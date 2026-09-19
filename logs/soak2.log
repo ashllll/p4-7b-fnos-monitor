@@ -1,0 +1,234 @@
+[   0.27] ESP-ROM:esp32p4-eco7-20260109
+[   0.27] Build:Jan  9 2026
+[   0.27] rst:0x1 (POWERON),boot:0xf (SPI_FAST_FLASH_BOOT)
+[   0.27] SPI mode:DIO, clock div:1
+[   0.27] load:0x4ffb60d0,len:0x11f0
+[   0.27] load:0x4ffac2c0,len:0xd5c
+[   0.27] load:0x4ffaefc0,len:0x3408
+[   0.27] entry 0x4ffac2c0
+[   0.48] I (261) hex_psram: vendor id    : 0x0d (AP)
+[   0.48] I (262) hex_psram: Latency      : 0x01 (Fixed)
+[   0.48] I (262) hex_psram: DriveStr.    : 0x00 (25 Ohm)
+[   0.48] I (263) hex_psram: dev id       : 0x03 (generation 4)
+[   0.48] I (267) hex_psram: density      : 0x07 (256 Mbit)
+[   0.48] I (272) hex_psram: good-die     : 0x06 (Pass)
+[   0.48] I (276) hex_psram: SRF          : 0x02 (Slow Refresh)
+[   0.48] I (281) hex_psram: BurstType    : 0x00 ( Wrap)
+[   0.48] I (285) hex_psram: BurstLen     : 0x03 (2048 Byte)
+[   0.48] I (289) hex_psram: BitMode      : 0x01 (X16 Mode)
+[   0.48] I (294) hex_psram: Readlatency  : 0x04 (14 cycles@Fixed)
+[   0.48] I (299) hex_psram: DriveStrength: 0x00 (1/1)
+[   0.48] I (303) MSPI Timing: Enter psram timing tuning
+[   0.48] I esp_psram: Found 32MB PSRAM device
+[   0.48] I esp_psram: Speed: 200MHz
+[   0.83] I (490) mmu_psram: .rodata xip on psram
+[   0.83] I (537) mmu_psram: .text xip on psram
+[   0.83] I (538) hex_psram: psram CS IO is dedicated
+[   0.83] I (538) cpu_start: Multicore app
+[   1.18] I (965) esp_psram: SPI SRAM memory test OK
+[   1.53] I (975) cpu_start: GPIO 38 and 37 are used as console UART I/O pins
+[   1.53] I (975) cpu_start: Pro cpu start user code
+[   1.53] I (976) cpu_start: cpu freq: 400000000 Hz
+[   1.53] I (977) app_init: Application information:
+[   1.53] I (981) app_init: Project name:     fnos_monitor
+[   1.53] I (986) app_init: App version:      0.1.0
+[   1.53] I (989) app_init: Compile time:     Sep 20 2026 01:25:45
+[   1.53] I (994) app_init: ELF file SHA256:  4a9b48395...
+[   1.53] I (999) app_init: ESP-IDF:          5.5.3
+[   1.53] I (1002) efuse_init: Min chip rev:     v3.0
+[   1.53] I (1006) efuse_init: Max chip rev:     v3.99 
+[   1.53] I (1010) efuse_init: Chip rev:         v3.2
+[   1.53] I (1014) heap_init: Initializing. RAM available for dynamic allocation:
+[   1.53] I (1021) heap_init: At 4FF5E0F0 len 0005CED0 (371 KiB): RETENT_RAM
+[   1.53] I (1027) heap_init: At 4FFBAFC0 len 00004BF0 (18 KiB): RAM
+[   1.53] I (1032) heap_init: At 501080D8 len 00000028 (0 KiB): RTCRAM
+[   1.53] I (1037) heap_init: At 501081A0 len 00007E60 (31 KiB): RTCRAM
+[   1.53] I (1043) heap_init: At 30100198 len 00001E68 (7 KiB): TCM
+[   1.53] I (1048) esp_psram: Adding pool of 31215K of PSRAM memory to heap allocator
+[   1.53] I (1054) esp_psram: Adding pool of 3K of PSRAM memory gap generated due to end address alignment of irom to the heap allocator
+[   1.53] I (1066) esp_psram: Adding pool of 49K of PSRAM memory gap generated due to end address alignment of drom to the heap allocator
+[   1.53] I (1077) spi_flash: detected chip: gd
+[   1.53] I (1080) spi_flash: flash io: qio
+[   1.53] I (1083) host_init: ESP Hosted : Host chip_ip[18]
+[   1.53] I (1088) H_API: ESP-Hosted starting. Hosted_Tasks: prio:23, stack: 5120 RPC_task_stack: 5120
+[   1.53] sdio_mempool_create free:32424780 min-free:32424780 lfb-def:31457280 lfb-8bit:31457280
+[   1.53] 
+[   1.53] I (1104) H_API: ** add_esp_wifi_remote_channels **
+[   1.53] I (1108) transport: Add ESP-Hosted channel IF[1]: S[0] Tx[0x4800b6dc] Rx[0x4801a922]
+[   1.53] I (1116) transport: Add ESP-Hosted channel IF[2]: S[0] Tx[0x4800b622] Rx[0x4801a922]
+[   1.53] I (1123) sleep_gpio: Configure to isolate all GPIO pins in sleep state
+[   1.53] I (1129) sleep_gpio: Enable automatic switching of GPIO sleep configuration
+[   1.53] I (1136) main_task: Started on CPU0
+[   1.53] I (1140) main_task: Calling app_main()
+[   1.53] I (1146) main: fnOS NAS dashboard booting (agent http://192.168.0.119:8799)
+[   1.53] I (1149) main: heap boot           internal=364KB largest=304KB dma=326KB psram=31265KB
+[   1.53] I (1158) transport: Attempt connection with slave: retry[0]
+[   1.53] I (1162) transport: Reset slave using GPIO[54]
+[   1.53] I (1166) os_wrapper_esp: GPIO [54] configured
+[   2.51] I (2336) sdio_wrapper: SDIO master: Data-Lines: 4-bit Freq(KHz)[40000 KHz]
+[   2.51] I (2336) sdio_wrapper: GPIOs: CLK[18] CMD[19] D0[14] D1[15] D2[16] D3[17] Slave_Reset[54]
+[   2.51] I (2336) H_SDIO_DRV: Starting SDIO process rx task
+[   2.51] I (2339) sdio_wrapper: Queues: Tx[20] Rx[20] SDIO-Rx-Mode[1]
+[   2.51] Name: 
+[   2.51] Type: SDIO
+[   2.51] Speed: 40.00 MHz (limit: 40.00 MHz)
+[   2.51] Size: 0MB
+[   2.51] CSD: ver=1, sector_size=0, capacity=0 read_bl_len=0
+[   2.51] SCR: sd_spec=0, bus_width=0
+[   2.51] TUPLE: DEVICE, size: 3: D9 01 FF 
+[   2.51] TUPLE: MANFID, size: 4
+[   2.51]   MANF: 0092, CARD: 6666
+[   2.51] TUPLE: FUNCID, size: 2: 0C 00 
+[   2.51] TUPLE: FUNCE, size: 4: 00 00 02 32 
+[   2.51] TUPLE: CONFIG, size: 5: 01 01 00 02 07 
+[   2.51] TUPLE: CFTABLE_ENTRY, size: 8
+[   2.51]   INDX: C1, Intface: 1, Default: 1, Conf-Entry-Num: 1
+[   2.51]   IF: 41
+[   2.51]   FS: 30, misc: 0, mem_space: 1, irq: 1, io_space: 0, timing: 0, power: 0
+[   2.51]   IR: 30, mask: 1,   IRQ: FF FF
+[   2.51]   LEN: FFFF
+[   2.51] TUPLE: END
+[   2.51] I (2422) sdio_wrapper: Function 0 Blocksize: 512
+[   2.51] I (2426) sdio_wrapper: Function 1 Blocksize: 512
+[   2.51] I (2430) H_SDIO_DRV: SDIO Host operating in STREAMING MODE
+[   2.51] I (2435) H_SDIO_DRV: generate slave intr
+[   2.51] I (2440) transport: Received INIT event from ESP32 peripheral
+[   2.51] I (2444) transport: EVENT: 12
+[   2.51] I (2447) transport: EVENT: 11
+[   2.51] I (2450) transport: capabilities: 0xd
+[   2.51] I (2453) transport: Features supported are:
+[   2.51] I (2457) transport: 	 * WLAN
+[   2.86] I (2460) transport: 	   - HCI over SDIO
+[   2.86] I (2463) transport: 	   - BLE only
+[   2.86] I (2466) transport: EVENT: 13
+[   2.86] I (2469) transport: ESP board type is : 13 
+[   2.86] 
+[   2.86] I (2473) transport: Base transport is set-up
+[   2.86] 
+[   2.86] I (2477) transport: Slave chip Id[12]
+[   2.86] I (2481) hci_stub_drv: Host BT Support: Disabled
+[   2.86] I (2485) H_SDIO_DRV: Received INIT event
+[   3.82] I (3517) fnos_net: wifi station started; awaiting ip
+[   3.82] I (3517) esp_lvgl:adapter: LVGL adapter initialized successfully
+[   3.82] W (3518) ledc: GPIO 32 is not usable, maybe conflict with others
+[   3.82] I (3522) ESP32_P4_EV: MIPI DSI PHY Powered on
+[   3.82] I (3527) ESP32_P4_EV: Install MIPI DSI LCD control panel
+[   3.82] I (3531) ESP32_P4_EV: Install EK79007 LCD control panel
+[   3.82] I (3536) ek79007: version: 2.0.2
+[   3.82] I (3538) H_API: esp_wifi_remote_connect
+[   3.82] I (3713) ESP32_P4_EV: Display initialized
+[   3.82] I (3714) esp_lvgl:bridge_v9: Initializing hardware resources
+[   3.82] I (3714) esp_lvgl:bridge_v9: Hardware resources initialized successfully
+[   3.82] I (3717) esp_lvgl:bridge: Initializing hardware resources
+[   3.82] I (3722) esp_lvgl:bridge: Hardware resources initialized successfully
+[   3.82] W (3728) esp_lvgl:bridge_v9: on_frame_buf_complete unavailable; buffer-switch release and dummy-draw may not function on MIPI DSI
+[   3.82] I (3740) ESP32_P4_EV: Touch 0x5d found
+[   3.82] I (3743) GT911: I2C address initialization procedure skipped - using default GT9xx setup
+[   3.82] I (3751) GT911: TouchPad_ID:0x39,0x31,0x31
+[   3.82] I (3755) GT911: TouchPad_Config_Version:91
+[   3.82] W (3759) esp_lvgl:touch: LV_USE_GESTURE_RECOGNITION is disabled; only single-point pointer events are available
+[   3.82] I (3768) esp_lvgl:touch: Touch input device registered successfully (IRQ mode: disabled)
+[   3.82] I (3777) esp_lvgl:adapter: LVGL task started successfully
+[   3.82] I (3781) ESP32_P4_EV: Setting LCD backlight: 100%
+[   4.17] I (3786) ESP32_P4_EV: Setting LCD backlight: 45%
+[   4.17] I (3790) main: heap display        internal=244KB largest=204KB dma=206KB psram=27622KB
+[   4.17] I (3902) fnos_view: dashboard created (4 pages, 180 s window)
+[   4.17] I (3903) main: heap ui             internal=244KB largest=204KB dma=206KB psram=27554KB
+[   4.17] I (3952) fnos_data: polling http://192.168.0.119:8799/api/v1/status every 1000 ms
+[   4.17] I (3952) main: heap polling        internal=244KB largest=204KB dma=206KB psram=27544KB
+[   4.17] I (3957) ESP32_P4_EV: Setting LCD backlight: 45%
+[   4.17] I (3962) main: backlight 45% (day)
+[   4.17] I (3966) main: boot complete
+[   4.17] I (3968) main_task: Returned from app_main()
+[   6.49] I (6482) esp_wifi_remote: esp_wifi_internal_reg_rxcb: sta: 0x480b99ea
+[   7.52] I (7502) esp_netif_handlers: sta ip: 192.168.0.214, mask: 255.255.255.0, gw: 192.168.0.1
+[   7.52] I (7502) fnos_net: got ip 192.168.0.214
+[   8.15] I (8037) fnos_data: history backfilled: 182 samples
+[  14.08] I (13966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[  23.98] I (23966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[  33.98] I (33966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[  37.88] I (37696) fnos_data: poll ok=30 fail=0 10ms cpu=1.8% mem=60.8% rx=14.3 tx=154.7 KB/s alerts=1 internal=236KB dma=198KB psram=27544KB
+[  43.98] I (43966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[  53.98] I (53966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[  63.99] I (63966) ESP32_P4_EV: Setting LCD backlight: 12%
+[  63.99] I (63966) main: backlight 12% (night)
+[  63.99] I (63966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[  68.71] I (68374) fnos_data: poll ok=60 fail=0 10ms cpu=1.9% mem=59.7% rx=14.4 tx=159.6 KB/s alerts=1 internal=236KB dma=197KB psram=27544KB
+[  74.16] I (73966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[  84.17] I (83966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[  94.25] I (93966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[  99.08] I (99043) fnos_data: poll ok=90 fail=0 17ms cpu=2.7% mem=60.9% rx=28.5 tx=104.8 KB/s alerts=1 internal=236KB dma=197KB psram=27544KB
+[ 103.98] I (103966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 114.16] I (113966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 124.05] I (123966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 129.78] I (129756) fnos_data: poll ok=120 fail=0 16ms cpu=2.0% mem=59.4% rx=12.3 tx=59.4 KB/s alerts=1 internal=236KB dma=197KB psram=27544KB
+[ 134.20] I (133966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 144.22] I (143966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 154.15] I (153966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 160.60] I (160278) fnos_data: poll ok=150 fail=0 18ms cpu=4.0% mem=61.0% rx=21.4 tx=134.7 KB/s alerts=1 internal=236KB dma=197KB psram=27544KB
+[ 164.13] I (163966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 173.99] I (173966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27540KB
+[ 183.99] I (183966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27540KB
+[ 190.88] I (190856) fnos_data: poll ok=180 fail=0 6ms cpu=3.4% mem=61.0% rx=5.0 tx=126.7 KB/s alerts=1 internal=236KB dma=197KB psram=27544KB
+[ 193.99] I (193966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 204.27] I (203966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 214.15] I (213966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 221.44] I (221420) fnos_data: poll ok=210 fail=0 25ms cpu=3.3% mem=61.1% rx=15.7 tx=123.2 KB/s alerts=1 internal=235KB dma=197KB psram=27543KB
+[ 223.99] I (223966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27540KB
+[ 233.99] I (233966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27540KB
+[ 244.32] I (243966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 252.45] I (252127) fnos_data: poll ok=240 fail=0 19ms cpu=1.9% mem=61.1% rx=7.6 tx=115.6 KB/s alerts=1 internal=236KB dma=197KB psram=27544KB
+[ 253.99] I (253966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 263.99] I (263966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 274.27] I (273966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 283.11] I (282768) fnos_data: poll ok=270 fail=0 13ms cpu=1.8% mem=61.2% rx=23.9 tx=184.6 KB/s alerts=1 internal=236KB dma=197KB psram=27544KB
+[ 283.99] I (283966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 294.14] I (293966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 304.31] I (303966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 313.50] I (313276) fnos_data: poll ok=300 fail=0 6ms cpu=2.3% mem=61.2% rx=10.1 tx=260.0 KB/s alerts=1 internal=236KB dma=197KB psram=27544KB
+[ 314.20] I (313966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 324.19] I (323966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 334.20] I (333966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 343.89] I (343769) fnos_data: poll ok=330 fail=0 13ms cpu=2.2% mem=61.2% rx=20.1 tx=140.1 KB/s alerts=1 internal=236KB dma=197KB psram=27544KB
+[ 344.23] I (343966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 354.00] I (353966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 364.17] I (363966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 373.99] I (373966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 374.33] I (374300) fnos_data: poll ok=360 fail=0 16ms cpu=1.9% mem=61.2% rx=7.1 tx=193.0 KB/s alerts=1 internal=236KB dma=197KB psram=27544KB
+[ 383.99] I (383966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 394.26] I (393966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 403.99] I (403966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 405.37] I (405010) fnos_data: poll ok=390 fail=0 27ms cpu=1.4% mem=61.2% rx=18.2 tx=130.0 KB/s alerts=1 internal=236KB dma=197KB psram=27537KB
+[ 414.00] I (413966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 423.99] I (423966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 434.22] I (433966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 435.84] I (435593) fnos_data: poll ok=420 fail=0 13ms cpu=2.5% mem=61.1% rx=16.9 tx=92.8 KB/s alerts=1 internal=236KB dma=197KB psram=27544KB
+[ 444.30] I (443966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 454.20] I (453966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 464.08] I (463966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 466.42] I (466195) fnos_data: poll ok=450 fail=0 7ms cpu=2.5% mem=61.2% rx=15.6 tx=121.7 KB/s alerts=1 internal=236KB dma=197KB psram=27544KB
+[ 474.20] I (473966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 484.32] I (483966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 494.00] I (493966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 496.88] I (496753) fnos_data: poll ok=480 fail=0 23ms cpu=1.4% mem=61.2% rx=17.6 tx=90.9 KB/s alerts=1 internal=236KB dma=197KB psram=27544KB
+[ 504.28] I (503966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 514.21] I (513966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 524.00] I (523966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 527.67] I (527281) fnos_data: poll ok=510 fail=0 24ms cpu=2.6% mem=60.8% rx=21.3 tx=56.0 KB/s alerts=1 internal=236KB dma=197KB psram=27544KB
+[ 534.00] I (533966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 544.00] I (543966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 554.00] I (553966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 558.05] I (557829) fnos_data: poll ok=540 fail=0 10ms cpu=2.4% mem=61.1% rx=36.3 tx=103.3 KB/s alerts=1 internal=236KB dma=197KB psram=27544KB
+[ 564.00] I (563966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 574.08] I (573966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 584.29] I (583966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 588.65] I (588288) fnos_data: poll ok=570 fail=0 24ms cpu=1.6% mem=61.2% rx=22.3 tx=103.3 KB/s alerts=1 internal=236KB dma=197KB psram=27544KB
+[ 594.29] I (593966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 604.25] I (603966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 614.24] I (613966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 618.99] I (618810) fnos_data: poll ok=600 fail=0 15ms cpu=1.7% mem=61.1% rx=12.7 tx=99.5 KB/s alerts=1 internal=236KB dma=197KB psram=27544KB
+[ 624.00] I (623966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 634.16] I (633966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 644.25] I (643966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB
+[ 649.63] I (649363) fnos_data: poll ok=630 fail=0 6ms cpu=2.8% mem=61.2% rx=18.7 tx=111.7 KB/s alerts=1 internal=236KB dma=197KB psram=27544KB
+[ 654.01] I (653966) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27541KB

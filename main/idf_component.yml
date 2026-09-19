@@ -1,0 +1,6 @@
+## IDF Component Manager Manifest File
+dependencies:
+  idf: ">=5.5"
+  # BSP 改用工程内本地副本 components/esp32_p4_wifi6_touch_lcd_7b
+  # （只为把 LVGL 绘制缓冲从内部 RAM 改到 PSRAM，补丁一行，见该文件注释）
+  esp32_p4_wifi6_touch_lcd_7b: "*"

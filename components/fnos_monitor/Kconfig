@@ -1,0 +1,25 @@
+menu "fnOS monitor"
+
+    config FNOS_HEAP_DEBUG
+        bool "打印堆余量与任务状态（每 10 秒）"
+        default n
+        help
+            打开后每 10 秒在串口打印内部 RAM / DMA / PSRAM 余量、LVGL 任务状态、
+            轮询统计。排查"界面冻结""内存下滑"时打开它比猜快得多。
+
+    config FNOS_AUTO_PAGE_SEC
+        int "自动轮播页面间隔（秒，0=关闭）"
+        range 0 120
+        default 0
+        help
+            只用于视觉验收：打开后每 N 秒自动切到下一页，方便用摄像头逐页拍照核对。
+            平时保持 0，交给你自己点导航/滑动翻页。
+
+    config FNOS_CHART_WINDOW
+        int "曲线窗口（秒，1 Hz 采样点数）"
+        range 60 600
+        default 180
+        help
+            网络/CPU 曲线在屏幕上保留的秒数。点数越多内存与重绘开销越大。
+
+endmenu

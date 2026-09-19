@@ -1,0 +1,16 @@
+version: "0.1.0"
+description: fnOS (飞牛 NAS) status dashboard for the ESP32-P4 7-inch touch panel
+license: Apache-2.0
+targets:
+- esp32p4
+dependencies:
+  idf: ">=5.5"
+  espressif/cjson:
+    version: "^1.7.19"
+    public: true
+  # 本板 Wi-Fi 由板载 ESP32-C6 经 ESP-Hosted 提供；版本与官方 7B 示例
+  # (examples/esp-idf/05_wifistation) 保持一致，以匹配 C6 出厂从机固件
+  espressif/esp_wifi_remote:
+    version: "==1.2.5"
+  espressif/esp_hosted:
+    version: "1.4.*"

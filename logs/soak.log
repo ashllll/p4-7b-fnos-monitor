@@ -1,0 +1,66 @@
+[   2.00] I (6469) esp_wifi_remote: esp_wifi_internal_reg_rxcb: sta: 0x480b9938
+[   3.02] I (7485) esp_netif_handlers: sta ip: 192.168.0.214, mask: 255.255.255.0, gw: 192.168.0.1
+[   3.02] I (7485) fnos_net: got ip 192.168.0.214
+[   3.67] I (8140) fnos_data: history backfilled: 300 samples
+[  33.62] I (37772) fnos_data: poll ok=30 fail=0 26ms cpu=3.0% mem=60.0% rx=16.0 tx=138.4 KB/s alerts=1
+[  46.85] E (51051) transport_base: tcp_read error, errno=Socket is not connected
+[  46.85] W (51052) HTTP_CLIENT: esp_transport_read returned:-2 and errno:128 
+[  46.85] E (51053) HTTP_CLIENT: transport_read: error - 57347 | ERROR
+[  46.85] W (51058) fnos_data: poll failed: read error status=-1 7ms
+[  47.88] E (52066) esp-tls: [sock=54] delayed connect error: Connection reset by peer
+[  47.88] E (52066) transport_base: Failed to open a new connection: 32772
+[  47.88] E (52067) HTTP_CLIENT: Connection failed, sock < 0
+[  47.88] W (52072) fnos_data: poll failed: connect/timeout status=0 8ms
+[  49.83] E (54085) esp-tls: [sock=54] delayed connect error: Connection reset by peer
+[  49.83] E (54085) transport_base: Failed to open a new connection: 32772
+[  49.83] E (54087) HTTP_CLIENT: Connection failed, sock < 0
+[  49.83] W (54091) fnos_data: poll failed: connect/timeout status=0 14ms
+[  52.70] E (57112) esp-tls: [sock=54] delayed connect error: Connection reset by peer
+[  52.70] E (57112) transport_base: Failed to open a new connection: 32772
+[  52.70] E (57113) HTTP_CLIENT: Connection failed, sock < 0
+[  52.70] W (57118) fnos_data: poll failed: connect/timeout status=0 20ms
+[  56.86] E (61127) esp-tls: [sock=54] delayed connect error: Connection reset by peer
+[  56.86] E (61127) transport_base: Failed to open a new connection: 32772
+[  56.86] E (61128) HTTP_CLIENT: Connection failed, sock < 0
+[  56.86] W (61133) fnos_data: poll failed: connect/timeout status=0 9ms
+[  59.43] I (63895) ESP32_P4_EV: Setting LCD backlight: 12%
+[  59.43] I (63895) main: backlight 12% (night)
+[  61.69] E (66144) esp-tls: [sock=54] delayed connect error: Connection reset by peer
+[  61.69] E (66144) transport_base: Failed to open a new connection: 32772
+[  61.69] E (66145) HTTP_CLIENT: Connection failed, sock < 0
+[  61.69] W (66150) fnos_data: poll failed: connect/timeout status=0 12ms
+[  66.96] E (71160) esp-tls: [sock=54] delayed connect error: Connection reset by peer
+[  66.96] E (71160) transport_base: Failed to open a new connection: 32772
+[  66.96] E (71161) HTTP_CLIENT: Connection failed, sock < 0
+[  66.96] W (71166) fnos_data: poll failed: connect/timeout status=0 11ms
+[  71.73] E (76175) esp-tls: [sock=54] delayed connect error: Connection reset by peer
+[  71.73] E (76175) transport_base: Failed to open a new connection: 32772
+[  71.73] E (76176) HTTP_CLIENT: Connection failed, sock < 0
+[  71.73] W (76181) fnos_data: poll failed: connect/timeout status=0 10ms
+[  77.04] E (81189) esp-tls: [sock=54] delayed connect error: Connection reset by peer
+[  77.04] E (81189) transport_base: Failed to open a new connection: 32772
+[  77.04] E (81190) HTTP_CLIENT: Connection failed, sock < 0
+[  77.04] W (81195) fnos_data: poll failed: connect/timeout status=0 8ms
+[ 100.02] I (104302) fnos_data: poll ok=60 fail=9 5ms cpu=1.3% mem=60.3% rx=11.4 tx=160.0 KB/s alerts=1
+[ 130.71] I (134938) fnos_data: poll ok=90 fail=9 23ms cpu=1.9% mem=58.9% rx=15.8 tx=100.2 KB/s alerts=1
+[ 161.33] I (165669) fnos_data: poll ok=120 fail=9 21ms cpu=1.3% mem=60.2% rx=14.1 tx=69.6 KB/s alerts=1
+[ 191.91] I (196375) fnos_data: poll ok=150 fail=9 21ms cpu=1.8% mem=60.0% rx=24.3 tx=124.1 KB/s alerts=1
+[ 222.88] I (227100) fnos_data: poll ok=180 fail=9 11ms cpu=1.1% mem=60.2% rx=21.7 tx=168.8 KB/s alerts=1
+[ 253.36] I (257818) fnos_data: poll ok=210 fail=9 25ms cpu=2.8% mem=60.3% rx=21.6 tx=146.1 KB/s alerts=1
+[ 283.88] I (288340) fnos_data: poll ok=240 fail=9 25ms cpu=2.4% mem=59.9% rx=12.0 tx=81.8 KB/s alerts=1
+[ 314.53] I (318992) fnos_data: poll ok=270 fail=9 8ms cpu=2.0% mem=60.4% rx=34.4 tx=78.7 KB/s alerts=1
+[ 345.13] I (349588) fnos_data: poll ok=300 fail=9 8ms cpu=1.5% mem=60.1% rx=26.5 tx=22.0 KB/s alerts=1
+[ 375.83] I (380285) fnos_data: poll ok=330 fail=9 21ms cpu=1.7% mem=60.4% rx=15.2 tx=235.0 KB/s alerts=1
+[ 406.65] I (410856) fnos_data: poll ok=360 fail=9 25ms cpu=1.8% mem=58.9% rx=7.6 tx=26.7 KB/s alerts=1
+[ 437.33] I (441524) fnos_data: poll ok=390 fail=9 24ms cpu=2.3% mem=60.3% rx=18.5 tx=230.9 KB/s alerts=1
+[ 468.10] I (472248) fnos_data: poll ok=420 fail=9 32ms cpu=2.2% mem=60.3% rx=12.7 tx=165.4 KB/s alerts=1
+[ 498.84] I (502999) fnos_data: poll ok=450 fail=9 11ms cpu=2.3% mem=60.2% rx=36.8 tx=52.3 KB/s alerts=1
+[ 529.34] I (533676) fnos_data: poll ok=480 fail=9 11ms cpu=2.3% mem=60.4% rx=11.9 tx=104.1 KB/s alerts=1
+[ 559.89] I (564343) fnos_data: poll ok=510 fail=9 14ms cpu=2.5% mem=58.9% rx=58.1 tx=186.4 KB/s alerts=1
+[ 590.83] I (595010) fnos_data: poll ok=540 fail=9 22ms cpu=2.8% mem=60.3% rx=11.1 tx=82.9 KB/s alerts=1
+[ 621.57] I (625680) fnos_data: poll ok=570 fail=9 30ms cpu=2.4% mem=60.1% rx=25.3 tx=194.3 KB/s alerts=1
+[ 652.10] I (656448) fnos_data: poll ok=600 fail=9 17ms cpu=2.3% mem=60.3% rx=17.5 tx=82.5 KB/s alerts=1
+[ 683.04] I (687167) fnos_data: poll ok=630 fail=9 20ms cpu=3.3% mem=60.5% rx=31.3 tx=86.0 KB/s alerts=1
+[ 713.30] I (717744) fnos_data: poll ok=660 fail=9 24ms cpu=2.4% mem=59.1% rx=15.9 tx=135.1 KB/s alerts=1
+[ 743.91] I (748354) fnos_data: poll ok=690 fail=9 20ms cpu=1.7% mem=60.4% rx=15.7 tx=85.0 KB/s alerts=1
+[ 774.79] I (779066) fnos_data: poll ok=720 fail=9 9ms cpu=3.4% mem=59.1% rx=15.8 tx=151.9 KB/s alerts=1

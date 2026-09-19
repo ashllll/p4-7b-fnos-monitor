@@ -1,0 +1,17 @@
+== t=0 soak started, board booted at flash reset ==
+== stopping fnos-agent on NAS ==
+Could not chdir to home directory /home/llll: No such file or directory
+active
+Could not chdir to home directory /home/llll: No such file or directory
+Could not chdir to home directory /home/llll: No such file or directory
+inactive
+stopped
+== capture while agent is DOWN ==
+{"image": "/Users/llll/Documents/ChatGPT/board-camera/android-preview-20260920-011120-104202.png", "resumed_camera": true}
+== restarting fnos-agent ==
+Could not chdir to home directory /home/llll: No such file or directory
+Could not chdir to home directory /home/llll: No such file or directory
+active
+== capture after recovery ==
+{"image": "/Users/llll/Documents/ChatGPT/board-camera/android-preview-20260920-011154-089181.png", "resumed_camera": false}
+== done ==
