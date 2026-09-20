@@ -117,7 +117,7 @@ SSHPASS='...' NAS_SUDO_PASS='...' ./install.sh uninstall           # 卸载
 * NAS 上 `fnos-agent.service` 已安装并 enabled，端口 8799，重启 NAS 后自动起来。
 * 板子上已烧录本工程固件，开机直进仪表盘，实测：
   * 13 分钟长跑 720 次轮询、0 崩溃/断言/看门狗，内部 RAM 稳态 234~244 KB；
-  * 四页版式用手机摄像头逐页核对通过（见 `docs/verification.md` 第 4 节）；
+  * 四页版式用手机摄像头逐页核对通过，触摸导航/滑动翻页由用户实机确认（`docs/verification.md` 第 4 节）；
   * 把采集器停掉 20 秒 → 面板立刻转红 `OFFLINE` + `AGENT UNREACHABLE`，重启后自动恢复。
 * 当前烧录的版本把 `CONFIG_FNOS_HEAP_DEBUG` 开着（串口每 10 秒一条堆余量 + 每 30 秒一条轮询统计），
   长期摆放观察时很有用；不想要就把它改成 n 重新编译烧录。
