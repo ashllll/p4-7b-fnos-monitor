@@ -1,7 +1,7 @@
 /*******************************************************************************
  * Size: 20 px
  * Bpp: 4
- * Opts: --font PlexMono-Medium.ttf --size 20 --bpp 4 --format lvgl --no-compress --force-fast-kern-format -r 0x20-0x7E --lv-include lvgl.h -o /Users/llll/code/esp/p4-7b-fnos-monitor/components/fnos_monitor/fonts/ui_font_mono_20.c
+ * Opts: --font PlexMono-Medium.ttf --size 20 --bpp 4 --format lvgl --no-compress --force-fast-kern-format -r 0x20-0x7E -r 0xB0 -r 0xB7 --lv-include lvgl.h -o /Users/llll/code/esp/p4-7b-fnos-monitor/components/fnos_monitor/fonts/ui_font_mono_20.c
  ******************************************************************************/
 
 #ifdef LV_LVGL_H_INCLUDE_SIMPLE
@@ -1073,7 +1073,16 @@ static LV_ATTRIBUTE_LARGE_CONST const uint8_t glyph_bitmap[] = {
     0x0, 0x5c, 0xc5, 0x0, 0x5, 0x70, 0x3, 0xff,
     0xff, 0x50, 0xc, 0xe0, 0xa, 0xf4, 0x4f, 0xf2,
     0x3f, 0xa0, 0xe, 0xc0, 0x6, 0xff, 0xff, 0x30,
-    0x8, 0x60, 0x0, 0x7e, 0xe6, 0x0
+    0x8, 0x60, 0x0, 0x7e, 0xe6, 0x0,
+
+    /* U+00B0 "°" */
+    0x0, 0x38, 0x83, 0x0, 0x7, 0xff, 0xff, 0x60,
+    0x2f, 0xc1, 0x1c, 0xf2, 0x7f, 0x30, 0x3, 0xf7,
+    0x8f, 0x20, 0x2, 0xf8, 0x5f, 0x70, 0x7, 0xf5,
+    0xc, 0xfb, 0xbf, 0xc0, 0x1, 0xaf, 0xf9, 0x0,
+
+    /* U+00B7 "·" */
+    0x5, 0x50, 0x9f, 0xf9, 0xbf, 0xfb, 0x5e, 0xe5
 };
 
 
@@ -1177,14 +1186,18 @@ static const lv_font_fmt_txt_glyph_dsc_t glyph_dsc[] = {
     {.bitmap_index = 6297, .adv_w = 192, .box_w = 8, .box_h = 19, .ofs_x = 2, .ofs_y = -4},
     {.bitmap_index = 6373, .adv_w = 192, .box_w = 2, .box_h = 19, .ofs_x = 5, .ofs_y = -4},
     {.bitmap_index = 6392, .adv_w = 192, .box_w = 8, .box_h = 19, .ofs_x = 2, .ofs_y = -4},
-    {.bitmap_index = 6468, .adv_w = 192, .box_w = 12, .box_h = 5, .ofs_x = 0, .ofs_y = 4}
+    {.bitmap_index = 6468, .adv_w = 192, .box_w = 12, .box_h = 5, .ofs_x = 0, .ofs_y = 4},
+    {.bitmap_index = 6498, .adv_w = 192, .box_w = 8, .box_h = 8, .ofs_x = 2, .ofs_y = 7},
+    {.bitmap_index = 6530, .adv_w = 192, .box_w = 4, .box_h = 4, .ofs_x = 4, .ofs_y = 5}
 };
 
 /*---------------------
  *  CHARACTER MAPPING
  *--------------------*/
 
-
+static const uint16_t unicode_list_1[] = {
+    0x0, 0x7
+};
 
 /*Collect the unicode lists and glyph_id offsets*/
 static const lv_font_fmt_txt_cmap_t cmaps[] =
@@ -1192,6 +1205,10 @@ static const lv_font_fmt_txt_cmap_t cmaps[] =
     {
         .range_start = 32, .range_length = 95, .glyph_id_start = 1,
         .unicode_list = NULL, .glyph_id_ofs_list = NULL, .list_length = 0, .type = LV_FONT_FMT_TXT_CMAP_FORMAT0_TINY
+    },
+    {
+        .range_start = 176, .range_length = 8, .glyph_id_start = 96,
+        .unicode_list = unicode_list_1, .glyph_id_ofs_list = NULL, .list_length = 2, .type = LV_FONT_FMT_TXT_CMAP_SPARSE_TINY
     }
 };
 
@@ -1213,7 +1230,7 @@ static lv_font_fmt_txt_dsc_t font_dsc = {
     .cmaps = cmaps,
     .kern_dsc = NULL,
     .kern_scale = 0,
-    .cmap_num = 1,
+    .cmap_num = 2,
     .bpp = 4,
     .kern_classes = 0,
     .bitmap_format = 0,

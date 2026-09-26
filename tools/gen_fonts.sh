@@ -66,11 +66,11 @@ echo "== 等宽数字（数值列，tabular） =="
 $LV --font PlexMono-SemiBold.ttf --size 84 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
     --symbols "0123456789.,:%-+/ " --lv-include lvgl.h -o "$OUT/ui_font_mono_84.c"
 $LV --font PlexMono-SemiBold.ttf --size 52 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
-    -r 0x20-0x7E --lv-include lvgl.h -o "$OUT/ui_font_mono_52.c"
+    -r 0x20-0x7E -r 0xB0 -r 0xB7 --lv-include lvgl.h -o "$OUT/ui_font_mono_52.c"
 $LV --font PlexMono-Medium.ttf --size 34 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
-    -r 0x20-0x7E --lv-include lvgl.h -o "$OUT/ui_font_mono_34.c"
+    -r 0x20-0x7E -r 0xB0 -r 0xB7 --lv-include lvgl.h -o "$OUT/ui_font_mono_34.c"
 $LV --font PlexMono-Medium.ttf --size 20 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
-    -r 0x20-0x7E --lv-include lvgl.h -o "$OUT/ui_font_mono_20.c"
+    -r 0x20-0x7E -r 0xB0 -r 0xB7 --lv-include lvgl.h -o "$OUT/ui_font_mono_20.c"
 
 echo "== 拉丁标签（Plex Sans） =="
 $LV --font PlexSans-SemiBold.ttf --size 24 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
