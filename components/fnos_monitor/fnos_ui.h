@@ -11,6 +11,7 @@
 #define CK_BG        0x06080B   // 底色（近黑）
 #define CK_PANEL     0x0E1116   // 对象底
 #define CK_PANEL_HI  0x161C24   // 选中/激活底
+#define CK_NAV_SEL   0x22303E   // 导航选中底（比 PANEL_HI 亮一档，斜视/照片下可辨）
 #define CK_GUIDE     0x25313E   // 参考线、非焦点描边
 #define CK_TEXT      0xF5F7FA
 #define CK_DIM       0x8A93A3

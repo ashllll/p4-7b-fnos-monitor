@@ -288,6 +288,8 @@ class Collector:
                 # 健康阵列每月做 check 的数小时里不该显示成异常。
                 cur["sync_pct"] = float(m.group(3))
                 cur["what"] = m.group(2)
+        # mdstat 的顺序是组装顺序，面板上按设备名排更易读
+        out.sort(key=lambda r: r["dev"])
         return out
 
     def _disk_io(self):
