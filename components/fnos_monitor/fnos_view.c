@@ -406,7 +406,7 @@ static void build_network(lv_obj_t *p)
         s_nw_axis[i] = ck_label(tr, "", CK_F_META, CK_DIM, CK_CONT_W - 106, 44 + i * 56);
     }
 
-    static const char *lbl[4] = { "累计接收", "累计发送", "采集延迟", "曲线采样" };
+    static const char *lbl[4] = { "峰值下行", "峰值上行", "采集延迟", "曲线采样" };
     int w = (CK_CONT_W - 3 * 14) / 4;
     for (int i = 0; i < 4; i++) {
         lv_obj_t *c = ck_tile(p, i * (w + 14), 388, w, CK_CONT_H - 388);
@@ -548,7 +548,8 @@ static void update_overview(void)
         snprintf(why, sizeof(why), "采集端不可达：%s", s_st.last_err[0] ? s_st.last_err : "poll failed");
         ck_set_color(s_ov_reason, CK_DANGER);
     } else if (s_st.nalerts > 0) {
-        snprintf(why, sizeof(why), "%s", s_st.alerts[0].m);
+        if (s_st.nalerts > 1) snprintf(why, sizeof(why), "%s  (+%d)", s_st.alerts[0].m, s_st.nalerts - 1);
+        else                  snprintf(why, sizeof(why), "%s", s_st.alerts[0].m);
         ck_set_color(s_ov_reason, strcmp(s_st.alerts[0].lv, "crit") == 0 ? CK_DANGER : CK_WARN);
     } else {
         why[0] = 0;
@@ -559,7 +560,7 @@ static void update_overview(void)
         snprintf(b, sizeof(b), "%.0f", s_st.cpu.pct);
         ck_set(s_ov_val[0], b);
         ck_set(s_ov_unit[0], "%");
-        place_unit(s_ov_val[0], s_ov_unit[0], 14, 53);
+        lv_obj_set_pos(s_ov_unit[0], 85, 53);
         snprintf(s, sizeof(s), "负载 %.2f · %d 核", s_st.cpu.load1, s_st.cpu.cores);
         ck_set(s_ov_sub[0], s);
         ck_bar_set_color(&s_ov_mbar[0], s_st.cpu.pct, CK_CPU);
@@ -567,7 +568,7 @@ static void update_overview(void)
         snprintf(b, sizeof(b), "%.0f", s_st.mem.pct);
         ck_set(s_ov_val[1], b);
         ck_set(s_ov_unit[1], "%");
-        place_unit(s_ov_val[1], s_ov_unit[1], 14, 53);
+        lv_obj_set_pos(s_ov_unit[1], 85, 53);
         snprintf(s, sizeof(s), "%.1f / %.0f GB", s_st.mem.used_mb / 1024.0f, s_st.mem.total_mb / 1024.0f);
         ck_set(s_ov_sub[1], s);
         ck_bar_set_color(&s_ov_mbar[1], s_st.mem.pct, CK_MEM);
@@ -577,8 +578,8 @@ static void update_overview(void)
         snprintf(b, sizeof(b), "%.0f", hot);
         ck_set(s_ov_val[2], b);
         ck_set(s_ov_unit[2], "C");
-        place_unit(s_ov_val[2], s_ov_unit[2], 14, 53);
-        if (s_st.ntemps > 0) snprintf(s, sizeof(s), "%s %.0fC", s_st.temps[0].n, s_st.temps[0].c);
+        lv_obj_set_pos(s_ov_unit[2], 85, 53);
+        if (s_st.ntemps > 0) snprintf(s, sizeof(s), "%s %.0f°C", s_st.temps[0].n, s_st.temps[0].c);
         else                 snprintf(s, sizeof(s), "--");
         ck_set(s_ov_sub[2], s);
         ck_bar_set_color(&s_ov_mbar[2], hot, CK_TEMP);
@@ -586,7 +587,6 @@ static void update_overview(void)
         fmt_uptime(b, sizeof(b), s_st.uptime_s);
         ck_set(s_ov_val[3], b);
         ck_set(s_ov_unit[3], "");
-        place_unit(s_ov_val[3], s_ov_unit[3], 14, 53);
         ck_set(s_ov_sub[3], "NAS 持续运行");
     } else {
         for (int i = 0; i < 4; i++) {
@@ -749,8 +749,11 @@ static void update_network(void)
         snprintf(s, sizeof(s), "累计发送 %s", c2);
         ck_set(s_nw_up_sub, s);
 
-        ck_set(s_nw_ctx_v[0], c1);
-        ck_set(s_nw_ctx_v[1], c2);
+        char p1[24], p2[24];
+        fmt_rate(p1, sizeof(p1), (float)ck_trend_peak(&s_nw_down), NULL);
+        fmt_rate(p2, sizeof(p2), (float)ck_trend_peak(&s_nw_up), NULL);
+        ck_set(s_nw_ctx_v[0], p1);
+        ck_set(s_nw_ctx_v[1], p2);
         snprintf(b, sizeof(b), "%d ms", s_st.http_ms);
         ck_set(s_nw_ctx_v[2], b);
         snprintf(b, sizeof(b), "%lld", (long long)s_hist_seq);
@@ -803,7 +806,7 @@ static void update_system(void)
     for (int i = 0; i < 7; i++) {
         if (ok && i < s_st.ntemps) {
             ck_set(s_sy_tname[i], s_st.temps[i].n);
-            snprintf(b, sizeof(b), "%.1fC", s_st.temps[i].c);
+            snprintf(b, sizeof(b), "%.1f°C", s_st.temps[i].c);
             ck_set(s_sy_tval[i], b);
             uint32_t c = CK_OK;
             if (s_st.temps[i].c >= 75) c = CK_DANGER;
