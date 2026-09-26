@@ -17,3 +17,6 @@ dependencies.lock
 .DS_Store
 __pycache__/
 *.pyc
+
+# 字体源文件（10 MB 级 TTF，用 tools/gen_fonts.sh 从 Google Fonts 重新拉取即可）
+tools/fonts/*.ttf

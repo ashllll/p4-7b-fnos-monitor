@@ -1,10 +1,27 @@
-set(PROJ_SRC ${CMAKE_CURRENT_LIST_DIR})
-
-file(GLOB_RECURSE PROJ_SRCS_C ${PROJ_SRC}/*.c)
+# 源文件显式列出，不用 glob：字体是 tools/gen_fonts.sh 生成的，
+# glob 在配置阶段只求值一次，新增文件会被静默漏掉（表现为链接期 undefined reference）。
+# 增删字体时同步改这里的列表（gen_fonts.sh 会打印需要的行）。
+set(PROJ_SRCS
+    "fnos_net.c"
+    "fnos_data.c"
+    "fnos_ui.c"
+    "fnos_view.c"
+    "fonts/ui_font_cjk_15.c"
+    "fonts/ui_font_cjk_20.c"
+    "fonts/ui_font_cjk_24.c"
+    "fonts/ui_font_cjk_40.c"
+    "fonts/ui_font_mono_20.c"
+    "fonts/ui_font_mono_34.c"
+    "fonts/ui_font_mono_52.c"
+    "fonts/ui_font_mono_84.c"
+    "fonts/ui_font_sans_15.c"
+    "fonts/ui_font_sans_20.c"
+    "fonts/ui_font_sans_24.c"
+)
 
 idf_component_register(
-    SRCS ${PROJ_SRCS_C}
-    INCLUDE_DIRS ${PROJ_SRC}
+    SRCS ${PROJ_SRCS}
+    INCLUDE_DIRS ${CMAKE_CURRENT_LIST_DIR}
     REQUIRES
         esp_wifi
         esp_netif
@@ -20,7 +37,6 @@ idf_component_register(
         lvgl__lvgl
 )
 
-# 字体 C 数组（Lato / crisp）沿用上游生成参数，关掉它们触发的告警
 target_compile_options(
     ${COMPONENT_LIB}
     PRIVATE

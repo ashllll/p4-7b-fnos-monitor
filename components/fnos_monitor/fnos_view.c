@@ -1,12 +1,11 @@
-// fnOS NAS 仪表盘：1024x600、4 页、触摸导航。
+// fnOS NAS 仪表盘 v2：1024×600 四页，按 docs/ui-redesign.md 的设计合同实现。
 //
-// 约定：
-//  * 所有装饰对象一律清掉 CLICKABLE —— LVGL 9.5 里每个对象默认可点，装饰件会吞掉
-//    点击且事件不冒泡；只留"导航项"和"每页内容容器"两个触摸目标：前者切页，
-//    后者按 PRESSED/RELEASED 的横向位移翻页（本工程没开 LV_USE_GESTURE_RECOGNITION）。
-//  * 本文件不建任务、不加锁，全部刷新都跑在 LVGL 任务里的一个定时器上。
-//  * 界面文本全 ASCII：LVGL 内置 Montserrat 只有 ASCII 字形。
+// 阅读顺序：每页只回答一个问题，自上而下"第一眼 → 第二眼 → 第三眼"。
+// 状态分三层：身份色（对象是谁）/ 运行状态 / 数据可信度，三者互不覆盖。
+// 切页一律原子换页（先隐藏全部旧页并归零偏移，再显示目标页）：
+// 本板是"全屏页 + partial buffer"，双页同时做位移动画会留残影。
 #include "fnos_view.h"
+#include "fnos_ui.h"
 #include "fnos_data.h"
 #include "fnos_net.h"
 #if __has_include("fnos_config.h")
@@ -27,187 +26,79 @@
 
 static const char *TAG = "fnos_view";
 
-// ── 配色
-#define BG       0x0E1114
-#define PANEL    0x191C1F
-#define PANEL2   0x14171A
-#define TRACK    0x2A2F35
-#define BORDER   0x2C3137
-#define TEXT     0xEBEDF0
-#define MUTED    0x9299A3
-#define DIM      0x6A7078
-#define BLUE     0x579AFF
-#define PURPLE   0xAC8CEB
-#define GREEN    0x73B880
-#define AMBER    0xD9B56D
-#define RED      0xE67E80
-#define SEL      0x1C304D
+#define PAGE_N 4
+#define STALE_MS 3000
+#define HIST_PTS CONFIG_FNOS_CHART_WINDOW
+// 趋势图的点数 = 2 秒一个点：180 秒的 1 Hz 数据如果 1:1 画成柱，
+// 柱子会挤成一块实心色板（实测就是这样），隔点显示才有"波形"的纹理感。
+#define TREND_PTS (CONFIG_FNOS_CHART_WINDOW / 2)
 
-// ── 版面
-#define SCR_W    1024
-#define SCR_H    600
-#define HEADER_H 56
-#define FOOTER_H 36
-#define RAIL_W   132
-#define NAV_TOP  (HEADER_H + 18)
-#define NAV_H    92
-#define NAV_STEP (NAV_H + 6)
-#define CONT_X   (RAIL_W + 16)
-#define CONT_W   (SCR_W - CONT_X - 16)
-#define CONT_Y   (HEADER_H + 16)
-#define CONT_H   (SCR_H - FOOTER_H - CONT_Y - 14)
+enum { PG_OVERVIEW = 0, PG_STORAGE, PG_NETWORK, PG_SYSTEM };
 
-// ── 字号
-#define F_BIG    (&lv_font_montserrat_44)
-#define F_NUM    (&lv_font_montserrat_32)
-#define F_HEAD   (&lv_font_montserrat_24)
-#define F_BODY   (&lv_font_montserrat_20)
-#define F_NAV    (&lv_font_montserrat_16)
-#define F_META   (&lv_font_montserrat_14)
-#define F_TINY   (&lv_font_montserrat_12)
-
-#define CHART_PTS CONFIG_FNOS_CHART_WINDOW
-#define STALE_MS  6000
-
-// STORAGE 页逐行显示的存储空间数量（标题行仍会汇总全部数量）
-#define ST_VOL_ROWS 6
-
-enum { PG_OVERVIEW = 0, PG_STORAGE, PG_NETWORK, PG_SYSTEM, PG_COUNT };
-static const char *PAGE_NAME[PG_COUNT] = { "OVERVIEW", "STORAGE", "NETWORK", "SYSTEM" };
-
-static bool  s_created;
-static int   s_page;
-static lv_obj_t *s_pages[PG_COUNT];
-static lv_obj_t *s_navs[PG_COUNT];
-static lv_obj_t *s_nav_bars[PG_COUNT];
-static lv_obj_t *s_nav_lbls[PG_COUNT];
-static int   s_press_x;
-
-static EXT_RAM_BSS_ATTR fnos_status_t s_st;      // UI 侧快照
+static bool s_created;
+static int  s_page, s_press_x;
+static lv_obj_t *s_pages[PAGE_N];
+static lv_obj_t *s_nav[PAGE_N], *s_nav_bar[PAGE_N], *s_nav_lbl[PAGE_N];
+static EXT_RAM_BSS_ATTR fnos_status_t s_st;
 static int64_t s_hist_seq;
 
-static lv_obj_t *s_hd_host, *s_hd_sub, *s_hd_pill, *s_hd_pill_lbl, *s_hd_clock;
-static lv_obj_t *s_ft_left, *s_ft_mid, *s_ft_alert;
+/* 顶栏 / 底栏 */
+static lv_obj_t *s_hd_host, *s_hd_endpoint, *s_hd_chip, *s_hd_clock, *s_sig[4];
+static lv_obj_t *s_ft_poll, *s_ft_alert_lbl, *s_ft_alert_dot;
 
-static lv_obj_t *s_ov_val[4], *s_ov_sub[4];
-static lv_obj_t *s_ov_chart;
-static lv_chart_series_t *s_ov_ser_cpu, *s_ov_ser_mem;
-static lv_obj_t *s_ov_temp[5], *s_ov_temp_v[5];
-static lv_obj_t *s_ov_vol[6], *s_ov_vol_v[6], *s_ov_vol_bar[6];
-static int       s_ov_vol_w;
+/* P0 总览 */
+static lv_obj_t *s_ov_verdict, *s_ov_verdict_sub, *s_ov_reason;
+static lv_obj_t *s_ov_val[4], *s_ov_unit[4], *s_ov_sub[4];
+static ck_bar_t  s_ov_mbar[3];
+static lv_obj_t *s_ov_vol_name[6], *s_ov_vol_pct[6];
+static ck_bar_t  s_ov_vol_bar[6];
+static ck_trend_t s_ov_cpu, s_ov_mem;
 
-static lv_obj_t *s_st_total;
-static lv_obj_t *s_st_mnt[FNOS_MAX_VOLS], *s_st_fs[FNOS_MAX_VOLS], *s_st_pct[FNOS_MAX_VOLS];
-static lv_obj_t *s_st_bar[FNOS_MAX_VOLS], *s_st_use[FNOS_MAX_VOLS];
-static int       s_st_bar_w;
-static lv_obj_t *s_st_raid[FNOS_MAX_RAID], *s_st_raid_v[FNOS_MAX_RAID];
-static lv_obj_t *s_st_zfs;
-static lv_obj_t *s_st_raid_panel, *s_st_io_panel;
-static lv_obj_t *s_st_io_dev[5], *s_st_io_val[5];
-static int       s_st_last_nvols = -1;
+/* P1 存储 */
+static lv_obj_t *s_st_hero, *s_st_used, *s_st_free, *s_st_cnt;
+static lv_obj_t *s_st_seg[6];
+static lv_obj_t *s_st_vname[6], *s_st_vfs[6], *s_st_vpct[6], *s_st_vuse[6];
+static ck_bar_t  s_st_vbar[6];
+static lv_obj_t *s_st_raid_name[4], *s_st_raid_lvl[4], *s_st_raid_state[4];
+static lv_obj_t *s_st_io_name[4], *s_st_io_val[4];
 
-static lv_obj_t *s_nw_rx, *s_nw_tx, *s_nw_rx_sub, *s_nw_tx_sub;
-static lv_obj_t *s_nw_chart;
-static lv_chart_series_t *s_nw_ser_rx, *s_nw_ser_tx;
-static lv_obj_t *s_nw_axis[3], *s_nw_info;
+/* P2 网络 */
+static lv_obj_t *s_nw_down_v, *s_nw_down_u, *s_nw_down_sub;
+static lv_obj_t *s_nw_up_v, *s_nw_up_u, *s_nw_up_sub;
+static ck_trend_t s_nw_down, s_nw_up;
+static lv_obj_t *s_nw_axis[3];
+static lv_obj_t *s_nw_ctx_v[4], *s_nw_ctx_l[4];
 
-static lv_obj_t *s_sy_dot[FNOS_MAX_DOCKER], *s_sy_dock[FNOS_MAX_DOCKER], *s_sy_dock_s[FNOS_MAX_DOCKER];
-static lv_obj_t *s_sy_temp[8], *s_sy_temp_v[8];
-static lv_obj_t *s_sy_kv[10];
+/* P3 系统 */
+static lv_obj_t *s_sy_dot[6], *s_sy_dock[6], *s_sy_dock_s[6];
+static lv_obj_t *s_sy_cnt;
+static lv_obj_t *s_sy_tname[7], *s_sy_tval[7];
+static ck_bar_t  s_sy_tbar[7];
+static lv_obj_t *s_sy_kv[8];
 
-// ───────────────────────────── 构件
+static bool s_mb_down, s_mb_up;
 
-static void set_text(lv_obj_t *l, const char *txt)
+/* ───────────────────────────── 格式化（统一格式，避免刷新抖动） */
+
+static void fmt_rate(char *b, size_t n, float kbs, bool *use_mb)
 {
-    if (l && txt) lv_label_set_text(l, txt);
-}
-
-static lv_obj_t *base(lv_obj_t *parent, int x, int y, int w, int h, uint32_t bg, int radius, bool clickable)
-{
-    lv_obj_t *o = lv_obj_create(parent);
-    if (!o) return NULL;
-    lv_obj_set_pos(o, x, y);
-    lv_obj_set_size(o, w, h);
-    lv_obj_set_style_radius(o, radius, 0);
-    lv_obj_set_style_bg_color(o, lv_color_hex(bg), 0);
-    lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(o, 0, 0);
-    lv_obj_set_style_pad_all(o, 0, 0);
-    lv_obj_set_style_outline_width(o, 0, 0);
-    lv_obj_clear_flag(o, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_clear_flag(o, LV_OBJ_FLAG_SCROLL_CHAIN);
-    if (!clickable) lv_obj_clear_flag(o, LV_OBJ_FLAG_CLICKABLE);
-    return o;
-}
-
-static lv_obj_t *panel(lv_obj_t *parent, int x, int y, int w, int h)
-{
-    lv_obj_t *o = base(parent, x, y, w, h, PANEL, 8, false);
-    if (o) {
-        lv_obj_set_style_border_width(o, 1, 0);
-        lv_obj_set_style_border_color(o, lv_color_hex(BORDER), 0);
+    const float HI = 1024.0f, LO = 950.0f;
+    if (use_mb) {
+        if (*use_mb && kbs < LO) *use_mb = false;
+        else if (!*use_mb && kbs > HI) *use_mb = true;
+        if (*use_mb) { snprintf(b, n, "%.2f", kbs / 1024.0f); return; }
+    } else if (kbs > HI) {
+        snprintf(b, n, "%.2f", kbs / 1024.0f);
+        return;
     }
-    return o;
+    if (kbs >= 100.0f) snprintf(b, n, "%.0f", kbs);
+    else               snprintf(b, n, "%.1f", kbs);
 }
 
-static lv_obj_t *text(lv_obj_t *parent, const char *txt, const lv_font_t *font, uint32_t color, int x, int y)
+static const char *rate_unit(bool use_mb, float kbs)
 {
-    lv_obj_t *l = lv_label_create(parent);
-    if (!l) return NULL;
-    lv_label_set_text(l, txt);
-    lv_obj_set_style_text_font(l, font, 0);
-    lv_obj_set_style_text_color(l, lv_color_hex(color), 0);
-    lv_obj_set_pos(l, x, y);
-    lv_obj_clear_flag(l, LV_OBJ_FLAG_CLICKABLE);
-    return l;
-}
-
-static lv_obj_t *text_r(lv_obj_t *parent, const char *txt, const lv_font_t *font, uint32_t color, int right_pad, int y)
-{
-    lv_obj_t *l = text(parent, txt, font, color, 0, y);
-    if (l) lv_obj_align(l, LV_ALIGN_TOP_RIGHT, -right_pad, y);
-    return l;
-}
-
-// 进度条：返回轨道，轨道内的填充条通过出参给出
-static void hbar(lv_obj_t *parent, int x, int y, int w, int h, lv_obj_t **out_fill)
-{
-    base(parent, x, y, w, h, TRACK, h / 2, false);
-    lv_obj_t *f = base(parent, x, y, 2, h, GREEN, h / 2, false);
-    if (out_fill) *out_fill = f;
-}
-
-static void hbar_set(lv_obj_t *fill, int w, float pct, bool alert_high)
-{
-    if (!fill) return;
-    if (pct < 0) pct = 0;
-    if (pct > 100) pct = 100;
-    int wpx = (int)(w * pct / 100.0f + 0.5f);
-    if (wpx < 2) wpx = 2;
-    lv_obj_set_width(fill, wpx);
-    uint32_t col = GREEN;
-    if (alert_high) {
-        if (pct >= 90) col = RED;
-        else if (pct >= 80) col = AMBER;
-        else if (pct >= 60) col = BLUE;
-    }
-    lv_obj_set_style_bg_color(fill, lv_color_hex(col), 0);
-}
-
-static uint32_t temp_color(float c)
-{
-    if (c >= 75) return RED;
-    if (c >= 60) return AMBER;
-    if (c >= 45) return BLUE;
-    return GREEN;
-}
-
-// ── 文本格式化（全 ASCII）
-static void fmt_rate(char *b, size_t n, float kbs)
-{
-    if (kbs >= 1024.0f)     snprintf(b, n, "%.2f MB/s", kbs / 1024.0f);
-    else if (kbs >= 100.0f) snprintf(b, n, "%.0f KB/s", kbs);
-    else                    snprintf(b, n, "%.1f KB/s", kbs);
+    bool mb = use_mb ? use_mb : (kbs > 1024.0f);
+    return mb ? "MB/s" : "KB/s";
 }
 
 static void fmt_cap(char *b, size_t n, float gb)
@@ -224,6 +115,14 @@ static void fmt_uptime(char *b, size_t n, uint32_t s)
     else            snprintf(b, n, "%um", (unsigned)m);
 }
 
+static void fmt_age(char *b, size_t n, int64_t sec)
+{
+    if (sec < 0)         snprintf(b, n, "--");
+    else if (sec < 90)   snprintf(b, n, "%llds", (long long)sec);
+    else if (sec < 5400) snprintf(b, n, "%lldm", (long long)(sec / 60));
+    else                 snprintf(b, n, "%lldh", (long long)(sec / 3600));
+}
+
 static int nice_max(int v)
 {
     if (v <= 10) return 10;
@@ -234,59 +133,81 @@ static int nice_max(int v)
     return nice * scale;
 }
 
-// ───────────────────────────── 翻页 / 触摸
+/* ───────────────────────────── 数据可信度 */
+
+typedef enum { TR_WARMING, TR_LIVE, TR_STALE, TR_OFFLINE } trust_t;
+
+static int64_t data_age_s(void)
+{
+    return s_st.recv_ms ? (esp_timer_get_time() / 1000 - s_st.recv_ms) / 1000 : -1;
+}
+
+static trust_t trust_state(void)
+{
+    if (!s_st.ever_ok) return TR_WARMING;
+    if (!s_st.online) return TR_OFFLINE;
+    int64_t age = data_age_s();
+    return (age >= 0 && age < STALE_MS / 1000) ? TR_LIVE : TR_STALE;
+}
+
+static bool have(void) { return s_st.ever_ok; }
+
+static int alert_count(const char *lv)
+{
+    int n = 0;
+    for (int i = 0; i < s_st.nalerts; i++) {
+        if (strcmp(s_st.alerts[i].lv, lv) == 0) n++;
+    }
+    return n;
+}
+
+/* ───────────────────────────── 翻页 */
 
 static void apply_page(void)
 {
-    for (int i = 0; i < PG_COUNT; i++) {
+    for (int i = 0; i < PAGE_N; i++) {
         if (s_pages[i]) {
+            lv_obj_set_pos(s_pages[i], 0, 0);
             if (i == s_page) lv_obj_clear_flag(s_pages[i], LV_OBJ_FLAG_HIDDEN);
             else             lv_obj_add_flag(s_pages[i], LV_OBJ_FLAG_HIDDEN);
         }
-        if (s_navs[i]) {
-            lv_obj_set_style_bg_color(s_navs[i], lv_color_hex(i == s_page ? SEL : PANEL2), 0);
-        }
-        if (s_nav_bars[i]) {
-            lv_obj_set_style_bg_opa(s_nav_bars[i], i == s_page ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
-        }
-        if (s_nav_lbls[i]) {
-            lv_obj_set_style_text_color(s_nav_lbls[i], lv_color_hex(i == s_page ? TEXT : MUTED), 0);
-        }
+        if (s_nav[i])     lv_obj_set_style_bg_color(s_nav[i], lv_color_hex(i == s_page ? CK_PANEL_HI : CK_BG), 0);
+        if (s_nav_bar[i]) lv_obj_set_style_bg_opa(s_nav_bar[i], i == s_page ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+        if (s_nav_lbl[i]) lv_obj_set_style_text_color(s_nav_lbl[i], lv_color_hex(i == s_page ? CK_TEXT : CK_DIM), 0);
     }
+    lv_obj_invalidate(lv_screen_active());
 }
 
 void fnos_view_set_page(int idx)
 {
-    if (idx < 0) idx = PG_COUNT - 1;
-    if (idx >= PG_COUNT) idx = 0;
+    if (idx < 0) idx = PAGE_N - 1;
+    if (idx >= PAGE_N) idx = 0;
     if (idx == s_page) return;
     s_page = idx;
     apply_page();
 }
 
-int fnos_view_page(void)
+int fnos_view_page(void) { return s_page; }
+
+static void on_nav(lv_event_t *e)
 {
-    return s_page;
+    if (lv_event_get_code(e) == LV_EVENT_PRESSED) {
+        lv_obj_t *o = lv_event_get_target(e);
+        if (o) lv_obj_set_style_bg_color(o, lv_color_hex(CK_PANEL_HI), 0);
+        return;
+    }
+    fnos_view_set_page((int)(intptr_t)lv_event_get_user_data(e));
 }
 
-static void on_nav_click(lv_event_t *e)
-{
-    int idx = (int)(intptr_t)lv_event_get_user_data(e);
-    fnos_view_set_page(idx);
-}
-
-static void on_content_press(lv_event_t *e)
+static void on_press(lv_event_t *e)
 {
     (void)e;
     lv_indev_t *indev = lv_indev_active();
     lv_point_t p = { 0, 0 };
-    if (indev) {                    // LVGL 9 里 lv_indev_get_point 返回 void
-        lv_indev_get_point(indev, &p);
-        s_press_x = p.x;
-    }
+    if (indev) { lv_indev_get_point(indev, &p); s_press_x = p.x; }
 }
 
-static void on_content_release(lv_event_t *e)
+static void on_release(lv_event_t *e)
 {
     (void)e;
     lv_indev_t *indev = lv_indev_active();
@@ -298,532 +219,594 @@ static void on_content_release(lv_event_t *e)
     else if (dx >= 70) fnos_view_set_page(s_page - 1);
 }
 
-// ───────────────────────────── 构建
+/* ───────────────────────────── 构建：框架 */
 
-static void build_header(lv_obj_t *scr)
+static void build_top(lv_obj_t *scr)
 {
-    base(scr, 0, 0, SCR_W, HEADER_H, PANEL, 0, false);
-    base(scr, 0, HEADER_H - 1, SCR_W, 1, BORDER, 0, false);
-    s_hd_host = text(scr, "NAS", F_HEAD, TEXT, 16, 12);
-    s_hd_sub  = text(scr, "wifi connecting...", F_META, MUTED, 150, 22);
-    s_hd_pill = base(scr, 470, 14, 140, 28, 0x3A1F22, 14, false);
-    s_hd_pill_lbl = text(s_hd_pill, "OFFLINE", F_NAV, RED, 0, 0);
-    if (s_hd_pill_lbl) lv_obj_center(s_hd_pill_lbl);
-    s_hd_clock = text_r(scr, "--:--", F_HEAD, TEXT, 16, 12);
+    ck_obj(scr, 0, 0, CK_SCR_W, CK_TOP_H, CK_PANEL, 0, false);
+    ck_divider(scr, 0, CK_TOP_H - 1, CK_SCR_W, CK_GUIDE);
+
+    s_hd_host = ck_label(scr, "NAS", CK_F_TITLE, CK_TEXT, CK_PAD, 18);
+    s_hd_endpoint = ck_label(scr, "", CK_F_META, CK_DIM, CK_PAD + 130, 26);
+
+    s_hd_chip = ck_chip(scr, 420, 17, 184, 30, CK_WARN);
+    ck_chip_set(s_hd_chip, "等待数据", CK_WARN);
+
+    s_hd_clock = ck_label_r(scr, "--:--", CK_F_NUMM, CK_TEXT, CK_PAD, 14);
+    ck_signal_bars(scr, CK_SCR_W - CK_PAD - 130, 20, s_sig);
 }
 
 static void build_rail(lv_obj_t *scr)
 {
-    base(scr, 0, HEADER_H, RAIL_W, SCR_H - HEADER_H - FOOTER_H, PANEL2, 0, false);
-    for (int i = 0; i < PG_COUNT; i++) {
-        lv_obj_t *item = base(scr, 8, NAV_TOP + i * NAV_STEP, RAIL_W - 16, NAV_H, PANEL2, 8, true);
-        s_navs[i] = item;
-        s_nav_bars[i] = base(item, 0, 10, 3, NAV_H - 20, BLUE, 2, false);
-        if (s_nav_bars[i]) lv_obj_set_style_bg_opa(s_nav_bars[i], LV_OPA_TRANSP, 0);
-        s_nav_lbls[i] = text(item, PAGE_NAME[i], F_NAV, MUTED, 14, 22);
-        const char *sub = (i == 0) ? "cpu mem temp" : (i == 1) ? "volumes raid" :
-                          (i == 2) ? "throughput" : "docker temps";
-        text(item, sub, F_TINY, DIM, 14, 50);
-        lv_obj_add_event_cb(item, on_nav_click, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+    static const char *names[PAGE_N] = { "总览", "存储", "网络", "系统" };
+    ck_obj(scr, 0, CK_TOP_H, CK_RAIL_W, CK_SCR_H - CK_TOP_H - CK_BOT_H, CK_BG, 0, false);
+    for (int i = 0; i < PAGE_N; i++) {
+        int y = CK_TOP_H + 18 + i * 96;
+        lv_obj_t *item = ck_obj(scr, 12, y, CK_RAIL_W - 24, 88, CK_BG, 12, true);
+        s_nav[i] = item;
+        s_nav_bar[i] = ck_obj(item, 0, 14, 3, 60, CK_TEXT, 2, false);
+        if (s_nav_bar[i]) lv_obj_set_style_bg_opa(s_nav_bar[i], LV_OPA_TRANSP, 0);
+        ck_icon(item, 14, 14, i, CK_DIM);
+        s_nav_lbl[i] = ck_label(item, names[i], CK_F_CLABEL, CK_DIM, 0, 52);
+        if (s_nav_lbl[i]) lv_obj_align(s_nav_lbl[i], LV_ALIGN_TOP_MID, 0, 52);
+        lv_obj_add_event_cb(item, on_nav, LV_EVENT_PRESSED, (void *)(intptr_t)i);
+        lv_obj_add_event_cb(item, on_nav, LV_EVENT_CLICKED, (void *)(intptr_t)i);
     }
 }
 
-static void build_footer(lv_obj_t *scr)
+static void build_bottom(lv_obj_t *scr)
 {
-    base(scr, 0, SCR_H - FOOTER_H, SCR_W, FOOTER_H, PANEL, 0, false);
-    base(scr, 0, SCR_H - FOOTER_H, SCR_W, 1, BORDER, 0, false);
-    s_ft_left  = text(scr, "poll --", F_TINY, MUTED, 16, 11);
-    s_ft_mid   = text(scr, "no data", F_TINY, DIM, 400, 11);
-    s_ft_alert = text_r(scr, "", F_TINY, GREEN, 16, 11);
+    ck_obj(scr, 0, CK_SCR_H - CK_BOT_H, CK_SCR_W, CK_BOT_H, CK_PANEL, 0, false);
+    ck_divider(scr, 0, CK_SCR_H - CK_BOT_H, CK_SCR_W, CK_GUIDE);
+    s_ft_poll = ck_label(scr, "", CK_F_META, CK_DIM, CK_PAD, 12);
+    s_ft_alert_dot = ck_obj(scr, CK_SCR_W - CK_PAD - 448, 16, 8, 8, CK_OK, 4, false);
+    s_ft_alert_lbl = ck_label(scr, "无告警", CK_F_CMETA, CK_OK, CK_SCR_W - CK_PAD - 432, 11);
 }
 
-static lv_obj_t *make_page(lv_obj_t *scr)
+// 页面是内容容器的子对象，坐标从内容区左上角算起；
+// 这样 apply_page() 里把页面位置归零 = 回到内容区原点，而不是跑到屏幕左上角去盖住顶栏/导航。
+static lv_obj_t *make_page(lv_obj_t *content)
 {
-    lv_obj_t *p = base(scr, CONT_X, CONT_Y, CONT_W, CONT_H, BG, 0, true);
+    lv_obj_t *p = ck_obj(content, 0, 0, CK_CONT_W, CK_CONT_H, CK_BG, 0, true);
     if (p) {
-        lv_obj_add_event_cb(p, on_content_press, LV_EVENT_PRESSED, NULL);
-        lv_obj_add_event_cb(p, on_content_release, LV_EVENT_RELEASED, NULL);
+        lv_obj_add_event_cb(p, on_press, LV_EVENT_PRESSED, NULL);
+        lv_obj_add_event_cb(p, on_release, LV_EVENT_RELEASED, NULL);
     }
     return p;
 }
 
+/* ───────────────────────────── 构建：P0 总览 */
+
+static void metric_tile(lv_obj_t *p, int idx, int x, const char *name, uint32_t color, bool with_bar)
+{
+    lv_obj_t *t = ck_tile(p, x, 190, 209, 118);
+    ck_label(t, name, CK_F_CLABEL, CK_DIM, 14, 10);
+    s_ov_val[idx] = ck_label(t, "--", CK_F_NUMM, CK_TEXT, 14, 38);
+    s_ov_unit[idx] = ck_label_r(t, "", CK_F_META, CK_DIM, 14, 56);
+    s_ov_sub[idx] = ck_label(t, "", CK_F_META, CK_IDLE, 14, 92);
+    if (with_bar) {
+        ck_bar_create(&s_ov_mbar[idx], t, 14, 80, 181, 6);
+        if (s_ov_mbar[idx].fill) {
+            lv_obj_set_style_bg_color(s_ov_mbar[idx].fill, lv_color_hex(color), 0);
+            lv_obj_set_style_bg_grad_color(s_ov_mbar[idx].fill, lv_color_hex(color), 0);
+        }
+    }
+}
+
 static void build_overview(lv_obj_t *p)
 {
-    static const char *title[4] = { "CPU", "MEMORY", "HOTTEST", "UPTIME" };
-    int tw = (CONT_W - 3 * 16) / 4;
-    for (int i = 0; i < 4; i++) {
-        lv_obj_t *t = panel(p, i * (tw + 16), 0, tw, 132);
-        text(t, title[i], F_META, MUTED, 16, 12);
-        s_ov_val[i] = text(t, "--", F_BIG, TEXT, 16, 38);
-        s_ov_sub[i] = text(t, "", F_META, DIM, 16, 100);
-    }
-    lv_obj_t *cp = panel(p, 0, 148, 576, 200);
-    text(cp, "CPU / MEM  %", F_META, MUTED, 16, 10);
-    s_ov_chart = lv_chart_create(cp);
-    if (s_ov_chart) {
-        lv_obj_set_pos(s_ov_chart, 12, 34);
-        lv_obj_set_size(s_ov_chart, 552, 154);
-        lv_chart_set_type(s_ov_chart, LV_CHART_TYPE_LINE);
-        lv_chart_set_point_count(s_ov_chart, CHART_PTS);
-        lv_chart_set_range(s_ov_chart, LV_CHART_AXIS_PRIMARY_Y, 0, 100);
-        lv_chart_set_div_line_count(s_ov_chart, 4, 6);
-        lv_obj_set_style_bg_opa(s_ov_chart, LV_OPA_TRANSP, LV_PART_MAIN);
-        lv_obj_set_style_border_width(s_ov_chart, 0, LV_PART_MAIN);
-        lv_obj_set_style_line_color(s_ov_chart, lv_color_hex(BORDER), LV_PART_MAIN);
-        lv_obj_set_style_line_width(s_ov_chart, 2, LV_PART_ITEMS);
-        lv_obj_set_style_size(s_ov_chart, 0, 0, LV_PART_INDICATOR);
-        lv_obj_clear_flag(s_ov_chart, LV_OBJ_FLAG_CLICKABLE);
-        s_ov_ser_cpu = lv_chart_add_series(s_ov_chart, lv_color_hex(BLUE), LV_CHART_AXIS_PRIMARY_Y);
-        s_ov_ser_mem = lv_chart_add_series(s_ov_chart, lv_color_hex(PURPLE), LV_CHART_AXIS_PRIMARY_Y);
-    }
-    lv_obj_t *tp = panel(p, 592, 148, CONT_W - 592, 200);
-    text(tp, "TEMPERATURES", F_META, MUTED, 16, 10);
-    for (int i = 0; i < 5; i++) {
-        int y = 40 + i * 30;
-        s_ov_temp[i] = text(tp, "", F_BODY, MUTED, 16, y);
-        s_ov_temp_v[i] = text_r(tp, "", F_BODY, TEXT, 16, y);
-    }
-    int sp_h = CONT_H - 364;
-    lv_obj_t *sp = panel(p, 0, 364, CONT_W, sp_h);
-    text(sp, "VOLUMES", F_META, MUTED, 16, 10);
-    s_ov_vol_w = (CONT_W - 32 - 5 * 10) / 6;
+    lv_obj_t *h = ck_tile(p, 0, 0, 430, 176);
+    ck_label(h, "NAS 健康", CK_F_CLABEL, CK_DIM, 20, 14);
+    s_ov_verdict = ck_label(h, "等待", CK_F_CVERDICT, CK_WARN, 20, 46);
+    s_ov_verdict_sub = ck_label(h, "等待首个数据帧", CK_F_CMETA, CK_DIM, 20, 128);
+    s_ov_reason = ck_label(h, "", CK_F_CMETA, CK_DANGER, 20, 150);
+
+    lv_obj_t *sp = ck_tile(p, 444, 0, 436, 176);
+    ck_label(sp, "存储空间", CK_F_CLABEL, CK_DIM, 16, 12);
     for (int i = 0; i < 6; i++) {
-        int x = 16 + i * (s_ov_vol_w + 10);
-        s_ov_vol[i] = text(sp, "--", F_NAV, MUTED, x, 40);
-        s_ov_vol_v[i] = text(sp, "--", F_NUM, TEXT, x, 56);
-        hbar(sp, x, sp_h - 22, s_ov_vol_w, 8, &s_ov_vol_bar[i]);
+        int y = 42 + i * 22;
+        s_ov_vol_name[i] = ck_label(sp, "", CK_F_NUMS, CK_DIM, 16, y - 4);
+        ck_bar_create(&s_ov_vol_bar[i], sp, 130, y, 220, 8);
+        s_ov_vol_pct[i] = ck_label_r(sp, "", CK_F_NUMS, CK_TEXT, 16, y - 5);
     }
+
+    metric_tile(p, 0, 0,   "CPU", CK_CPU, true);
+    metric_tile(p, 1, 223, "内存", CK_MEM, true);
+    metric_tile(p, 2, 446, "最高温度", CK_TEMP, true);
+    metric_tile(p, 3, 669, "运行时长", CK_ZFS, false);
+
+    lv_obj_t *tr = ck_tile(p, 0, 322, CK_CONT_W, CK_CONT_H - 322);
+    ck_label(tr, "CPU / 内存 · 百分比 · 近 3 分钟", CK_F_CMETA, CK_DIM, 16, 8);
+    ck_trend_create(&s_ov_cpu, tr, 14, 34, CK_CONT_W - 28, 46, CK_CPU, TREND_PTS);
+    ck_trend_create(&s_ov_mem, tr, 14, 88, CK_CONT_W - 28, 46, CK_MEM, TREND_PTS);
+    ck_trend_range(&s_ov_cpu, 100);
+    ck_trend_range(&s_ov_mem, 100);
+}
+
+/* ───────────────────────────── 构建：P1 存储 */
+
+static void volume_cell(lv_obj_t *p, int i)
+{
+    int col = i % 2, row = i / 2;
+    int x = col * 450, y = 162 + row * 58;
+    lv_obj_t *c = ck_tile(p, x, y, 430, 54);
+    s_st_vname[i] = ck_label(c, "", CK_F_NUMS, CK_TEXT, 14, 8);
+    s_st_vfs[i] = ck_label(c, "", CK_F_META, CK_IDLE, 120, 12);
+    s_st_vuse[i] = ck_label(c, "", CK_F_META, CK_DIM, 220, 12);
+    s_st_vpct[i] = ck_label_r(c, "", CK_F_NUMS, CK_TEXT, 14, 7);
+    ck_bar_create(&s_st_vbar[i], c, 14, 34, 402, 10);
+    ck_bar_tick(c, 14 + (int)(402 * 0.80f), 30, 18);
+    ck_bar_tick(c, 14 + (int)(402 * 0.90f), 30, 18);
 }
 
 static void build_storage(lv_obj_t *p)
 {
-    text(p, "STORAGE", F_HEAD, TEXT, 0, 0);
-    s_st_total = text(p, "", F_BODY, MUTED, 150, 6);
-
-    // 行高 44（原来 52）+ 固定 6 行：6 个存储空间时下半区还剩 160 px，
-    // RAID 4 行 + 磁盘 5 行都放得下（8 行会把 RAID/磁盘区挤出屏幕）
-    const int y0 = 46, row = 44;
-    s_st_bar_w = 380;
-    for (int i = 0; i < ST_VOL_ROWS; i++) {
-        int y = y0 + i * row;
-        s_st_mnt[i] = text(p, "", F_BODY, TEXT, 0, y);
-        s_st_fs[i]  = text(p, "", F_TINY, DIM, 120, y + 7);
-        hbar(p, 200, y + 5, s_st_bar_w, 18, &s_st_bar[i]);
-        s_st_pct[i] = text(p, "", F_BODY, TEXT, 592, y);
-        s_st_use[i] = text_r(p, "", F_META, MUTED, 8, y + 5);
+    lv_obj_t *h = ck_tile(p, 0, 0, CK_CONT_W, 150);
+    ck_label(h, "已用容量 / 总容量", CK_F_CLABEL, CK_DIM, 20, 12);
+    s_st_hero = ck_label(h, "--", CK_F_HERO, CK_TEXT, 20, 28);
+    s_st_used = ck_label(h, "TB / 总量", CK_F_LABEL, CK_DIM, 250, 74);
+    s_st_cnt = ck_label_r(h, "", CK_F_CMETA, CK_DIM, 20, 16);
+    s_st_free = ck_label_r(h, "", CK_F_CLABEL, CK_OK, 20, 66);
+    for (int i = 0; i < 6; i++) {
+        s_st_seg[i] = ck_obj(h, 20, 128, 0, 12, CK_NET_DOWN, 3, false);
     }
-    // 下半区：RAID 阵列 + 磁盘活动。位置按"实际有几个存储空间"在 update_storage()
-    // 里修正（首次拿到数据时才知道），这里先按 6 个预留，避免面板被压成一条缝。
-    int ry = y0 + ST_VOL_ROWS * row + 8;
-    s_st_raid_panel = panel(p, 0, ry, 560, CONT_H - ry);
-    text(s_st_raid_panel, "RAID ARRAYS", F_META, MUTED, 16, 8);
-    for (int i = 0; i < FNOS_MAX_RAID; i++) {
-        int y = 32 + i * 21;
-        s_st_raid[i] = text(s_st_raid_panel, "", F_META, MUTED, 16, y);
-        s_st_raid_v[i] = text(s_st_raid_panel, "", F_META, TEXT, 200, y);
-    }
-    s_st_zfs = text_r(s_st_raid_panel, "", F_TINY, DIM, 16, 10);
 
-    s_st_io_panel = panel(p, 576, ry, CONT_W - 576, CONT_H - ry);
-    text(s_st_io_panel, "DISK ACTIVITY", F_META, MUTED, 16, 8);
-    for (int i = 0; i < 5; i++) {
-        int y = 32 + i * 21;
-        s_st_io_dev[i] = text(s_st_io_panel, "", F_META, MUTED, 16, y);
-        s_st_io_val[i] = text_r(s_st_io_panel, "", F_TINY, TEXT, 16, y + 3);
+    for (int i = 0; i < 6; i++) volume_cell(p, i);
+
+    lv_obj_t *r = ck_tile(p, 0, 344, 430, CK_CONT_H - 344);
+    ck_label(r, "RAID 阵列", CK_F_CLABEL, CK_DIM, 16, 10);
+    for (int i = 0; i < 4; i++) {
+        int y = 38 + i * 21;
+        s_st_raid_name[i] = ck_label(r, "", CK_F_NUMS, CK_TEXT, 16, y);
+        s_st_raid_lvl[i] = ck_label(r, "", CK_F_META, CK_IDLE, 110, y + 4);
+        s_st_raid_state[i] = ck_label(r, "", CK_F_CMETA, CK_OK, 190, y + 3);
+    }
+
+    lv_obj_t *d = ck_tile(p, 450, 344, 430, CK_CONT_H - 344);
+    ck_label(d, "磁盘活动", CK_F_CLABEL, CK_DIM, 16, 10);
+    for (int i = 0; i < 4; i++) {
+        int y = 38 + i * 21;
+        s_st_io_name[i] = ck_label(d, "", CK_F_NUMS, CK_TEXT, 16, y);
+        s_st_io_val[i] = ck_label_r(d, "", CK_F_NUMS, CK_DIM, 16, y);
     }
 }
+
+/* ───────────────────────────── 构建：P2 网络 */
 
 static void build_network(lv_obj_t *p)
 {
-    int tw = (CONT_W - 16) / 2;
-    lv_obj_t *a = panel(p, 0, 0, tw, 150);
-    text(a, "DOWNLOAD", F_META, MUTED, 16, 12);
-    s_nw_rx = text(a, "--", F_BIG, BLUE, 16, 40);
-    s_nw_rx_sub = text(a, "", F_META, DIM, 16, 106);
-
-    lv_obj_t *b = panel(p, tw + 16, 0, tw, 150);
-    text(b, "UPLOAD", F_META, MUTED, 16, 12);
-    s_nw_tx = text(b, "--", F_BIG, PURPLE, 16, 40);
-    s_nw_tx_sub = text(b, "", F_META, DIM, 16, 106);
-
-    int cp_h = CONT_H - 166 - 30;
-    lv_obj_t *cp = panel(p, 0, 166, CONT_W, cp_h);
-    text(cp, "THROUGHPUT  KB/s", F_META, MUTED, 16, 10);
-    s_nw_chart = lv_chart_create(cp);
-    if (s_nw_chart) {
-        lv_obj_set_pos(s_nw_chart, 12, 34);
-        lv_obj_set_size(s_nw_chart, CONT_W - 140, cp_h - 50);
-        lv_chart_set_type(s_nw_chart, LV_CHART_TYPE_LINE);
-        lv_chart_set_point_count(s_nw_chart, CHART_PTS);
-        lv_chart_set_range(s_nw_chart, LV_CHART_AXIS_PRIMARY_Y, 0, 1000);
-        lv_chart_set_div_line_count(s_nw_chart, 4, 6);
-        lv_obj_set_style_bg_opa(s_nw_chart, LV_OPA_TRANSP, LV_PART_MAIN);
-        lv_obj_set_style_border_width(s_nw_chart, 0, LV_PART_MAIN);
-        lv_obj_set_style_line_color(s_nw_chart, lv_color_hex(BORDER), LV_PART_MAIN);
-        lv_obj_set_style_line_width(s_nw_chart, 2, LV_PART_ITEMS);
-        lv_obj_set_style_size(s_nw_chart, 0, 0, LV_PART_INDICATOR);
-        lv_obj_clear_flag(s_nw_chart, LV_OBJ_FLAG_CLICKABLE);
-        s_nw_ser_rx = lv_chart_add_series(s_nw_chart, lv_color_hex(BLUE), LV_CHART_AXIS_PRIMARY_Y);
-        s_nw_ser_tx = lv_chart_add_series(s_nw_chart, lv_color_hex(PURPLE), LV_CHART_AXIS_PRIMARY_Y);
+    for (int k = 0; k < 2; k++) {
+        bool down = (k == 0);
+        lv_obj_t *t = ck_tile(p, down ? 0 : 450, 0, 430, 170);
+        uint32_t color = down ? CK_NET_DOWN : CK_NET_UP;
+        ck_label(t, down ? "下行 DOWN" : "上行 UP", CK_F_CLABEL, color, 18, 12);
+        lv_obj_t *v = ck_label(t, "--", CK_F_NUML, CK_TEXT, 18, 44);
+        lv_obj_t *u = ck_label(t, "KB/s", CK_F_LABEL, CK_DIM, 20, 86);
+        lv_obj_t *s = ck_label(t, "", CK_F_META, CK_IDLE, 18, 126);
+        (void)color;
+        if (down) { s_nw_down_v = v; s_nw_down_u = u; s_nw_down_sub = s; }
+        else      { s_nw_up_v = v;   s_nw_up_u = u;   s_nw_up_sub = s; }
     }
+
+    lv_obj_t *tr = ck_tile(p, 0, 184, CK_CONT_W, 190);
+    ck_label(tr, "吞吐趋势 · KB/s · 近 3 分钟", CK_F_CMETA, CK_DIM, 16, 8);
+    ck_trend_create(&s_nw_down, tr, 14, 36, CK_CONT_W - 120, 60, CK_NET_DOWN, TREND_PTS);
+    ck_trend_create(&s_nw_up, tr, 14, 108, CK_CONT_W - 120, 60, CK_NET_UP, TREND_PTS);
+    ck_trend_range(&s_nw_down, 256);
+    ck_trend_range(&s_nw_up, 256);
     for (int i = 0; i < 3; i++) {
-        s_nw_axis[i] = text(cp, "", F_TINY, DIM, CONT_W - 118, 44 + i * (cp_h - 100) / 2);
+        s_nw_axis[i] = ck_label(tr, "", CK_F_META, CK_DIM, CK_CONT_W - 106, 44 + i * 56);
     }
-    s_nw_info = text(p, "", F_META, MUTED, 0, CONT_H - 22);
+
+    static const char *lbl[4] = { "累计接收", "累计发送", "采集延迟", "曲线采样" };
+    int w = (CK_CONT_W - 3 * 12) / 4;
+    for (int i = 0; i < 4; i++) {
+        lv_obj_t *c = ck_tile(p, i * (w + 12), 388, w, CK_CONT_H - 388);
+        s_nw_ctx_l[i] = ck_label(c, lbl[i], CK_F_CLABEL, CK_DIM, 14, 10);
+        s_nw_ctx_v[i] = ck_label(c, "--", CK_F_NUMS, CK_TEXT, 14, 38);
+    }
 }
+
+/* ───────────────────────────── 构建：P3 系统 */
 
 static void build_system(lv_obj_t *p)
 {
-    int lw = 420, rw = CONT_W - lw - 16;
-    lv_obj_t *a = panel(p, 0, 0, lw, CONT_H);
-    text(a, "CONTAINERS", F_META, MUTED, 16, 10);
-    for (int i = 0; i < FNOS_MAX_DOCKER; i++) {
-        int y = 42 + i * 34;
-        s_sy_dot[i] = base(a, 16, y + 5, 10, 10, DIM, 5, false);
-        s_sy_dock[i] = text(a, "", F_BODY, TEXT, 36, y);
-        s_sy_dock_s[i] = text_r(a, "", F_TINY, DIM, 16, y + 7);
+    lv_obj_t *c = ck_tile(p, 0, 0, 430, CK_CONT_H);
+    ck_label(c, "容器", CK_F_CLABEL, CK_DIM, 16, 12);
+    s_sy_cnt = ck_label_r(c, "", CK_F_CMETA, CK_DIM, 16, 16);
+    for (int i = 0; i < 6; i++) {
+        int y = 52 + i * 44;
+        s_sy_dot[i] = ck_obj(c, 16, y + 8, 10, 10, CK_IDLE, 5, false);
+        s_sy_dock[i] = ck_label(c, "", CK_F_NUMS, CK_TEXT, 36, y);
+        s_sy_dock_s[i] = ck_label(c, "", CK_F_CMETA, CK_DIM, 36, y + 22);
     }
 
-    // 温度 205 + 端点信息 (CONT_H-205=273)：原来温度占 264 时下面只剩 198，
-    // 10 行端点信息放不下（LVGL 会把超出父对象的子对象裁掉，最后几行永远看不见）
-    lv_obj_t *b = panel(p, lw + 16, 0, rw, 205);
-    text(b, "TEMPERATURES", F_META, MUTED, 16, 10);
+    lv_obj_t *t = ck_tile(p, 450, 0, 430, 238);
+    ck_label(t, "温度", CK_F_CLABEL, CK_DIM, 16, 12);
+    for (int i = 0; i < 7; i++) {
+        int y = 42 + i * 28;                 // 7 行 × 28 = 196，起点 42 → 238 正好铺满面板
+        s_sy_tname[i] = ck_label(t, "", CK_F_LABEL, CK_DIM, 16, y);
+        ck_bar_create(&s_sy_tbar[i], t, 150, y + 5, 170, 8);
+        s_sy_tval[i] = ck_label_r(t, "", CK_F_NUMS, CK_TEXT, 16, y - 2);
+    }
+
+    lv_obj_t *k = ck_tile(p, 450, 252, 430, CK_CONT_H - 252);
+    ck_label(k, "采集端点", CK_F_CLABEL, CK_DIM, 16, 12);
     for (int i = 0; i < 8; i++) {
-        int col = i / 4, line = i % 4;
-        int x = 16 + col * (rw / 2);
-        int y = 40 + line * 30;
-        s_sy_temp[i] = text(b, "", F_BODY, MUTED, x, y);
-        s_sy_temp_v[i] = text(b, "", F_BODY, TEXT, x + 128, y);
-    }
-
-    lv_obj_t *c = panel(p, lw + 16, 205, rw, CONT_H - 205);
-    text(c, "AGENT / LINK", F_META, MUTED, 16, 10);
-    for (int i = 0; i < 10; i++) {
-        // 行距 20：36+9*20+15 = 231 < 273
-        s_sy_kv[i] = text(c, "", F_TINY, MUTED, 16, 36 + i * 20);
+        s_sy_kv[i] = ck_label(k, "", CK_F_CMETA, CK_DIM, 16, 40 + i * 22);
     }
 }
 
-// ───────────────────────────── 刷新
+/* ───────────────────────────── 刷新 */
 
-static void update_header(bool have)
+static void update_top(void)
 {
-    char b[96];
+    char b[96], chip[48];
     const char *ip = fnos_net_ip();
-    if (have) {
-        set_text(s_hd_host, s_st.host[0] ? s_st.host : "NAS");
-        snprintf(b, sizeof(b), "%s:%d  %s", FNOS_HOST, FNOS_PORT, ip[0] ? ip : "no ip");
-    } else {
-        set_text(s_hd_host, "NAS");
-        snprintf(b, sizeof(b), "%s:%d  %s", FNOS_HOST, FNOS_PORT,
-                 ip[0] ? "waiting for agent" : "wifi connecting...");
-    }
-    set_text(s_hd_sub, b);
+    ck_set(s_hd_host, s_st.host[0] ? s_st.host : "NAS");
+    snprintf(b, sizeof(b), "%s:%d  %s", FNOS_HOST, FNOS_PORT, ip[0] ? ip : "无 IP");
+    ck_set(s_hd_endpoint, b);
 
-    int64_t age_ms = s_st.recv_ms ? (esp_timer_get_time() / 1000 - s_st.recv_ms) : -1;
-    // ONLINE：最近一次轮询成功且数据新鲜
-    // OFFLINE：拿到过数据、但最近一次轮询失败（采集端/网络断了）——监控器上必须显眼
-    // STALE  ：轮询没失败，但数据已经 6 秒没更新（卡在别处）
-    // NO DATA：还从来没成功过（开机、Wi-Fi 没连上、地址填错）
-    const char *pill;
-    uint32_t bg, fg;
-    if (have && s_st.online && age_ms >= 0 && age_ms < STALE_MS) {
-        pill = "ONLINE"; bg = 0x1B3A28; fg = GREEN;
-    } else if (have && !s_st.online) {
-        pill = "OFFLINE"; bg = 0x3A1F22; fg = RED;
-    } else if (have) {
-        pill = "STALE"; bg = 0x3A2F1B; fg = AMBER;
-    } else {
-        pill = "NO DATA"; bg = 0x3A2F1B; fg = AMBER;
+    int64_t age = data_age_s();
+    const char *txt;
+    uint32_t col;
+    switch (trust_state()) {
+    case TR_LIVE:    col = CK_OK;     snprintf(chip, sizeof(chip), "在线 · %llds", (long long)age); break;
+    case TR_WARMING: col = CK_WARN;   snprintf(chip, sizeof(chip), "等待数据"); break;
+    case TR_STALE:   col = CK_WARN;   snprintf(chip, sizeof(chip), "陈旧 %llds", (long long)age); break;
+    default:         col = CK_DANGER; snprintf(chip, sizeof(chip), "采集端离线"); break;
     }
-    set_text(s_hd_pill_lbl, pill);
-    if (s_hd_pill) lv_obj_set_style_bg_color(s_hd_pill, lv_color_hex(bg), 0);
-    if (s_hd_pill_lbl) lv_obj_set_style_text_color(s_hd_pill_lbl, lv_color_hex(fg), 0);
+    txt = chip;
+    ck_chip_set(s_hd_chip, txt, col);
 
     time_t now = time(NULL);
     struct tm tmv;
     localtime_r(&now, &tmv);
     if (tmv.tm_year > 120) snprintf(b, sizeof(b), "%02d:%02d", tmv.tm_hour, tmv.tm_min);
     else                   snprintf(b, sizeof(b), "--:--");
-    set_text(s_hd_clock, b);
+    ck_set(s_hd_clock, b);
+    ck_signal_set(s_sig, fnos_net_rssi());
 }
 
-static void update_footer(bool have)
+static void update_bottom(void)
 {
     char b[128];
-    if (have) {
-        snprintf(b, sizeof(b), "poll %s:%d  ok %u  err %u  api %d ms  %s",
-                 FNOS_HOST, FNOS_PORT, (unsigned)s_st.ok_count, (unsigned)s_st.fail_count,
-                 s_st.http_ms, s_st.online ? "live" : "retrying");
+    if (have()) {
+        snprintf(b, sizeof(b), "采集 %s:%d · 正常 %u / 失败 %u · %d ms",
+                 FNOS_HOST, FNOS_PORT, (unsigned)s_st.ok_count, (unsigned)s_st.fail_count, s_st.http_ms);
     } else {
-        snprintf(b, sizeof(b), "poll %s:%d  waiting...", FNOS_HOST, FNOS_PORT);
+        snprintf(b, sizeof(b), "采集 %s:%d · 等待首个数据帧", FNOS_HOST, FNOS_PORT);
     }
-    set_text(s_ft_left, b);
+    ck_set(s_ft_poll, b);
 
-    int64_t age_s = s_st.recv_ms ? (esp_timer_get_time() / 1000 - s_st.recv_ms) / 1000 : -1;
-    if (have) {
-        snprintf(b, sizeof(b), "age %llds  wifi %d dBm  heap %u KB", (long long)age_s,
-                 (int)fnos_net_rssi(), (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024));
-    } else {
-        snprintf(b, sizeof(b), "wifi %d dBm  heap %u KB", (int)fnos_net_rssi(),
-                 (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024));
+    uint32_t col = CK_OK;
+    const char *msg = "无告警";
+    if (trust_state() == TR_OFFLINE) {
+        col = CK_DANGER;
+        msg = s_st.last_err[0] ? s_st.last_err : "采集端不可达";
+    } else if (s_st.nalerts > 0) {
+        col = strcmp(s_st.alerts[0].lv, "crit") == 0 ? CK_DANGER : CK_WARN;
+        msg = s_st.alerts[0].m;
     }
-    set_text(s_ft_mid, b);
-
-    if (have && !s_st.online) {
-        // 采集端失联优先于 NAS 自身告警：这时看到的所有数值都是旧的
-        snprintf(b, sizeof(b), "AGENT UNREACHABLE: %s",
-                 s_st.last_err[0] ? s_st.last_err : "poll failed");
-        set_text(s_ft_alert, b);
-        lv_obj_set_style_text_color(s_ft_alert, lv_color_hex(RED), 0);
-    } else if (have && s_st.nalerts > 0) {
-        set_text(s_ft_alert, s_st.alerts[0].m);
-        lv_obj_set_style_text_color(s_ft_alert,
-            lv_color_hex(strcmp(s_st.alerts[0].lv, "crit") == 0 ? RED : AMBER), 0);
-    } else {
-        set_text(s_ft_alert, have ? "no alerts" : "");
-        if (have) lv_obj_set_style_text_color(s_ft_alert, lv_color_hex(GREEN), 0);
-    }
+    ck_set(s_ft_alert_lbl, msg);
+    ck_set_color(s_ft_alert_lbl, col);
+    if (s_ft_alert_dot) lv_obj_set_style_bg_color(s_ft_alert_dot, lv_color_hex(col), 0);
 }
 
-static void update_overview(bool have)
+static void update_overview(void)
 {
     char b[64], s[64];
-    if (have) {
-        snprintf(b, sizeof(b), "%.0f%%", s_st.cpu.pct);
-        set_text(s_ov_val[0], b);
-        snprintf(s, sizeof(s), "load %.2f  %d cores", s_st.cpu.load1, s_st.cpu.cores);
-        set_text(s_ov_sub[0], s);
+    bool ok = have();
 
-        snprintf(b, sizeof(b), "%.0f%%", s_st.mem.pct);
-        set_text(s_ov_val[1], b);
+    int crit = alert_count("crit"), warn = alert_count("warn");
+    trust_t tr = trust_state();
+    const char *word;
+    uint32_t col;
+    if (tr == TR_OFFLINE)                { word = "离线"; col = CK_DANGER; }
+    else if (crit > 0)                   { word = "危险"; col = CK_DANGER; }
+    else if (warn > 0 || tr == TR_STALE) { word = "注意"; col = CK_WARN; }
+    else if (tr == TR_WARMING)           { word = "等待"; col = CK_WARN; }
+    else                                 { word = "正常"; col = CK_OK; }
+    ck_set(s_ov_verdict, word);
+    ck_set_color(s_ov_verdict, col);
+
+    if (ok) snprintf(b, sizeof(b), "6 项检查 · %d 条告警", s_st.nalerts);
+    else    snprintf(b, sizeof(b), "等待首个数据帧");
+    ck_set(s_ov_verdict_sub, b);
+
+    // 原因行：让"注意/危险"这个结论立刻可解释
+    char why[48];
+    if (trust_state() == TR_OFFLINE) {
+        snprintf(why, sizeof(why), "采集端不可达：%s", s_st.last_err[0] ? s_st.last_err : "poll failed");
+        ck_set_color(s_ov_reason, CK_DANGER);
+    } else if (s_st.nalerts > 0) {
+        snprintf(why, sizeof(why), "%s", s_st.alerts[0].m);
+        ck_set_color(s_ov_reason, strcmp(s_st.alerts[0].lv, "crit") == 0 ? CK_DANGER : CK_WARN);
+    } else {
+        why[0] = 0;
+    }
+    ck_set(s_ov_reason, why);
+
+    if (ok) {
+        snprintf(b, sizeof(b), "%.0f", s_st.cpu.pct);
+        ck_set(s_ov_val[0], b);
+        ck_set(s_ov_unit[0], "%");
+        snprintf(s, sizeof(s), "负载 %.2f · %d 核", s_st.cpu.load1, s_st.cpu.cores);
+        ck_set(s_ov_sub[0], s);
+        ck_bar_set_color(&s_ov_mbar[0], s_st.cpu.pct, CK_CPU);
+
+        snprintf(b, sizeof(b), "%.0f", s_st.mem.pct);
+        ck_set(s_ov_val[1], b);
+        ck_set(s_ov_unit[1], "%");
         snprintf(s, sizeof(s), "%.1f / %.0f GB", s_st.mem.used_mb / 1024.0f, s_st.mem.total_mb / 1024.0f);
-        set_text(s_ov_sub[1], s);
+        ck_set(s_ov_sub[1], s);
+        ck_bar_set_color(&s_ov_mbar[1], s_st.mem.pct, CK_MEM);
 
         float hot = 0;
         for (int i = 0; i < s_st.ntemps; i++) if (s_st.temps[i].c > hot) hot = s_st.temps[i].c;
-        snprintf(b, sizeof(b), "%.0fC", hot);
-        set_text(s_ov_val[2], b);
-        if (s_ov_val[2]) lv_obj_set_style_text_color(s_ov_val[2], lv_color_hex(temp_color(hot)), 0);
-        snprintf(s, sizeof(s), "cpu %.0fC", s_st.cpu.temp_c);
-        set_text(s_ov_sub[2], s);
+        snprintf(b, sizeof(b), "%.0f", hot);
+        ck_set(s_ov_val[2], b);
+        ck_set(s_ov_unit[2], "C");
+        if (s_st.ntemps > 0) snprintf(s, sizeof(s), "%s %.0fC", s_st.temps[0].n, s_st.temps[0].c);
+        else                 snprintf(s, sizeof(s), "--");
+        ck_set(s_ov_sub[2], s);
+        ck_bar_set_color(&s_ov_mbar[2], hot, CK_TEMP);
 
         fmt_uptime(b, sizeof(b), s_st.uptime_s);
-        set_text(s_ov_val[3], b);
-        set_text(s_ov_sub[3], "nas uptime");
+        ck_set(s_ov_val[3], b);
+        ck_set(s_ov_unit[3], "");
+        ck_set(s_ov_sub[3], "NAS 持续运行");
     } else {
-        for (int i = 0; i < 4; i++) { set_text(s_ov_val[i], "--"); set_text(s_ov_sub[i], ""); }
-    }
-
-    for (int i = 0; i < 5; i++) {
-        if (have && i < s_st.ntemps) {
-            char nb[20];
-            snprintf(nb, sizeof(nb), "%s", s_st.temps[i].n);
-            set_text(s_ov_temp[i], nb);
-            snprintf(b, sizeof(b), "%.0fC", s_st.temps[i].c);
-            set_text(s_ov_temp_v[i], b);
-            if (s_ov_temp_v[i]) lv_obj_set_style_text_color(s_ov_temp_v[i], lv_color_hex(temp_color(s_st.temps[i].c)), 0);
-        } else {
-            set_text(s_ov_temp[i], "");
-            set_text(s_ov_temp_v[i], "");
+        for (int i = 0; i < 4; i++) {
+            ck_set(s_ov_val[i], "--");
+            ck_set(s_ov_unit[i], "");
+            ck_set(s_ov_sub[i], "");
         }
     }
 
     for (int i = 0; i < 6; i++) {
-        if (have && i < s_st.nvols) {
-            set_text(s_ov_vol[i], s_st.vols[i].mnt);
+        if (ok && i < s_st.nvols) {
+            ck_set(s_ov_vol_name[i], s_st.vols[i].mnt);
             snprintf(b, sizeof(b), "%.0f%%", s_st.vols[i].pct);
-            set_text(s_ov_vol_v[i], b);
-            uint32_t col = GREEN;
-            if (s_st.vols[i].pct >= 90) col = RED;
-            else if (s_st.vols[i].pct >= 80) col = AMBER;
-            else if (s_st.vols[i].pct >= 60) col = BLUE;
-            if (s_ov_vol_v[i]) lv_obj_set_style_text_color(s_ov_vol_v[i], lv_color_hex(col), 0);
-            hbar_set(s_ov_vol_bar[i], s_ov_vol_w, s_st.vols[i].pct, true);
+            ck_set(s_ov_vol_pct[i], b);
+            uint32_t c = CK_OK;
+            if (s_st.vols[i].pct >= 90) c = CK_DANGER;
+            else if (s_st.vols[i].pct >= 80) c = CK_WARN;
+            else if (s_st.vols[i].pct >= 60) c = CK_TEXT;
+            ck_set_color(s_ov_vol_pct[i], c);
+            ck_bar_set(&s_ov_vol_bar[i], s_st.vols[i].pct);
         } else {
-            set_text(s_ov_vol[i], "");
-            set_text(s_ov_vol_v[i], "");
-            if (s_ov_vol_bar[i]) lv_obj_set_width(s_ov_vol_bar[i], 0);
+            ck_set(s_ov_vol_name[i], "");
+            ck_set(s_ov_vol_pct[i], "");
+            if (s_ov_vol_bar[i].fill) lv_obj_set_width(s_ov_vol_bar[i].fill, 0);
         }
     }
 }
 
-static void update_storage(bool have)
+static void update_storage(void)
 {
-    char b[64];
-    if (have) {
-        float total = 0, used = 0;
-        for (int i = 0; i < s_st.nvols; i++) { total += s_st.vols[i].total_gb; used += s_st.vols[i].used_gb; }
-        char t1[24], t2[24];
-        fmt_cap(t1, sizeof(t1), total);
-        fmt_cap(t2, sizeof(t2), used);
-        snprintf(b, sizeof(b), "%d volumes  %s total  %s used", s_st.nvols, t1, t2);
-        set_text(s_st_total, b);
-    } else {
-        set_text(s_st_total, "");
+    char b[64], s[64];
+    bool ok = have();
+    float total = 0, used = 0, free = 0;
+    for (int i = 0; i < s_st.nvols; i++) {
+        total += s_st.vols[i].total_gb;
+        used  += s_st.vols[i].used_gb;
+        free  += s_st.vols[i].free_gb;
     }
 
-    for (int i = 0; i < ST_VOL_ROWS; i++) {
-        if (have && i < s_st.nvols) {
-            set_text(s_st_mnt[i], s_st.vols[i].mnt);
-            set_text(s_st_fs[i], s_st.vols[i].fs);
+    if (ok && total > 0) {
+        bool tb = used >= 1024.0f;
+        snprintf(b, sizeof(b), tb ? "%.1f" : "%.0f", tb ? used / 1024.0f : used);
+        ck_set(s_st_hero, b);
+        ck_set(s_st_used, tb ? "TB / 总量" : "GB / 总量");
+        if (s_st_used) lv_obj_set_pos(s_st_used, tb ? 250 : 200, 74);
+        char t1[24], t2[24], t3[24];
+        fmt_cap(t1, sizeof(t1), used);
+        fmt_cap(t2, sizeof(t2), total);
+        fmt_cap(t3, sizeof(t3), free);
+        snprintf(s, sizeof(s), "%s / %s", t1, t2);
+        ck_set(s_st_cnt, s);
+        snprintf(s, sizeof(s), "可用 %s", t3);
+        ck_set(s_st_free, s);
+
+        int x = 20;
+        const int W = 840;
+        for (int i = 0; i < 6; i++) {
+            if (i >= s_st.nvols || !s_st_seg[i]) continue;
+            int wpx = (int)(W * (s_st.vols[i].total_gb / total) + 0.5f);
+            if (wpx < 6) wpx = 6;
+            lv_obj_set_pos(s_st_seg[i], x, 92);
+            lv_obj_set_width(s_st_seg[i], wpx);
+            float pct = s_st.vols[i].pct;
+            uint32_t c = CK_NET_DOWN;
+            if (pct >= 85) c = CK_DANGER;
+            else if (pct >= 70) c = CK_WARN;
+            else if (pct >= 45) c = CK_ZFS;
+            lv_obj_set_style_bg_color(s_st_seg[i], lv_color_hex(c), 0);
+            x += wpx + 3;
+        }
+        for (int i = s_st.nvols; i < 6; i++) {
+            if (s_st_seg[i]) lv_obj_set_width(s_st_seg[i], 0);
+        }
+    } else {
+        ck_set(s_st_hero, "--");
+        ck_set(s_st_cnt, "");
+        ck_set(s_st_free, "");
+    }
+
+    for (int i = 0; i < 6; i++) {
+        if (ok && i < s_st.nvols) {
+            ck_set(s_st_vname[i], s_st.vols[i].mnt);
+            ck_set(s_st_vfs[i], s_st.vols[i].fs);
             snprintf(b, sizeof(b), "%.0f%%", s_st.vols[i].pct);
-            set_text(s_st_pct[i], b);
-            uint32_t col = GREEN;
-            if (s_st.vols[i].pct >= 90) col = RED;
-            else if (s_st.vols[i].pct >= 80) col = AMBER;
-            if (s_st_pct[i]) lv_obj_set_style_text_color(s_st_pct[i], lv_color_hex(col), 0);
+            ck_set(s_st_vpct[i], b);
+            uint32_t c = CK_OK;
+            if (s_st.vols[i].pct >= 90) c = CK_DANGER;
+            else if (s_st.vols[i].pct >= 80) c = CK_WARN;
+            ck_set_color(s_st_vpct[i], c);
             char c1[24], c2[24];
             fmt_cap(c1, sizeof(c1), s_st.vols[i].used_gb);
             fmt_cap(c2, sizeof(c2), s_st.vols[i].total_gb);
             snprintf(b, sizeof(b), "%s / %s", c1, c2);
-            set_text(s_st_use[i], b);
-            hbar_set(s_st_bar[i], s_st_bar_w, s_st.vols[i].pct, true);
+            ck_set(s_st_vuse[i], b);
+            ck_bar_set(&s_st_vbar[i], s_st.vols[i].pct);
         } else {
-            set_text(s_st_mnt[i], "");
-            set_text(s_st_fs[i], "");
-            set_text(s_st_pct[i], "");
-            set_text(s_st_use[i], "");
-            if (s_st_bar[i]) lv_obj_set_width(s_st_bar[i], 0);
+            ck_set(s_st_vname[i], "");
+            ck_set(s_st_vfs[i], "");
+            ck_set(s_st_vpct[i], "");
+            ck_set(s_st_vuse[i], "");
+            if (s_st_vbar[i].fill) lv_obj_set_width(s_st_vbar[i].fill, 0);
         }
     }
 
-    // 存储空间数量与首帧假设不同时，把下半区面板挪到最后一行的正下方
-    if (have && s_st.nvols != s_st_last_nvols) {
-        s_st_last_nvols = s_st.nvols;
-        int n = s_st.nvols > 0 ? s_st.nvols : 1;
-        if (n > ST_VOL_ROWS) n = ST_VOL_ROWS;      // 多出来的只体现在标题汇总里
-        int ry = 46 + n * 44 + 8;
-        if (s_st_raid_panel) {
-            lv_obj_set_y(s_st_raid_panel, ry);
-            lv_obj_set_height(s_st_raid_panel, CONT_H - ry);
-        }
-        if (s_st_io_panel) {
-            lv_obj_set_y(s_st_io_panel, ry);
-            lv_obj_set_height(s_st_io_panel, CONT_H - ry);
-        }
-    }
-
-    for (int i = 0; i < FNOS_MAX_RAID; i++) {
-        if (have && i < s_st.nraid) {
-            snprintf(b, sizeof(b), "%s  %s", s_st.raid[i].dev, s_st.raid[i].lvl);
-            set_text(s_st_raid[i], b);
+    for (int i = 0; i < 4; i++) {
+        if (ok && i < s_st.nraid) {
+            ck_set(s_st_raid_name[i], s_st.raid[i].dev);
+            ck_set(s_st_raid_lvl[i], s_st.raid[i].lvl);
+            uint32_t c;
             if (s_st.raid[i].sync_pct >= 0) {
-                snprintf(b, sizeof(b), "SYNC %.1f%%", s_st.raid[i].sync_pct);
-                if (s_st_raid_v[i]) lv_obj_set_style_text_color(s_st_raid_v[i], lv_color_hex(BLUE), 0);
+                snprintf(b, sizeof(b), "同步 %.0f%%", s_st.raid[i].sync_pct);
+                c = CK_NET_DOWN;
             } else if (s_st.raid[i].ok) {
-                snprintf(b, sizeof(b), "OK  %d/%d", s_st.raid[i].have, s_st.raid[i].want);
-                if (s_st_raid_v[i]) lv_obj_set_style_text_color(s_st_raid_v[i], lv_color_hex(GREEN), 0);
+                snprintf(b, sizeof(b), "正常 %d/%d", s_st.raid[i].have, s_st.raid[i].want);
+                c = CK_OK;
             } else {
-                snprintf(b, sizeof(b), "DEGRADED %s", s_st.raid[i].state);
-                if (s_st_raid_v[i]) lv_obj_set_style_text_color(s_st_raid_v[i], lv_color_hex(RED), 0);
+                snprintf(b, sizeof(b), "降级 %s", s_st.raid[i].state);
+                c = CK_DANGER;
             }
-            set_text(s_st_raid_v[i], b);
+            ck_set(s_st_raid_state[i], b);
+            ck_set_color(s_st_raid_state[i], c);
         } else {
-            set_text(s_st_raid[i], "");
-            set_text(s_st_raid_v[i], "");
+            ck_set(s_st_raid_name[i], "");
+            ck_set(s_st_raid_lvl[i], "");
+            ck_set(s_st_raid_state[i], "");
         }
     }
 
-    if (have && s_st.has_zfs) {
-        char c1[24];
-        fmt_cap(c1, sizeof(c1), s_st.zfs_arc_gb);
-        snprintf(b, sizeof(b), "ZFS ARC %s  hit %.0f%%", c1, s_st.zfs_hit_pct);
-        set_text(s_st_zfs, b);
-    } else {
-        set_text(s_st_zfs, "");
-    }
-
-    // 磁盘活动：按吞吐排序的前 5 个设备（采集端已经排好序）
-    for (int i = 0; i < 5; i++) {
-        if (have && i < s_st.ndisks) {
+    for (int i = 0; i < 4; i++) {
+        if (ok && i < s_st.ndisks) {
             char r1[20], r2[20];
-            fmt_rate(r1, sizeof(r1), s_st.disks[i].rd_kbs);
-            fmt_rate(r2, sizeof(r2), s_st.disks[i].wr_kbs);
-            set_text(s_st_io_dev[i], s_st.disks[i].dev);
-            snprintf(b, sizeof(b), "R %s  W %s", r1, r2);
-            set_text(s_st_io_val[i], b);
+            fmt_rate(r1, sizeof(r1), s_st.disks[i].rd_kbs, NULL);
+            fmt_rate(r2, sizeof(r2), s_st.disks[i].wr_kbs, NULL);
+            ck_set(s_st_io_name[i], s_st.disks[i].dev);
+            snprintf(b, sizeof(b), "R %s W %s", r1, r2);
+            ck_set(s_st_io_val[i], b);
         } else {
-            set_text(s_st_io_dev[i], "");
-            set_text(s_st_io_val[i], "");
+            ck_set(s_st_io_name[i], "");
+            ck_set(s_st_io_val[i], "");
         }
     }
 }
 
-static void update_network(bool have)
+static void update_network(void)
 {
     char b[64], s[64];
-    if (have) {
-        fmt_rate(b, sizeof(b), s_st.net.rx_kbs);
-        set_text(s_nw_rx, b);
-        fmt_rate(b, sizeof(b), s_st.net.tx_kbs);
-        set_text(s_nw_tx, b);
+    bool ok = have();
+    if (ok) {
+        fmt_rate(b, sizeof(b), s_st.net.rx_kbs, &s_mb_down);
+        ck_set(s_nw_down_v, b);
+        ck_set(s_nw_down_u, rate_unit(s_mb_down, s_st.net.rx_kbs));
+        fmt_rate(b, sizeof(b), s_st.net.tx_kbs, &s_mb_up);
+        ck_set(s_nw_up_v, b);
+        ck_set(s_nw_up_u, rate_unit(s_mb_up, s_st.net.tx_kbs));
+
         char c1[24], c2[24];
         fmt_cap(c1, sizeof(c1), s_st.net.rx_total_gb);
         fmt_cap(c2, sizeof(c2), s_st.net.tx_total_gb);
-        snprintf(s, sizeof(s), "total received %s", c1);
-        set_text(s_nw_rx_sub, s);
-        snprintf(s, sizeof(s), "total sent %s", c2);
-        set_text(s_nw_tx_sub, s);
-        snprintf(b, sizeof(b), "interface %s   poll 1 s   agent %d ms   samples %lld",
-                 s_st.net.ifname[0] ? s_st.net.ifname : "?", s_st.http_ms, (long long)s_hist_seq);
-        set_text(s_nw_info, b);
+        snprintf(s, sizeof(s), "累计接收 %s", c1);
+        ck_set(s_nw_down_sub, s);
+        snprintf(s, sizeof(s), "累计发送 %s", c2);
+        ck_set(s_nw_up_sub, s);
+
+        ck_set(s_nw_ctx_v[0], c1);
+        ck_set(s_nw_ctx_v[1], c2);
+        snprintf(b, sizeof(b), "%d ms", s_st.http_ms);
+        ck_set(s_nw_ctx_v[2], b);
+        snprintf(b, sizeof(b), "%lld", (long long)s_hist_seq);
+        ck_set(s_nw_ctx_v[3], b);
     } else {
-        set_text(s_nw_rx, "--");
-        set_text(s_nw_tx, "--");
-        set_text(s_nw_rx_sub, "");
-        set_text(s_nw_tx_sub, "");
-        set_text(s_nw_info, "waiting for agent...");
+        ck_set(s_nw_down_v, "--");
+        ck_set(s_nw_up_v, "--");
+        ck_set(s_nw_down_sub, "");
+        ck_set(s_nw_up_sub, "");
+        for (int i = 0; i < 4; i++) ck_set(s_nw_ctx_v[i], "--");
+    }
+
+    int pd = ck_trend_peak(&s_nw_down), pu = ck_trend_peak(&s_nw_up);
+    int top = nice_max(pd > pu ? pd : pu);
+    if (top < 64) top = 64;
+    ck_trend_range(&s_nw_down, top);
+    ck_trend_range(&s_nw_up, top);
+    for (int i = 0; i < 3; i++) {
+        fmt_rate(b, sizeof(b), (float)(top - (top / 2) * i), NULL);
+        ck_set(s_nw_axis[i], b);
     }
 }
 
-static void update_system(bool have)
+static void update_system(void)
 {
     char b[96];
-    for (int i = 0; i < FNOS_MAX_DOCKER; i++) {
-        if (have && i < s_st.ndocker) {
-            set_text(s_sy_dock[i], s_st.docker[i].n);
-            set_text(s_sy_dock_s[i], s_st.docker[i].up ? "up" : s_st.docker[i].s);
-            if (s_sy_dot[i]) lv_obj_set_style_bg_color(s_sy_dot[i], lv_color_hex(s_st.docker[i].up ? GREEN : RED), 0);
+    bool ok = have();
+
+    int up = 0;
+    for (int i = 0; i < s_st.ndocker; i++) if (s_st.docker[i].up) up++;
+    if (ok) snprintf(b, sizeof(b), "%d / %d 运行中", up, s_st.ndocker);
+    else    b[0] = 0;
+    ck_set(s_sy_cnt, b);
+
+    for (int i = 0; i < 6; i++) {
+        if (ok && i < s_st.ndocker) {
+            ck_set(s_sy_dock[i], s_st.docker[i].n);
+            ck_set(s_sy_dock_s[i], s_st.docker[i].up ? "运行中" : s_st.docker[i].s);
+            uint32_t c = s_st.docker[i].up ? CK_OK : CK_IDLE;
+            ck_set_color(s_sy_dock_s[i], c);
+            if (s_sy_dot[i]) lv_obj_set_style_bg_color(s_sy_dot[i], lv_color_hex(c), 0);
         } else {
-            set_text(s_sy_dock[i], "");
-            set_text(s_sy_dock_s[i], "");
-            if (s_sy_dot[i]) lv_obj_set_style_bg_color(s_sy_dot[i], lv_color_hex(TRACK), 0);
-        }
-    }
-    for (int i = 0; i < 8; i++) {
-        if (have && i < s_st.ntemps) {
-            set_text(s_sy_temp[i], s_st.temps[i].n);
-            snprintf(b, sizeof(b), "%.1fC", s_st.temps[i].c);
-            set_text(s_sy_temp_v[i], b);
-            if (s_sy_temp_v[i]) lv_obj_set_style_text_color(s_sy_temp_v[i], lv_color_hex(temp_color(s_st.temps[i].c)), 0);
-        } else {
-            set_text(s_sy_temp[i], "");
-            set_text(s_sy_temp_v[i], "");
+            ck_set(s_sy_dock[i], "");
+            ck_set(s_sy_dock_s[i], "");
+            if (s_sy_dot[i]) lv_obj_set_style_bg_color(s_sy_dot[i], lv_color_hex(CK_GUIDE), 0);
         }
     }
 
-    int64_t age_s = s_st.recv_ms ? (esp_timer_get_time() / 1000 - s_st.recv_ms) / 1000 : -1;
-    snprintf(b, sizeof(b), "host        %s", have ? s_st.host : "--");
-    set_text(s_sy_kv[0], b);
-    snprintf(b, sizeof(b), "endpoint    %s:%d", FNOS_HOST, FNOS_PORT);
-    set_text(s_sy_kv[1], b);
-    snprintf(b, sizeof(b), "http        %d ms  (status %d)", s_st.http_ms, s_st.last_status);
-    set_text(s_sy_kv[2], b);
-    snprintf(b, sizeof(b), "poll        %u ok / %u err", (unsigned)s_st.ok_count, (unsigned)s_st.fail_count);
-    set_text(s_sy_kv[3], b);
-    snprintf(b, sizeof(b), "last error  %s", s_st.last_err[0] ? s_st.last_err : "none");
-    set_text(s_sy_kv[4], b);
-    snprintf(b, sizeof(b), "data age    %lld s", (long long)age_s);
-    set_text(s_sy_kv[5], b);
-    snprintf(b, sizeof(b), "wifi        %s  %d dBm", fnos_net_ip()[0] ? fnos_net_ip() : "offline", (int)fnos_net_rssi());
-    set_text(s_sy_kv[6], b);
-    snprintf(b, sizeof(b), "internal    %u KB free", (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024));
-    set_text(s_sy_kv[7], b);
-    snprintf(b, sizeof(b), "psram       %u KB free", (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
-    set_text(s_sy_kv[8], b);
-    snprintf(b, sizeof(b), "charts      %d s window", CHART_PTS);
-    set_text(s_sy_kv[9], b);
+    for (int i = 0; i < 7; i++) {
+        if (ok && i < s_st.ntemps) {
+            ck_set(s_sy_tname[i], s_st.temps[i].n);
+            snprintf(b, sizeof(b), "%.1fC", s_st.temps[i].c);
+            ck_set(s_sy_tval[i], b);
+            uint32_t c = CK_OK;
+            if (s_st.temps[i].c >= 75) c = CK_DANGER;
+            else if (s_st.temps[i].c >= 60) c = CK_WARN;
+            ck_set_color(s_sy_tval[i], c);
+            ck_bar_set_color(&s_sy_tbar[i], s_st.temps[i].c, c);
+        } else {
+            ck_set(s_sy_tname[i], "");
+            ck_set(s_sy_tval[i], "");
+            if (s_sy_tbar[i].fill) lv_obj_set_width(s_sy_tbar[i].fill, 0);
+        }
+    }
+
+    static const char *k[8] = { "主机", "端点", "HTTP", "轮询", "最近错误", "数据年龄", "Wi-Fi", "内部内存" };
+    char a1[16];
+    fmt_age(a1, sizeof(a1), data_age_s());
+    const char *ip = fnos_net_ip();
+    for (int i = 0; i < 8; i++) {
+        char line[96];
+        switch (i) {
+        case 0: snprintf(line, sizeof(line), "%s  %s", k[i], ok ? s_st.host : "--"); break;
+        case 1: snprintf(line, sizeof(line), "%s  %s:%d", k[i], FNOS_HOST, FNOS_PORT); break;
+        case 2: snprintf(line, sizeof(line), "%s  %d ms (状态 %d)", k[i], s_st.http_ms, s_st.last_status); break;
+        case 3: snprintf(line, sizeof(line), "%s  正常 %u / 失败 %u", k[i], (unsigned)s_st.ok_count, (unsigned)s_st.fail_count); break;
+        case 4: snprintf(line, sizeof(line), "%s  %s", k[i], s_st.last_err[0] ? s_st.last_err : "无"); break;
+        case 5: snprintf(line, sizeof(line), "%s  %s", k[i], a1); break;
+        case 6:
+            if (fnos_net_rssi() != 0) snprintf(line, sizeof(line), "%s  %s  %d dBm", k[i], ip[0] ? ip : "--", (int)fnos_net_rssi());
+            else                      snprintf(line, sizeof(line), "%s  %s", k[i], ip[0] ? ip : "未连接");
+            break;
+        default: snprintf(line, sizeof(line), "%s  %u KB 可用", k[i],
+                          (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024)); break;
+        }
+        ck_set(s_sy_kv[i], line);
+    }
 }
 
 static void drain_history(void)
@@ -832,82 +815,64 @@ static void drain_history(void)
     int64_t next = s_hist_seq;
     int n = fnos_data_hist_read(s_hist_seq, smp, 12, &next);
     if (n <= 0) return;
+    static int div;                       // 隔点入图：图表 2 秒一个点，窗口仍是 3 分钟
     for (int i = 0; i < n; i++) {
-        lv_chart_set_next_value(s_ov_chart, s_ov_ser_cpu, (int32_t)(smp[i].cpu + 0.5f));
-        lv_chart_set_next_value(s_ov_chart, s_ov_ser_mem, (int32_t)(smp[i].mem + 0.5f));
-        lv_chart_set_next_value(s_nw_chart, s_nw_ser_rx, (int32_t)(smp[i].rx_kbs + 0.5f));
-        lv_chart_set_next_value(s_nw_chart, s_nw_ser_tx, (int32_t)(smp[i].tx_kbs + 0.5f));
+        if ((div++ & 1) == 0) {
+            ck_trend_push(&s_ov_cpu, (int)(smp[i].cpu + 0.5f));
+            ck_trend_push(&s_ov_mem, (int)(smp[i].mem + 0.5f));
+            ck_trend_push(&s_nw_down, (int)(smp[i].rx_kbs + 0.5f));
+            ck_trend_push(&s_nw_up, (int)(smp[i].tx_kbs + 0.5f));
+        }
     }
     s_hist_seq = next;
-
-    if (s_nw_chart && s_nw_ser_rx && s_nw_ser_tx) {
-        int32_t peak = 0;
-        int32_t *a = lv_chart_get_series_y_array(s_nw_chart, s_nw_ser_rx);
-        int32_t *b = lv_chart_get_series_y_array(s_nw_chart, s_nw_ser_tx);
-        if (a && b) {
-            for (int i = 0; i < CHART_PTS; i++) {
-                // 未被写入的点是 LV_CHART_POINT_NONE(=INT32_MAX)，不能当数据：
-                // 否则开机后图表没填满的那几分钟纵轴会变成 2e9 这种荒诞刻度。
-                if (a[i] != LV_CHART_POINT_NONE && a[i] > peak) peak = a[i];
-                if (b[i] != LV_CHART_POINT_NONE && b[i] > peak) peak = b[i];
-            }
-        }
-        int top = nice_max(peak < 64 ? 64 : peak);
-        lv_chart_set_range(s_nw_chart, LV_CHART_AXIS_PRIMARY_Y, 0, top);
-        char buf[24];
-        for (int i = 0; i < 3; i++) {
-            fmt_rate(buf, sizeof(buf), (float)(top - (top / 2) * i));
-            set_text(s_nw_axis[i], buf);
-        }
-    }
 }
 
 static void view_tick(lv_timer_t *t)
 {
     (void)t;
-    bool have = fnos_data_get(&s_st);
+    fnos_data_get(&s_st);
     drain_history();
-    update_header(have);
-    update_footer(have);
-    update_overview(have);
-    update_storage(have);
-    update_network(have);
-    update_system(have);
+    update_top();
+    update_bottom();
+    update_overview();
+    update_storage();
+    update_network();
+    update_system();
 }
+
+/* ───────────────────────────── 入口 */
 
 void fnos_view_create(void)
 {
     if (s_created) return;
     lv_obj_t *scr = lv_screen_active();
     if (!scr) return;
-    lv_obj_set_style_bg_color(scr, lv_color_hex(BG), 0);
+    lv_obj_set_style_bg_color(scr, lv_color_hex(CK_BG), 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    build_header(scr);
+    build_top(scr);
     build_rail(scr);
-    build_footer(scr);
+    build_bottom(scr);
 
-    for (int i = 0; i < PG_COUNT; i++) {
-        s_pages[i] = make_page(scr);
-        if (!s_pages[i]) {
-            ESP_LOGE(TAG, "page %d alloc failed", i);
-            return;
-        }
+    lv_obj_t *content = ck_obj(scr, CK_CONT_X, CK_CONT_Y, CK_CONT_W, CK_CONT_H, CK_BG, 0, false);
+    if (!content) { ESP_LOGE(TAG, "content container alloc failed"); return; }
+    for (int i = 0; i < PAGE_N; i++) {
+        s_pages[i] = make_page(content);
+        if (!s_pages[i]) { ESP_LOGE(TAG, "page %d alloc failed", i); return; }
     }
     build_overview(s_pages[PG_OVERVIEW]);
     build_storage(s_pages[PG_STORAGE]);
     build_network(s_pages[PG_NETWORK]);
     build_system(s_pages[PG_SYSTEM]);
 
-    if (!s_ov_chart || !s_nw_chart || !s_ov_ser_cpu || !s_nw_ser_rx) {
-        ESP_LOGE(TAG, "chart creation failed - UI would hang on refresh");
+    if (!s_ov_cpu.line || !s_ov_mem.line || !s_nw_down.line || !s_nw_up.line) {
+        ESP_LOGE(TAG, "trend creation failed");
         return;
     }
-
     s_page = 0;
     apply_page();
     s_created = true;
     lv_timer_create(view_tick, 500, NULL);
-    ESP_LOGI(TAG, "dashboard created (%d pages, %d s window)", PG_COUNT, CHART_PTS);
+    ESP_LOGI(TAG, "dashboard v2 created (4 pages, %d s window)", HIST_PTS);
 }
