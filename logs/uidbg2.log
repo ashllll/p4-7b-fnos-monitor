@@ -1,0 +1,12 @@
+[   0.28] s=2 internal=235KB dma=197KB psram=27467KB
+[   0.29] I (43956) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27464KB
+[   0.29] I (44430) uidbg: unit0=0x48102500 I (263956) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27464KB
+[   0.98] I (264431) uidbg: unit0=0x48102500 x=278 y=53 w=14 h=16 hidden=0 text='%'
+[   0.98] I (264431) uidbg: val0 x=14 y=38 w=20 h=35 text='2'
+[  10.29] I (273956) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27466KB
+[  10.98] I (274431) uidbg: unit0=0x48102500 x=278 y=53 w=14 h=16 hidden=0 text='%'
+[  10.98] I (274431) uidbg: val0 x=14 y=38 w=20 h=35 text='1'
+[  18.31] I (281803) fnos_data: poll ok=270 fail=0 6ms cpu=1.3% mem=51.6% rx=10.1 tx=124.0 KB/s alerts=2 internal=235KB dma=197KB psram=27467KB
+[  20.29] I (283956) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27467KB
+[  20.98] I (284431) uidbg: unit0=0x48102500 x=278 y=53 w=14 h=16 hidden=0 text='%'
+[  20.98] I (284431) uidbg: val0 x=14 y=38 w=20 h=35 text='1'

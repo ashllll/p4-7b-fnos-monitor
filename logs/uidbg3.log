@@ -1,0 +1,10 @@
+[   0.35] I (6484) esp_wifi_remote: esp_wifi_internal_reg_rxcb: sta: 0x480bad0a
+[   1.38] I (7506) esp_netif_handlers: sta ip: 192.168.0.214, mask: 255.255.255.0, gw: 192.168.0.1
+[   1.38] I (7506) fnos_net: got ip 192.168.0.214
+[   2.03] I (8269) fnos_data: history backfilled: 300 samples
+[   7.92] I (13978) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27467KB
+[   8.27] I (14412) uidbg: unit0 x=85 y=53 w=14 h=16 style_x=85 style_y=53 hidden=0 text='%' par_w=209
+[   8.27] I (14412) uidbg: val0 x=14 y=38 w=20 h=35 text='2'
+[  17.62] I (23978) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27467KB
+[  18.32] I (24412) uidbg: unit0 x=85 y=53 w=14 h=16 style_x=85 style_y=53 hidden=0 text='%' par_w=209
+[  18.32] I (24412) uidbg: val0 x=14 y=38 w=20 h=35 text='2'

@@ -288,7 +288,7 @@ static void metric_tile(lv_obj_t *p, int idx, int x, const char *name, uint32_t 
     lv_obj_t *t = ck_tile(p, x, 190, 209, 118);
     ck_label(t, name, CK_F_CLABEL, CK_DIM, 14, 10);
     s_ov_val[idx] = ck_label(t, "--", CK_F_NUMM, CK_TEXT, 14, 38);
-    s_ov_unit[idx] = ck_label_r(t, "", CK_F_META, CK_DIM, 14, 56);
+    s_ov_unit[idx] = ck_label(t, "", CK_F_META, CK_DIM, 85, 53);
     // 副标题里会出现中文（"负载 … 核"、"NAS 持续运行"），必须用带中文的混排字体，
     // 否则 LVGL 找不到字形会画成豆腐块（实测踩过）
     s_ov_sub[idx] = ck_label(t, "", CK_F_CMETA, CK_IDLE, 14, 92);
@@ -884,6 +884,26 @@ static void drain_history(void)
 static void view_tick(lv_timer_t *t)
 {
     (void)t;
+#if CONFIG_FNOS_HEAP_DEBUG
+    // 排障：单位标签在照片上看不到，把它的真实坐标/尺寸/状态打进串口（每 10 秒一次）
+    {
+        static int dbg_div;
+        if ((dbg_div++ % 20) == 0 && s_ov_unit[0]) {
+            lv_obj_t *par = lv_obj_get_parent(s_ov_unit[0]);
+            ESP_LOGI("uidbg", "unit0 x=%d y=%d w=%d h=%d style_x=%d style_y=%d hidden=%d text='%s' par_w=%d",
+                     (int)lv_obj_get_x(s_ov_unit[0]), (int)lv_obj_get_y(s_ov_unit[0]),
+                     (int)lv_obj_get_width(s_ov_unit[0]), (int)lv_obj_get_height(s_ov_unit[0]),
+                     (int)lv_obj_get_style_x(s_ov_unit[0], 0), (int)lv_obj_get_style_y(s_ov_unit[0], 0),
+                     (int)lv_obj_has_flag(s_ov_unit[0], LV_OBJ_FLAG_HIDDEN),
+                     lv_label_get_text(s_ov_unit[0]),
+                     par ? (int)lv_obj_get_width(par) : -1);
+            ESP_LOGI("uidbg", "val0 x=%d y=%d w=%d h=%d text='%s'",
+                     (int)lv_obj_get_x(s_ov_val[0]), (int)lv_obj_get_y(s_ov_val[0]),
+                     (int)lv_obj_get_width(s_ov_val[0]), (int)lv_obj_get_height(s_ov_val[0]),
+                     lv_label_get_text(s_ov_val[0]));
+        }
+    }
+#endif
     fnos_data_get(&s_st);
     drain_history();
     update_top();
