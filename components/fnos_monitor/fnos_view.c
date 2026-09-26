@@ -560,7 +560,7 @@ static void update_overview(void)
         snprintf(b, sizeof(b), "%.0f", s_st.cpu.pct);
         ck_set(s_ov_val[0], b);
         ck_set(s_ov_unit[0], "%");
-        lv_obj_set_pos(s_ov_unit[0], 85, 53);
+        lv_obj_set_pos(s_ov_unit[0], 14 + lv_obj_get_width(s_ov_val[0]) + 8, 53);
         snprintf(s, sizeof(s), "负载 %.2f · %d 核", s_st.cpu.load1, s_st.cpu.cores);
         ck_set(s_ov_sub[0], s);
         ck_bar_set_color(&s_ov_mbar[0], s_st.cpu.pct, CK_CPU);
@@ -568,7 +568,7 @@ static void update_overview(void)
         snprintf(b, sizeof(b), "%.0f", s_st.mem.pct);
         ck_set(s_ov_val[1], b);
         ck_set(s_ov_unit[1], "%");
-        lv_obj_set_pos(s_ov_unit[1], 85, 53);
+        lv_obj_set_pos(s_ov_unit[1], 14 + lv_obj_get_width(s_ov_val[1]) + 8, 53);
         snprintf(s, sizeof(s), "%.1f / %.0f GB", s_st.mem.used_mb / 1024.0f, s_st.mem.total_mb / 1024.0f);
         ck_set(s_ov_sub[1], s);
         ck_bar_set_color(&s_ov_mbar[1], s_st.mem.pct, CK_MEM);
@@ -578,7 +578,7 @@ static void update_overview(void)
         snprintf(b, sizeof(b), "%.0f", hot);
         ck_set(s_ov_val[2], b);
         ck_set(s_ov_unit[2], "C");
-        lv_obj_set_pos(s_ov_unit[2], 85, 53);
+        lv_obj_set_pos(s_ov_unit[2], 14 + lv_obj_get_width(s_ov_val[2]) + 8, 53);
         if (s_st.ntemps > 0) snprintf(s, sizeof(s), "%s %.0f°C", s_st.temps[0].n, s_st.temps[0].c);
         else                 snprintf(s, sizeof(s), "--");
         ck_set(s_ov_sub[2], s);
@@ -601,10 +601,11 @@ static void update_overview(void)
             ck_set(s_ov_vol_name[i], s_st.vols[i].mnt);
             snprintf(b, sizeof(b), "%.0f%%", s_st.vols[i].pct);
             ck_set(s_ov_vol_pct[i], b);
+            // 严重度色阶：绿→黄绿→黄→红，与存储页用量条的渐变一致
             uint32_t c = CK_OK;
             if (s_st.vols[i].pct >= 90) c = CK_DANGER;
             else if (s_st.vols[i].pct >= 80) c = CK_WARN;
-            else if (s_st.vols[i].pct >= 60) c = CK_TEXT;
+            else if (s_st.vols[i].pct >= 60) c = CK_ZFS;
             ck_set_color(s_ov_vol_pct[i], c);
             ck_bar_set(&s_ov_vol_bar[i], s_st.vols[i].pct);
         } else {
