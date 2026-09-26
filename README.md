@@ -120,6 +120,14 @@ SSHPASS='...' NAS_SUDO_PASS='...' ./install.sh uninstall           # 卸载
    内部分配打光 → 界面冻结 + 触摸失效。本工程不碰 TLS，从根上避开；
    `CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC/DYNAMIC_BUFFER` 也照旧留着以防其它组件用到 TLS。
 5. **改 `sdkconfig.defaults` 不会覆盖已生成的 `sdkconfig`**：改完要 `rm sdkconfig` 重新生成。
+6. **自定义字体必须 `--no-compress`**（`tools/gen_fonts.sh` 已固定）：lv_font_conv 默认输出 RLE 压缩字体，
+   而 LVGL 9.5 的解压器用的是**一份全局状态**（`LV_GLOBAL_DEFAULT()->font_fmt_rle`，无锁），
+   本工程又开着 `CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=2`（两个 tile 两个线程并行绘制）——
+   两个线程同时解压字形就会互相踩状态，表现是**字体随机碎裂 + 闪烁**。LVGL 内置 Montserrat 未压缩，
+   所以只有换成自定义字体后才会暴露（详见 `docs/verification.md` 第 9 节）。
+7. **中文标签必须用带中文的字库**：界面混排 Plex（拉丁）与 Noto（中文），
+   把中文写进只有拉丁字形的标签会画成豆腐块。改完跑一遍审计脚本
+   （扫"拉丁字体 + 字符串含中文"的调用点，含动态 `ck_set` 目标）应输出 0。
 
 ## 当前交付状态（2026-09-20）
 

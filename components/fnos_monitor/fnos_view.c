@@ -258,7 +258,7 @@ static void build_bottom(lv_obj_t *scr)
 {
     ck_obj(scr, 0, CK_SCR_H - CK_BOT_H, CK_SCR_W, CK_BOT_H, CK_PANEL, 0, false);
     ck_divider(scr, 0, CK_SCR_H - CK_BOT_H, CK_SCR_W, CK_GUIDE);
-    s_ft_poll = ck_label(scr, "", CK_F_META, CK_DIM, CK_PAD, 12);
+    s_ft_poll = ck_label(scr, "", CK_F_CMETA, CK_DIM, CK_PAD, 12);
     s_ft_alert_dot = ck_obj(scr, CK_SCR_W - CK_PAD - 448, 16, 8, 8, CK_OK, 4, false);
     s_ft_alert_lbl = ck_label(scr, "无告警", CK_F_CMETA, CK_OK, CK_SCR_W - CK_PAD - 432, 11);
 }
@@ -283,7 +283,9 @@ static void metric_tile(lv_obj_t *p, int idx, int x, const char *name, uint32_t 
     ck_label(t, name, CK_F_CLABEL, CK_DIM, 14, 10);
     s_ov_val[idx] = ck_label(t, "--", CK_F_NUMM, CK_TEXT, 14, 38);
     s_ov_unit[idx] = ck_label_r(t, "", CK_F_META, CK_DIM, 14, 56);
-    s_ov_sub[idx] = ck_label(t, "", CK_F_META, CK_IDLE, 14, 92);
+    // 副标题里会出现中文（"负载 … 核"、"NAS 持续运行"），必须用带中文的混排字体，
+    // 否则 LVGL 找不到字形会画成豆腐块（实测踩过）
+    s_ov_sub[idx] = ck_label(t, "", CK_F_CMETA, CK_IDLE, 14, 92);
     if (with_bar) {
         ck_bar_create(&s_ov_mbar[idx], t, 14, 80, 181, 6);
         if (s_ov_mbar[idx].fill) {
@@ -344,7 +346,7 @@ static void build_storage(lv_obj_t *p)
     lv_obj_t *h = ck_tile(p, 0, 0, CK_CONT_W, 150);
     ck_label(h, "已用容量 / 总容量", CK_F_CLABEL, CK_DIM, 20, 12);
     s_st_hero = ck_label(h, "--", CK_F_HERO, CK_TEXT, 20, 28);
-    s_st_used = ck_label(h, "TB / 总量", CK_F_LABEL, CK_DIM, 250, 74);
+    s_st_used = ck_label(h, "TB / 总量", CK_F_CLABEL, CK_DIM, 250, 74);
     s_st_cnt = ck_label_r(h, "", CK_F_CMETA, CK_DIM, 20, 16);
     s_st_free = ck_label_r(h, "", CK_F_CLABEL, CK_OK, 20, 66);
     for (int i = 0; i < 6; i++) {
@@ -382,7 +384,7 @@ static void build_network(lv_obj_t *p)
         ck_label(t, down ? "下行 DOWN" : "上行 UP", CK_F_CLABEL, color, 18, 12);
         lv_obj_t *v = ck_label(t, "--", CK_F_NUML, CK_TEXT, 18, 44);
         lv_obj_t *u = ck_label(t, "KB/s", CK_F_LABEL, CK_DIM, 20, 86);
-        lv_obj_t *s = ck_label(t, "", CK_F_META, CK_IDLE, 18, 126);
+        lv_obj_t *s = ck_label(t, "", CK_F_CMETA, CK_IDLE, 18, 126);
         (void)color;
         if (down) { s_nw_down_v = v; s_nw_down_u = u; s_nw_down_sub = s; }
         else      { s_nw_up_v = v;   s_nw_up_u = u;   s_nw_up_sub = s; }

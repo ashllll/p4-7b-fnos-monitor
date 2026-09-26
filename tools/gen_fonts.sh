@@ -6,6 +6,15 @@
 #
 # 依赖：node/npm（用 npx 拉 lv_font_conv@1.5.2）、tools/fonts/ 下的 TTF。
 # 用法：bash tools/gen_fonts.sh
+#
+# ⚠️ 必须 --no-compress（RLE 压缩字体在这块板子上会"字体花屏 + 闪烁"）：
+#   lv_font_conv 默认输出 RLE 压缩字体（描述符里 .bitmap_format = 1），而 LVGL 9.5
+#   的解压器用的是**一份全局状态**（src/core/lv_global.h 的 LV_GLOBAL_DEFAULT()->font_fmt_rle，
+#   rle_init/rle_next 都在它上面跑，font/fmt_txt/lv_font_fmt_txt.c 里没有任何锁）。
+#   本工程开着 CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=2，LVGL 会把一帧拆成两个 tile 用两个线程并行绘制，
+#   两个线程同时解压不同字形就会互相踩状态 → 字形碎裂、每次重绘碎裂的位置还不一样（看起来就是闪烁）。
+#   LVGL 内置的 Montserrat（.bitmap_format = 0，未压缩）没这个问题，所以 v1 界面是干净的，
+#   换成自定义压缩字体后才暴露。代价是字体体积大 2~3 倍（本工程 11 个字库约 +0.3 MB Flash，分区绰绰有余）。
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$ROOT/tools/fonts"
@@ -54,27 +63,27 @@ PYEOF
 echo "中文字形数: $(printf '%s' "$CJK" | python3 -c 'import sys;print(len(sys.stdin.read().strip()))')"
 
 echo "== 等宽数字（数值列，tabular） =="
-$LV --font PlexMono-SemiBold.ttf --size 84 --bpp 4 --format lvgl --force-fast-kern-format \
+$LV --font PlexMono-SemiBold.ttf --size 84 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
     --symbols "0123456789.,:%-+/ " --lv-include lvgl.h -o "$OUT/ui_font_mono_84.c"
-$LV --font PlexMono-SemiBold.ttf --size 52 --bpp 4 --format lvgl --force-fast-kern-format \
+$LV --font PlexMono-SemiBold.ttf --size 52 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
     -r 0x20-0x7E --lv-include lvgl.h -o "$OUT/ui_font_mono_52.c"
-$LV --font PlexMono-Medium.ttf --size 34 --bpp 4 --format lvgl --force-fast-kern-format \
+$LV --font PlexMono-Medium.ttf --size 34 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
     -r 0x20-0x7E --lv-include lvgl.h -o "$OUT/ui_font_mono_34.c"
-$LV --font PlexMono-Medium.ttf --size 20 --bpp 4 --format lvgl --force-fast-kern-format \
+$LV --font PlexMono-Medium.ttf --size 20 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
     -r 0x20-0x7E --lv-include lvgl.h -o "$OUT/ui_font_mono_20.c"
 
 echo "== 拉丁标签（Plex Sans） =="
-$LV --font PlexSans-SemiBold.ttf --size 24 --bpp 4 --format lvgl --force-fast-kern-format \
+$LV --font PlexSans-SemiBold.ttf --size 24 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
     -r 0x20-0x7E -r 0xB0 -r 0xB7 --lv-include lvgl.h -o "$OUT/ui_font_sans_24.c"
-$LV --font PlexSans-Medium.ttf --size 20 --bpp 4 --format lvgl --force-fast-kern-format \
+$LV --font PlexSans-Medium.ttf --size 20 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
     -r 0x20-0x7E -r 0xB0 -r 0xB7 --lv-include lvgl.h -o "$OUT/ui_font_sans_20.c"
-$LV --font PlexSans-Regular.ttf --size 15 --bpp 4 --format lvgl --force-fast-kern-format \
+$LV --font PlexSans-Regular.ttf --size 15 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
     -r 0x20-0x7E -r 0xB0 -r 0xB7 --lv-include lvgl.h -o "$OUT/ui_font_sans_15.c"
 
 echo "== 中文标签（Noto Sans SC 子集，含 ASCII 便于混排） =="
 for spec in "40:Medium:ui_font_cjk_40" "24:Medium:ui_font_cjk_24" "20:Medium:ui_font_cjk_20" "15:Regular:ui_font_cjk_15"; do
   size="${spec%%:*}"; rest="${spec#*:}"; weight="${rest%%:*}"; name="${rest#*:}"
-  $LV --font "NotoSansSC-${weight}.ttf" --size "$size" --bpp 4 --format lvgl --force-fast-kern-format \
+  $LV --font "NotoSansSC-${weight}.ttf" --size "$size" --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
       -r 0x20-0x7E -r 0xB0 -r 0xB7 --symbols "$CJK" --lv-include lvgl.h -o "$OUT/$name.c"
 done
 
