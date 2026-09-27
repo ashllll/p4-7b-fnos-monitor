@@ -1,0 +1,6 @@
+[   5.86] I (13990) main: heap periodic       internal=232KB largest=188KB dma=194KB psram=27459KB
+[   6.08] I (14418) uidbg: unit0 x=42 y=53 w=14 h=16 style_x=42 style_y=53 hidden=0 text='%' par_w=209
+[   6.08] I (14418) uidbg: val0 x=14 y=38 w=20 h=35 text='2'
+[  15.66] I (23990) main: heap periodic       internal=232KB largest=188KB dma=194KB psram=27459KB
+[  16.36] I (24418) uidbg: unit0 x=42 y=53 w=14 h=16 style_x=42 style_y=53 hidden=0 text='%' par_w=209
+[  16.36] I (24418) uidbg: val0 x=14 y=38 w=20 h=35 text='2'

@@ -54,6 +54,7 @@ static void night_timer_cb(void *arg)
     first = false;
     last_night = night;
     bsp_display_brightness_set(night ? APP_BL_NIGHT_PCT : APP_BL_PCT);
+    fnos_view_set_night(night);            // 夜间配色：纯黑底 + 面板更暗 + 趋势纹理降透明度
     ESP_LOGI(TAG, "backlight %d%% (%s)", night ? APP_BL_NIGHT_PCT : APP_BL_PCT, night ? "night" : "day");
 }
 

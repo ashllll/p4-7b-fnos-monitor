@@ -36,9 +36,12 @@ static const char *TAG = "fnos_view";
 enum { PG_OVERVIEW = 0, PG_STORAGE, PG_NETWORK, PG_SYSTEM };
 
 static bool s_created;
+static bool s_night;
 static int  s_page, s_press_x;
+static lv_obj_t *s_chrome_scr, *s_chrome_top, *s_chrome_rail, *s_chrome_bot, *s_chrome_content;
 static lv_obj_t *s_pages[PAGE_N];
-static lv_obj_t *s_nav[PAGE_N], *s_nav_bar[PAGE_N], *s_nav_lbl[PAGE_N];
+static lv_obj_t *s_nav[PAGE_N], *s_nav_lbl[PAGE_N];
+static lv_obj_t *s_nav_ind;            // 唯一的选中指示条（切页时滑动过去）
 static EXT_RAM_BSS_ATTR fnos_status_t s_st;
 static int64_t s_hist_seq;
 
@@ -66,6 +69,7 @@ static lv_obj_t *s_st_io_name[4], *s_st_io_val[4];
 static lv_obj_t *s_nw_down_v, *s_nw_down_u, *s_nw_down_sub;
 static lv_obj_t *s_nw_up_v, *s_nw_up_u, *s_nw_up_sub;
 static ck_trend_t s_nw_down, s_nw_up;
+static ck_trend_t s_nw_mini_down, s_nw_mini_up;   // 网络瓦片右侧的迷你趋势（补留白）
 static lv_obj_t *s_nw_axis[3];
 static lv_obj_t *s_nw_ctx_v[4], *s_nw_ctx_l[4];
 
@@ -79,6 +83,8 @@ static lv_obj_t *s_sy_kv_l[8], *s_sy_kv_v[8];
 static lv_obj_t *s_sy_alert_dot[3], *s_sy_alert_lbl[3];
 
 static bool s_mb_down, s_mb_up;
+
+static void nav_ind_anim(void *var, int32_t v);   // apply_page 里用到
 
 /* ───────────────────────────── 格式化（统一格式，避免刷新抖动） */
 
@@ -174,8 +180,19 @@ static void apply_page(void)
             else             lv_obj_add_flag(s_pages[i], LV_OBJ_FLAG_HIDDEN);
         }
         if (s_nav[i])     lv_obj_set_style_bg_color(s_nav[i], lv_color_hex(i == s_page ? CK_NAV_SEL : CK_BG), 0);
-        if (s_nav_bar[i]) lv_obj_set_style_bg_opa(s_nav_bar[i], i == s_page ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
         if (s_nav_lbl[i]) lv_obj_set_style_text_color(s_nav_lbl[i], lv_color_hex(i == s_page ? CK_TEXT : CK_DIM), 0);
+    }
+    // 切页过渡：指示条滑向新项（180ms ease-out），页面本体瞬时切换（原子换页）
+    if (s_nav_ind) {
+        int target = CK_TOP_H + 18 + s_page * 96 + 12;
+        lv_anim_t a;
+        lv_anim_init(&a);
+        lv_anim_set_var(&a, s_nav_ind);
+        lv_anim_set_exec_cb(&a, nav_ind_anim);
+        lv_anim_set_values(&a, lv_obj_get_y(s_nav_ind), target);
+        lv_anim_set_duration(&a, 180);
+        lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+        lv_anim_start(&a);
     }
     lv_obj_invalidate(lv_screen_active());
 }
@@ -225,7 +242,7 @@ static void on_release(lv_event_t *e)
 
 static void build_top(lv_obj_t *scr)
 {
-    ck_obj(scr, 0, 0, CK_SCR_W, CK_TOP_H, CK_PANEL, 0, false);
+    s_chrome_top = ck_obj(scr, 0, 0, CK_SCR_W, CK_TOP_H, CK_PANEL, 0, false);
     ck_divider(scr, 0, CK_TOP_H - 1, CK_SCR_W, CK_GUIDE);
 
     s_hd_host = ck_label(scr, "NAS", CK_F_TITLE, CK_TEXT, CK_PAD, 18);
@@ -239,22 +256,29 @@ static void build_top(lv_obj_t *scr)
     ck_signal_bars(scr, CK_SCR_W - CK_PAD - 130, 20, s_sig);
 }
 
+// 切页过渡：只让 4px 宽的选中指示条滑到新导航项（180ms），页面本体原子换页。
+// 不做整页 translate/淡入：本板是"全屏页 + partial buffer"，双页同时合成会留残影。
+static void nav_ind_anim(void *var, int32_t v)   // lv_anim_exec_xcb_t 签名
+{
+    lv_obj_set_y((lv_obj_t *)var, v);
+}
+
 static void build_rail(lv_obj_t *scr)
 {
     static const char *names[PAGE_N] = { "总览", "存储", "网络", "系统" };
-    ck_obj(scr, 0, CK_TOP_H, CK_RAIL_W, CK_SCR_H - CK_TOP_H - CK_BOT_H, CK_BG, 0, false);
+    s_chrome_rail = ck_obj(scr, 0, CK_TOP_H, CK_RAIL_W, CK_SCR_H - CK_TOP_H - CK_BOT_H, CK_BG, 0, false);
     for (int i = 0; i < PAGE_N; i++) {
         int y = CK_TOP_H + 18 + i * 96;
         lv_obj_t *item = ck_obj(scr, 12, y, CK_RAIL_W - 24, 88, CK_BG, 12, true);
         s_nav[i] = item;
-        s_nav_bar[i] = ck_obj(item, 0, 12, 4, 64, CK_TEXT, 2, false);
-        if (s_nav_bar[i]) lv_obj_set_style_bg_opa(s_nav_bar[i], LV_OPA_TRANSP, 0);
         ck_icon(item, 14, 14, i, CK_DIM);
         s_nav_lbl[i] = ck_label(item, names[i], CK_F_CLABEL, CK_DIM, 0, 52);
         if (s_nav_lbl[i]) lv_obj_align(s_nav_lbl[i], LV_ALIGN_TOP_MID, 0, 52);
         lv_obj_add_event_cb(item, on_nav, LV_EVENT_PRESSED, (void *)(intptr_t)i);
         lv_obj_add_event_cb(item, on_nav, LV_EVENT_CLICKED, (void *)(intptr_t)i);
     }
+    // 唯一的指示条，挂在屏幕（rail 区域内），初始在第 1 项
+    s_nav_ind = ck_obj(scr, 12, CK_TOP_H + 18 + 12, 4, 64, CK_TEXT, 2, false);
 }
 
 static void build_bottom(lv_obj_t *scr)
@@ -263,6 +287,7 @@ static void build_bottom(lv_obj_t *scr)
     // 曾经挂在 screen 上写 y=11/12/16，整行画到屏幕顶部压住顶栏 ——
     // 视觉评审报的"红色告警压住在线胶囊 / 采集与 nas 重叠"根因就是它。
     lv_obj_t *f = ck_obj(scr, 0, CK_SCR_H - CK_BOT_H, CK_SCR_W, CK_BOT_H, CK_PANEL, 0, false);
+    s_chrome_bot = f;
     ck_divider(scr, 0, CK_SCR_H - CK_BOT_H, CK_SCR_W, CK_GUIDE);
     s_ft_poll = ck_label(f, "", CK_F_CMETA, CK_DIM, CK_PAD, 10);
     s_ft_alert_dot = ck_obj(f, CK_SCR_W - CK_PAD - 448, 14, 8, 8, CK_OK, 4, false);
@@ -325,6 +350,10 @@ static void build_overview(lv_obj_t *p)
 
     lv_obj_t *tr = ck_tile(p, 0, 322, CK_CONT_W, CK_CONT_H - 322);
     ck_label(tr, "CPU / 内存 · 百分比 · 近 3 分钟", CK_F_CMETA, CK_DIM, 16, 8);
+    ck_obj(tr, CK_CONT_W - 240, 12, 10, 10, CK_CPU, 3, false);
+    ck_label(tr, "CPU", CK_F_META, CK_CPU, CK_CONT_W - 222, 8);
+    ck_obj(tr, CK_CONT_W - 130, 12, 10, 10, CK_MEM, 3, false);
+    ck_label(tr, "MEM", CK_F_META, CK_MEM, CK_CONT_W - 112, 8);
     ck_trend_create(&s_ov_cpu, tr, 14, 34, CK_CONT_W - 28, 46, CK_CPU, TREND_PTS);
     ck_trend_create(&s_ov_mem, tr, 14, 88, CK_CONT_W - 28, 46, CK_MEM, TREND_PTS);
     ck_trend_range(&s_ov_cpu, 100);
@@ -391,13 +420,22 @@ static void build_network(lv_obj_t *p)
         lv_obj_t *v = ck_label(t, "--", CK_F_NUML, CK_TEXT, 18, 44);
         lv_obj_t *u = ck_label(t, "KB/s", CK_F_LABEL, CK_DIM, 20, 94);
         lv_obj_t *s = ck_label(t, "", CK_F_CMETA, CK_IDLE, 18, 126);
-        (void)color;
+        // 右半留白放迷你趋势：即时"在涨还是在跌"的纹理，
+        // 下方吞吐趋势面板仍是 3 分钟详图
+        ck_trend_t *mini = down ? &s_nw_mini_down : &s_nw_mini_up;
+        ck_trend_create(mini, t, 214, 44, 203, 96, color, TREND_PTS);
+        ck_trend_range(mini, 256);
         if (down) { s_nw_down_v = v; s_nw_down_u = u; s_nw_down_sub = s; }
         else      { s_nw_up_v = v;   s_nw_up_u = u;   s_nw_up_sub = s; }
     }
 
     lv_obj_t *tr = ck_tile(p, 0, 184, CK_CONT_W, 190);
     ck_label(tr, "吞吐趋势 · KB/s · 近 3 分钟", CK_F_CMETA, CK_DIM, 16, 8);
+    // 图例：色块 + 序列名（解决"两条曲线分不清谁是谁"）
+    ck_obj(tr, CK_CONT_W - 240, 12, 10, 10, CK_NET_DOWN, 3, false);
+    ck_label(tr, "DOWN", CK_F_META, CK_NET_DOWN, CK_CONT_W - 222, 8);
+    ck_obj(tr, CK_CONT_W - 130, 12, 10, 10, CK_NET_UP, 3, false);
+    ck_label(tr, "UP", CK_F_META, CK_NET_UP, CK_CONT_W - 112, 8);
     ck_trend_create(&s_nw_down, tr, 14, 36, CK_CONT_W - 120, 60, CK_NET_DOWN, TREND_PTS);
     ck_trend_create(&s_nw_up, tr, 14, 108, CK_CONT_W - 120, 60, CK_NET_UP, TREND_PTS);
     ck_trend_range(&s_nw_down, 256);
@@ -432,8 +470,8 @@ static void build_system(lv_obj_t *p)
     ck_divider(c, 16, 332, 430 - 32, CK_GUIDE);
     ck_label(c, "告警", CK_F_CLABEL, CK_DIM, 16, 344);
     for (int i = 0; i < 3; i++) {
-        s_sy_alert_dot[i] = ck_obj(c, 16, 384 + i * 28, 8, 8, CK_IDLE, 4, false);
-        s_sy_alert_lbl[i] = ck_label(c, "", CK_F_CMETA, CK_DIM, 34, 378 + i * 28);
+        s_sy_alert_dot[i] = ck_obj(c, 16, 386 + i * 30, 8, 8, CK_IDLE, 4, false);
+        s_sy_alert_lbl[i] = ck_label(c, "", CK_F_CMETA, CK_DIM, 34, 380 + i * 30);
     }
 
     lv_obj_t *t = ck_tile(p, 450, 0, 430, 238);
@@ -772,6 +810,8 @@ static void update_network(void)
     if (top < 64) top = 64;
     ck_trend_range(&s_nw_down, top);
     ck_trend_range(&s_nw_up, top);
+    ck_trend_range(&s_nw_mini_down, top);
+    ck_trend_range(&s_nw_mini_up, top);
     for (int i = 0; i < 3; i++) {
         fmt_rate(b, sizeof(b), (float)(top - (top / 2) * i), NULL);
         ck_set(s_nw_axis[i], b);
@@ -877,6 +917,8 @@ static void drain_history(void)
             ck_trend_push(&s_ov_mem, (int)(smp[i].mem + 0.5f));
             ck_trend_push(&s_nw_down, (int)(smp[i].rx_kbs + 0.5f));
             ck_trend_push(&s_nw_up, (int)(smp[i].tx_kbs + 0.5f));
+            ck_trend_push(&s_nw_mini_down, (int)(smp[i].rx_kbs + 0.5f));
+            ck_trend_push(&s_nw_mini_up, (int)(smp[i].tx_kbs + 0.5f));
         }
     }
     s_hist_seq = next;
@@ -917,6 +959,32 @@ static void view_tick(lv_timer_t *t)
 
 /* ───────────────────────────── 入口 */
 
+// 夜间配色（由 main.cpp 的夜间定时器调用）：纯黑底、面板更暗、趋势纹理降透明度。
+// 不做整屏 alpha 合成（opa_layered 会让每帧都走一遍全屏图层，这板子绘制预算有限）。
+void fnos_view_set_night(bool on)
+{
+    if (s_night == on) return;
+    s_night = on;
+    uint32_t bg = on ? 0x000000 : CK_BG;
+    uint32_t panel = on ? 0x0B0E12 : CK_PANEL;
+    lv_opa_t bar_opa = on ? LV_OPA_10 : LV_OPA_20;
+    if (s_chrome_scr)  lv_obj_set_style_bg_color(s_chrome_scr, lv_color_hex(bg), 0);
+    if (s_chrome_top)  lv_obj_set_style_bg_color(s_chrome_top, lv_color_hex(panel), 0);
+    if (s_chrome_bot)  lv_obj_set_style_bg_color(s_chrome_bot, lv_color_hex(panel), 0);
+    if (s_chrome_rail) lv_obj_set_style_bg_color(s_chrome_rail, lv_color_hex(bg), 0);
+    if (s_chrome_content) lv_obj_set_style_bg_color(s_chrome_content, lv_color_hex(bg), 0);
+    lv_obj_t *bars[4] = { s_ov_cpu.bar, s_ov_mem.bar, s_nw_down.bar, s_nw_up.bar,
+                          /* 只处理这 4 条主趋势；瓦片内迷你趋势同样降 */ };
+    for (int i = 0; i < 4; i++) {
+        if (bars[i]) lv_obj_set_style_bg_opa(bars[i], bar_opa, LV_PART_ITEMS);
+    }
+    lv_obj_t *mini[2] = { s_nw_mini_down.bar, s_nw_mini_up.bar };
+    for (int i = 0; i < 2; i++) {
+        if (mini[i]) lv_obj_set_style_bg_opa(mini[i], bar_opa, LV_PART_ITEMS);
+    }
+    lv_obj_invalidate(lv_screen_active());
+}
+
 void fnos_view_create(void)
 {
     if (s_created) return;
@@ -926,11 +994,13 @@ void fnos_view_create(void)
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
+    s_chrome_scr = scr;
     build_top(scr);
     build_rail(scr);
     build_bottom(scr);
 
     lv_obj_t *content = ck_obj(scr, CK_CONT_X, CK_CONT_Y, CK_CONT_W, CK_CONT_H, CK_BG, 0, false);
+    s_chrome_content = content;
     if (!content) { ESP_LOGE(TAG, "content container alloc failed"); return; }
     for (int i = 0; i < PAGE_N; i++) {
         s_pages[i] = make_page(content);
