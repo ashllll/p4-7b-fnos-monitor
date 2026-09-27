@@ -44,6 +44,8 @@ lv_obj_t *ck_label(lv_obj_t *parent, const char *txt, const lv_font_t *f, uint32
     lv_label_set_text(l, txt ? txt : "");
     lv_obj_set_style_text_font(l, f, 0);
     lv_obj_set_style_text_color(l, lv_color_hex(color), 0);
+    // UniFi 风格：拉丁标签带轻微字间距（数字/中文不加，避免破坏对齐与字面）
+    if (f == CK_F_LABEL) lv_obj_set_style_text_letter_space(l, 1, 0);
     lv_obj_set_pos(l, x, y);
     lv_obj_clear_flag(l, LV_OBJ_FLAG_CLICKABLE);
     return l;
@@ -60,6 +62,8 @@ lv_obj_t *ck_divider(lv_obj_t *parent, int x, int y, int w, uint32_t color)
 {
     return ck_obj(parent, x, y, w, 1, color, 0, false);
 }
+
+// UniFi 风格细进度条：高 6px（CK_BAR_H）、圆角全圆、轨道 CK_TRACK
 
 void ck_set(lv_obj_t *l, const char *txt)
 {
@@ -82,7 +86,7 @@ void ck_bar_create(ck_bar_t *b, lv_obj_t *parent, int x, int y, int w, int h)
 {
     if (!b) return;
     b->w = w;
-    b->track = ck_obj(parent, x, y, w, h, 0x151A21, h / 2, false);
+    b->track = ck_obj(parent, x, y, w, h, CK_TRACK, h / 2, false);
     b->fill = ck_obj(parent, x, y, 2, h, CK_OK, h / 2, false);
     if (b->fill) {
         lv_obj_set_style_bg_grad_dir(b->fill, LV_GRAD_DIR_HOR, 0);
@@ -227,7 +231,7 @@ static lv_obj_t *trend_layer(lv_obj_t *parent, int x, int y, int w, int h, int p
         // 否则密集柱会糊成一整块实心色板（实测第一版就是这样）
         lv_obj_set_style_pad_column(c, 2, LV_PART_ITEMS);
         lv_obj_set_style_radius(c, 1, LV_PART_ITEMS);
-        lv_obj_set_style_bg_opa(c, LV_OPA_20, LV_PART_ITEMS);
+        lv_obj_set_style_bg_opa(c, LV_OPA_10, LV_PART_ITEMS);   // 10% 级别的面积感，不糊成色板
     } else {
         lv_obj_set_style_line_width(c, 2, LV_PART_ITEMS);
         lv_obj_set_style_size(c, 0, 0, LV_PART_INDICATOR);   // 不要数据点圆点

@@ -29,9 +29,8 @@ static const char *TAG = "fnos_view";
 #define PAGE_N 4
 #define STALE_MS 3000
 #define HIST_PTS CONFIG_FNOS_CHART_WINDOW
-// 趋势图的点数 = 2 秒一个点：180 秒的 1 Hz 数据如果 1:1 画成柱，
-// 柱子会挤成一块实心色板（实测就是这样），隔点显示才有"波形"的纹理感。
-#define TREND_PTS (CONFIG_FNOS_CHART_WINDOW / 2)
+// 趋势 1s/点（2s/点会让曲线呈规则锯齿）；柱层透明度 12% + 2px 缝，不会糊成色板
+#define TREND_PTS (CONFIG_FNOS_CHART_WINDOW)
 
 enum { PG_OVERVIEW = 0, PG_STORAGE, PG_NETWORK, PG_SYSTEM };
 
@@ -51,6 +50,7 @@ static lv_obj_t *s_ft_poll, *s_ft_alert_lbl, *s_ft_alert_dot;
 
 /* P0 总览 */
 static lv_obj_t *s_ov_verdict, *s_ov_verdict_sub, *s_ov_reason;
+static lv_obj_t *s_ov_alert_n, *s_ov_checks, *s_ov_leg_cpu, *s_ov_leg_mem;
 static lv_obj_t *s_ov_val[4], *s_ov_unit[4], *s_ov_sub[4];
 static ck_bar_t  s_ov_mbar[3];
 static lv_obj_t *s_ov_vol_name[6], *s_ov_vol_pct[6];
@@ -70,7 +70,7 @@ static lv_obj_t *s_nw_down_v, *s_nw_down_u, *s_nw_down_sub;
 static lv_obj_t *s_nw_up_v, *s_nw_up_u, *s_nw_up_sub;
 static ck_trend_t s_nw_down, s_nw_up;
 static ck_trend_t s_nw_mini_down, s_nw_mini_up;   // 网络瓦片右侧的迷你趋势（补留白）
-static lv_obj_t *s_nw_axis[3];
+static lv_obj_t *s_nw_leg_down, *s_nw_leg_up;
 static lv_obj_t *s_nw_ctx_v[4], *s_nw_ctx_l[4];
 
 /* P3 系统 */
@@ -243,16 +243,21 @@ static void on_release(lv_event_t *e)
 static void build_top(lv_obj_t *scr)
 {
     s_chrome_top = ck_obj(scr, 0, 0, CK_SCR_W, CK_TOP_H, CK_PANEL, 0, false);
-    ck_divider(scr, 0, CK_TOP_H - 1, CK_SCR_W, CK_GUIDE);
+    ck_divider(scr, 0, CK_TOP_H - 1, CK_SCR_W, CK_LINE);
 
-    s_hd_host = ck_label(scr, "NAS", CK_F_TITLE, CK_TEXT, CK_PAD, 18);
-    s_hd_endpoint = ck_label(scr, "", CK_F_META, CK_DIM, CK_PAD + 130, 26);
-    // 位置在 update_top 里按主机名实际宽度定位（place_unit）
+    // 品牌块：圆角方块 + 服务器图形（UniFi 顶栏的识别元素）
+    lv_obj_t *brand = ck_obj(scr, 20, 10, 36, 36, CK_NAV_SEL, 10, false);
+    ck_obj(brand, 8, 10, 20, 5, CK_ACCENT, 2, false);
+    ck_obj(brand, 8, 18, 20, 5, CK_ACCENT, 2, false);
+    ck_obj(brand, 8, 26, 20, 5, CK_DIM, 2, false);
 
-    s_hd_chip = ck_chip(scr, 420, 17, 184, 30, CK_WARN);
+    s_hd_host = ck_label(scr, "NAS", CK_F_TITLE, CK_TEXT, 68, 6);
+    s_hd_endpoint = ck_label(scr, "", CK_F_META, CK_DIM, 68, 36);
+
+    s_hd_chip = ck_chip(scr, 380, 13, 120, 30, CK_WARN);
     ck_chip_set(s_hd_chip, "等待数据", CK_WARN);
 
-    s_hd_clock = ck_label_r(scr, "--:--", CK_F_NUMM, CK_TEXT, CK_PAD, 14);
+    s_hd_clock = ck_label_r(scr, "--:--", CK_F_NUMS, CK_DIM, CK_PAD, 20);
     ck_signal_bars(scr, CK_SCR_W - CK_PAD - 130, 20, s_sig);
 }
 
@@ -278,7 +283,7 @@ static void build_rail(lv_obj_t *scr)
         lv_obj_add_event_cb(item, on_nav, LV_EVENT_CLICKED, (void *)(intptr_t)i);
     }
     // 唯一的指示条，挂在屏幕（rail 区域内），初始在第 1 项
-    s_nav_ind = ck_obj(scr, 12, CK_TOP_H + 18 + 12, 4, 64, CK_TEXT, 2, false);
+    s_nav_ind = ck_obj(scr, 12, CK_TOP_H + 18 + 12, 4, 64, CK_ACCENT, 2, false);
 }
 
 static void build_bottom(lv_obj_t *scr)
@@ -310,19 +315,20 @@ static lv_obj_t *make_page(lv_obj_t *content)
 
 static void metric_tile(lv_obj_t *p, int idx, int x, const char *name, uint32_t color, bool with_bar)
 {
-    lv_obj_t *t = ck_tile(p, x, 190, 209, 118);
-    ck_label(t, name, CK_F_CLABEL, CK_DIM, 14, 10);
-    s_ov_val[idx] = ck_label(t, "--", CK_F_NUMM, CK_TEXT, 14, 38);
-    s_ov_unit[idx] = ck_label(t, "", CK_F_META, CK_DIM, 85, 53);
-    // 副标题里会出现中文（"负载 … 核"、"NAS 持续运行"），必须用带中文的混排字体，
-    // 否则 LVGL 找不到字形会画成豆腐块（实测踩过）
-    s_ov_sub[idx] = ck_label(t, "", CK_F_CMETA, CK_IDLE, 14, 92);
-    if (with_bar) {
-        ck_bar_create(&s_ov_mbar[idx], t, 14, 80, 181, 6);
-        if (s_ov_mbar[idx].fill) {
-            lv_obj_set_style_bg_color(s_ov_mbar[idx].fill, lv_color_hex(color), 0);
-            lv_obj_set_style_bg_grad_color(s_ov_mbar[idx].fill, lv_color_hex(color), 0);
-        }
+    // 统一节奏：标签 17 / 主值 44 SemiBold / 细条 / 脚注 —— 四张卡结构一致、基线对齐
+    lv_obj_t *t = ck_tile(p, x, 190, 209, 128);
+    ck_label(t, name, CK_F_CLABEL, CK_DIM, 18, 12);
+    s_ov_val[idx] = ck_label(t, "--", CK_F_NUML, CK_TEXT, 18, 32);
+    s_ov_unit[idx] = ck_label(t, "", CK_F_NUMS, CK_DIM, 85, 57);
+    // 副标题里会出现中文（"负载 … 核"、"NAS 持续运行"），必须用带中文的混排字体
+    s_ov_sub[idx] = ck_label(t, "", CK_F_CMETA, CK_IDLE, 18, 104);
+    ck_bar_create(&s_ov_mbar[idx], t, 18, 92, 173, CK_BAR_H);
+    if (s_ov_mbar[idx].fill) {
+        // 运行时长没有百分比：用中性轨道占位，保证四卡节奏一致
+        uint32_t c = with_bar ? color : CK_TRACK;
+        lv_obj_set_style_bg_color(s_ov_mbar[idx].fill, lv_color_hex(c), 0);
+        lv_obj_set_style_bg_grad_color(s_ov_mbar[idx].fill, lv_color_hex(c), 0);
+        if (!with_bar) lv_obj_set_width(s_ov_mbar[idx].fill, 173);
     }
 }
 
@@ -333,13 +339,17 @@ static void build_overview(lv_obj_t *p)
     s_ov_verdict = ck_label(h, "等待", CK_F_CVERDICT, CK_WARN, 20, 46);
     s_ov_verdict_sub = ck_label(h, "等待首个数据帧", CK_F_CMETA, CK_DIM, 20, 128);
     s_ov_reason = ck_label(h, "", CK_F_CMETA, CK_DANGER, 20, 150);
+    // 右侧：告警计数 + 检查项（补右半空白，也回答"几条告警"）
+    s_ov_alert_n = ck_label_r(h, "0", CK_F_NUML, CK_OK, 28, 34);
+    ck_label_r(h, "ALERTS", CK_F_LABEL, CK_DIM, 28, 92);
+    s_ov_checks = ck_label_r(h, "6 CHECKS", CK_F_META, CK_IDLE, 28, 118);
 
     lv_obj_t *sp = ck_tile(p, 444, 0, 436, 176);
     ck_label(sp, "存储空间", CK_F_CLABEL, CK_DIM, 16, 12);
     for (int i = 0; i < 6; i++) {
         int y = 42 + i * 22;
         s_ov_vol_name[i] = ck_label(sp, "", CK_F_NUMS, CK_DIM, 16, y - 4);
-        ck_bar_create(&s_ov_vol_bar[i], sp, 130, y, 220, 8);
+        ck_bar_create(&s_ov_vol_bar[i], sp, 130, y + 1, 220, CK_BAR_H);
         s_ov_vol_pct[i] = ck_label_r(sp, "", CK_F_NUMS, CK_TEXT, 16, y - 5);
     }
 
@@ -348,16 +358,20 @@ static void build_overview(lv_obj_t *p)
     metric_tile(p, 2, 446, "最高温度", CK_TEMP, true);
     metric_tile(p, 3, 669, "运行时长", CK_ZFS, false);
 
-    lv_obj_t *tr = ck_tile(p, 0, 322, CK_CONT_W, CK_CONT_H - 322);
+    lv_obj_t *tr = ck_tile(p, 0, 326, CK_CONT_W, CK_CONT_H - 326);
     ck_label(tr, "CPU / 内存 · 百分比 · 近 3 分钟", CK_F_CMETA, CK_DIM, 16, 8);
-    ck_obj(tr, CK_CONT_W - 240, 12, 10, 10, CK_CPU, 3, false);
-    ck_label(tr, "CPU", CK_F_META, CK_CPU, CK_CONT_W - 222, 8);
-    ck_obj(tr, CK_CONT_W - 130, 12, 10, 10, CK_MEM, 3, false);
-    ck_label(tr, "MEM", CK_F_META, CK_MEM, CK_CONT_W - 112, 8);
-    ck_trend_create(&s_ov_cpu, tr, 14, 34, CK_CONT_W - 28, 46, CK_CPU, TREND_PTS);
-    ck_trend_create(&s_ov_mem, tr, 14, 88, CK_CONT_W - 28, 46, CK_MEM, TREND_PTS);
+    // 网格（顶/底两条细线）+ 线尾图例（"● MEM 55%" 式，比标题行色块更贴近数据）
+    const int SW = 760;
+    for (int g = 0; g < 2; g++) {
+        ck_divider(tr, 14, 36 + g * 44, SW, CK_LINE);
+        ck_divider(tr, 14, 92 + g * 44, SW, CK_LINE);
+    }
+    ck_trend_create(&s_ov_cpu, tr, 14, 36, SW, 44, CK_CPU, TREND_PTS);
+    ck_trend_create(&s_ov_mem, tr, 14, 92, SW, 44, CK_MEM, TREND_PTS);
     ck_trend_range(&s_ov_cpu, 100);
     ck_trend_range(&s_ov_mem, 100);
+    s_ov_leg_cpu = ck_label(tr, "", CK_F_NUMS, CK_CPU, 788, 46);
+    s_ov_leg_mem = ck_label(tr, "", CK_F_NUMS, CK_MEM, 788, 100);
 }
 
 /* ───────────────────────────── 构建：P1 存储 */
@@ -371,9 +385,9 @@ static void volume_cell(lv_obj_t *p, int i)
     s_st_vfs[i] = ck_label(c, "", CK_F_META, CK_IDLE, 120, 12);
     s_st_vuse[i] = ck_label(c, "", CK_F_META, CK_DIM, 220, 12);
     s_st_vpct[i] = ck_label_r(c, "", CK_F_NUMS, CK_TEXT, 14, 7);
-    ck_bar_create(&s_st_vbar[i], c, 14, 36, 402, 10);
-    ck_bar_tick(c, 14 + (int)(402 * 0.80f), 32, 18);
-    ck_bar_tick(c, 14 + (int)(402 * 0.90f), 32, 18);
+    ck_bar_create(&s_st_vbar[i], c, 14, 38, 402, 8);
+    ck_bar_tick(c, 14 + (int)(402 * 0.80f), 34, 16);
+    ck_bar_tick(c, 14 + (int)(402 * 0.90f), 34, 16);
 }
 
 static void build_storage(lv_obj_t *p)
@@ -431,18 +445,18 @@ static void build_network(lv_obj_t *p)
 
     lv_obj_t *tr = ck_tile(p, 0, 184, CK_CONT_W, 190);
     ck_label(tr, "吞吐趋势 · KB/s · 近 3 分钟", CK_F_CMETA, CK_DIM, 16, 8);
-    // 图例：色块 + 序列名（解决"两条曲线分不清谁是谁"）
-    ck_obj(tr, CK_CONT_W - 240, 12, 10, 10, CK_NET_DOWN, 3, false);
-    ck_label(tr, "DOWN", CK_F_META, CK_NET_DOWN, CK_CONT_W - 222, 8);
-    ck_obj(tr, CK_CONT_W - 130, 12, 10, 10, CK_NET_UP, 3, false);
-    ck_label(tr, "UP", CK_F_META, CK_NET_UP, CK_CONT_W - 112, 8);
-    ck_trend_create(&s_nw_down, tr, 14, 36, CK_CONT_W - 120, 60, CK_NET_DOWN, TREND_PTS);
-    ck_trend_create(&s_nw_up, tr, 14, 108, CK_CONT_W - 120, 60, CK_NET_UP, TREND_PTS);
+    // 网格 + 线尾图例（当前值贴在曲线末端，比标题行色块更像 UniFi）
+    const int SW = 720;
+    for (int g = 0; g < 2; g++) {
+        ck_divider(tr, 14, 36 + g * 56, SW, CK_LINE);
+        ck_divider(tr, 14, 108 + g * 56, SW, CK_LINE);
+    }
+    ck_trend_create(&s_nw_down, tr, 14, 36, SW, 56, CK_NET_DOWN, TREND_PTS);
+    ck_trend_create(&s_nw_up, tr, 14, 108, SW, 56, CK_NET_UP, TREND_PTS);
     ck_trend_range(&s_nw_down, 256);
     ck_trend_range(&s_nw_up, 256);
-    for (int i = 0; i < 3; i++) {
-        s_nw_axis[i] = ck_label(tr, "", CK_F_META, CK_DIM, CK_CONT_W - 106, 44 + i * 56);
-    }
+    s_nw_leg_down = ck_label(tr, "", CK_F_NUMS, CK_NET_DOWN, 744, 52);
+    s_nw_leg_up = ck_label(tr, "", CK_F_NUMS, CK_NET_UP, 744, 124);
 
     static const char *lbl[4] = { "峰值下行", "峰值上行", "采集延迟", "曲线采样" };
     int w = (CK_CONT_W - 3 * 14) / 4;
@@ -479,7 +493,7 @@ static void build_system(lv_obj_t *p)
     for (int i = 0; i < 7; i++) {
         int y = 42 + i * 28;                 // 7 行 × 28 = 196，起点 42 → 238 正好铺满面板
         s_sy_tname[i] = ck_label(t, "", CK_F_LABEL, CK_DIM, 16, y);
-        ck_bar_create(&s_sy_tbar[i], t, 150, y + 5, 170, 8);
+        ck_bar_create(&s_sy_tbar[i], t, 150, y + 6, 170, CK_BAR_H);
         s_sy_tval[i] = ck_label_r(t, "", CK_F_NUMS, CK_TEXT, 16, y - 2);
     }
 
@@ -511,13 +525,12 @@ static void update_top(void)
     ck_set(s_hd_host, s_st.host[0] ? s_st.host : "NAS");
     snprintf(b, sizeof(b), "%s:%d  %s", FNOS_HOST, FNOS_PORT, ip[0] ? ip : "无 IP");
     ck_set(s_hd_endpoint, b);
-    place_unit(s_hd_host, s_hd_endpoint, CK_PAD, 26);
 
     int64_t age = data_age_s();
     const char *txt;
     uint32_t col;
     switch (trust_state()) {
-    case TR_LIVE:    col = CK_OK;     snprintf(chip, sizeof(chip), "在线 · %llds", (long long)age); break;
+    case TR_LIVE:    col = CK_OK;     snprintf(chip, sizeof(chip), "在线"); break;
     case TR_WARMING: col = CK_WARN;   snprintf(chip, sizeof(chip), "等待数据"); break;
     case TR_STALE:   col = CK_WARN;   snprintf(chip, sizeof(chip), "陈旧 %llds", (long long)age); break;
     default:         col = CK_DANGER; snprintf(chip, sizeof(chip), "采集端离线"); break;
@@ -580,6 +593,12 @@ static void update_overview(void)
     else    snprintf(b, sizeof(b), "等待首个数据帧");
     ck_set(s_ov_verdict_sub, b);
 
+    snprintf(b, sizeof(b), "%d", s_st.nalerts);
+    ck_set(s_ov_alert_n, b);
+    ck_set_color(s_ov_alert_n, s_st.nalerts == 0 ? CK_OK : (alert_count("crit") ? CK_DANGER : CK_WARN));
+    snprintf(b, sizeof(b), "6 CHECKS");
+    ck_set(s_ov_checks, b);
+
     // 原因行：让"注意/危险"这个结论立刻可解释
     char why[48];
     if (trust_state() == TR_OFFLINE) {
@@ -598,7 +617,7 @@ static void update_overview(void)
         snprintf(b, sizeof(b), "%.0f", s_st.cpu.pct);
         ck_set(s_ov_val[0], b);
         ck_set(s_ov_unit[0], "%");
-        lv_obj_set_pos(s_ov_unit[0], 14 + lv_obj_get_width(s_ov_val[0]) + 8, 53);
+        lv_obj_set_pos(s_ov_unit[0], 18 + lv_obj_get_width(s_ov_val[0]) + 4, 57);
         snprintf(s, sizeof(s), "负载 %.2f · %d 核", s_st.cpu.load1, s_st.cpu.cores);
         ck_set(s_ov_sub[0], s);
         ck_bar_set_color(&s_ov_mbar[0], s_st.cpu.pct, CK_CPU);
@@ -606,7 +625,7 @@ static void update_overview(void)
         snprintf(b, sizeof(b), "%.0f", s_st.mem.pct);
         ck_set(s_ov_val[1], b);
         ck_set(s_ov_unit[1], "%");
-        lv_obj_set_pos(s_ov_unit[1], 14 + lv_obj_get_width(s_ov_val[1]) + 8, 53);
+        lv_obj_set_pos(s_ov_unit[1], 18 + lv_obj_get_width(s_ov_val[1]) + 4, 57);
         snprintf(s, sizeof(s), "%.1f / %.0f GB", s_st.mem.used_mb / 1024.0f, s_st.mem.total_mb / 1024.0f);
         ck_set(s_ov_sub[1], s);
         ck_bar_set_color(&s_ov_mbar[1], s_st.mem.pct, CK_MEM);
@@ -615,8 +634,8 @@ static void update_overview(void)
         for (int i = 0; i < s_st.ntemps; i++) if (s_st.temps[i].c > hot) hot = s_st.temps[i].c;
         snprintf(b, sizeof(b), "%.0f", hot);
         ck_set(s_ov_val[2], b);
-        ck_set(s_ov_unit[2], "C");
-        lv_obj_set_pos(s_ov_unit[2], 14 + lv_obj_get_width(s_ov_val[2]) + 8, 53);
+        ck_set(s_ov_unit[2], "°C");
+        lv_obj_set_pos(s_ov_unit[2], 18 + lv_obj_get_width(s_ov_val[2]) + 4, 57);
         if (s_st.ntemps > 0) snprintf(s, sizeof(s), "%s %.0f°C", s_st.temps[0].n, s_st.temps[0].c);
         else                 snprintf(s, sizeof(s), "--");
         ck_set(s_ov_sub[2], s);
@@ -634,18 +653,27 @@ static void update_overview(void)
         }
     }
 
+    // 线尾图例：当前值
+    if (ok) {
+        snprintf(b, sizeof(b), "CPU %.0f%%", s_st.cpu.pct);
+        ck_set(s_ov_leg_cpu, b);
+        snprintf(b, sizeof(b), "MEM %.0f%%", s_st.mem.pct);
+        ck_set(s_ov_leg_mem, b);
+    } else {
+        ck_set(s_ov_leg_cpu, "--");
+        ck_set(s_ov_leg_mem, "--");
+    }
+
     for (int i = 0; i < 6; i++) {
         if (ok && i < s_st.nvols) {
             ck_set(s_ov_vol_name[i], s_st.vols[i].mnt);
             snprintf(b, sizeof(b), "%.0f%%", s_st.vols[i].pct);
             ck_set(s_ov_vol_pct[i], b);
-            // 严重度色阶：绿→黄绿→黄→红，与存储页用量条的渐变一致
-            uint32_t c = CK_OK;
-            if (s_st.vols[i].pct >= 90) c = CK_DANGER;
-            else if (s_st.vols[i].pct >= 80) c = CK_WARN;
-            else if (s_st.vols[i].pct >= 60) c = CK_ZFS;
-            ck_set_color(s_ov_vol_pct[i], c);
-            ck_bar_set(&s_ov_vol_bar[i], s_st.vols[i].pct);
+            ck_set_color(s_ov_vol_pct[i], CK_TEXT);      // 数值统一白，语义色只给条
+            uint32_t c = CK_ACCENT;
+            if (s_st.vols[i].pct >= 85) c = CK_DANGER;
+            else if (s_st.vols[i].pct >= 70) c = CK_WARN;
+            ck_bar_set_color(&s_ov_vol_bar[i], s_st.vols[i].pct, c);
         } else {
             ck_set(s_ov_vol_name[i], "");
             ck_set(s_ov_vol_pct[i], "");
@@ -712,10 +740,11 @@ static void update_storage(void)
             ck_set(s_st_vfs[i], s_st.vols[i].fs);
             snprintf(b, sizeof(b), "%.0f%%", s_st.vols[i].pct);
             ck_set(s_st_vpct[i], b);
-            uint32_t c = CK_OK;
-            if (s_st.vols[i].pct >= 90) c = CK_DANGER;
-            else if (s_st.vols[i].pct >= 80) c = CK_WARN;
-            ck_set_color(s_st_vpct[i], c);
+            ck_set_color(s_st_vpct[i], CK_TEXT);          // 数值统一白，语义色只给条
+            uint32_t c = CK_ACCENT;
+            if (s_st.vols[i].pct >= 85) c = CK_DANGER;
+            else if (s_st.vols[i].pct >= 70) c = CK_WARN;
+            ck_bar_set_color(&s_st_vbar[i], s_st.vols[i].pct, c);
             char c1[24], c2[24];
             fmt_cap(c1, sizeof(c1), s_st.vols[i].used_gb);
             fmt_cap(c2, sizeof(c2), s_st.vols[i].total_gb);
@@ -812,9 +841,18 @@ static void update_network(void)
     ck_trend_range(&s_nw_up, top);
     ck_trend_range(&s_nw_mini_down, top);
     ck_trend_range(&s_nw_mini_up, top);
-    for (int i = 0; i < 3; i++) {
-        fmt_rate(b, sizeof(b), (float)(top - (top / 2) * i), NULL);
-        ck_set(s_nw_axis[i], b);
+    // 线尾图例：当前值贴在曲线末端（替代纵轴刻度，更接近 UniFi）
+    if (ok) {
+        char l1[32], l2[32];
+        fmt_rate(l1, sizeof(l1), s_st.net.rx_kbs, &s_mb_down);
+        fmt_rate(l2, sizeof(l2), s_st.net.tx_kbs, &s_mb_up);
+        snprintf(b, sizeof(b), "%s", l1);
+        ck_set(s_nw_leg_down, b);
+        snprintf(b, sizeof(b), "%s", l2);
+        ck_set(s_nw_leg_up, b);
+    } else {
+        ck_set(s_nw_leg_down, "--");
+        ck_set(s_nw_leg_up, "--");
     }
 }
 
@@ -910,16 +948,13 @@ static void drain_history(void)
     int64_t next = s_hist_seq;
     int n = fnos_data_hist_read(s_hist_seq, smp, 12, &next);
     if (n <= 0) return;
-    static int div;                       // 隔点入图：图表 2 秒一个点，窗口仍是 3 分钟
     for (int i = 0; i < n; i++) {
-        if ((div++ & 1) == 0) {
-            ck_trend_push(&s_ov_cpu, (int)(smp[i].cpu + 0.5f));
-            ck_trend_push(&s_ov_mem, (int)(smp[i].mem + 0.5f));
-            ck_trend_push(&s_nw_down, (int)(smp[i].rx_kbs + 0.5f));
-            ck_trend_push(&s_nw_up, (int)(smp[i].tx_kbs + 0.5f));
-            ck_trend_push(&s_nw_mini_down, (int)(smp[i].rx_kbs + 0.5f));
-            ck_trend_push(&s_nw_mini_up, (int)(smp[i].tx_kbs + 0.5f));
-        }
+        ck_trend_push(&s_ov_cpu, (int)(smp[i].cpu + 0.5f));
+        ck_trend_push(&s_ov_mem, (int)(smp[i].mem + 0.5f));
+        ck_trend_push(&s_nw_down, (int)(smp[i].rx_kbs + 0.5f));
+        ck_trend_push(&s_nw_up, (int)(smp[i].tx_kbs + 0.5f));
+        ck_trend_push(&s_nw_mini_down, (int)(smp[i].rx_kbs + 0.5f));
+        ck_trend_push(&s_nw_mini_up, (int)(smp[i].tx_kbs + 0.5f));
     }
     s_hist_seq = next;
 }

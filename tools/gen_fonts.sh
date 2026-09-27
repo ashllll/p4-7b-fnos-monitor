@@ -62,26 +62,24 @@ PYEOF
 )
 echo "中文字形数: $(printf '%s' "$CJK" | python3 -c 'import sys;print(len(sys.stdin.read().strip()))')"
 
-echo "== 等宽数字（数值列，tabular） =="
-$LV --font PlexMono-SemiBold.ttf --size 84 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
-    --symbols "0123456789.,:%-+/ " --lv-include lvgl.h -o "$OUT/ui_font_mono_84.c"
-$LV --font PlexMono-SemiBold.ttf --size 52 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
-    -r 0x20-0x7E -r 0xB0 -r 0xB7 --lv-include lvgl.h -o "$OUT/ui_font_mono_52.c"
-$LV --font PlexMono-Medium.ttf --size 34 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
-    -r 0x20-0x7E -r 0xB0 -r 0xB7 --lv-include lvgl.h -o "$OUT/ui_font_mono_34.c"
-$LV --font PlexMono-Medium.ttf --size 20 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
-    -r 0x20-0x7E -r 0xB0 -r 0xB7 --lv-include lvgl.h -o "$OUT/ui_font_mono_20.c"
+echo "== 数值（Inter SemiBold/Medium，UniFi 风格） =="
+$LV --font Inter-SemiBold.ttf --size 56 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
+    --symbols "0123456789.,:%-+/ °" --lv-include lvgl.h -o "$OUT/ui_font_num_56.c"
+$LV --font Inter-SemiBold.ttf --size 44 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
+    -r 0x20-0x7E -r 0xB0 -r 0xB7 --lv-include lvgl.h -o "$OUT/ui_font_num_44.c"
+$LV --font Inter-Medium.ttf --size 28 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
+    -r 0x20-0x7E -r 0xB0 -r 0xB7 --lv-include lvgl.h -o "$OUT/ui_font_num_28.c"
+$LV --font Inter-Medium.ttf --size 17 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
+    -r 0x20-0x7E -r 0xB0 -r 0xB7 --lv-include lvgl.h -o "$OUT/ui_font_num_17.c"
 
-echo "== 拉丁标签（Plex Sans） =="
-$LV --font PlexSans-SemiBold.ttf --size 24 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
-    -r 0x20-0x7E -r 0xB0 -r 0xB7 --lv-include lvgl.h -o "$OUT/ui_font_sans_24.c"
-$LV --font PlexSans-Medium.ttf --size 20 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
-    -r 0x20-0x7E -r 0xB0 -r 0xB7 --lv-include lvgl.h -o "$OUT/ui_font_sans_20.c"
-$LV --font PlexSans-Regular.ttf --size 15 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
-    -r 0x20-0x7E -r 0xB0 -r 0xB7 --lv-include lvgl.h -o "$OUT/ui_font_sans_15.c"
+echo "== 文本（Inter Medium/Regular） =="
+$LV --font Inter-Medium.ttf --size 15 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
+    -r 0x20-0x7E -r 0xB0 -r 0xB7 --lv-include lvgl.h -o "$OUT/ui_font_txt_15.c"
+$LV --font Inter-Regular.ttf --size 13 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
+    -r 0x20-0x7E -r 0xB0 -r 0xB7 --lv-include lvgl.h -o "$OUT/ui_font_txt_13.c"
 
 echo "== 中文标签（Noto Sans SC 子集，含 ASCII 便于混排） =="
-for spec in "40:Medium:ui_font_cjk_40" "24:Medium:ui_font_cjk_24" "20:Medium:ui_font_cjk_20" "15:Regular:ui_font_cjk_15"; do
+for spec in "40:Medium:ui_font_cjk_40" "24:Medium:ui_font_cjk_24" "17:Medium:ui_font_cjk_17" "13:Regular:ui_font_cjk_13"; do
   size="${spec%%:*}"; rest="${spec#*:}"; weight="${rest%%:*}"; name="${rest#*:}"
   $LV --font "NotoSansSC-${weight}.ttf" --size "$size" --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
       -r 0x20-0x7E -r 0xB0 -r 0xB7 --symbols "$CJK" --lv-include lvgl.h -o "$OUT/$name.c"
