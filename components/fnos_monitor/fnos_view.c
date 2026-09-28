@@ -37,6 +37,8 @@ enum { PG_OVERVIEW = 0, PG_STORAGE, PG_NETWORK, PG_SYSTEM };
 
 static bool s_created;
 static bool s_night;
+static volatile bool s_night_req;   // 非 LVGL 任务只写这个标志
+static void apply_night(void);
 static int  s_page, s_press_x;
 static lv_obj_t *s_chrome_scr, *s_chrome_top, *s_chrome_rail, *s_chrome_bot, *s_chrome_content;
 static lv_obj_t *s_pages[PAGE_N];
@@ -947,6 +949,7 @@ static void view_tick(lv_timer_t *t)
         }
     }
 #endif
+    if (s_night_req != s_night) apply_night();   // LVGL 任务里落地夜间配色
     fnos_data_get(&s_st);
     drain_history();
     update_top();
@@ -961,8 +964,16 @@ static void view_tick(lv_timer_t *t)
 
 // 夜间配色（由 main.cpp 的夜间定时器调用）：纯黑底、面板更暗、趋势纹理降透明度。
 // 不做整屏 alpha 合成（opa_layered 会让每帧都走一遍全屏图层，这板子绘制预算有限）。
+// ⚠️ 线程安全红线：从 esp_timer 任务调用，**只能置标志**；
+// 直接改 LVGL 样式会让 esp_timer 卡死刷爆看门狗、LVGL 任务停摆（闪屏/白屏）。
 void fnos_view_set_night(bool on)
 {
+    s_night_req = on;
+}
+
+static void apply_night(void)
+{
+    bool on = s_night_req;
     if (s_night == on) return;
     s_night = on;
     uint32_t bg = on ? 0x000000 : CK_BG;

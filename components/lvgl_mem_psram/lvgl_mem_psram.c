@@ -52,15 +52,9 @@ void *lv_realloc_core(void *p, size_t new_size)
         return lv_malloc_core(new_size);
     }
 
-    /* 不直接用 heap_caps_realloc：原块可能在 PSRAM、新块可能落到内部 RAM，
-     * 手动搬一次更稳，也避免跨区域 realloc 的未定义行为。 */
-    size_t old_size = heap_caps_get_allocated_size(p);
-    void *q = lv_malloc_core(new_size);
-    if (q == NULL) {
-        return NULL;
-    }
-    memcpy(q, p, (old_size < new_size) ? old_size : new_size);
-    heap_caps_free(p);
+    /* 定点测试：改用 heap_caps_realloc（同区域内 realloc，失败再手动搬） */
+    void *q = heap_caps_realloc(p, new_size, LVGL_MEM_CAPS_PRIMARY);
+    if (q == NULL) q = heap_caps_realloc(p, new_size, LVGL_MEM_CAPS_FALLBACK);
     return q;
 }
 

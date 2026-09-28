@@ -1,0 +1,1060 @@
+[   0.51] I (2299) sdio_wrapper: SDIO master: Data-Lines: 4-bit Freq(KHz)[40000 KHz]
+[   0.51] I (2299) sdio_wrapper: GPIOs: CLK[18] CMD[19] D0[14] D1[15] D2[16] D3[17] Slave_Reset[54]
+[   0.51] I (2299) H_SDIO_DRV: Starting SDIO process rx task
+[   0.51] I (2302) sdio_wrapper: Queues: Tx[20] Rx[20] SDIO-Rx-Mode[1]
+[   0.51] Name: 
+[   0.51] Type: SDIO
+[   0.51] Speed: 40.00 MHz (limit: 40.00 MHz)
+[   0.51] Size: 0MB
+[   0.51] CSD: ver=1, sector_size=0, capacity=0 read_bl_len=0
+[   0.51] SCR: sd_spec=0, bus_width=0
+[   0.51] TUPLE: DEVICE, size: 3: D9 01 FF 
+[   0.51] TUPLE: MANFID, size: 4
+[   0.51]   MANF: 0092, CARD: 6666
+[   0.51] TUPLE: FUNCID, size: 2: 0C 00 
+[   0.51] TUPLE: FUNCE, size: 4: 00 00 02 32 
+[   0.51] TUPLE: CONFIG, size: 5: 01 01 00 02 07 
+[   0.51] TUPLE: CFTABLE_ENTRY, size: 8
+[   0.51]   INDX: C1, Intface: 1, Default: 1, Conf-Entry-Num: 1
+[   0.51]   IF: 41
+[   0.51]   FS: 30, misc: 0, mem_space: 1, irq: 1, io_space: 0, timing: 0, power: 0
+[   0.51]   IR: 30, mask: 1,   IRQ: FF FF
+[   0.51]   LEN: FFFF
+[   0.51] TUPLE: END
+[   0.51] I (2385) sdio_wrapper: Function 0 Blocksize: 512
+[   0.51] I (2389) sdio_wrapper: Function 1 Blocksize: 512
+[   0.51] I (2393) H_SDIO_DRV: SDIO Host operating in STREAMING MODE
+[   0.51] I (2398) H_SDIO_DRV: generate slave intr
+[   0.51] I (2404) transport: Received INIT event from ESP32 peripheral
+[   0.51] I (2407) transport: EVENT: 12
+[   0.51] I (2410) transport: EVENT: 11
+[   0.51] I (2413) transport: capabilities: 0xd
+[   0.51] I (2416) transport: Features supported are:
+[   0.51] I (2420) transport: 	 * WLAN
+[   0.86] I (2423) transport: 	   - HCI over SDIO
+[   0.86] I (2426) transport: 	   - BLE only
+[   0.86] I (2429) transport: EVENT: 13
+[   0.86] I (2432) transport: ESP board type is : 13 
+[   0.86] 
+[   0.86] I (2436) transport: Base transport is set-up
+[   0.86] 
+[   0.86] I (2440) transport: Slave chip Id[12]
+[   0.86] I (2444) hci_stub_drv: Host BT Support: Disabled
+[   0.86] I (2448) H_SDIO_DRV: Received INIT event
+[   1.54] I (3453) fnos_net: wifi station started; awaiting ip
+[   1.54] I (3454) esp_lvgl:adapter: LVGL adapter initialized successfully
+[   1.54] W (3454) ledc: GPIO 32 is not usable, maybe conflict with others
+[   1.54] I (3458) ESP32_P4_EV: MIPI DSI PHY Powered on
+[   1.54] I (3463) ESP32_P4_EV: Install MIPI DSI LCD control panel
+[   1.54] I (3467) ESP32_P4_EV: Install EK79007 LCD control panel
+[   1.54] I (3472) ek79007: version: 2.0.2
+[   1.54] I (3474) H_API: esp_wifi_remote_connect
+[   1.79] I (3649) ESP32_P4_EV: Display initialized
+[   1.79] I (3650) esp_lvgl:bridge_v9: Initializing hardware resources
+[   1.79] I (3650) esp_lvgl:bridge_v9: Hardware resources initialized successfully
+[   1.79] I (3653) esp_lvgl:bridge: Initializing hardware resources
+[   1.79] I (3658) esp_lvgl:bridge: Hardware resources initialized successfully
+[   1.79] W (3664) esp_lvgl:bridge_v9: on_frame_buf_complete unavailable; buffer-switch release and dummy-draw may not function on MIPI DSI
+[   1.79] I (3676) ESP32_P4_EV: Touch 0x5d found
+[   1.79] I (3679) GT911: I2C address initialization procedure skipped - using default GT9xx setup
+[   1.79] I (3687) GT911: TouchPad_ID:0x39,0x31,0x31
+[   1.79] I (3691) GT911: TouchPad_Config_Version:91
+[   1.79] W (3695) esp_lvgl:touch: LV_USE_GESTURE_RECOGNITION is disabled; only single-point pointer events are available
+[   1.79] I (3704) esp_lvgl:touch: Touch input device registered successfully (IRQ mode: disabled)
+[   1.79] I (3713) esp_lvgl:adapter: LVGL task started successfully
+[   1.79] I (3717) ESP32_P4_EV: Setting LCD backlight: 100%
+[   2.00] I (3722) ESP32_P4_EV: Setting LCD backlight: 45%
+[   2.00] I (3726) main: heap display        internal=244KB largest=204KB dma=206KB psram=27577KB
+[   2.00] I (3869) fnos_view: dashboard v2 created (4 pages, 180 s window)
+[   2.00] I (3869) main: heap ui             internal=244KB largest=204KB dma=206KB psram=27489KB
+[   2.00] I (3924) fnos_data: polling http://192.168.0.119:8799/api/v1/status every 1000 ms
+[   2.00] I (3924) main: heap polling        internal=243KB largest=204KB dma=205KB psram=27479KB
+[   2.00] I (3930) ESP32_P4_EV: Setting LCD backlight: 45%
+[   2.00] I (3934) main: backlight 45% (day)
+[   2.00] I (3937) main: boot complete
+[   2.00] I (3940) main_task: Returned from app_main()
+[   2.83] Guru Meditation Error: Core  0 panic'ed (Load access fault). Exception was unhandled.
+[   2.83] 
+[   2.83] Core  0 register dump:
+[   2.83] MEPC    : 0x4fc1b714  RA      : 0x480ef1e2  SP      : 0x48511260  GP      : 0x4ff56f80  
+[   2.83] TP      : 0x48511810  T0      : 0x0000000d  T1      : 0x90000000  T2      : 0xffffffff  
+[   2.83] S0/FP   : 0x00000000  S1      : 0x00000014  A0      : 0x00000014  A1      : 0xffffffff  
+[   2.83] A2      : 0x0000000a  A3      : 0x7f7f7f7f  A4      : 0x00000000  A5      : 0x00000018  
+[   2.83] A6      : 0xa0000000  A7      : 0x0000000a  S2      : 0x4817f000  S3      : 0x00000009  
+[   2.83] S4      : 0xffffffff  S5      : 0x0000000a  S6      : 0x00000002  S7      : 0x00000073  
+[   2.83] S8      : 0x00000009  S9      : 0x00000000  S10     : 0xffffffff  S11     : 0x48511384  
+[   2.83] T3      : 0x00000000  T4      : 0x00000000  T5      : 0xffffffff  T6      : 0x00000000  
+[   2.83] MSTATUS : 0x00011881  MTVEC   : 0x4ff40003  MCAUSE  : 0x00000005  MTVAL   : 0x00000014  
+[   2.83] MHARTID : 0x00000000  
+[   2.83] 
+[   2.83] Stack memory:
+[   2.83] 48511260: 0x00000001 0x4ff5ec14 0x4ff87710 0x4810dea6 0x00000000 0x00000000 0x00000000 0x00000000
+[   2.83] 48511280: 0x00000000 0x00000001 0x0000004f 0x00000001 0x00000000 0x48113744 0x00000000 0x00000000
+[   2.83] 485112a0: 0x00000000 0x00000258 0xffffffbf 0x00000002 0x000003f0 0x4ff6da00 0x00000080 0x00000000
+[   2.83] 485112c0: 0x0012c000 0x48188e00 0x00000006 0x4fc116ea 0x0012c000 0x48188e00 0x00000006 0x4ff505c0
+[   2.83] 485112e0: 0x00000000 0x4ff6da00 0x48188e00 0x0012c000 0x4ff4c35c 0x4ff4f440 0x48511370 0x4ff56f80
+[   2.83] 48511300: 0x48511810 0x4fc114ec 0x4ff4c68a 0x00000001 0x00000000 0x4ff86da8 0x00000000 0x500e5014
+[   2.83] 48511320: 0x500e5010 0x00000000 0x00000000 0x0000001f 0x08000000 0x4fc11284 0x00000001 0x48511734
+[   2.83] 48511340: 0x48110000 0x4ff6da00 0x000003f0 0x00000002 0x0000000a 0x00000000 0x00000000 0x48188e00
+[   2.83] 48511360: 0x1fffffff 0x4ff6da00 0x48110000 0xffffffff 0x4851137c 0x00000001 0x00000007 0x4810de9d
+[   2.83] 48511380: 0x00000007 0x4851141f 0x00000001 0x48110000 0x00000000 0x00000258 0xffffffbf 0x00000002
+[   2.83] 485113a0: 0x000003f0 0x4ff6da00 0x480fed20 0x00000004 0x4ff5dfa8 0x4ff86d90 0x4ff86a04 0x480272b8
+[   2.83] 485113c0: 0x480ffe50 0x00000001 0x485113f4 0x4802ee24 0x00000000 0x480ff064 0x4ff5c48c 0x00000000
+[   2.83] 485113e0: 0x480ff098 0x00000004 0x00000400 0x00000002 0x00000095 0x480ffd9c 0x480ffd9c 0x00010000
+[   2.83] 48511400: 0x000003f0 0x000001c2 0x000003f3 0x00000203 0x00000042 0x00000000 0x00000000 0x30393134
+[   2.83] 48511420: 0xffffffff 0x00000000 0x48188e00 0x0012c000 0x4ff4c35c 0x4ff4bb5e 0x485114b0 0x4ff56f80
+[   2.83] 48511440: 0x48511810 0x00000000 0x381e0000 0x00003000 0x00000001 0x00000000 0x4850e668 0x500e5014
+[   2.83] 48511460: 0x500e5010 0x00000000 0x00000000 0x0000001f 0x00000004 0x00000002 0x4850e668 0x4850e614
+[   2.83] 48511480: 0x4850e638 0x4851150c 0x02625a00 0x4850e518 0x4850e528 0x00000000 0x00000000 0x00000000
+[   2.83] 485114a0: 0x00001112 0x4850e528 0x00000000 0x00000000 0x4810de50 0x4850e608 0x4850e5b4 0x4ff4b6a0
+[   2.83] 485114c0: 0x00000012 0x48511646 0x00000000 0x00000000 0x0000005c 0x00000000 0x00000000 0x00000cba
+[   2.83] 485114e0: 0x000000ad 0x4850e528 0x4850e518 0x00000000 0x00000006 0xffffffff 0x4850e204 0x480f27f0
+[   2.83] 48511500: 0x00000012 0xffffffff 0x0001e204 0x00000001 0x0000005c 0x00000000 0x0000000a 0x4850e518
+[   2.83] 48511520: 0x00000000 0x00000004 0x00000000 0x00000000 0x00000014 0x4850e5a8 0x4850e554 0x4ff4b6d8
+[   2.83] 48511540: 0x00000006 0x4850e5a8 0x00000000 0x00000000 0x4ff56ebc 0x0000000c 0x00000000 0x48114000
+[   2.83] 48511560: 0x48177000 0x00000004 0x485115a0 0x00000000 0x00000004 0xffffffff 0x4850e674 0x480f2d3e
+[   2.83] 48511580: 0x00000006 0xffffffff 0x00000002 0x4850e674 0x00000003 0xffffffff 0x48511648 0x480f3d82
+[   2.83] 485115a0: 0x00003000 0x00000000 0x00000000 0x00000000 0x00000900 0x48511646 0x00000000 0x00000002
+[   2.83] 485115c0: 0x00000900 0x48511670 0x00000000 0x00000001 0x00001000 0x00000000 0x00000000 0x00000000
+[   2.83] 485115e0: 0x00000000 0x00000000 0x00000000 0x00000000 0x00000000 0x00000000 0x00000000 0x00000000
+[   2.83] 48511600: 0x00000000 0x00000000 0x00000000 0x00000000 0x00000000 0x00000001 0x48511670 0x48511680
+[   2.83] 48511620: 0x485116c7 0x4810e000 0x00000000 0x00000000 0x00000000 0x00000001 0x4ff876a8 0x4ff4f1ee
+[   3.11] 48511640: 0x4ff5fa68 0x00000000 0x4ff5fa14 0x4ff4f3ee 0x00000000 0x00000001 0x4ff5fa14 0x4ff4b182
+[   3.11] 
+[   3.11] 
+[   3.11] 
+[   3.11] ELF file SHA256: 440d62121
+[   3.11] 
+[   3.11] Rebooting...
+[   3.11] ESP-ROM:esp32p4-eco7-20260109
+[   3.11] Build:Jan  9 2026
+[   3.11] rst:0xc (SW_CPU_RESET),boot:0xf (SPI_FAST_FLASH_BOOT)
+[   3.11] Core0 Saved PC:0x4ff4ace6
+[   3.11] Core1 Saved PC:0x4ff444ce
+[   3.11] SPI mode:DIO, clock div:1
+[   3.11] load:0x4ffb60d0,len:0x11f0
+[   3.11] load:0x4ffac2c0,len:0xd5c
+[   3.11] load:0x4ffaefc0,len:0x3408
+[   3.11] entry 0x4ffac2c0
+[   3.11] I (228) hex_psram: vendor id    : 0x0d (AP)
+[   3.11] I (229) hex_psram: Latency      : 0x01 (Fixed)
+[   3.11] I (229) hex_psram: DriveStr.    : 0x00 (25 Ohm)
+[   3.11] I (229) hex_psram: dev id       : 0x03 (generation 4)
+[   3.11] I (234) hex_psram: density      : 0x07 (256 Mbit)
+[   3.11] I (239) hex_psram: good-die     : 0x06 (Pass)
+[   3.11] I (243) hex_psram: SRF          : 0x02 (Slow Refresh)
+[   3.11] I (247) hex_psram: BurstType    : 0x00 ( Wrap)
+[   3.11] I (252) hex_psram: BurstLen     : 0x03 (2048 Byte)
+[   3.11] I (256) hex_psram: BitMode      : 0x01 (X16 Mode)
+[   3.11] I (261) hex_psram: Readlatency  : 0x04 (14 cycles@Fixed)
+[   3.11] I (266) hex_psram: DriveStrength: 0x00 (1/1)
+[   3.11] I (270) MSPI Timing: Enter psram timing tuning
+[   3.32] I esp_psram: Found 32MB PSRAM device
+[   3.32] I esp_psram: Speed: 200MHz
+[   3.32] I (457) mmu_psram: .rodata xip on psram
+[   3.67] I (504) mmu_psram: .text xip on psram
+[   3.67] I (505) hex_psram: psram CS IO is dedicated
+[   3.67] I (505) cpu_start: Multicore app
+[   3.97] I (928) esp_psram: SPI SRAM memory test OK
+[   3.97] I (938) cpu_start: GPIO 38 and 37 are used as console UART I/O pins
+[   3.97] I (938) cpu_start: Pro cpu start user code
+[   3.97] I (938) cpu_start: cpu freq: 400000000 Hz
+[   3.97] I (940) app_init: Application information:
+[   3.97] I (944) app_init: Project name:     fnos_monitor
+[   3.97] I (948) app_init: App version:      0.1.0
+[   3.97] I (952) app_init: Compile time:     Sep 28 2026 07:59:20
+[   3.97] I (957) app_init: ELF file SHA256:  440d62121...
+[   3.97] I (961) app_init: ESP-IDF:          5.5.3
+[   3.97] I (965) efuse_init: Min chip rev:     v3.0
+[   3.97] I (969) efuse_init: Max chip rev:     v3.99 
+[   3.97] I (973) efuse_init: Chip rev:         v3.2
+[   3.97] I (976) heap_init: Initializing. RAM available for dynamic allocation:
+[   3.97] I (983) heap_init: At 4FF5E210 len 0005CDB0 (371 KiB): RETENT_RAM
+[   3.97] I (989) heap_init: At 4FFBAFC0 len 00004BF0 (18 KiB): RAM
+[   3.97] I (994) heap_init: At 501080D8 len 00000028 (0 KiB): RTCRAM
+[   3.97] I (999) heap_init: At 501081A0 len 00007E60 (31 KiB): RTCRAM
+[   3.97] I (1004) heap_init: At 30100198 len 00001E68 (7 KiB): TCM
+[   4.32] I (1010) esp_psram: Adding pool of 31215K of PSRAM memory to heap allocator
+[   4.32] I (1016) esp_psram: Adding pool of 8K of PSRAM memory gap generated due to end address alignment of irom to the heap allocator
+[   4.32] I (1027) esp_psram: Adding pool of 0K of PSRAM memory gap generated due to end address alignment of drom to the heap allocator
+[   4.32] I (1039) spi_flash: detected chip: gd
+[   4.32] I (1042) spi_flash: flash io: qio
+[   4.32] I (1045) host_init: ESP Hosted : Host chip_ip[18]
+[   4.32] I (1049) H_API: ESP-Hosted starting. Hosted_Tasks: prio:23, stack: 5120 RPC_task_stack: 5120
+[   4.32] sdio_mempool_create free:32378568 min-free:32378568 lfb-def:31457280 lfb-8bit:31457280
+[   4.32] 
+[   4.32] I (1066) H_API: ** add_esp_wifi_remote_channels **
+[   4.32] I (1070) transport: Add ESP-Hosted channel IF[1]: S[0] Tx[0x4800b6dc] Rx[0x4801a922]
+[   4.32] I (1077) transport: Add ESP-Hosted channel IF[2]: S[0] Tx[0x4800b622] Rx[0x4801a922]
+[   4.32] I (1085) sleep_gpio: Configure to isolate all GPIO pins in sleep state
+[   4.32] I (1091) sleep_gpio: Enable automatic switching of GPIO sleep configuration
+[   4.32] I (1098) main_task: Started on CPU0
+[   4.32] I (1102) main_task: Calling app_main()
+[   4.32] I (1108) main: fnOS NAS dashboard booting (agent http://192.168.0.119:8799)
+[   4.32] I (1111) main: heap boot           internal=364KB largest=304KB dma=326KB psram=31220KB
+[   4.32] I (1120) transport: Attempt connection with slave: retry[0]
+[   4.32] I (1124) transport: Reset slave using GPIO[54]
+[   4.32] I (1128) os_wrapper_esp: GPIO [54] configured
+[   5.29] I (2298) sdio_wrapper: SDIO master: Data-Lines: 4-bit Freq(KHz)[40000 KHz]
+[   5.29] I (2298) sdio_wrapper: GPIOs: CLK[18] CMD[19] D0[14] D1[15] D2[16] D3[17] Slave_Reset[54]
+[   5.29] I (2298) H_SDIO_DRV: Starting SDIO process rx task
+[   5.29] I (2301) sdio_wrapper: Queues: Tx[20] Rx[20] SDIO-Rx-Mode[1]
+[   5.29] Name: 
+[   5.29] Type: SDIO
+[   5.29] Speed: 40.00 MHz (limit: 40.00 MHz)
+[   5.29] Size: 0MB
+[   5.29] CSD: ver=1, sector_size=0, capacity=0 read_bl_len=0
+[   5.29] SCR: sd_spec=0, bus_width=0
+[   5.29] TUPLE: DEVICE, size: 3: D9 01 FF 
+[   5.29] TUPLE: MANFID, size: 4
+[   5.29]   MANF: 0092, CARD: 6666
+[   5.29] TUPLE: FUNCID, size: 2: 0C 00 
+[   5.29] TUPLE: FUNCE, size: 4: 00 00 02 32 
+[   5.29] TUPLE: CONFIG, size: 5: 01 01 00 02 07 
+[   5.29] TUPLE: CFTABLE_ENTRY, size: 8
+[   5.29]   INDX: C1, Intface: 1, Default: 1, Conf-Entry-Num: 1
+[   5.29]   IF: 41
+[   5.29]   FS: 30, misc: 0, mem_space: 1, irq: 1, io_space: 0, timing: 0, power: 0
+[   5.29]   IR: 30, mask: 1,   IRQ: FF FF
+[   5.29]   LEN: FFFF
+[   5.29] TUPLE: END
+[   5.29] I (2384) sdio_wrapper: Function 0 Blocksize: 512
+[   5.29] I (2388) sdio_wrapper: Function 1 Blocksize: 512
+[   5.29] I (2392) H_SDIO_DRV: SDIO Host operating in STREAMING MODE
+[   5.29] I (2397) H_SDIO_DRV: generate slave intr
+[   5.29] I (2404) transport: Received INIT event from ESP32 peripheral
+[   5.29] I (2406) transport: EVENT: 12
+[   5.29] I (2409) transport: EVENT: 11
+[   5.29] I (2412) transport: capabilities: 0xd
+[   5.29] I (2415) transport: Features supported are:
+[   5.29] I (2419) transport: 	 * WLAN
+[   5.63] I (2422) transport: 	   - HCI over SDIO
+[   5.63] I (2425) transport: 	   - BLE only
+[   5.63] I (2428) transport: EVENT: 13
+[   5.63] I (2431) transport: ESP board type is : 13 
+[   5.63] 
+[   5.63] I (2435) transport: Base transport is set-up
+[   5.63] 
+[   5.63] I (2439) transport: Slave chip Id[12]
+[   5.63] I (2443) hci_stub_drv: Host BT Support: Disabled
+[   5.63] I (2447) H_SDIO_DRV: Received INIT event
+[   6.32] I (3452) fnos_net: wifi station started; awaiting ip
+[   6.32] I (3452) esp_lvgl:adapter: LVGL adapter initialized successfully
+[   6.32] W (3453) ledc: GPIO 32 is not usable, maybe conflict with others
+[   6.32] I (3457) ESP32_P4_EV: MIPI DSI PHY Powered on
+[   6.32] I (3462) ESP32_P4_EV: Install MIPI DSI LCD control panel
+[   6.32] I (3466) ESP32_P4_EV: Install EK79007 LCD control panel
+[   6.32] I (3471) ek79007: version: 2.0.2
+[   6.32] I (3473) H_API: esp_wifi_remote_connect
+[   6.57] I (3648) ESP32_P4_EV: Display initialized
+[   6.57] I (3649) esp_lvgl:bridge_v9: Initializing hardware resources
+[   6.57] I (3649) esp_lvgl:bridge_v9: Hardware resources initialized successfully
+[   6.57] I (3652) esp_lvgl:bridge: Initializing hardware resources
+[   6.57] I (3657) esp_lvgl:bridge: Hardware resources initialized successfully
+[   6.57] W (3663) esp_lvgl:bridge_v9: on_frame_buf_complete unavailable; buffer-switch release and dummy-draw may not function on MIPI DSI
+[   6.57] I (3675) ESP32_P4_EV: Touch 0x5d found
+[   6.57] I (3678) GT911: I2C address initialization procedure skipped - using default GT9xx setup
+[   6.57] I (3686) GT911: TouchPad_ID:0x39,0x31,0x31
+[   6.57] I (3690) GT911: TouchPad_Config_Version:91
+[   6.57] W (3694) esp_lvgl:touch: LV_USE_GESTURE_RECOGNITION is disabled; only single-point pointer events are available
+[   6.57] I (3703) esp_lvgl:touch: Touch input device registered successfully (IRQ mode: disabled)
+[   6.57] I (3712) esp_lvgl:adapter: LVGL task started successfully
+[   6.57] I (3716) ESP32_P4_EV: Setting LCD backlight: 100%
+[   6.92] I (3721) ESP32_P4_EV: Setting LCD backlight: 45%
+[   6.92] I (3725) main: heap display        internal=244KB largest=204KB dma=206KB psram=27577KB
+[   6.92] I (3868) fnos_view: dashboard v2 created (4 pages, 180 s window)
+[   6.92] I (3868) main: heap ui             internal=244KB largest=204KB dma=206KB psram=27489KB
+[   6.92] I (3870) fnos_data: polling http://192.168.0.119:8799/api/v1/status every 1000 ms
+[   6.92] I (3877) main: heap polling        internal=243KB largest=204KB dma=205KB psram=27475KB
+[   6.92] I (3885) ESP32_P4_EV: Setting LCD backlight: 45%
+[   6.92] I (3890) main: backlight 45% (day)
+[   6.92] I (3893) main: boot complete
+[   6.92] I (3895) main_task: Returned from app_main()
+[   7.61] Guru Meditation Error: Core  1 panic'ed (Load access fault). Exception was unhandled.
+[   7.61] 
+[   7.61] Core  1 register dump:
+[   7.61] MEPC    : 0x4fc1b714  RA      : 0x480ef1e2  SP      : 0x48511260  GP      : 0x4ff56f80  
+[   7.61] TP      : 0x48511810  T0      : 0x0000000d  T1      : 0x90000000  T2      : 0xffffffff  
+[   7.61] S0/FP   : 0x00000000  S1      : 0x00000014  A0      : 0x00000014  A1      : 0xffffffff  
+[   7.61] A2      : 0x0000000a  A3      : 0x7f7f7f7f  A4      : 0x00000000  A5      : 0x00000018  
+[   7.61] A6      : 0xa0000000  A7      : 0x0000000a  S2      : 0x4817f000  S3      : 0x00000009  
+[   7.61] S4      : 0xffffffff  S5      : 0x0000000a  S6      : 0x00000002  S7      : 0x00000073  
+[   7.61] S8      : 0x00000009  S9      : 0x00000000  S10     : 0xffffffff  S11     : 0x48511384  
+[   7.61] T3      : 0x00000000  T4      : 0x00000000  T5      : 0xffffffff  T6      : 0x00000000  
+[   7.61] MSTATUS : 0x00011881  MTVEC   : 0x4ff40003  MCAUSE  : 0x00000005  MTVAL   : 0x00000014  
+[   7.61] MHARTID : 0x00000001  
+[   7.61] 
+[   7.61] Stack memory:
+[   7.61] 48511260: 0x00000001 0x4ff5ec14 0x4ff87710 0x4810dea6 0x00000000 0x00000000 0x00000000 0x00000000
+[   7.61] 48511280: 0x00000000 0x00000001 0x0000004f 0x00000001 0x00000000 0x48113744 0x00000000 0x00000000
+[   7.61] 485112a0: 0x00000000 0x00000258 0xffffffc0 0x00000002 0x000003f0 0x4ff6da00 0x00000080 0x00000000
+[   7.61] 485112c0: 0x0012c000 0x482b4e80 0x00000006 0x4fc116ea 0x0012c000 0x482b4e80 0x00000006 0x4ff505c0
+[   7.61] 485112e0: 0x00000000 0x4ff6da00 0x482b4e80 0x0012c000 0x4ff4c35c 0x4ff4f440 0x48511370 0x4ff56f80
+[   7.61] 48511300: 0x48511810 0x4fc114ec 0x4ff4c68a 0x00000001 0x00000000 0x4ff86da8 0x00000000 0x500e5014
+[   7.61] 48511320: 0x500e5010 0x00000004 0x00000000 0x0000001f 0x08000000 0x4fc11284 0x00000001 0x48511734
+[   7.61] 48511340: 0x48110000 0x4ff6da00 0x000003f0 0x00000002 0x0000000a 0x00000000 0x00000000 0x482b4e80
+[   7.61] 48511360: 0x1fffffff 0x4ff6da00 0x48110000 0xffffffff 0x4851137c 0x00000001 0x00000007 0x4810de9d
+[   7.61] 48511380: 0x00000007 0x4851141f 0x00000001 0x48110000 0x00000000 0x00000258 0xffffffc0 0x00000002
+[   7.61] 485113a0: 0x000003f0 0x4ff6da00 0x480fed20 0x00000004 0x4ff5dfa8 0x4ff86d90 0x4ff86a04 0x480272b8
+[   7.61] 485113c0: 0x480ffe50 0x00000001 0x485113f4 0x4802ee24 0x00000000 0x480ff064 0x4ff5c48c 0x00000000
+[   7.61] 485113e0: 0x480ff098 0x00000004 0x00000400 0x00000002 0x00000095 0x480ffd9c 0x480ffd9c 0x00010001
+[   7.61] 48511400: 0x000003f0 0x000001c2 0x000003f3 0x00000202 0x00000041 0x00000000 0x00000000 0x30393134
+[   7.61] 48511420: 0xffffffff 0x00000000 0x482b4e80 0x0012c000 0x4ff4c35e 0x4ff4bb5e 0x485114b0 0x4ff56f80
+[   7.61] 48511440: 0x48511810 0x00000000 0x381e0000 0x00003000 0x00000001 0x00000000 0x4850e668 0x500e5014
+[   7.61] 48511460: 0x500e5010 0x00000004 0x00000000 0x0000001f 0x00000004 0x00000002 0x4850e668 0x4850e614
+[   7.61] 48511480: 0x4850e638 0x4851150c 0x02625a00 0x4850e518 0x4850e528 0x00000000 0x00000000 0x00000000
+[   7.61] 485114a0: 0x00001110 0x4850e528 0x00000000 0x00000000 0x4810de50 0x4850e608 0x4850e5b4 0x4ff4b6a0
+[   7.61] 485114c0: 0x00000012 0x48511646 0x00000000 0x00000000 0x0000005c 0x00000000 0x00000000 0x00000cc2
+[   7.61] 485114e0: 0x000000ad 0x4850e528 0x4850e518 0x00000000 0x00000006 0xffffffff 0x4850e204 0x480f27f0
+[   7.61] 48511500: 0x00000012 0xffffffff 0x0001e204 0x00000001 0x0000005c 0x00000000 0x0000000a 0x4850e518
+[   7.61] 48511520: 0x00000000 0x00000004 0x00000000 0x00000000 0x00000014 0x4850e5a8 0x4850e554 0x4ff4b6d8
+[   7.61] 48511540: 0x00000006 0x4850e5a8 0x00000000 0x00000000 0x4ff56ebc 0x0000000c 0x00000000 0x48114000
+[   7.61] 48511560: 0x48177000 0x00000004 0x485115a0 0x00000000 0x00000004 0xffffffff 0x4850e674 0x480f2d3e
+[   7.61] 48511580: 0x00000006 0xffffffff 0x00000002 0x4850e674 0x00000003 0xffffffff 0x48511648 0x480f3d82
+[   7.61] 485115a0: 0x00003000 0x00000000 0x00000000 0x00000000 0x00000900 0x48511646 0x00000000 0x00000002
+[   7.61] 485115c0: 0x00000900 0x48511670 0x00000000 0x00000001 0x00001000 0x00000000 0x00000000 0x00000000
+[   7.61] 485115e0: 0x00000000 0x00000000 0x00000000 0x00000000 0x00000000 0x00000000 0x00000000 0x00000000
+[   7.61] 48511600: 0x00000000 0x00000000 0x00000000 0x00000000 0x00000000 0x00000001 0x48511670 0x48511680
+[   7.61] 48511620: 0x485116c7 0x4810e000 0x00000000 0x00000000 0x00000000 0x00000001 0x4ff876a8 0x4ff4f1ee
+[   7.90] 48511640: 0x4ff5fa68 0x00000000 0x4ff5fa14 0x4ff4f3ee 0x00000000 0x00000001 0x4ff5fa14 0x4ff4b182
+[   7.90] 
+[   7.90] 
+[   7.90] 
+[   7.90] ELF file SHA256: 440d62121
+[   7.90] 
+[   7.90] Rebooting...
+[   7.90] ESP-ROM:esp32p4-eco7-20260109
+[   7.90] Build:Jan  9 2026
+[   7.90] rst:0xc (SW_CPU_RESET),boot:0xf (SPI_FAST_FLASH_BOOT)
+[   7.90] Core0 Saved PC:0x4ff444de
+[   7.90] Core1 Saved PC:0x4ff4ace6
+[   7.90] SPI mode:DIO, clock div:1
+[   7.90] load:0x4ffb60d0,len:0x11f0
+[   7.90] load:0x4ffac2c0,len:0xd5c
+[   7.90] load:0x4ffaefc0,len:0x3408
+[   7.90] entry 0x4ffac2c0
+[   7.90] I (229) hex_psram: vendor id    : 0x0d (AP)
+[   7.90] I (229) hex_psram: Latency      : 0x01 (Fixed)
+[   7.90] I (229) hex_psram: DriveStr.    : 0x00 (25 Ohm)
+[   7.90] I (230) hex_psram: dev id       : 0x03 (generation 4)
+[   7.90] I (235) hex_psram: density      : 0x07 (256 Mbit)
+[   7.90] I (239) hex_psram: good-die     : 0x06 (Pass)
+[   7.90] I (243) hex_psram: SRF          : 0x02 (Slow Refresh)
+[   7.90] I (248) hex_psram: BurstType    : 0x00 ( Wrap)
+[   7.90] I (252) hex_psram: BurstLen     : 0x03 (2048 Byte)
+[   7.90] I (257) hex_psram: BitMode      : 0x01 (X16 Mode)
+[   7.90] I (261) hex_psram: Readlatency  : 0x04 (14 cycles@Fixed)
+[   7.90] I (266) hex_psram: DriveStrength: 0x00 (1/1)
+[   7.90] I (270) MSPI Timing: Enter psram timing tuning
+[   8.12] I esp_psram: Found 32MB PSRAM device
+[   8.13] I esp_psram: Speed: 200MHz
+[   8.13] I (457) mmu_psram: .rodata xip on psram
+[   8.13] I (505) mmu_psram: .text xip on psram
+[   8.13] I (506) hex_psram: psram CS IO is dedicated
+[   8.13] I (506) cpu_start: Multicore app
+[   8.81] I (929) esp_psram: SPI SRAM memory test OK
+[   8.81] I (938) cpu_start: GPIO 38 and 37 are used as console UART I/O pins
+[   8.81] I (939) cpu_start: Pro cpu start user code
+[   8.81] I (939) cpu_start: cpu freq: 400000000 Hz
+[   8.81] I (941) app_init: Application information:
+[   8.81] I (944) app_init: Project name:     fnos_monitor
+[   8.81] I (949) app_init: App version:      0.1.0
+[   8.81] I (953) app_init: Compile time:     Sep 28 2026 07:59:20
+[   8.81] I (958) app_init: ELF file SHA256:  440d62121...
+[   8.81] I (962) app_init: ESP-IDF:          5.5.3
+[   8.81] I (966) efuse_init: Min chip rev:     v3.0
+[   8.81] I (969) efuse_init: Max chip rev:     v3.99 
+[   8.81] I (973) efuse_init: Chip rev:         v3.2
+[   8.81] I (977) heap_init: Initializing. RAM available for dynamic allocation:
+[   8.81] I (984) heap_init: At 4FF5E210 len 0005CDB0 (371 KiB): RETENT_RAM
+[   8.81] I (989) heap_init: At 4FFBAFC0 len 00004BF0 (18 KiB): RAM
+[   8.81] I (994) heap_init: At 501080D8 len 00000028 (0 KiB): RTCRAM
+[   8.81] I (1000) heap_init: At 501081A0 len 00007E60 (31 KiB): RTCRAM
+[   8.81] I (1005) heap_init: At 30100198 len 00001E68 (7 KiB): TCM
+[   9.16] I (1010) esp_psram: Adding pool of 31215K of PSRAM memory to heap allocator
+[   9.16] I (1017) esp_psram: Adding pool of 8K of PSRAM memory gap generated due to end address alignment of irom to the heap allocator
+[   9.16] I (1028) esp_psram: Adding pool of 0K of PSRAM memory gap generated due to end address alignment of drom to the heap allocator
+[   9.16] I (1039) spi_flash: detected chip: gd
+[   9.16] I (1043) spi_flash: flash io: qio
+[   9.16] I (1046) host_init: ESP Hosted : Host chip_ip[18]
+[   9.16] I (1050) H_API: ESP-Hosted starting. Hosted_Tasks: prio:23, stack: 5120 RPC_task_stack: 5120
+[   9.16] sdio_mempool_create free:32378568 min-free:32378568 lfb-def:31457280 lfb-8bit:31457280
+[   9.16] 
+[   9.16] I (1066) H_API: ** add_esp_wifi_remote_channels **
+[   9.16] I (1071) transport: Add ESP-Hosted channel IF[1]: S[0] Tx[0x4800b6dc] Rx[0x4801a922]
+[   9.16] I (1078) transport: Add ESP-Hosted channel IF[2]: S[0] Tx[0x4800b622] Rx[0x4801a922]
+[   9.16] I (1086) sleep_gpio: Configure to isolate all GPIO pins in sleep state
+[   9.16] I (1092) sleep_gpio: Enable automatic switching of GPIO sleep configuration
+[   9.16] I (1099) main_task: Started on CPU0
+[   9.16] I (1103) main_task: Calling app_main()
+[   9.16] I (1109) main: fnOS NAS dashboard booting (agent http://192.168.0.119:8799)
+[   9.16] I (1112) main: heap boot           internal=364KB largest=304KB dma=326KB psram=31220KB
+[   9.16] I (1121) transport: Attempt connection with slave: retry[0]
+[   9.16] I (1125) transport: Reset slave using GPIO[54]
+[   9.16] I (1129) os_wrapper_esp: GPIO [54] configured
+[  10.07] I (2299) sdio_wrapper: SDIO master: Data-Lines: 4-bit Freq(KHz)[40000 KHz]
+[  10.07] I (2299) sdio_wrapper: GPIOs: CLK[18] CMD[19] D0[14] D1[15] D2[16] D3[17] Slave_Reset[54]
+[  10.07] I (2299) H_SDIO_DRV: Starting SDIO process rx task
+[  10.07] I (2302) sdio_wrapper: Queues: Tx[20] Rx[20] SDIO-Rx-Mode[1]
+[  10.07] Name: 
+[  10.07] Type: SDIO
+[  10.07] Speed: 40.00 MHz (limit: 40.00 MHz)
+[  10.07] Size: 0MB
+[  10.07] CSD: ver=1, sector_size=0, capacity=0 read_bl_len=0
+[  10.07] SCR: sd_spec=0, bus_width=0
+[  10.07] TUPLE: DEVICE, size: 3: D9 01 FF 
+[  10.07] TUPLE: MANFID, size: 4
+[  10.07]   MANF: 0092, CARD: 6666
+[  10.07] TUPLE: FUNCID, size: 2: 0C 00 
+[  10.07] TUPLE: FUNCE, size: 4: 00 00 02 32 
+[  10.07] TUPLE: CONFIG, size: 5: 01 01 00 02 07 
+[  10.07] TUPLE: CFTABLE_ENTRY, size: 8
+[  10.07]   INDX: C1, Intface: 1, Default: 1, Conf-Entry-Num: 1
+[  10.07]   IF: 41
+[  10.07]   FS: 30, misc: 0, mem_space: 1, irq: 1, io_space: 0, timing: 0, power: 0
+[  10.07]   IR: 30, mask: 1,   IRQ: FF FF
+[  10.07]   LEN: FFFF
+[  10.07] TUPLE: END
+[  10.07] I (2385) sdio_wrapper: Function 0 Blocksize: 512
+[  10.07] I (2389) sdio_wrapper: Function 1 Blocksize: 512
+[  10.07] I (2393) H_SDIO_DRV: SDIO Host operating in STREAMING MODE
+[  10.07] I (2398) H_SDIO_DRV: generate slave intr
+[  10.07] I (2404) transport: Received INIT event from ESP32 peripheral
+[  10.07] I (2407) transport: EVENT: 12
+[  10.07] I (2410) transport: EVENT: 11
+[  10.07] I (2413) transport: capabilities: 0xd
+[  10.07] I (2416) transport: Features supported are:
+[  10.07] I (2420) transport: 	 * WLAN
+[  10.42] I (2423) transport: 	   - HCI over SDIO
+[  10.42] I (2426) transport: 	   - BLE only
+[  10.42] I (2429) transport: EVENT: 13
+[  10.42] I (2432) transport: ESP board type is : 13 
+[  10.42] 
+[  10.42] I (2436) transport: Base transport is set-up
+[  10.42] 
+[  10.42] I (2440) transport: Slave chip Id[12]
+[  10.42] I (2444) hci_stub_drv: Host BT Support: Disabled
+[  10.42] I (2448) H_SDIO_DRV: Received INIT event
+[  11.10] I (3453) fnos_net: wifi station started; awaiting ip
+[  11.10] I (3454) esp_lvgl:adapter: LVGL adapter initialized successfully
+[  11.10] W (3454) ledc: GPIO 32 is not usable, maybe conflict with others
+[  11.10] I (3458) ESP32_P4_EV: MIPI DSI PHY Powered on
+[  11.10] I (3463) ESP32_P4_EV: Install MIPI DSI LCD control panel
+[  11.10] I (3467) ESP32_P4_EV: Install EK79007 LCD control panel
+[  11.10] I (3472) ek79007: version: 2.0.2
+[  11.10] I (3474) H_API: esp_wifi_remote_connect
+[  11.35] I (3649) ESP32_P4_EV: Display initialized
+[  11.35] I (3650) esp_lvgl:bridge_v9: Initializing hardware resources
+[  11.35] I (3650) esp_lvgl:bridge_v9: Hardware resources initialized successfully
+[  11.35] I (3653) esp_lvgl:bridge: Initializing hardware resources
+[  11.35] I (3658) esp_lvgl:bridge: Hardware resources initialized successfully
+[  11.35] W (3664) esp_lvgl:bridge_v9: on_frame_buf_complete unavailable; buffer-switch release and dummy-draw may not function on MIPI DSI
+[  11.35] I (3676) ESP32_P4_EV: Touch 0x5d found
+[  11.35] I (3679) GT911: I2C address initialization procedure skipped - using default GT9xx setup
+[  11.35] I (3687) GT911: TouchPad_ID:0x39,0x31,0x31
+[  11.36] I (3691) GT911: TouchPad_Config_Version:91
+[  11.36] W (3695) esp_lvgl:touch: LV_USE_GESTURE_RECOGNITION is disabled; only single-point pointer events are available
+[  11.36] I (3704) esp_lvgl:touch: Touch input device registered successfully (IRQ mode: disabled)
+[  11.36] I (3713) esp_lvgl:adapter: LVGL task started successfully
+[  11.36] I (3717) ESP32_P4_EV: Setting LCD backlight: 100%
+[  11.70] I (3722) ESP32_P4_EV: Setting LCD backlight: 45%
+[  11.70] I (3726) main: heap display        internal=244KB largest=204KB dma=206KB psram=27577KB
+[  11.70] I (3869) fnos_view: dashboard v2 created (4 pages, 180 s window)
+[  11.70] I (3869) main: heap ui             internal=244KB largest=204KB dma=206KB psram=27489KB
+[  11.70] I (3871) fnos_data: polling http://192.168.0.119:8799/api/v1/status every 1000 ms
+[  11.70] I (3878) main: heap polling        internal=243KB largest=204KB dma=205KB psram=27475KB
+[  11.70] I (3886) ESP32_P4_EV: Setting LCD backlight: 45%
+[  11.70] I (3891) main: backlight 45% (day)
+[  11.70] I (3894) main: boot complete
+[  11.70] I (3896) main_task: Returned from app_main()
+[  12.39] Guru Meditation Error: Core  1 panic'ed (Load access fault). Exception was unhandled.
+[  12.39] 
+[  12.39] Core  1 register dump:
+[  12.39] MEPC    : 0x4fc1b714  RA      : 0x480ef1e2  SP      : 0x48511260  GP      : 0x4ff56f80  
+[  12.39] TP      : 0x48511810  T0      : 0x0000000d  T1      : 0x90000000  T2      : 0xffffffff  
+[  12.39] S0/FP   : 0x00000000  S1      : 0x00000014  A0      : 0x00000014  A1      : 0xffffffff  
+[  12.39] A2      : 0x0000000a  A3      : 0x7f7f7f7f  A4      : 0x00000000  A5      : 0x00000018  
+[  12.39] A6      : 0xa0000000  A7      : 0x0000000a  S2      : 0x4817f000  S3      : 0x00000009  
+[  12.39] S4      : 0xffffffff  S5      : 0x0000000a  S6      : 0x00000002  S7      : 0x00000073  
+[  12.39] S8      : 0x00000009  S9      : 0x00000000  S10     : 0xffffffff  S11     : 0x48511384  
+[  12.39] T3      : 0x00000000  T4      : 0x00000000  T5      : 0xffffffff  T6      : 0x00000000  
+[  12.39] MSTATUS : 0x00011881  MTVEC   : 0x4ff40003  MCAUSE  : 0x00000005  MTVAL   : 0x00000014  
+[  12.39] MHARTID : 0x00000001  
+[  12.39] 
+[  12.39] Stack memory:
+[  12.39] 48511260: 0x00000001 0x4ff5ec14 0x4ff87710 0x4810dea6 0x00000000 0x00000000 0x00000000 0x00000000
+[  12.39] 48511280: 0x00000000 0x00000001 0x0000004f 0x00000001 0x00000000 0x48113744 0x00000000 0x00000000
+[  12.39] 485112a0: 0x00000000 0x00000258 0xffffffc0 0x00000002 0x000003f0 0x4ff6da00 0x00000080 0x00000000
+[  12.39] 485112c0: 0x0012c000 0x482b4e80 0x00000006 0x4fc116ea 0x0012c000 0x482b4e80 0x00000006 0x4ff505c0
+[  12.39] 485112e0: 0x00000000 0x4ff6da00 0x482b4e80 0x0012c000 0x4ff4c35e 0x4ff4f440 0x48511370 0x4ff56f80
+[  12.39] 48511300: 0x48511810 0x4fc114ec 0x4ff4c68a 0x00000001 0x00000000 0x4ff86da8 0x00000000 0x500e5014
+[  12.39] 48511320: 0x500e5010 0x00000004 0x00000000 0x0000001f 0x08000000 0x4fc11284 0x00000001 0x48511734
+[  12.39] 48511340: 0x48110000 0x4ff6da00 0x000003f0 0x00000002 0x0000000a 0x00000000 0x00000000 0x482b4e80
+[  12.39] 48511360: 0x1fffffff 0x4ff6da00 0x48110000 0xffffffff 0x4851137c 0x00000001 0x00000007 0x4810de9d
+[  12.39] 48511380: 0x00000007 0x4851141f 0x00000001 0x48110000 0x00000000 0x00000258 0xffffffc0 0x00000002
+[  12.39] 485113a0: 0x000003f0 0x4ff6da00 0x480fed20 0x00000004 0x4ff5dfa8 0x4ff86d90 0x4ff86a04 0x480272b8
+[  12.39] 485113c0: 0x480ffe50 0x00000001 0x485113f4 0x4802ee24 0x00000000 0x480ff064 0x4ff5c48c 0x00000000
+[  12.39] 485113e0: 0x480ff098 0x00000004 0x00000400 0x00000002 0x00000095 0x480ffd9c 0x480ffd9c 0x00010001
+[  12.39] 48511400: 0x000003f0 0x000001c2 0x000003f3 0x00000202 0x00000041 0x00000000 0x00000000 0x30393134
+[  12.39] 48511420: 0xffffffff 0x00000000 0x482b4e80 0x0012c000 0x4ff4c35c 0x4ff4bb5e 0x485114b0 0x4ff56f80
+[  12.39] 48511440: 0x48511810 0x00000000 0x381e0000 0x00003000 0x00000001 0x00000000 0x4850e668 0x500e5014
+[  12.39] 48511460: 0x500e5010 0x00000004 0x00000000 0x0000001f 0x00000004 0x00000002 0x4850e668 0x4850e614
+[  12.39] 48511480: 0x4850e638 0x4851150c 0x02625a00 0x4850e518 0x4850e528 0x00000000 0x00000000 0x00000000
+[  12.39] 485114a0: 0x00001111 0x4850e528 0x00000000 0x00000000 0x4810de50 0x4850e608 0x4850e5b4 0x4ff4b6a0
+[  12.39] 485114c0: 0x00000012 0x48511646 0x00000000 0x00000000 0x0000005c 0x00000000 0x00000000 0x00000cc3
+[  12.39] 485114e0: 0x000000ad 0x4850e528 0x4850e518 0x00000000 0x00000006 0xffffffff 0x4850e204 0x480f27f0
+[  12.39] 48511500: 0x00000012 0xffffffff 0x0001e204 0x00000001 0x0000005c 0x00000000 0x0000000a 0x4850e518
+[  12.39] 48511520: 0x00000000 0x00000004 0x00000000 0x00000000 0x00000014 0x4850e5a8 0x4850e554 0x4ff4b6d8
+[  12.39] 48511540: 0x00000006 0x4850e5a8 0x00000000 0x00000000 0x4ff56ebc 0x0000000c 0x00000000 0x48114000
+[  12.39] 48511560: 0x48177000 0x00000004 0x485115a0 0x00000000 0x00000004 0xffffffff 0x4850e674 0x480f2d3e
+[  12.39] 48511580: 0x00000006 0xffffffff 0x00000002 0x4850e674 0x00000003 0xffffffff 0x48511648 0x480f3d82
+[  12.39] 485115a0: 0x00003000 0x00000000 0x00000000 0x00000000 0x00000900 0x48511646 0x00000000 0x00000002
+[  12.39] 485115c0: 0x00000900 0x48511670 0x00000000 0x00000001 0x00001000 0x00000000 0x00000000 0x00000000
+[  12.39] 485115e0: 0x00000000 0x00000000 0x00000000 0x00000000 0x00000000 0x00000000 0x00000000 0x00000000
+[  12.39] 48511600: 0x00000000 0x00000000 0x00000000 0x00000000 0x00000000 0x00000001 0x48511670 0x48511680
+[  12.39] 48511620: 0x485116c7 0x4810e000 0x00000000 0x00000000 0x00000000 0x00000001 0x4ff876a8 0x4ff4f1ee
+[  12.68] 48511640: 0x4ff5fa68 0x00000000 0x4ff5fa14 0x4ff4f3ee 0x00000000 0x00000001 0x4ff5fa14 0x4ff4b182
+[  12.68] 
+[  12.68] 
+[  12.68] 
+[  12.68] ELF file SHA256: 440d62121
+[  12.68] 
+[  12.68] Rebooting...
+[  12.68] ESP-ROM:esp32p4-eco7-20260109
+[  12.68] Build:Jan  9 2026
+[  12.68] rst:0xc (SW_CPU_RESET),boot:0xf (SPI_FAST_FLASH_BOOT)
+[  12.68] Core0 Saved PC:0x4ff444de
+[  12.68] Core1 Saved PC:0x4ff4ace6
+[  12.68] SPI mode:DIO, clock div:1
+[  12.68] load:0x4ffb60d0,len:0x11f0
+[  12.68] load:0x4ffac2c0,len:0xd5c
+[  12.68] load:0x4ffaefc0,len:0x3408
+[  12.68] entry 0x4ffac2c0
+[  12.68] I (229) hex_psram: vendor id    : 0x0d (AP)
+[  12.68] I (229) hex_psram: Latency      : 0x01 (Fixed)
+[  12.68] I (229) hex_psram: DriveStr.    : 0x00 (25 Ohm)
+[  12.68] I (230) hex_psram: dev id       : 0x03 (generation 4)
+[  12.68] I (235) hex_psram: density      : 0x07 (256 Mbit)
+[  12.68] I (239) hex_psram: good-die     : 0x06 (Pass)
+[  12.68] I (243) hex_psram: SRF          : 0x02 (Slow Refresh)
+[  12.68] I (248) hex_psram: BurstType    : 0x00 ( Wrap)
+[  12.68] I (252) hex_psram: BurstLen     : 0x03 (2048 Byte)
+[  12.68] I (257) hex_psram: BitMode      : 0x01 (X16 Mode)
+[  12.68] I (261) hex_psram: Readlatency  : 0x04 (14 cycles@Fixed)
+[  12.68] I (266) hex_psram: DriveStrength: 0x00 (1/1)
+[  12.68] I (270) MSPI Timing: Enter psram timing tuning
+[  12.91] I esp_psram: Found 32MB PSRAM device
+[  12.91] I esp_psram: Speed: 200MHz
+[  12.91] I (457) mmu_psram: .rodata xip on psram
+[  12.91] I (505) mmu_psram: .text xip on psram
+[  12.91] I (506) hex_psram: psram CS IO is dedicated
+[  12.91] I (506) cpu_start: Multicore app
+[  13.54] I (929) esp_psram: SPI SRAM memory test OK
+[  13.54] I (938) cpu_start: GPIO 38 and 37 are used as console UART I/O pins
+[  13.54] I (939) cpu_start: Pro cpu start user code
+[  13.54] I (939) cpu_start: cpu freq: 400000000 Hz
+[  13.54] I (941) app_init: Application information:
+[  13.54] I (944) app_init: Project name:     fnos_monitor
+[  13.54] I (949) app_init: App version:      0.1.0
+[  13.54] I (953) app_init: Compile time:     Sep 28 2026 07:59:20
+[  13.54] I (958) app_init: ELF file SHA256:  440d62121...
+[  13.54] I (962) app_init: ESP-IDF:          5.5.3
+[  13.54] I (966) efuse_init: Min chip rev:     v3.0
+[  13.54] I (969) efuse_init: Max chip rev:     v3.99 
+[  13.54] I (973) efuse_init: Chip rev:         v3.2
+[  13.54] I (977) heap_init: Initializing. RAM available for dynamic allocation:
+[  13.54] I (984) heap_init: At 4FF5E210 len 0005CDB0 (371 KiB): RETENT_RAM
+[  13.54] I (989) heap_init: At 4FFBAFC0 len 00004BF0 (18 KiB): RAM
+[  13.54] I (994) heap_init: At 501080D8 len 00000028 (0 KiB): RTCRAM
+[  13.54] I (1000) heap_init: At 501081A0 len 00007E60 (31 KiB): RTCRAM
+[  13.54] I (1005) heap_init: At 30100198 len 00001E68 (7 KiB): TCM
+[  13.89] I (1010) esp_psram: Adding pool of 31215K of PSRAM memory to heap allocator
+[  13.89] I (1017) esp_psram: Adding pool of 8K of PSRAM memory gap generated due to end address alignment of irom to the heap allocator
+[  13.89] I (1028) esp_psram: Adding pool of 0K of PSRAM memory gap generated due to end address alignment of drom to the heap allocator
+[  13.89] I (1039) spi_flash: detected chip: gd
+[  13.89] I (1043) spi_flash: flash io: qio
+[  13.89] I (1046) host_init: ESP Hosted : Host chip_ip[18]
+[  13.89] I (1050) H_API: ESP-Hosted starting. Hosted_Tasks: prio:23, stack: 5120 RPC_task_stack: 5120
+[  13.89] sdio_mempool_create free:32378568 min-free:32378568 lfb-def:31457280 lfb-8bit:31457280
+[  13.89] 
+[  13.89] I (1066) H_API: ** add_esp_wifi_remote_channels **
+[  13.89] I (1071) transport: Add ESP-Hosted channel IF[1]: S[0] Tx[0x4800b6dc] Rx[0x4801a922]
+[  13.89] I (1078) transport: Add ESP-Hosted channel IF[2]: S[0] Tx[0x4800b622] Rx[0x4801a922]
+[  13.89] I (1086) sleep_gpio: Configure to isolate all GPIO pins in sleep state
+[  13.89] I (1092) sleep_gpio: Enable automatic switching of GPIO sleep configuration
+[  13.89] I (1099) main_task: Started on CPU0
+[  13.89] I (1103) main_task: Calling app_main()
+[  13.89] I (1109) main: fnOS NAS dashboard booting (agent http://192.168.0.119:8799)
+[  13.89] I (1112) main: heap boot           internal=364KB largest=304KB dma=326KB psram=31220KB
+[  13.89] I (1121) transport: Attempt connection with slave: retry[0]
+[  13.89] I (1125) transport: Reset slave using GPIO[54]
+[  13.89] I (1129) os_wrapper_esp: GPIO [54] configured
+[  14.86] I (2299) sdio_wrapper: SDIO master: Data-Lines: 4-bit Freq(KHz)[40000 KHz]
+[  14.86] I (2299) sdio_wrapper: GPIOs: CLK[18] CMD[19] D0[14] D1[15] D2[16] D3[17] Slave_Reset[54]
+[  14.86] I (2299) H_SDIO_DRV: Starting SDIO process rx task
+[  14.86] I (2302) sdio_wrapper: Queues: Tx[20] Rx[20] SDIO-Rx-Mode[1]
+[  14.86] Name: 
+[  14.86] Type: SDIO
+[  14.86] Speed: 40.00 MHz (limit: 40.00 MHz)
+[  14.86] Size: 0MB
+[  14.86] CSD: ver=1, sector_size=0, capacity=0 read_bl_len=0
+[  14.86] SCR: sd_spec=0, bus_width=0
+[  14.86] TUPLE: DEVICE, size: 3: D9 01 FF 
+[  14.86] TUPLE: MANFID, size: 4
+[  14.86]   MANF: 0092, CARD: 6666
+[  14.86] TUPLE: FUNCID, size: 2: 0C 00 
+[  14.86] TUPLE: FUNCE, size: 4: 00 00 02 32 
+[  14.86] TUPLE: CONFIG, size: 5: 01 01 00 02 07 
+[  14.86] TUPLE: CFTABLE_ENTRY, size: 8
+[  14.86]   INDX: C1, Intface: 1, Default: 1, Conf-Entry-Num: 1
+[  14.86]   IF: 41
+[  14.86]   FS: 30, misc: 0, mem_space: 1, irq: 1, io_space: 0, timing: 0, power: 0
+[  14.86]   IR: 30, mask: 1,   IRQ: FF FF
+[  14.86]   LEN: FFFF
+[  14.86] TUPLE: END
+[  14.86] I (2385) sdio_wrapper: Function 0 Blocksize: 512
+[  14.86] I (2389) sdio_wrapper: Function 1 Blocksize: 512
+[  14.86] I (2393) H_SDIO_DRV: SDIO Host operating in STREAMING MODE
+[  14.86] I (2398) H_SDIO_DRV: generate slave intr
+[  14.86] I (2404) transport: Received INIT event from ESP32 peripheral
+[  14.86] I (2407) transport: EVENT: 12
+[  14.86] I (2410) transport: EVENT: 11
+[  14.86] I (2413) transport: capabilities: 0xd
+[  14.86] I (2416) transport: Features supported are:
+[  14.86] I (2420) transport: 	 * WLAN
+[  15.20] I (2423) transport: 	   - HCI over SDIO
+[  15.20] I (2426) transport: 	   - BLE only
+[  15.20] I (2429) transport: EVENT: 13
+[  15.20] I (2432) transport: ESP board type is : 13 
+[  15.20] 
+[  15.20] I (2436) transport: Base transport is set-up
+[  15.20] 
+[  15.20] I (2440) transport: Slave chip Id[12]
+[  15.20] I (2444) hci_stub_drv: Host BT Support: Disabled
+[  15.20] I (2448) H_SDIO_DRV: Received INIT event
+[  16.14] I (3453) fnos_net: wifi station started; awaiting ip
+[  16.14] I (3453) esp_lvgl:adapter: LVGL adapter initialized successfully
+[  16.14] W (3454) ledc: GPIO 32 is not usable, maybe conflict with others
+[  16.14] I (3458) ESP32_P4_EV: MIPI DSI PHY Powered on
+[  16.14] I (3463) ESP32_P4_EV: Install MIPI DSI LCD control panel
+[  16.14] I (3467) ESP32_P4_EV: Install EK79007 LCD control panel
+[  16.14] I (3472) ek79007: version: 2.0.2
+[  16.14] I (3474) H_API: esp_wifi_remote_connect
+[  16.14] I (3649) ESP32_P4_EV: Display initialized
+[  16.14] I (3650) esp_lvgl:bridge_v9: Initializing hardware resources
+[  16.14] I (3650) esp_lvgl:bridge_v9: Hardware resources initialized successfully
+[  16.14] I (3653) esp_lvgl:bridge: Initializing hardware resources
+[  16.14] I (3658) esp_lvgl:bridge: Hardware resources initialized successfully
+[  16.14] W (3664) esp_lvgl:bridge_v9: on_frame_buf_complete unavailable; buffer-switch release and dummy-draw may not function on MIPI DSI
+[  16.14] I (3676) ESP32_P4_EV: Touch 0x5d found
+[  16.14] I (3679) GT911: I2C address initialization procedure skipped - using default GT9xx setup
+[  16.14] I (3687) GT911: TouchPad_ID:0x39,0x31,0x31
+[  16.14] I (3691) GT911: TouchPad_Config_Version:91
+[  16.14] W (3695) esp_lvgl:touch: LV_USE_GESTURE_RECOGNITION is disabled; only single-point pointer events are available
+[  16.14] I (3704) esp_lvgl:touch: Touch input device registered successfully (IRQ mode: disabled)
+[  16.14] I (3713) esp_lvgl:adapter: LVGL task started successfully
+[  16.14] I (3717) ESP32_P4_EV: Setting LCD backlight: 100%
+[  16.48] I (3722) ESP32_P4_EV: Setting LCD backlight: 45%
+[  16.48] I (3726) main: heap display        internal=244KB largest=204KB dma=206KB psram=27577KB
+[  16.48] I (3869) fnos_view: dashboard v2 created (4 pages, 180 s window)
+[  16.48] I (3869) main: heap ui             internal=244KB largest=204KB dma=206KB psram=27489KB
+[  16.48] I (3871) fnos_data: polling http://192.168.0.119:8799/api/v1/status every 1000 ms
+[  16.48] I (3878) main: heap polling        internal=243KB largest=204KB dma=205KB psram=27475KB
+[  16.48] I (3886) ESP32_P4_EV: Setting LCD backlight: 45%
+[  16.48] I (3890) main: backlight 45% (day)
+[  16.48] I (3894) main: boot complete
+[  16.48] I (3896) main_task: Returned from app_main()
+[  17.17] Guru Meditation Error: Core  1 panic'ed (Load access fault). Exception was unhandled.
+[  17.17] 
+[  17.17] Core  1 register dump:
+[  17.17] MEPC    : 0x4fc1b714  RA      : 0x480ef1e2  SP      : 0x48511260  GP      : 0x4ff56f80  
+[  17.18] TP      : 0x48511810  T0      : 0x0000000d  T1      : 0x90000000  T2      : 0xffffffff  
+[  17.18] S0/FP   : 0x00000000  S1      : 0x00000014  A0      : 0x00000014  A1      : 0xffffffff  
+[  17.18] A2      : 0x0000000a  A3      : 0x7f7f7f7f  A4      : 0x00000000  A5      : 0x00000018  
+[  17.18] A6      : 0xa0000000  A7      : 0x0000000a  S2      : 0x4817f000  S3      : 0x00000009  
+[  17.18] S4      : 0xffffffff  S5      : 0x0000000a  S6      : 0x00000002  S7      : 0x00000073  
+[  17.18] S8      : 0x00000009  S9      : 0x00000000  S10     : 0xffffffff  S11     : 0x48511384  
+[  17.18] T3      : 0x00000000  T4      : 0x00000000  T5      : 0xffffffff  T6      : 0x00000000  
+[  17.18] MSTATUS : 0x00011881  MTVEC   : 0x4ff40003  MCAUSE  : 0x00000005  MTVAL   : 0x00000014  
+[  17.18] MHARTID : 0x00000001  
+[  17.18] 
+[  17.18] Stack memory:
+[  17.18] 48511260: 0x00000001 0x4ff5ec14 0x4ff87710 0x4810dea6 0x00000000 0x00000000 0x00000000 0x00000000
+[  17.18] 48511280: 0x00000000 0x00000001 0x0000004f 0x00000001 0x00000000 0x48113744 0x00000000 0x00000000
+[  17.18] 485112a0: 0x00000000 0x00000258 0xffffffc0 0x00000002 0x000003f0 0x4ff6da00 0x00000080 0x00000000
+[  17.18] 485112c0: 0x0012c000 0x482b4e80 0x00000006 0x4fc116ea 0x0012c000 0x482b4e80 0x00000006 0x4ff505c0
+[  17.18] 485112e0: 0x00000000 0x4ff6da00 0x482b4e80 0x0012c000 0x4ff4c35e 0x4ff4f440 0x48511370 0x4ff56f80
+[  17.18] 48511300: 0x48511810 0x4fc114ec 0x4ff4c68a 0x00000001 0x00000000 0x4ff86da8 0x00000000 0x500e5014
+[  17.18] 48511320: 0x500e5010 0x00000004 0x00000000 0x0000001f 0x08000000 0x4fc11284 0x00000001 0x48511734
+[  17.18] 48511340: 0x48110000 0x4ff6da00 0x000003f0 0x00000002 0x0000000a 0x00000000 0x00000000 0x482b4e80
+[  17.18] 48511360: 0x1fffffff 0x4ff6da00 0x48110000 0xffffffff 0x4851137c 0x00000001 0x00000007 0x4810de9d
+[  17.18] 48511380: 0x00000007 0x4851141f 0x00000001 0x48110000 0x00000000 0x00000258 0xffffffc0 0x00000002
+[  17.18] 485113a0: 0x000003f0 0x4ff6da00 0x480fed20 0x00000004 0x4ff5dfa8 0x4ff86d90 0x4ff86a04 0x480272b8
+[  17.18] 485113c0: 0x480ffe50 0x00000001 0x485113f4 0x4802ee24 0x00000000 0x480ff064 0x4ff5c48c 0x00000000
+[  17.18] 485113e0: 0x480ff098 0x00000004 0x00000400 0x00000002 0x00000095 0x480ffd9c 0x480ffd9c 0x00010001
+[  17.18] 48511400: 0x000003f0 0x000001c2 0x000003f3 0x00000202 0x00000041 0x00000000 0x00000000 0x30393134
+[  17.18] 48511420: 0xffffffff 0x00000000 0x482b4e80 0x0012c000 0x4ff4c35c 0x4ff4bb5e 0x485114b0 0x4ff56f80
+[  17.18] 48511440: 0x48511810 0x00000000 0x381e0000 0x00003000 0x00000001 0x00000000 0x4850e668 0x500e5014
+[  17.18] 48511460: 0x500e5010 0x00000004 0x00000000 0x0000001f 0x00000004 0x00000002 0x4850e668 0x4850e614
+[  17.18] 48511480: 0x4850e638 0x4851150c 0x02625a00 0x4850e518 0x4850e528 0x00000000 0x00000000 0x00000000
+[  17.18] 485114a0: 0x00001111 0x4850e528 0x00000000 0x00000000 0x4810de50 0x4850e608 0x4850e5b4 0x4ff4b6a0
+[  17.18] 485114c0: 0x00000012 0x48511646 0x00000000 0x00000000 0x0000005c 0x00000000 0x00000000 0x00000cc2
+[  17.18] 485114e0: 0x000000ad 0x4850e528 0x4850e518 0x00000000 0x00000006 0xffffffff 0x4850e204 0x480f27f0
+[  17.18] 48511500: 0x00000012 0xffffffff 0x0001e204 0x00000001 0x0000005c 0x00000000 0x0000000a 0x4850e518
+[  17.18] 48511520: 0x00000000 0x00000004 0x00000000 0x00000000 0x00000014 0x4850e5a8 0x4850e554 0x4ff4b6d8
+[  17.18] 48511540: 0x00000006 0x4850e5a8 0x00000000 0x00000000 0x4ff56ebc 0x0000000c 0x00000000 0x48114000
+[  17.18] 48511560: 0x48177000 0x00000004 0x485115a0 0x00000000 0x00000004 0xffffffff 0x4850e674 0x480f2d3e
+[  17.18] 48511580: 0x00000006 0xffffffff 0x00000002 0x4850e674 0x00000003 0xffffffff 0x48511648 0x480f3d82
+[  17.18] 485115a0: 0x00003000 0x00000000 0x00000000 0x00000000 0x00000900 0x48511646 0x00000000 0x00000002
+[  17.18] 485115c0: 0x00000900 0x48511670 0x00000000 0x00000001 0x00001000 0x00000000 0x00000000 0x00000000
+[  17.18] 485115e0: 0x00000000 0x00000000 0x00000000 0x00000000 0x00000000 0x00000000 0x00000000 0x00000000
+[  17.18] 48511600: 0x00000000 0x00000000 0x00000000 0x00000000 0x00000000 0x00000001 0x48511670 0x48511680
+[  17.18] 48511620: 0x485116c7 0x4810e000 0x00000000 0x00000000 0x00000000 0x00000001 0x4ff876a8 0x4ff4f1ee
+[  17.46] 48511640: 0x4ff5fa68 0x00000000 0x4ff5fa14 0x4ff4f3ee 0x00000000 0x00000001 0x4ff5fa14 0x4ff4b182
+[  17.46] 
+[  17.46] 
+[  17.46] 
+[  17.46] ELF file SHA256: 440d62121
+[  17.46] 
+[  17.46] Rebooting...
+[  17.46] ESP-ROM:esp32p4-eco7-20260109
+[  17.46] Build:Jan  9 2026
+[  17.46] rst:0xc (SW_CPU_RESET),boot:0xf (SPI_FAST_FLASH_BOOT)
+[  17.46] Core0 Saved PC:0x4ff444de
+[  17.46] Core1 Saved PC:0x4ff4ace6
+[  17.46] SPI mode:DIO, clock div:1
+[  17.46] load:0x4ffb60d0,len:0x11f0
+[  17.46] load:0x4ffac2c0,len:0xd5c
+[  17.46] load:0x4ffaefc0,len:0x3408
+[  17.46] entry 0x4ffac2c0
+[  17.46] I (229) hex_psram: vendor id    : 0x0d (AP)
+[  17.46] I (229) hex_psram: Latency      : 0x01 (Fixed)
+[  17.46] I (229) hex_psram: DriveStr.    : 0x00 (25 Ohm)
+[  17.46] I (230) hex_psram: dev id       : 0x03 (generation 4)
+[  17.46] I (235) hex_psram: density      : 0x07 (256 Mbit)
+[  17.46] I (239) hex_psram: good-die     : 0x06 (Pass)
+[  17.46] I (243) hex_psram: SRF          : 0x02 (Slow Refresh)
+[  17.46] I (248) hex_psram: BurstType    : 0x00 ( Wrap)
+[  17.46] I (252) hex_psram: BurstLen     : 0x03 (2048 Byte)
+[  17.46] I (257) hex_psram: BitMode      : 0x01 (X16 Mode)
+[  17.46] I (261) hex_psram: Readlatency  : 0x04 (14 cycles@Fixed)
+[  17.46] I (266) hex_psram: DriveStrength: 0x00 (1/1)
+[  17.46] I (270) MSPI Timing: Enter psram timing tuning
+[  17.69] I esp_psram: Found 32MB PSRAM device
+[  17.69] I esp_psram: Speed: 200MHz
+[  17.69] I (457) mmu_psram: .rodata xip on psram
+[  17.69] I (505) mmu_psram: .text xip on psram
+[  17.69] I (506) hex_psram: psram CS IO is dedicated
+[  17.69] I (506) cpu_start: Multicore app
+[  18.32] I (929) esp_psram: SPI SRAM memory test OK
+[  18.32] I (938) cpu_start: GPIO 38 and 37 are used as console UART I/O pins
+[  18.32] I (939) cpu_start: Pro cpu start user code
+[  18.32] I (939) cpu_start: cpu freq: 400000000 Hz
+[  18.32] I (941) app_init: Application information:
+[  18.32] I (944) app_init: Project name:     fnos_monitor
+[  18.32] I (949) app_init: App version:      0.1.0
+[  18.32] I (953) app_init: Compile time:     Sep 28 2026 07:59:20
+[  18.32] I (958) app_init: ELF file SHA256:  440d62121...
+[  18.32] I (962) app_init: ESP-IDF:          5.5.3
+[  18.32] I (966) efuse_init: Min chip rev:     v3.0
+[  18.32] I (969) efuse_init: Max chip rev:     v3.99 
+[  18.32] I (973) efuse_init: Chip rev:         v3.2
+[  18.32] I (977) heap_init: Initializing. RAM available for dynamic allocation:
+[  18.32] I (984) heap_init: At 4FF5E210 len 0005CDB0 (371 KiB): RETENT_RAM
+[  18.32] I (989) heap_init: At 4FFBAFC0 len 00004BF0 (18 KiB): RAM
+[  18.32] I (994) heap_init: At 501080D8 len 00000028 (0 KiB): RTCRAM
+[  18.32] I (1000) heap_init: At 501081A0 len 00007E60 (31 KiB): RTCRAM
+[  18.32] I (1005) heap_init: At 30100198 len 00001E68 (7 KiB): TCM
+[  18.66] I (1010) esp_psram: Adding pool of 31215K of PSRAM memory to heap allocator
+[  18.66] I (1017) esp_psram: Adding pool of 8K of PSRAM memory gap generated due to end address alignment of irom to the heap allocator
+[  18.66] I (1028) esp_psram: Adding pool of 0K of PSRAM memory gap generated due to end address alignment of drom to the heap allocator
+[  18.66] I (1039) spi_flash: detected chip: gd
+[  18.66] I (1043) spi_flash: flash io: qio
+[  18.66] I (1046) host_init: ESP Hosted : Host chip_ip[18]
+[  18.66] I (1050) H_API: ESP-Hosted starting. Hosted_Tasks: prio:23, stack: 5120 RPC_task_stack: 5120
+[  18.66] sdio_mempool_create free:32378568 min-free:32378568 lfb-def:31457280 lfb-8bit:31457280
+[  18.66] 
+[  18.66] I (1066) H_API: ** add_esp_wifi_remote_channels **
+[  18.66] I (1071) transport: Add ESP-Hosted channel IF[1]: S[0] Tx[0x4800b6dc] Rx[0x4801a922]
+[  18.66] I (1078) transport: Add ESP-Hosted channel IF[2]: S[0] Tx[0x4800b622] Rx[0x4801a922]
+[  18.66] I (1086) sleep_gpio: Configure to isolate all GPIO pins in sleep state
+[  18.66] I (1092) sleep_gpio: Enable automatic switching of GPIO sleep configuration
+[  18.66] I (1099) main_task: Started on CPU0
+[  18.66] I (1103) main_task: Calling app_main()
+[  18.66] I (1109) main: fnOS NAS dashboard booting (agent http://192.168.0.119:8799)
+[  18.66] I (1112) main: heap boot           internal=364KB largest=304KB dma=326KB psram=31220KB
+[  18.66] I (1121) transport: Attempt connection with slave: retry[0]
+[  18.66] I (1125) transport: Reset slave using GPIO[54]
+[  18.66] I (1129) os_wrapper_esp: GPIO [54] configured
+[  19.64] I (2299) sdio_wrapper: SDIO master: Data-Lines: 4-bit Freq(KHz)[40000 KHz]
+[  19.64] I (2299) sdio_wrapper: GPIOs: CLK[18] CMD[19] D0[14] D1[15] D2[16] D3[17] Slave_Reset[54]
+[  19.64] I (2299) H_SDIO_DRV: Starting SDIO process rx task
+[  19.64] I (2302) sdio_wrapper: Queues: Tx[20] Rx[20] SDIO-Rx-Mode[1]
+[  19.64] Name: 
+[  19.64] Type: SDIO
+[  19.64] Speed: 40.00 MHz (limit: 40.00 MHz)
+[  19.64] Size: 0MB
+[  19.64] CSD: ver=1, sector_size=0, capacity=0 read_bl_len=0
+[  19.64] SCR: sd_spec=0, bus_width=0
+[  19.64] TUPLE: DEVICE, size: 3: D9 01 FF 
+[  19.64] TUPLE: MANFID, size: 4
+[  19.64]   MANF: 0092, CARD: 6666
+[  19.64] TUPLE: FUNCID, size: 2: 0C 00 
+[  19.64] TUPLE: FUNCE, size: 4: 00 00 02 32 
+[  19.64] TUPLE: CONFIG, size: 5: 01 01 00 02 07 
+[  19.64] TUPLE: CFTABLE_ENTRY, size: 8
+[  19.64]   INDX: C1, Intface: 1, Default: 1, Conf-Entry-Num: 1
+[  19.64]   IF: 41
+[  19.64]   FS: 30, misc: 0, mem_space: 1, irq: 1, io_space: 0, timing: 0, power: 0
+[  19.64]   IR: 30, mask: 1,   IRQ: FF FF
+[  19.64]   LEN: FFFF
+[  19.64] TUPLE: END
+[  19.64] I (2385) sdio_wrapper: Function 0 Blocksize: 512
+[  19.64] I (2389) sdio_wrapper: Function 1 Blocksize: 512
+[  19.64] I (2393) H_SDIO_DRV: SDIO Host operating in STREAMING MODE
+[  19.64] I (2398) H_SDIO_DRV: generate slave intr
+[  19.64] I (2404) transport: Received INIT event from ESP32 peripheral
+[  19.64] I (2407) transport: EVENT: 12
+[  19.64] I (2410) transport: EVENT: 11
+[  19.64] I (2413) transport: capabilities: 0xd
+[  19.64] I (2416) transport: Features supported are:
+[  19.64] I (2420) transport: 	 * WLAN
+[  19.99] I (2423) transport: 	   - HCI over SDIO
+[  19.99] I (2426) transport: 	   - BLE only
+[  19.99] I (2429) transport: EVENT: 13
+[  19.99] I (2432) transport: ESP board type is : 13 
+[  19.99] 
+[  19.99] I (2436) transport: Base transport is set-up
+[  19.99] 
+[  19.99] I (2440) transport: Slave chip Id[12]
+[  19.99] I (2444) hci_stub_drv: Host BT Support: Disabled
+[  19.99] I (2448) H_SDIO_DRV: Received INIT event
+[  20.66] I (3453) fnos_net: wifi station started; awaiting ip
+[  20.67] I (3454) esp_lvgl:adapter: LVGL adapter initialized successfully
+[  20.67] W (3454) ledc: GPIO 32 is not usable, maybe conflict with others
+[  20.67] I (3458) ESP32_P4_EV: MIPI DSI PHY Powered on
+[  20.67] I (3463) ESP32_P4_EV: Install MIPI DSI LCD control panel
+[  20.67] I (3467) ESP32_P4_EV: Install EK79007 LCD control panel
+[  20.67] I (3472) ek79007: version: 2.0.2
+[  20.67] I (3474) H_API: esp_wifi_remote_connect
+[  20.92] I (3649) ESP32_P4_EV: Display initialized
+[  20.92] I (3650) esp_lvgl:bridge_v9: Initializing hardware resources
+[  20.92] I (3650) esp_lvgl:bridge_v9: Hardware resources initialized successfully
+[  20.92] I (3653) esp_lvgl:bridge: Initializing hardware resources
+[  20.92] I (3658) esp_lvgl:bridge: Hardware resources initialized successfully
+[  20.92] W (3664) esp_lvgl:bridge_v9: on_frame_buf_complete unavailable; buffer-switch release and dummy-draw may not function on MIPI DSI
+[  20.92] I (3676) ESP32_P4_EV: Touch 0x5d found
+[  20.92] I (3679) GT911: I2C address initialization procedure skipped - using default GT9xx setup
+[  20.92] I (3687) GT911: TouchPad_ID:0x39,0x31,0x31
+[  20.92] I (3691) GT911: TouchPad_Config_Version:91
+[  20.92] W (3695) esp_lvgl:touch: LV_USE_GESTURE_RECOGNITION is disabled; only single-point pointer events are available
+[  20.92] I (3704) esp_lvgl:touch: Touch input device registered successfully (IRQ mode: disabled)
+[  20.92] I (3713) esp_lvgl:adapter: LVGL task started successfully
+[  20.92] I (3717) ESP32_P4_EV: Setting LCD backlight: 100%
+[  21.27] I (3722) ESP32_P4_EV: Setting LCD backlight: 45%
+[  21.27] I (3726) main: heap display        internal=244KB largest=204KB dma=206KB psram=27577KB
+[  21.27] I (3869) fnos_view: dashboard v2 created (4 pages, 180 s window)
+[  21.27] I (3869) main: heap ui             internal=244KB largest=204KB dma=206KB psram=27489KB
+[  21.27] I (3871) fnos_data: polling http://192.168.0.119:8799/api/v1/status every 1000 ms
+[  21.27] I (3878) main: heap polling        internal=243KB largest=204KB dma=205KB psram=27475KB
+[  21.27] I (3886) ESP32_P4_EV: Setting LCD backlight: 45%
+[  21.27] I (3891) main: backlight 45% (day)
+[  21.27] I (3894) main: boot complete
+[  21.27] I (3896) main_task: Returned from app_main()
+[  21.96] Guru Meditation Error: Core  1 panic'ed (Load access fault). Exception was unhandled.
+[  21.96] 
+[  21.96] Core  1 register dump:
+[  21.96] MEPC    : 0x4fc1b714  RA      : 0x480ef1e2  SP      : 0x48511260  GP      : 0x4ff56f80  
+[  21.96] TP      : 0x48511810  T0      : 0x0000000d  T1      : 0x90000000  T2      : 0xffffffff  
+[  21.96] S0/FP   : 0x00000000  S1      : 0x00000014  A0      : 0x00000014  A1      : 0xffffffff  
+[  21.96] A2      : 0x0000000a  A3      : 0x7f7f7f7f  A4      : 0x00000000  A5      : 0x00000018  
+[  21.96] A6      : 0xa0000000  A7      : 0x0000000a  S2      : 0x4817f000  S3      : 0x00000009  
+[  21.96] S4      : 0xffffffff  S5      : 0x0000000a  S6      : 0x00000002  S7      : 0x00000073  
+[  21.96] S8      : 0x00000009  S9      : 0x00000000  S10     : 0xffffffff  S11     : 0x48511384  
+[  21.96] T3      : 0x00000000  T4      : 0x00000000  T5      : 0xffffffff  T6      : 0x00000000  
+[  21.96] MSTATUS : 0x00011881  MTVEC   : 0x4ff40003  MCAUSE  : 0x00000005  MTVAL   : 0x00000014  
+[  21.96] MHARTID : 0x00000001  
+[  21.96] 
+[  21.96] Stack memory:
+[  21.96] 48511260: 0x00000001 0x4ff5ec14 0x4ff87710 0x4810dea6 0x00000000 0x00000000 0x00000000 0x00000000
+[  21.96] 48511280: 0x00000000 0x00000001 0x0000004f 0x00000001 0x00000000 0x48113744 0x00000000 0x00000000
+[  21.96] 485112a0: 0x00000000 0x00000258 0xffffffc0 0x00000002 0x000003f0 0x4ff6da00 0x00000080 0x00000000
+[  21.96] 485112c0: 0x0012c000 0x482b4e80 0x00000006 0x4fc116ea 0x0012c000 0x482b4e80 0x00000006 0x4ff505c0
+[  21.96] 485112e0: 0x00000000 0x4ff6da00 0x482b4e80 0x0012c000 0x4ff4c35e 0x4ff4f440 0x48511370 0x4ff56f80
+[  21.96] 48511300: 0x48511810 0x4fc114ec 0x4ff4c68a 0x00000001 0x00000000 0x4ff86da8 0x00000000 0x500e5014
+[  21.96] 48511320: 0x500e5010 0x00000004 0x00000000 0x0000001f 0x08000000 0x4fc11284 0x00000001 0x48511734
+[  21.96] 48511340: 0x48110000 0x4ff6da00 0x000003f0 0x00000002 0x0000000a 0x00000000 0x00000000 0x482b4e80
+[  21.96] 48511360: 0x1fffffff 0x4ff6da00 0x48110000 0xffffffff 0x4851137c 0x00000001 0x00000007 0x4810de9d
+[  21.96] 48511380: 0x00000007 0x4851141f 0x00000001 0x48110000 0x00000000 0x00000258 0xffffffc0 0x00000002
+[  21.96] 485113a0: 0x000003f0 0x4ff6da00 0x480fed20 0x00000004 0x4ff5dfa8 0x4ff86d90 0x4ff86a04 0x480272b8
+[  21.96] 485113c0: 0x480ffe50 0x00000001 0x485113f4 0x4802ee24 0x00000000 0x480ff064 0x4ff5c48c 0x00000000
+[  21.96] 485113e0: 0x480ff098 0x00000004 0x00000400 0x00000002 0x00000095 0x480ffd9c 0x480ffd9c 0x00010001
+[  21.96] 48511400: 0x000003f0 0x000001c2 0x000003f3 0x00000202 0x00000041 0x00000000 0x00000000 0x30393134
+[  21.96] 48511420: 0xffffffff 0x00000000 0x482b4e80 0x0012c000 0x4ff4c35e 0x4ff4bb5e 0x485114b0 0x4ff56f80
+[  21.96] 48511440: 0x48511810 0x00000000 0x381e0000 0x00003000 0x00000001 0x00000000 0x4850e668 0x500e5014
+[  21.96] 48511460: 0x500e5010 0x00000004 0x00000000 0x0000001f 0x00000004 0x00000002 0x4850e668 0x4850e614
+[  21.96] 48511480: 0x4850e638 0x4851150c 0x02625a00 0x4850e518 0x4850e528 0x00000000 0x00000000 0x00000000
+[  21.96] 485114a0: 0x00001111 0x4850e528 0x00000000 0x00000000 0x4810de50 0x4850e608 0x4850e5b4 0x4ff4b6a0
+[  21.96] 485114c0: 0x00000012 0x48511646 0x00000000 0x00000000 0x0000005c 0x00000000 0x00000000 0x00000cc3
+[  21.96] 485114e0: 0x000000ad 0x4850e528 0x4850e518 0x00000000 0x00000006 0xffffffff 0x4850e204 0x480f27f0
+[  21.96] 48511500: 0x00000012 0xffffffff 0x0001e204 0x00000001 0x0000005c 0x00000000 0x0000000a 0x4850e518
+[  21.96] 48511520: 0x00000000 0x00000004 0x00000000 0x00000000 0x00000014 0x4850e5a8 0x4850e554 0x4ff4b6d8
+[  21.96] 48511540: 0x00000006 0x4850e5a8 0x00000000 0x00000000 0x4ff56ebc 0x0000000c 0x00000000 0x48114000
+[  21.96] 48511560: 0x48177000 0x00000004 0x485115a0 0x00000000 0x00000004 0xffffffff 0x4850e674 0x480f2d3e
+[  21.96] 48511580: 0x00000006 0xffffffff 0x00000002 0x4850e674 0x00000003 0xffffffff 0x48511648 0x480f3d82
+[  21.96] 485115a0: 0x00003000 0x00000000 0x00000000 0x00000000 0x00000900 0x48511646 0x00000000 0x00000002
+[  21.96] 485115c0: 0x00000900 0x48511670 0x00000000 0x00000001 0x00001000 0x00000000 0x00000000 0x00000000
+[  21.96] 485115e0: 0x00000000 0x00000000 0x00000000 0x00000000 0x00000000 0x00000000 0x00000000 0x00000000
+[  21.96] 48511600: 0x00000000 0x00000000 0x00000000 0x00000000 0x00000000 0x00000001 0x48511670 0x48511680
+[  21.96] 48511620: 0x485116c7 0x4810e000 0x00000000 0x00000000 0x00000000 0x00000001 0x4ff876a8 0x4ff4f1ee
+[  22.25] 48511640: 0x4ff5fa68 0x00000000 0x4ff5fa14 0x4ff4f3ee 0x00000000 0x00000001 0x4ff5fa14 0x4ff4b182
+[  22.25] 
+[  22.25] 
+[  22.25] 
+[  22.25] ELF file SHA256: 440d62121
+[  22.25] 
+[  22.25] Rebooting...
+[  22.25] ESP-ROM:esp32p4-eco7-20260109
+[  22.25] Build:Jan  9 2026
+[  22.25] rst:0xc (SW_CPU_RESET),boot:0xf (SPI_FAST_FLASH_BOOT)
+[  22.25] Core0 Saved PC:0x4ff444de
+[  22.25] Core1 Saved PC:0x4ff4ace6
+[  22.25] SPI mode:DIO, clock div:1
+[  22.25] load:0x4ffb60d0,len:0x11f0
+[  22.25] load:0x4ffac2c0,len:0xd5c
+[  22.25] load:0x4ffaefc0,len:0x3408
+[  22.25] entry 0x4ffac2c0
+[  22.25] I (229) hex_psram: vendor id    : 0x0d (AP)
+[  22.25] I (229) hex_psram: Latency      : 0x01 (Fixed)
+[  22.25] I (229) hex_psram: DriveStr.    : 0x00 (25 Ohm)
+[  22.25] I (230) hex_psram: dev id       : 0x03 (generation 4)
+[  22.25] I (235) hex_psram: density      : 0x07 (256 Mbit)
+[  22.25] I (239) hex_psram: good-die     : 0x06 (Pass)
+[  22.25] I (243) hex_psram: SRF          : 0x02 (Slow Refresh)
+[  22.25] I (248) hex_psram: BurstType    : 0x00 ( Wrap)
+[  22.25] I (252) hex_psram: BurstLen     : 0x03 (2048 Byte)
+[  22.25] I (257) hex_psram: BitMode      : 0x01 (X16 Mode)
+[  22.25] I (261) hex_psram: Readlatency  : 0x04 (14 cycles@Fixed)
+[  22.25] I (266) hex_psram: DriveStrength: 0x00 (1/1)
+[  22.25] I (270) MSPI Timing: Enter psram timing tuning
+[  22.47] I esp_psram: Found 32MB PSRAM device
+[  22.47] I esp_psram: Speed: 200MHz
+[  22.47] I (457) mmu_psram: .rodata xip on psram
+[  22.47] I (505) mmu_psram: .text xip on psram
+[  22.47] I (506) hex_psram: psram CS IO is dedicated
+[  22.47] I (506) cpu_start: Multicore app
+[  23.10] I (929) esp_psram: SPI SRAM memory test OK
+[  23.10] I (938) cpu_start: GPIO 38 and 37 are used as console UART I/O pins
+[  23.10] I (939) cpu_start: Pro cpu start user code
+[  23.10] I (939) cpu_start: cpu freq: 400000000 Hz
+[  23.10] I (941) app_init: Application information:
+[  23.10] I (944) app_init: Project name:     fnos_monitor
+[  23.10] I (949) app_init: App version:      0.1.0
+[  23.10] I (953) app_init: Compile time:     Sep 28 2026 07:59:20
+[  23.10] I (958) app_init: ELF file SHA256:  440d62121...
+[  23.10] I (962) app_init: ESP-IDF:          5.5.3
+[  23.10] I (966) efuse_init: Min chip rev:     v3.0
+[  23.10] I (969) efuse_init: Max chip rev:     v3.99 
+[  23.10] I (973) efuse_init: Chip rev:         v3.2
+[  23.10] I (977) heap_init: Initializing. RAM available for dynamic allocation:
+[  23.10] I (984) heap_init: At 4FF5E210 len 0005CDB0 (371 KiB): RETENT_RAM
+[  23.10] I (989) heap_init: At 4FFBAFC0 len 00004BF0 (18 KiB): RAM
+[  23.10] I (994) heap_init: At 501080D8 len 00000028 (0 KiB): RTCRAM
+[  23.10] I (1000) heap_init: At 501081A0 len 00007E60 (31 KiB): RTCRAM
+[  23.10] I (1005) heap_init: At 30100198 len 00001E68 (7 KiB): TCM
+[  23.45] I (1010) esp_psram: Adding pool of 31215K of PSRAM memory to heap allocator
+[  23.45] I (1017) esp_psram: Adding pool of 8K of PSRAM memory gap generated due to end address alignment of irom to the heap allocator
+[  23.45] I (1028) esp_psram: Adding pool of 0K of PSRAM memory gap generated due to end address alignment of drom to the heap allocator
+[  23.45] I (1039) spi_flash: detected chip: gd
+[  23.45] I (1043) spi_flash: flash io: qio
+[  23.45] I (1046) host_init: ESP Hosted : Host chip_ip[18]
+[  23.45] I (1050) H_API: ESP-Hosted starting. Hosted_Tasks: prio:23, stack: 5120 RPC_task_stack: 5120
+[  23.45] sdio_mempool_create free:32378568 min-free:32378568 lfb-def:31457280 lfb-8bit:31457280
+[  23.45] 
+[  23.45] I (1066) H_API: ** add_esp_wifi_remote_channels **
+[  23.45] I (1071) transport: Add ESP-Hosted channel IF[1]: S[0] Tx[0x4800b6dc] Rx[0x4801a922]
+[  23.45] I (1078) transport: Add ESP-Hosted channel IF[2]: S[0] Tx[0x4800b622] Rx[0x4801a922]
+[  23.45] I (1086) sleep_gpio: Configure to isolate all GPIO pins in sleep state
+[  23.45] I (1092) sleep_gpio: Enable automatic switching of GPIO sleep configuration
+[  23.45] I (1099) main_task: Started on CPU0
+[  23.45] I (1103) main_task: Calling app_main()
+[  23.45] I (1109) main: fnOS NAS dashboard booting (agent http://192.168.0.119:8799)
+[  23.45] I (1112) main: heap boot           internal=364KB largest=304KB dma=326KB psram=31220KB
+[  23.45] I (1121) transport: Attempt connection with slave: retry[0]
+[  23.45] I (1125) transport: Reset slave using GPIO[54]
+[  23.45] I (1129) os_wrapper_esp: GPIO [54] configured
+[  24.42] I (2299) sdio_wrapper: SDIO master: Data-Lines: 4-bit Freq(KHz)[40000 KHz]
+[  24.42] I (2299) sdio_wrapper: GPIOs: CLK[18] CMD[19] D0[14] D1[15] D2[16] D3[17] Slave_Reset[54]
+[  24.42] I (2299) H_SDIO_DRV: Starting SDIO process rx task
+[  24.42] I (2302) sdio_wrapper: Queues: Tx[20] Rx[20] SDIO-Rx-Mode[1]
+[  24.42] Name: 
+[  24.42] Type: SDIO
+[  24.42] Speed: 40.00 MHz (limit: 40.00 MHz)
+[  24.42] Size: 0MB
+[  24.42] CSD: ver=1, sector_size=0, capacity=0 read_bl_len=0
+[  24.42] SCR: sd_spec=0, bus_width=0
+[  24.42] TUPLE: DEVICE, size: 3: D9 01 FF 
+[  24.42] TUPLE: MANFID, size: 4
+[  24.42]   MANF: 0092, CARD: 6666
+[  24.42] TUPLE: FUNCID, size: 2: 0C 00 
+[  24.42] TUPLE: FUNCE, size: 4: 00 00 02 32 
+[  24.42] TUPLE: CONFIG, size: 5: 01 01 00 02 07 
+[  24.42] TUPLE: CFTABLE_ENTRY, size: 8
+[  24.42]   INDX: C1, Intface: 1, Default: 1, Conf-Entry-Num: 1
+[  24.42]   IF: 41
+[  24.42]   FS: 30, misc: 0, mem_space: 1, irq: 1, io_space: 0, timing: 0, power: 0
+[  24.42]   IR: 30, mask: 1,   IRQ: FF FF
+[  24.42]   LEN: FFFF
+[  24.42] TUPLE: END
+[  24.42] I (2385) sdio_wrapper: Function 0 Blocksize: 512
+[  24.42] I (2389) sdio_wrapper: Function 1 Blocksize: 512
+[  24.42] I (2393) H_SDIO_DRV: SDIO Host operating in STREAMING MODE
+[  24.42] I (2398) H_SDIO_DRV: generate slave intr
+[  24.42] I (2404) transport: Received INIT event from ESP32 peripheral
+[  24.42] I (2407) transport: EVENT: 12
+[  24.42] I (2410) transport: EVENT: 11
+[  24.42] I (2413) transport: capabilities: 0xd
+[  24.42] I (2416) transport: Features supported are:
+[  24.42] I (2420) transport: 	 * WLAN
+[  24.76] I (2423) transport: 	   - HCI over SDIO
+[  24.76] I (2426) transport: 	   - BLE only
+[  24.76] I (2429) transport: EVENT: 13
+[  24.76] I (2432) transport: ESP board type is : 13 
+[  24.76] 
+[  24.76] I (2436) transport: Base transport is set-up
+[  24.76] 
+[  24.76] I (2440) transport: Slave chip Id[12]
+[  24.76] I (2444) hci_stub_drv: Host BT Support: Disabled
+[  24.76] I (2448) H_SDIO_DRV: Received INIT event
+[  25.45] I (3453) fnos_net: wifi station started; awaiting ip
+[  25.45] I (3454) esp_lvgl:adapter: LVGL adapter initialized successfully
+[  25.45] W (3454) ledc: GPIO 32 is not usable, maybe conflict with others
+[  25.45] I (3458) ESP32_P4_EV: MIPI DSI PHY Powered on
+[  25.45] I (3464) ESP32_P4_EV: Install MIPI DSI LCD control panel
+[  25.45] I (3468) ESP32_P4_EV: Install EK79007 LCD control panel
+[  25.45] I (3472) ek79007: version: 2.0.2
+[  25.45] I (3474) H_API: esp_wifi_remote_connect
+[  25.70] I (3649) ESP32_P4_EV: Display initialized
+[  25.70] I (3650) esp_lvgl:bridge_v9: Initializing hardware resources
+[  25.70] I (3650) esp_lvgl:bridge_v9: Hardware resources initialized successfully
+[  25.70] I (3653) esp_lvgl:bridge: Initializing hardware resources
+[  25.70] I (3658) esp_lvgl:bridge: Hardware resources initialized successfully
+[  25.70] W (3664) esp_lvgl:bridge_v9: on_frame_buf_complete unavailable; buffer-switch release and dummy-draw may not function on MIPI DSI
+[  25.70] I (3676) ESP32_P4_EV: Touch 0x5d found
+[  25.70] I (3679) GT911: I2C address initialization procedure skipped - using default GT9xx setup
+[  25.70] I (3687) GT911: TouchPad_ID:0x39,0x31,0x31
+[  25.70] I (3691) GT911: TouchPad_Config_Version:91
+[  25.70] W (3695) esp_lvgl:touch: LV_USE_GESTURE_RECOGNITION is disabled; only single-point pointer events are available
+[  25.70] I (3704) esp_lvgl:touch: Touch input device registered successfully (IRQ mode: disabled)
+[  25.70] I (3713) esp_lvgl:adapter: LVGL task started successfully
+[  25.70] I (3717) ESP32_P4_EV: Setting LCD backlight: 100%
+[  26.05] I (3722) ESP32_P4_EV: Setting LCD backlight: 45%
+[  26.05] I (3726) main: heap display        internal=244KB largest=204KB dma=206KB psram=27577KB
+[  26.05] I (3869) fnos_view: dashboard v2 created (4 pages, 180 s window)
+[  26.05] I (3869) main: heap ui             internal=244KB largest=204KB dma=206KB psram=27489KB
+[  26.05] I (3871) fnos_data: polling http://192.168.0.119:8799/api/v1/status every 1000 ms
+[  26.05] I (3878) main: heap polling        internal=243KB largest=204KB dma=205KB psram=27475KB
+[  26.05] I (3886) ESP32_P4_EV: Setting LCD backlight: 45%
+[  26.05] I (3891) main: backlight 45% (day)
+[  26.05] I (3894) main: boot complete
+[  26.05] I (3896) main_task: Returned from app_main()

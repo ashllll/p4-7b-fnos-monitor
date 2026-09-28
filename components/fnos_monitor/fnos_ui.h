@@ -50,17 +50,17 @@
 #define CK_BAR_H   6           // 进度条粗细（细条风格）
 
 /* ── 字体：Inter（数值/拉丁）+ Noto Sans SC（中文）─────────────────── */
-#define CK_F_HERO     (&ui_font_mono_84)      // Hero 数字
-#define CK_F_NUML     (&ui_font_mono_52)      // 统计卡主值
-#define CK_F_NUMM     (&ui_font_mono_34)      // 列表值 / 主机名
-#define CK_F_NUMS     (&ui_font_mono_20)      // 行内数值 / 设备名
-#define CK_F_TITLE    (&ui_font_mono_34)
-#define CK_F_LABEL    (&ui_font_sans_20)      // 拉丁标签（自动加字间距）
-#define CK_F_META     (&ui_font_sans_15)      // 单位 / 辅助
+#define CK_F_HERO     (&ui_font_num_56)      // Hero 数字
+#define CK_F_NUML     (&ui_font_num_44)      // 统计卡主值
+#define CK_F_NUMM     (&ui_font_num_28)      // 列表值 / 主机名
+#define CK_F_NUMS     (&ui_font_num_17)      // 行内数值 / 设备名
+#define CK_F_TITLE    (&ui_font_num_28)
+#define CK_F_LABEL    (&ui_font_txt_15)      // 拉丁标签（自动加字间距）
+#define CK_F_META     (&ui_font_txt_13)      // 单位 / 辅助
 #define CK_F_CVERDICT (&ui_font_cjk_40)
 #define CK_F_CTITLE   (&ui_font_cjk_24)
-#define CK_F_CLABEL   (&ui_font_cjk_20)
-#define CK_F_CMETA    (&ui_font_cjk_15)
+#define CK_F_CLABEL   (&ui_font_cjk_17)
+#define CK_F_CMETA    (&ui_font_cjk_13)
 
 /* ── 基础构件 ─────────────────────────────────────────────────────── */
 lv_obj_t *ck_obj(lv_obj_t *parent, int x, int y, int w, int h, uint32_t bg, int radius, bool clickable);
