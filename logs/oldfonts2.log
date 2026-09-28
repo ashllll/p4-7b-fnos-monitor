@@ -1,0 +1,8 @@
+[   0.31] nal dma=197KB psram=27554KB
+[   0.31] I (63905) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27554KB
+[   4.45] I (70965) fnos_data: poll ok=60 fail=0 56ms cpu=1.9% mem=34.3% rx=12.3 tx=10I (93905) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27554KB
+[  14.48] I (103905) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27554KB
+[  17.27] I (106606) fnos_data: poll ok=90 fail=0 1671ms cpu=1.8% mem=33.0% rx=10.0 tx=111.2 KB/s alerts=0 internal=235KB dma=197KB psram=27554KB
+[  24.57] I (113905) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27554KB
+[  34.26] I (123905) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27554KB
+[  44.26] I (133905) main: heap periodic       internal=235KB largest=192KB dma=197KB psram=27554KB
