@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 生成仪表盘用的 LVGL 字体（IBM Plex Sans/Mono + Noto Sans SC 子集）。
+# 生成仪表盘用的 LVGL 字体（Inter 拉丁 + Noto Sans SC 中文子集）。
 #
 # 为什么要有这个脚本：界面标签是中文 + 拉丁数字混排，字体必须覆盖代码里真正用到的字形，
 # 而且要在换字号/换字体时能一键复现。中文字符集直接从源码里扫出来，不手写清单。
@@ -14,7 +14,7 @@
 #   本工程开着 CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=2，LVGL 会把一帧拆成两个 tile 用两个线程并行绘制，
 #   两个线程同时解压不同字形就会互相踩状态 → 字形碎裂、每次重绘碎裂的位置还不一样（看起来就是闪烁）。
 #   LVGL 内置的 Montserrat（.bitmap_format = 0，未压缩）没这个问题，所以 v1 界面是干净的，
-#   换成自定义压缩字体后才暴露。代价是字体体积大 2~3 倍（本工程 11 个字库约 +0.3 MB Flash，分区绰绰有余）。
+#   换成自定义压缩字体后才暴露。代价是字体体积大 2~3 倍（本工程 10 个字库约 +0.3 MB Flash，分区绰绰有余）。
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$ROOT/tools/fonts"
@@ -24,13 +24,30 @@ LV="npx --yes lv_font_conv@1.5.2"
 mkdir -p "$OUT"
 cd "$SRC"
 
+# 本次要产出的字库（与下面每条生成命令一一对应）。生成完会删掉 OUT 里其余的 ui_font_*.c：
+# 上一代字库留在目录里没有任何东西引用，却会被下面的 glob 声明进 fnos_fonts.h，白占仓库体积、
+# 也让"到底哪些字体在用"变得难查（v1 的 9 个 sans/mono/cjk 字库就是这么残留了 ≈1.0 MB）。
+EXPECT="ui_font_num_56 ui_font_num_44 ui_font_num_28 ui_font_num_17 \
+        ui_font_txt_15 ui_font_txt_13 \
+        ui_font_cjk_40 ui_font_cjk_24 ui_font_cjk_17 ui_font_cjk_13"
+
 # 1) 只从界面源码的**字符串字面量**里扫中文（先剥掉注释）：
 #    注释里也有大量中文，全扫进来会让字体白胖好几倍（562 vs 约 90 个字）。
+#    清单必须覆盖"所有能把文字送上屏的文件"：strings.json（locKey）+ bindings.json
+#    （字段默认值，例如"等待数据"）+ Controller（格式化串）+ ViewAnim/fnos_ui/main/kk_widgets。
+#    漏一个文件就可能出现"库里有这个字、字库里没有"的豆腐块（v4.2 的"前"就是这么来的）。
+#    对照检查：python3 tools/audit_fonts.py（会校验本清单的产物是否覆盖全部文案）。
 CJK=$(python3 - "$ROOT" <<'PYEOF'
 import io, os, re, sys
 root = sys.argv[1]
-UI = ['components/fnos_monitor/fnos_view.c', 'components/fnos_monitor/fnos_ui.c',
-      'components/fnos_monitor/fnos_ui.h', 'components/fnos_monitor/fnos_view.h']
+UI = ['components/fnos_monitor/ui/Source/FnosDashboard/strings.json',
+      'components/fnos_monitor/ui/Source/FnosDashboard/bindings.json',
+      'components/fnos_monitor/ui/FnosDashboardController.c',
+      'components/fnos_monitor/ui/FnosDashboardViewAnim.c',
+      'components/fnos_monitor/ui/Generated/FnosDashboard/fnos_dash_strings.generated.h',
+      'components/fnos_monitor/fnos_ui.c', 'components/fnos_monitor/fnos_ui.h',
+      'components/fnos_monitor/kk_ui/kk_widgets.c',
+      'main/main.cpp']
 pat = re.compile(r'[\u3000-\u303f\u4e00-\u9fff\uff00-\uffef]')
 
 def keep_strings(s):
@@ -85,7 +102,17 @@ for spec in "40:Medium:ui_font_cjk_40" "24:Medium:ui_font_cjk_24" "17:Medium:ui_
       -r 0x20-0x7E -r 0xB0 -r 0xB7 --symbols "$CJK" --lv-include lvgl.h -o "$OUT/$name.c"
 done
 
-# 2) 统一的声明头
+# 2) 清理上一代产物（只保留本次生成的；EXPECT 之外的 ui_font_*.c 一律删）
+for f in "$OUT"/ui_font_*.c; do
+  [ -e "$f" ] || continue
+  b="$(basename "$f" .c)"
+  case " $EXPECT " in
+    *" $b "*) ;;
+    *) echo "清理上一代字库: $b.c"; rm -f "$f" ;;
+  esac
+done
+
+# 3) 统一的声明头
 {
   echo "// 由 tools/gen_fonts.sh 生成，请勿手改。"
   echo "#pragma once"
