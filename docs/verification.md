@@ -180,9 +180,9 @@ I (37748) fnos_data: poll ok=30 fail=0 19ms cpu=3.0% mem=62.0% rx=39.6 tx=1104.0
 仍未做（留给下一轮）：滑动切页过渡动画、告警历史页、趋势柱再稀一档（现在 2 s/点在 7 寸上仍偏"条形码"）、
 夜间配色（现在只降背光不换配色）。
 
-> 复核路径说明：四页的最终版面是用 `CONFIG_FNOS_AUTO_PAGE_SEC=12` 的临时构建逐页拍照核对的，
-> 交付固件只把该值改回 0（唯一的差别是那个自动轮播定时器），交付版本另拍了总览页并核对了串口稳态
-> （`poll ok=30 fail=0 9ms`、内部 RAM 235 KB）。
+> 复核路径说明：v4.2 那轮四页版面是用 `CONFIG_FNOS_AUTO_PAGE_SEC=12` 的临时构建逐页拍照核对的，
+> 交付固件把该值改回 0（唯一差别是那个自动轮播定时器）。2026-10-02 的交付复核轮又完整走了一遍
+> "关掉轮播 → 重建 → 烧录 → 串口 + 实机复拍"（数据见 §13.2）。
 
 ## 9. "字体花屏闪烁"的两个真因（2026-09-26，用户实机报告后定位）
 
@@ -221,7 +221,7 @@ I (37748) fnos_data: poll ok=30 fail=0 19ms cpu=3.0% mem=62.0% rx=39.6 tx=1104.0
 * 网络：`累计接收 54 GB` / `累计发送 309 GB` / `采集延迟 7 ms` / `曲线采样 368` 全部正常；
 * 四页在两张相隔数十秒的照片里同一段文字像素一致（不再有随机碎裂）。
 
-交付固件已把自动轮播关掉重新烧录，并再抓一次串口稳态确认。
+交付固件已把自动轮播关掉重新烧录，并再抓一次串口稳态确认（2026-10-02 再次确认：见 §13.2）。
 
 ## 10. 布局异常修复轮（2026-09-26 晚，用户报告"存储/总览界面布局存在异常"）
 
@@ -330,3 +330,72 @@ uidbg: unit0 x=278 y=53 w=14 h=16 hidden=0 text='%' par_w=209
   4 块 NVMe + CPU + 网卡 + 核显。
 * **界面文字为 ASCII**：LVGL 内置 Montserrat 只有 ASCII 字形（见 README 说明）。
 * **md127 是 NAS 的真实状态**（broken raid1，只挂着一个成员），不是固件误报。
+
+## 13. 交付复核轮（2026-10-02 下午：代码复审 + 字体审计工具 + 关掉轮播）
+
+### 13.1 复审范围与结论
+
+逐个文件人工细读（配合 `ocr scan` 整文件扫描）：`fnos_ui.c`、`ui/FnosDashboardController.c`、
+`ui/FnosDashboardViewAnim.c`、`kk_ui/kk_widgets.c`、`kk_ui/kk_theme.h`、`kk_ui/kk_rect.c`、`main/main.cpp`、
+`tools/ui_gen.py`、`tools/ui_validate.py`、`fnos_data.c`、`fnos_net.c`。
+
+* **数据层无实质问题**：`fnos_data.c` 的 `http_get` 三条错误路径都会 `http_drop_client()`（不残留 keep-alive
+  连接污染后续轮询）、数组解析全部带 `FNOS_MAX_*` 边界、cJSON hooks 走 PSRAM 且失败回退内部 RAM；
+  `fnos_net.c` 的 esp_timer 回调只置 `s_connect_wanted`，真正的 `esp_wifi_connect()` 由轮询任务发出
+  （不阻塞 LVGL 的 esp_timer 任务），`s_rssi` 是 `volatile int8_t`。
+* **界面层**：`kk_widgets.c` 里 `t->bar` / `t->line` 的每次解引用都有判空（313-316、336-337、352-353、358）；
+  `kk_swipe_attach` 的 `lv_malloc` 只在视图构造期发生 4 次（`fnos_dash_view.generated.c:4440-4443`），长跑无泄漏。
+
+本轮修掉的 3 个真问题：
+
+| # | 问题 | 修法 |
+| --- | --- | --- |
+| 1 | `fnos_ui.c:129` 还留着 6 秒一次性调试探针 `probe_cb`（v4.2.2 冻结事故的主角），交付固件里照跑 | 删除函数与 `lv_timer_create(probe_cb, …)` |
+| 2 | `tools/gen_fonts.sh` 扫中文字形时漏了 `bindings.json`（5 个字段默认值含中文：等待数据 / 无告警 / 等待 / 等待首个数据帧 / TB / 总量） | 清单补上 bindings.json、`kk_widgets.c`、`main.cpp` |
+| 3 | v3 有的"拉丁字体写中文"审计在 v4 丢了（v4.2 的"前"字豆腐块就是这么漏出去的） | 新增 `tools/audit_fonts.py`（见 §13.3） |
+
+顺手清理：删除 9 个僵尸字库（≈1 MB，不在 `CMakeLists.txt` 的 `PROJ_SRCS` 里，却被 `fnos_fonts.h` 的 glob
+声明着），`gen_fonts.sh` 增加"生成后清理非本次产出"步骤；字库从 11 个降到 10 个（cjk_13/17/24/40、
+num_17/28/44/56、txt_13/15）。
+
+### 13.2 关掉轮播（交付态）
+
+* `sdkconfig:2547`：`CONFIG_FNOS_AUTO_PAGE_SEC` **12 → 0**。该宏只有两处使用：`main/main.cpp:61-68`
+  的 `auto_page_cb` 与 `main/main.cpp:120-123` 的 `lv_timer_create(...)`，整块都在
+  `#if CONFIG_FNOS_AUTO_PAGE_SEC > 0` 里 —— 关掉后连定时器都不存在（Kconfig 里这本来就是"仅视觉验收"的开关）。
+* 重建：`./idf.sh build` → EXIT=0，`build/fnos_monitor.bin` 1816544 B；烧录：
+  `./idf.sh -p /dev/cu.usbmodem5CF71088571 -b 230400 flash` → FLASH_EXIT=0。
+* 串口 50 s（`logs/delivery-nocarousel.log`）：`VERIFY MODE` **0 次**、`task_wdt`/`Guru Meditation`/断言 **0 次**、
+  `poll ok=30 fail=0 12ms`、内部 RAM 稳态 217 KB（启动首帧 230 → 稳定 217）、PSRAM 27314 KB 无下降。
+* 实机复拍（手机相机预览截图，两张相隔 36 s）：时钟 15:39 → 15:40、CPU 2% → 8%、
+  负载 1.27/0.62/0.49 → 2.06/0.90/0.58、曲线出现新峰 —— **UI 活性确认**；
+  页面仍停在总览、左侧导航指示条不动 —— **轮播确已关闭**。
+
+### 13.3 `tools/audit_fonts.py`：审计内容与自身的三个坑
+
+审计项：A 字库 `.bitmap_format` 必须为 0（RLE 会花屏）；B Text 节点的实际文案（locKey 各语言 + 字段默认值，
+字体按父链继承）必须被其字库覆盖；C Controller `SETS/SETS_F` 格式串里的中文必须被目标字段节点的字库覆盖；
+D 全仓 UI 源码的中文字形至少被某个"参与构建"的字库覆盖；E 僵尸字库；F 字段缓冲（`maxLen`）预算。
+
+调试这个脚本时它自己踩了三个坑，都是"静默失效 → 假绿"，已全部修正并加了自检：
+
+1. `strip_comments_keep_literals()` 只保留字面量，`SETS(...)` 的调用语法一起被丢掉 → 正则永远匹配不上
+   （检查 C/F 一直是死代码）→ 新增 `strip_comments_keep_code()`（注释换空格、代码原样保留）。
+2. 正则 `SETS_F?\(` 里的下划线是硬字符（只有 `F` 可选）→ 只匹配 `SETS_F`，20 多处 `SETS(FtPoll, …)` 被整片漏掉
+   → 改为 `SETS(?:_F)?\(`。
+3. `field_macro_table()` 把捕获组（已经是去掉 `FNOS_DASH_FIELD_` 前缀的字段名）又切了一次前缀 → 展开成空串，
+   存储/RAID/告警整组行漏检 → 直接使用捕获组。
+4. 收尾自检：一条 `SETS/SETS_F` 都没解析到就直接报错（"别信这个 PASS"），避免以后再次静默失效。
+
+F 检查据此发现 3 处字段缓冲偏紧并已放宽：`FtPoll` 80 → 96、`SyCnt` 24 → 40、`SyKvVal2` 24 → 40
+（生成物 `fnos_dash_store.generated.h:302/435/499`）。
+
+### 13.4 OCR 第二轮评审未完成（环境原因，如实记录）
+
+* 本机 `git` 当前不可用：`git --version` 打印 "You have not agreed to the Xcode license agreements.
+  Please run 'sudo xcodebuild -license'..."（exit 69）→ `ocr review`（diff 模式）直接报
+  "not a git repository"。构建同理受影响，须 `export DEVELOPER_DIR=/Library/Developer/CommandLineTools`
+  才能跑 `./idf.sh build`。
+* 改用 `ocr scan`（整文件、不需要 git）跑三路（固件 9 文件 / NAS 5 文件 / 数据层 4 文件）：
+  三个进程均 0% CPU 长时间挂起（16 分钟后仍无输出文件），判定为 provider 端无响应，已终止。
+  本轮复审以人工逐文件细读 + 自建审计工具完成。

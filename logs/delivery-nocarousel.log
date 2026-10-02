@@ -1,0 +1,18 @@
+[   0.20] I (4092) fnos_ui: ui created (pages=4)
+[   0.20] I (4092) main: heap ui             internal=230KB largest=188KB dma=192KB psram=27324KB
+[   0.20] I (4092) fnos_data: polling http://192.168.0.119:8799/api/v1/status every 1000 ms
+[   0.20] I (4099) main: heap polling        internal=229KB largest=188KB dma=191KB psram=27310KB
+[   0.20] I (4107) ESP32_P4_EV: Setting LCD backlight: 45%
+[   0.20] I (4112) main: backlight 45% (day)
+[   0.20] I (4115) main: boot complete
+[   0.20] I (4117) main_task: Returned from app_main()
+[   2.45] I (6505) esp_wifi_remote: esp_wifi_internal_reg_rxcb: sta: 0x480d5cee
+[   3.67] I (7553) esp_netif_handlers: sta ip: 192.168.0.214, mask: 255.255.255.0, gw: 192.168.0.1
+[   3.67] I (7553) fnos_net: got ip 192.168.0.214
+[   3.67] I (7692) fnos_data: history backfilled: 300 samples
+[  10.20] I (14115) main: heap periodic       internal=217KB largest=176KB dma=179KB psram=27313KB
+[  20.18] I (24115) main: heap periodic       internal=217KB largest=176KB dma=179KB psram=27313KB
+[  30.17] I (34115) main: heap periodic       internal=217KB largest=176KB dma=179KB psram=27314KB
+[  33.22] I (37239) fnos_data: poll ok=30 fail=0 12ms cpu=1.1% mem=67.3% rx=18.7 tx=73.1 KB/s alerts=0 internal=217KB dma=179KB psram=27314KB
+[  40.15] I (44115) main: heap periodic       internal=217KB largest=176KB dma=179KB psram=27314KB
+[  50.13] I (54115) main: heap periodic       internal=217KB largest=176KB dma=179KB psram=27314KB
