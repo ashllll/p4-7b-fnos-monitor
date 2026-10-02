@@ -1,0 +1,3386 @@
+{
+  "mvvm": {
+    "fields": [
+      {
+        "id": "HdHost",
+        "type": "string",
+        "maxLen": 32,
+        "default": "NAS"
+      },
+      {
+        "id": "HdEndpoint",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "HdClock",
+        "type": "string",
+        "maxLen": 24,
+        "default": "--:--"
+      },
+      {
+        "id": "HdChipText",
+        "type": "string",
+        "maxLen": 80,
+        "default": "等待数据"
+      },
+      {
+        "id": "HdChipColor",
+        "type": "string",
+        "maxLen": 10,
+        "default": "#F2B01E"
+      },
+      {
+        "id": "HdSignalValue",
+        "type": "int",
+        "maxLen": null,
+        "default": 0
+      },
+      {
+        "id": "FtPoll",
+        "type": "string",
+        "maxLen": 96,
+        "default": ""
+      },
+      {
+        "id": "FtAlertLbl",
+        "type": "string",
+        "maxLen": 80,
+        "default": "无告警"
+      },
+      {
+        "id": "FtAlertDotColor",
+        "type": "string",
+        "maxLen": 10,
+        "default": "#2FBF71"
+      },
+      {
+        "id": "FtAlertLblColor",
+        "type": "string",
+        "maxLen": 10,
+        "default": "#2FBF71"
+      },
+      {
+        "id": "OvVerdict",
+        "type": "string",
+        "maxLen": 48,
+        "default": "等待"
+      },
+      {
+        "id": "OvVerdictSub",
+        "type": "string",
+        "maxLen": 48,
+        "default": "等待首个数据帧"
+      },
+      {
+        "id": "OvReason",
+        "type": "string",
+        "maxLen": 80,
+        "default": ""
+      },
+      {
+        "id": "OvVerdictColor",
+        "type": "string",
+        "maxLen": 10,
+        "default": "#F2B01E"
+      },
+      {
+        "id": "OvVolName0",
+        "type": "string",
+        "maxLen": 32,
+        "default": ""
+      },
+      {
+        "id": "OvVolBar0Value",
+        "type": "float",
+        "maxLen": null,
+        "default": 0
+      },
+      {
+        "id": "OvVolPct0",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "OvVolName1",
+        "type": "string",
+        "maxLen": 32,
+        "default": ""
+      },
+      {
+        "id": "OvVolBar1Value",
+        "type": "float",
+        "maxLen": null,
+        "default": 0
+      },
+      {
+        "id": "OvVolPct1",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "OvVolName2",
+        "type": "string",
+        "maxLen": 32,
+        "default": ""
+      },
+      {
+        "id": "OvVolBar2Value",
+        "type": "float",
+        "maxLen": null,
+        "default": 0
+      },
+      {
+        "id": "OvVolPct2",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "OvVolName3",
+        "type": "string",
+        "maxLen": 32,
+        "default": ""
+      },
+      {
+        "id": "OvVolBar3Value",
+        "type": "float",
+        "maxLen": null,
+        "default": 0
+      },
+      {
+        "id": "OvVolPct3",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "OvVolName4",
+        "type": "string",
+        "maxLen": 32,
+        "default": ""
+      },
+      {
+        "id": "OvVolBar4Value",
+        "type": "float",
+        "maxLen": null,
+        "default": 0
+      },
+      {
+        "id": "OvVolPct4",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "OvVolName5",
+        "type": "string",
+        "maxLen": 32,
+        "default": ""
+      },
+      {
+        "id": "OvVolBar5Value",
+        "type": "float",
+        "maxLen": null,
+        "default": 0
+      },
+      {
+        "id": "OvVolPct5",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "OvVal0",
+        "type": "string",
+        "maxLen": 24,
+        "default": "--"
+      },
+      {
+        "id": "OvSub0",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "OvMbar0Value",
+        "type": "float",
+        "maxLen": null,
+        "default": 0
+      },
+      {
+        "id": "OvVal1",
+        "type": "string",
+        "maxLen": 24,
+        "default": "--"
+      },
+      {
+        "id": "OvSub1",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "OvMbar1Value",
+        "type": "float",
+        "maxLen": null,
+        "default": 0
+      },
+      {
+        "id": "OvVal2",
+        "type": "string",
+        "maxLen": 24,
+        "default": "--"
+      },
+      {
+        "id": "OvSub2",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "OvMbar2Value",
+        "type": "float",
+        "maxLen": null,
+        "default": 0
+      },
+      {
+        "id": "OvVal3",
+        "type": "string",
+        "maxLen": 24,
+        "default": "--"
+      },
+      {
+        "id": "OvSub3",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "OvCpuPoints",
+        "type": "series",
+        "capacity": 90,
+        "default": null
+      },
+      {
+        "id": "OvMemPoints",
+        "type": "series",
+        "capacity": 90,
+        "default": null
+      },
+      {
+        "id": "StHero",
+        "type": "string",
+        "maxLen": 24,
+        "default": "--"
+      },
+      {
+        "id": "StUsed",
+        "type": "string",
+        "maxLen": 48,
+        "default": "TB / 总量"
+      },
+      {
+        "id": "StCnt",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "StFree",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "StSeg0X",
+        "type": "int",
+        "maxLen": null,
+        "default": 20
+      },
+      {
+        "id": "StSeg0Width",
+        "type": "int",
+        "maxLen": null,
+        "default": 0
+      },
+      {
+        "id": "StSeg0Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": "#4EC9E8"
+      },
+      {
+        "id": "StSeg1X",
+        "type": "int",
+        "maxLen": null,
+        "default": 23
+      },
+      {
+        "id": "StSeg1Width",
+        "type": "int",
+        "maxLen": null,
+        "default": 0
+      },
+      {
+        "id": "StSeg1Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": "#4EC9E8"
+      },
+      {
+        "id": "StSeg2X",
+        "type": "int",
+        "maxLen": null,
+        "default": 26
+      },
+      {
+        "id": "StSeg2Width",
+        "type": "int",
+        "maxLen": null,
+        "default": 0
+      },
+      {
+        "id": "StSeg2Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": "#4EC9E8"
+      },
+      {
+        "id": "StSeg3X",
+        "type": "int",
+        "maxLen": null,
+        "default": 29
+      },
+      {
+        "id": "StSeg3Width",
+        "type": "int",
+        "maxLen": null,
+        "default": 0
+      },
+      {
+        "id": "StSeg3Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": "#4EC9E8"
+      },
+      {
+        "id": "StSeg4X",
+        "type": "int",
+        "maxLen": null,
+        "default": 32
+      },
+      {
+        "id": "StSeg4Width",
+        "type": "int",
+        "maxLen": null,
+        "default": 0
+      },
+      {
+        "id": "StSeg4Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": "#4EC9E8"
+      },
+      {
+        "id": "StSeg5X",
+        "type": "int",
+        "maxLen": null,
+        "default": 35
+      },
+      {
+        "id": "StSeg5Width",
+        "type": "int",
+        "maxLen": null,
+        "default": 0
+      },
+      {
+        "id": "StSeg5Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": "#4EC9E8"
+      },
+      {
+        "id": "StVolName0",
+        "type": "string",
+        "maxLen": 32,
+        "default": ""
+      },
+      {
+        "id": "StVolFs0",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "StVolUse0",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "StVolPct0",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "StVolBar0Value",
+        "type": "float",
+        "maxLen": null,
+        "default": 0
+      },
+      {
+        "id": "StVolName1",
+        "type": "string",
+        "maxLen": 32,
+        "default": ""
+      },
+      {
+        "id": "StVolFs1",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "StVolUse1",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "StVolPct1",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "StVolBar1Value",
+        "type": "float",
+        "maxLen": null,
+        "default": 0
+      },
+      {
+        "id": "StVolName2",
+        "type": "string",
+        "maxLen": 32,
+        "default": ""
+      },
+      {
+        "id": "StVolFs2",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "StVolUse2",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "StVolPct2",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "StVolBar2Value",
+        "type": "float",
+        "maxLen": null,
+        "default": 0
+      },
+      {
+        "id": "StVolName3",
+        "type": "string",
+        "maxLen": 32,
+        "default": ""
+      },
+      {
+        "id": "StVolFs3",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "StVolUse3",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "StVolPct3",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "StVolBar3Value",
+        "type": "float",
+        "maxLen": null,
+        "default": 0
+      },
+      {
+        "id": "StVolName4",
+        "type": "string",
+        "maxLen": 32,
+        "default": ""
+      },
+      {
+        "id": "StVolFs4",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "StVolUse4",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "StVolPct4",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "StVolBar4Value",
+        "type": "float",
+        "maxLen": null,
+        "default": 0
+      },
+      {
+        "id": "StVolName5",
+        "type": "string",
+        "maxLen": 32,
+        "default": ""
+      },
+      {
+        "id": "StVolFs5",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "StVolUse5",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "StVolPct5",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "StVolBar5Value",
+        "type": "float",
+        "maxLen": null,
+        "default": 0
+      },
+      {
+        "id": "StRaidName0",
+        "type": "string",
+        "maxLen": 32,
+        "default": ""
+      },
+      {
+        "id": "StRaidLvl0",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "StRaidState0",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "StRaidState0Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": "#2FBF71"
+      },
+      {
+        "id": "StRaidName1",
+        "type": "string",
+        "maxLen": 32,
+        "default": ""
+      },
+      {
+        "id": "StRaidLvl1",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "StRaidState1",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "StRaidState1Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": "#2FBF71"
+      },
+      {
+        "id": "StRaidName2",
+        "type": "string",
+        "maxLen": 32,
+        "default": ""
+      },
+      {
+        "id": "StRaidLvl2",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "StRaidState2",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "StRaidState2Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": "#2FBF71"
+      },
+      {
+        "id": "StRaidName3",
+        "type": "string",
+        "maxLen": 32,
+        "default": ""
+      },
+      {
+        "id": "StRaidLvl3",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "StRaidState3",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "StRaidState3Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": "#2FBF71"
+      },
+      {
+        "id": "StIoName0",
+        "type": "string",
+        "maxLen": 32,
+        "default": ""
+      },
+      {
+        "id": "StIoVal0",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "StIoName1",
+        "type": "string",
+        "maxLen": 32,
+        "default": ""
+      },
+      {
+        "id": "StIoVal1",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "StIoName2",
+        "type": "string",
+        "maxLen": 32,
+        "default": ""
+      },
+      {
+        "id": "StIoVal2",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "StIoName3",
+        "type": "string",
+        "maxLen": 32,
+        "default": ""
+      },
+      {
+        "id": "StIoVal3",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "NwDownVal",
+        "type": "string",
+        "maxLen": 24,
+        "default": "--"
+      },
+      {
+        "id": "NwDownUnit",
+        "type": "string",
+        "maxLen": 48,
+        "default": "KB/s"
+      },
+      {
+        "id": "NwDownSub",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "NwMiniDownPoints",
+        "type": "series",
+        "capacity": 90,
+        "default": null
+      },
+      {
+        "id": "NwUpVal",
+        "type": "string",
+        "maxLen": 24,
+        "default": "--"
+      },
+      {
+        "id": "NwUpUnit",
+        "type": "string",
+        "maxLen": 48,
+        "default": "KB/s"
+      },
+      {
+        "id": "NwUpSub",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "NwMiniUpPoints",
+        "type": "series",
+        "capacity": 90,
+        "default": null
+      },
+      {
+        "id": "NwDownTrendPoints",
+        "type": "series",
+        "capacity": 90,
+        "default": null
+      },
+      {
+        "id": "NwUpTrendPoints",
+        "type": "series",
+        "capacity": 90,
+        "default": null
+      },
+      {
+        "id": "NwTrendTop",
+        "type": "float",
+        "default": 0
+      },
+      {
+        "id": "NwAxis0",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "NwAxis1",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "NwAxis2",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "NwCtxVal0",
+        "type": "string",
+        "maxLen": 24,
+        "default": "--"
+      },
+      {
+        "id": "NwCtxVal1",
+        "type": "string",
+        "maxLen": 24,
+        "default": "--"
+      },
+      {
+        "id": "NwCtxVal2",
+        "type": "string",
+        "maxLen": 24,
+        "default": "--"
+      },
+      {
+        "id": "NwCtxVal3",
+        "type": "string",
+        "maxLen": 24,
+        "default": "--"
+      },
+      {
+        "id": "SyCnt",
+        "type": "string",
+        "maxLen": 40,
+        "default": ""
+      },
+      {
+        "id": "SyDock0",
+        "type": "string",
+        "maxLen": 32,
+        "default": ""
+      },
+      {
+        "id": "SyDock1",
+        "type": "string",
+        "maxLen": 32,
+        "default": ""
+      },
+      {
+        "id": "SyDock2",
+        "type": "string",
+        "maxLen": 32,
+        "default": ""
+      },
+      {
+        "id": "SyDock3",
+        "type": "string",
+        "maxLen": 32,
+        "default": ""
+      },
+      {
+        "id": "SyDock4",
+        "type": "string",
+        "maxLen": 32,
+        "default": ""
+      },
+      {
+        "id": "SyDock5",
+        "type": "string",
+        "maxLen": 32,
+        "default": ""
+      },
+      {
+        "id": "SyDockState0",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "SyDockState1",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "SyDockState2",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "SyDockState3",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "SyDockState4",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "SyDockState5",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "SyDot0Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": ""
+      },
+      {
+        "id": "SyDot1Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": ""
+      },
+      {
+        "id": "SyDot2Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": ""
+      },
+      {
+        "id": "SyDot3Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": ""
+      },
+      {
+        "id": "SyDot4Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": ""
+      },
+      {
+        "id": "SyDot5Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": ""
+      },
+      {
+        "id": "SyDockState0Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": ""
+      },
+      {
+        "id": "SyDockState1Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": ""
+      },
+      {
+        "id": "SyDockState2Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": ""
+      },
+      {
+        "id": "SyDockState3Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": ""
+      },
+      {
+        "id": "SyDockState4Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": ""
+      },
+      {
+        "id": "SyDockState5Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": ""
+      },
+      {
+        "id": "SyAlertLbl0",
+        "type": "string",
+        "maxLen": 80,
+        "default": ""
+      },
+      {
+        "id": "SyAlertLbl1",
+        "type": "string",
+        "maxLen": 80,
+        "default": ""
+      },
+      {
+        "id": "SyAlertLbl2",
+        "type": "string",
+        "maxLen": 80,
+        "default": ""
+      },
+      {
+        "id": "SyAlertLbl0Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": ""
+      },
+      {
+        "id": "SyAlertLbl1Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": ""
+      },
+      {
+        "id": "SyAlertLbl2Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": ""
+      },
+      {
+        "id": "SyAlertDot0Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": ""
+      },
+      {
+        "id": "SyAlertDot1Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": ""
+      },
+      {
+        "id": "SyAlertDot2Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": ""
+      },
+      {
+        "id": "SyTName0",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "SyTName1",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "SyTName2",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "SyTName3",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "SyTName4",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "SyTName5",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "SyTName6",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "SyTVal0",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "SyTVal1",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "SyTVal2",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "SyTVal3",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "SyTVal4",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "SyTVal5",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "SyTVal6",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "SyTVal0Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": ""
+      },
+      {
+        "id": "SyTVal1Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": ""
+      },
+      {
+        "id": "SyTVal2Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": ""
+      },
+      {
+        "id": "SyTVal3Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": ""
+      },
+      {
+        "id": "SyTVal4Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": ""
+      },
+      {
+        "id": "SyTVal5Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": ""
+      },
+      {
+        "id": "SyTVal6Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": ""
+      },
+      {
+        "id": "SyTBar0Value",
+        "type": "float",
+        "default": 0
+      },
+      {
+        "id": "SyTBar1Value",
+        "type": "float",
+        "default": 0
+      },
+      {
+        "id": "SyTBar2Value",
+        "type": "float",
+        "default": 0
+      },
+      {
+        "id": "SyTBar3Value",
+        "type": "float",
+        "default": 0
+      },
+      {
+        "id": "SyTBar4Value",
+        "type": "float",
+        "default": 0
+      },
+      {
+        "id": "SyTBar5Value",
+        "type": "float",
+        "default": 0
+      },
+      {
+        "id": "SyTBar6Value",
+        "type": "float",
+        "default": 0
+      },
+      {
+        "id": "SyKvVal0",
+        "type": "string",
+        "maxLen": 32,
+        "default": ""
+      },
+      {
+        "id": "SyKvVal1",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "SyKvVal2",
+        "type": "string",
+        "maxLen": 40,
+        "default": ""
+      },
+      {
+        "id": "SyKvVal3",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "SyKvVal4",
+        "type": "string",
+        "maxLen": 80,
+        "default": ""
+      },
+      {
+        "id": "SyKvVal5",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "SyKvVal6",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "SyKvVal7",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "OvTempTrendPoints",
+        "type": "series",
+        "capacity": 90,
+        "default": null
+      },
+      {
+        "id": "StZfsArc",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "StZfsHit",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "StZfsBarValue",
+        "type": "float",
+        "maxLen": null,
+        "default": 0
+      },
+      {
+        "id": "StRaidBar0Value",
+        "type": "float",
+        "maxLen": null,
+        "default": 0
+      },
+      {
+        "id": "StRaidBar1Value",
+        "type": "float",
+        "maxLen": null,
+        "default": 0
+      },
+      {
+        "id": "StRaidBar2Value",
+        "type": "float",
+        "maxLen": null,
+        "default": 0
+      },
+      {
+        "id": "StRaidBar3Value",
+        "type": "float",
+        "maxLen": null,
+        "default": 0
+      },
+      {
+        "id": "NwTotalVal",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "SyDock6",
+        "type": "string",
+        "maxLen": 32,
+        "default": ""
+      },
+      {
+        "id": "SyDockState6",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "SyDockState6Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": ""
+      },
+      {
+        "id": "SyDot6Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": ""
+      },
+      {
+        "id": "SyDock7",
+        "type": "string",
+        "maxLen": 32,
+        "default": ""
+      },
+      {
+        "id": "SyDockState7",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "SyDockState7Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": ""
+      },
+      {
+        "id": "SyDot7Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": ""
+      },
+      {
+        "id": "SyAlertLbl3",
+        "type": "string",
+        "maxLen": 80,
+        "default": ""
+      },
+      {
+        "id": "SyAlertLbl3Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": ""
+      },
+      {
+        "id": "SyAlertDot3Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": ""
+      },
+      {
+        "id": "SyTName7",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "SyTVal7",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "SyTVal7Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": ""
+      },
+      {
+        "id": "SyTBar7Value",
+        "type": "float",
+        "maxLen": null,
+        "default": 0
+      },
+      {
+        "id": "SyTName8",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "SyTVal8",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "SyTVal8Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": ""
+      },
+      {
+        "id": "SyTBar8Value",
+        "type": "float",
+        "maxLen": null,
+        "default": 0
+      },
+      {
+        "id": "SyTName9",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "SyTVal9",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "SyTVal9Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": ""
+      },
+      {
+        "id": "SyTBar9Value",
+        "type": "float",
+        "maxLen": null,
+        "default": 0
+      },
+      {
+        "id": "SyKvVal8",
+        "type": "string",
+        "maxLen": 32,
+        "default": ""
+      },
+      {
+        "id": "SyKvVal9",
+        "type": "string",
+        "maxLen": 32,
+        "default": ""
+      },
+      {
+        "id": "SyKvVal10",
+        "type": "string",
+        "maxLen": 32,
+        "default": ""
+      },
+      {
+        "id": "SyKvVal11",
+        "type": "string",
+        "maxLen": 32,
+        "default": ""
+      },
+      {
+        "id": "OvLegendCpuLbl",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "OvLegendMemLbl",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "OvLegendTempLbl",
+        "type": "string",
+        "maxLen": 24,
+        "default": ""
+      },
+      {
+        "id": "OvHealthAccentColor",
+        "type": "string",
+        "maxLen": 10,
+        "default": "#2FBF71"
+      },
+      {
+        "id": "OvVal0Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": "#FFFFFF"
+      },
+      {
+        "id": "OvVal1Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": "#FFFFFF"
+      },
+      {
+        "id": "OvVal2Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": "#FFFFFF"
+      },
+      {
+        "id": "OvVal3Color",
+        "type": "string",
+        "maxLen": 10,
+        "default": "#FFFFFF"
+      },
+      {
+        "id": "StHeroColor",
+        "type": "string",
+        "maxLen": 10,
+        "default": "#FFFFFF"
+      },
+      {
+        "id": "NwDownValColor",
+        "type": "string",
+        "maxLen": 10,
+        "default": "#FFFFFF"
+      },
+      {
+        "id": "NwUpValColor",
+        "type": "string",
+        "maxLen": 10,
+        "default": "#FFFFFF"
+      },
+      {
+        "id": "OvTrendTop",
+        "type": "float",
+        "maxLen": null,
+        "default": 100
+      },
+      {
+        "id": "SyDockRow0Alpha",
+        "type": "float",
+        "maxLen": null,
+        "default": 1.0
+      },
+      {
+        "id": "SyDockRow1Alpha",
+        "type": "float",
+        "maxLen": null,
+        "default": 1.0
+      },
+      {
+        "id": "SyDockRow2Alpha",
+        "type": "float",
+        "maxLen": null,
+        "default": 1.0
+      },
+      {
+        "id": "SyDockRow3Alpha",
+        "type": "float",
+        "maxLen": null,
+        "default": 1.0
+      },
+      {
+        "id": "SyDockRow4Alpha",
+        "type": "float",
+        "maxLen": null,
+        "default": 1.0
+      },
+      {
+        "id": "SyDockRow5Alpha",
+        "type": "float",
+        "maxLen": null,
+        "default": 1.0
+      },
+      {
+        "id": "SyDockRow6Alpha",
+        "type": "float",
+        "maxLen": null,
+        "default": 1.0
+      },
+      {
+        "id": "SyDockRow7Alpha",
+        "type": "float",
+        "maxLen": null,
+        "default": 1.0
+      },
+      {
+        "id": "SyTempRow0Alpha",
+        "type": "float",
+        "maxLen": null,
+        "default": 1.0
+      },
+      {
+        "id": "SyTempRow1Alpha",
+        "type": "float",
+        "maxLen": null,
+        "default": 1.0
+      },
+      {
+        "id": "SyTempRow2Alpha",
+        "type": "float",
+        "maxLen": null,
+        "default": 1.0
+      },
+      {
+        "id": "SyTempRow3Alpha",
+        "type": "float",
+        "maxLen": null,
+        "default": 1.0
+      },
+      {
+        "id": "SyTempRow4Alpha",
+        "type": "float",
+        "maxLen": null,
+        "default": 1.0
+      },
+      {
+        "id": "SyTempRow5Alpha",
+        "type": "float",
+        "maxLen": null,
+        "default": 1.0
+      },
+      {
+        "id": "SyTempRow6Alpha",
+        "type": "float",
+        "maxLen": null,
+        "default": 1.0
+      },
+      {
+        "id": "SyTempRow7Alpha",
+        "type": "float",
+        "maxLen": null,
+        "default": 1.0
+      },
+      {
+        "id": "SyTempRow8Alpha",
+        "type": "float",
+        "maxLen": null,
+        "default": 1.0
+      },
+      {
+        "id": "SyTempRow9Alpha",
+        "type": "float",
+        "maxLen": null,
+        "default": 1.0
+      }
+    ]
+  },
+  "bindings": [
+    {
+      "controlId": "HdHost",
+      "fieldId": "HdHost",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "HdEndpoint",
+      "fieldId": "HdEndpoint",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "HdClock",
+      "fieldId": "HdClock",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "HdChip",
+      "fieldId": "HdChipText",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "HdChip",
+      "fieldId": "HdChipColor",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "HdSignal",
+      "fieldId": "HdSignalValue",
+      "mode": "OneWay",
+      "property": "value"
+    },
+    {
+      "controlId": "FtPoll",
+      "fieldId": "FtPoll",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "FtAlertLbl",
+      "fieldId": "FtAlertLbl",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "FtAlertDot",
+      "fieldId": "FtAlertDotColor",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "FtAlertLbl",
+      "fieldId": "FtAlertLblColor",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "OvVerdict",
+      "fieldId": "OvVerdict",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "OvVerdictSub",
+      "fieldId": "OvVerdictSub",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "OvReason",
+      "fieldId": "OvReason",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "OvVerdict",
+      "fieldId": "OvVerdictColor",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "OvVolName0",
+      "fieldId": "OvVolName0",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "OvVolBar0",
+      "fieldId": "OvVolBar0Value",
+      "mode": "OneWay",
+      "property": "value"
+    },
+    {
+      "controlId": "OvVolPct0",
+      "fieldId": "OvVolPct0",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "OvVolName1",
+      "fieldId": "OvVolName1",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "OvVolBar1",
+      "fieldId": "OvVolBar1Value",
+      "mode": "OneWay",
+      "property": "value"
+    },
+    {
+      "controlId": "OvVolPct1",
+      "fieldId": "OvVolPct1",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "OvVolName2",
+      "fieldId": "OvVolName2",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "OvVolBar2",
+      "fieldId": "OvVolBar2Value",
+      "mode": "OneWay",
+      "property": "value"
+    },
+    {
+      "controlId": "OvVolPct2",
+      "fieldId": "OvVolPct2",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "OvVolName3",
+      "fieldId": "OvVolName3",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "OvVolBar3",
+      "fieldId": "OvVolBar3Value",
+      "mode": "OneWay",
+      "property": "value"
+    },
+    {
+      "controlId": "OvVolPct3",
+      "fieldId": "OvVolPct3",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "OvVolName4",
+      "fieldId": "OvVolName4",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "OvVolBar4",
+      "fieldId": "OvVolBar4Value",
+      "mode": "OneWay",
+      "property": "value"
+    },
+    {
+      "controlId": "OvVolPct4",
+      "fieldId": "OvVolPct4",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "OvVolName5",
+      "fieldId": "OvVolName5",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "OvVolBar5",
+      "fieldId": "OvVolBar5Value",
+      "mode": "OneWay",
+      "property": "value"
+    },
+    {
+      "controlId": "OvVolPct5",
+      "fieldId": "OvVolPct5",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "OvVal0",
+      "fieldId": "OvVal0",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "OvSub0",
+      "fieldId": "OvSub0",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "OvMbar0",
+      "fieldId": "OvMbar0Value",
+      "mode": "OneWay",
+      "property": "value"
+    },
+    {
+      "controlId": "OvVal1",
+      "fieldId": "OvVal1",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "OvSub1",
+      "fieldId": "OvSub1",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "OvMbar1",
+      "fieldId": "OvMbar1Value",
+      "mode": "OneWay",
+      "property": "value"
+    },
+    {
+      "controlId": "OvVal2",
+      "fieldId": "OvVal2",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "OvSub2",
+      "fieldId": "OvSub2",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "OvMbar2",
+      "fieldId": "OvMbar2Value",
+      "mode": "OneWay",
+      "property": "value"
+    },
+    {
+      "controlId": "OvVal3",
+      "fieldId": "OvVal3",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "OvSub3",
+      "fieldId": "OvSub3",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "OvCpu",
+      "fieldId": "OvCpuPoints",
+      "mode": "OneWay",
+      "property": "points"
+    },
+    {
+      "controlId": "OvMem",
+      "fieldId": "OvMemPoints",
+      "mode": "OneWay",
+      "property": "points"
+    },
+    {
+      "controlId": "StHero",
+      "fieldId": "StHero",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StUsed",
+      "fieldId": "StUsed",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StCnt",
+      "fieldId": "StCnt",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StFree",
+      "fieldId": "StFree",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StSeg0",
+      "fieldId": "StSeg0X",
+      "mode": "OneWay",
+      "property": "x"
+    },
+    {
+      "controlId": "StSeg0",
+      "fieldId": "StSeg0Width",
+      "mode": "OneWay",
+      "property": "width"
+    },
+    {
+      "controlId": "StSeg0",
+      "fieldId": "StSeg0Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "StSeg1",
+      "fieldId": "StSeg1X",
+      "mode": "OneWay",
+      "property": "x"
+    },
+    {
+      "controlId": "StSeg1",
+      "fieldId": "StSeg1Width",
+      "mode": "OneWay",
+      "property": "width"
+    },
+    {
+      "controlId": "StSeg1",
+      "fieldId": "StSeg1Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "StSeg2",
+      "fieldId": "StSeg2X",
+      "mode": "OneWay",
+      "property": "x"
+    },
+    {
+      "controlId": "StSeg2",
+      "fieldId": "StSeg2Width",
+      "mode": "OneWay",
+      "property": "width"
+    },
+    {
+      "controlId": "StSeg2",
+      "fieldId": "StSeg2Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "StSeg3",
+      "fieldId": "StSeg3X",
+      "mode": "OneWay",
+      "property": "x"
+    },
+    {
+      "controlId": "StSeg3",
+      "fieldId": "StSeg3Width",
+      "mode": "OneWay",
+      "property": "width"
+    },
+    {
+      "controlId": "StSeg3",
+      "fieldId": "StSeg3Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "StSeg4",
+      "fieldId": "StSeg4X",
+      "mode": "OneWay",
+      "property": "x"
+    },
+    {
+      "controlId": "StSeg4",
+      "fieldId": "StSeg4Width",
+      "mode": "OneWay",
+      "property": "width"
+    },
+    {
+      "controlId": "StSeg4",
+      "fieldId": "StSeg4Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "StSeg5",
+      "fieldId": "StSeg5X",
+      "mode": "OneWay",
+      "property": "x"
+    },
+    {
+      "controlId": "StSeg5",
+      "fieldId": "StSeg5Width",
+      "mode": "OneWay",
+      "property": "width"
+    },
+    {
+      "controlId": "StSeg5",
+      "fieldId": "StSeg5Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "StVolName0",
+      "fieldId": "StVolName0",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StVolFs0",
+      "fieldId": "StVolFs0",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StVolUse0",
+      "fieldId": "StVolUse0",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StVolPct0",
+      "fieldId": "StVolPct0",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StVolBar0",
+      "fieldId": "StVolBar0Value",
+      "mode": "OneWay",
+      "property": "value"
+    },
+    {
+      "controlId": "StVolName1",
+      "fieldId": "StVolName1",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StVolFs1",
+      "fieldId": "StVolFs1",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StVolUse1",
+      "fieldId": "StVolUse1",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StVolPct1",
+      "fieldId": "StVolPct1",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StVolBar1",
+      "fieldId": "StVolBar1Value",
+      "mode": "OneWay",
+      "property": "value"
+    },
+    {
+      "controlId": "StVolName2",
+      "fieldId": "StVolName2",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StVolFs2",
+      "fieldId": "StVolFs2",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StVolUse2",
+      "fieldId": "StVolUse2",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StVolPct2",
+      "fieldId": "StVolPct2",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StVolBar2",
+      "fieldId": "StVolBar2Value",
+      "mode": "OneWay",
+      "property": "value"
+    },
+    {
+      "controlId": "StVolName3",
+      "fieldId": "StVolName3",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StVolFs3",
+      "fieldId": "StVolFs3",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StVolUse3",
+      "fieldId": "StVolUse3",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StVolPct3",
+      "fieldId": "StVolPct3",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StVolBar3",
+      "fieldId": "StVolBar3Value",
+      "mode": "OneWay",
+      "property": "value"
+    },
+    {
+      "controlId": "StVolName4",
+      "fieldId": "StVolName4",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StVolFs4",
+      "fieldId": "StVolFs4",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StVolUse4",
+      "fieldId": "StVolUse4",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StVolPct4",
+      "fieldId": "StVolPct4",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StVolBar4",
+      "fieldId": "StVolBar4Value",
+      "mode": "OneWay",
+      "property": "value"
+    },
+    {
+      "controlId": "StVolName5",
+      "fieldId": "StVolName5",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StVolFs5",
+      "fieldId": "StVolFs5",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StVolUse5",
+      "fieldId": "StVolUse5",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StVolPct5",
+      "fieldId": "StVolPct5",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StVolBar5",
+      "fieldId": "StVolBar5Value",
+      "mode": "OneWay",
+      "property": "value"
+    },
+    {
+      "controlId": "StRaidName0",
+      "fieldId": "StRaidName0",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StRaidLvl0",
+      "fieldId": "StRaidLvl0",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StRaidState0",
+      "fieldId": "StRaidState0",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StRaidState0",
+      "fieldId": "StRaidState0Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "StRaidName1",
+      "fieldId": "StRaidName1",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StRaidLvl1",
+      "fieldId": "StRaidLvl1",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StRaidState1",
+      "fieldId": "StRaidState1",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StRaidState1",
+      "fieldId": "StRaidState1Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "StRaidName2",
+      "fieldId": "StRaidName2",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StRaidLvl2",
+      "fieldId": "StRaidLvl2",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StRaidState2",
+      "fieldId": "StRaidState2",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StRaidState2",
+      "fieldId": "StRaidState2Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "StRaidName3",
+      "fieldId": "StRaidName3",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StRaidLvl3",
+      "fieldId": "StRaidLvl3",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StRaidState3",
+      "fieldId": "StRaidState3",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StRaidState3",
+      "fieldId": "StRaidState3Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "StIoName0",
+      "fieldId": "StIoName0",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StIoVal0",
+      "fieldId": "StIoVal0",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StIoName1",
+      "fieldId": "StIoName1",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StIoVal1",
+      "fieldId": "StIoVal1",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StIoName2",
+      "fieldId": "StIoName2",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StIoVal2",
+      "fieldId": "StIoVal2",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StIoName3",
+      "fieldId": "StIoName3",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StIoVal3",
+      "fieldId": "StIoVal3",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "NwDownVal",
+      "fieldId": "NwDownVal",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "NwDownUnit",
+      "fieldId": "NwDownUnit",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "NwDownSub",
+      "fieldId": "NwDownSub",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "NwMiniDown",
+      "fieldId": "NwMiniDownPoints",
+      "mode": "OneWay",
+      "property": "points"
+    },
+    {
+      "controlId": "NwMiniDown",
+      "fieldId": "NwTrendTop",
+      "mode": "OneWay",
+      "property": "top"
+    },
+    {
+      "controlId": "NwUpVal",
+      "fieldId": "NwUpVal",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "NwUpUnit",
+      "fieldId": "NwUpUnit",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "NwUpSub",
+      "fieldId": "NwUpSub",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "NwMiniUp",
+      "fieldId": "NwMiniUpPoints",
+      "mode": "OneWay",
+      "property": "points"
+    },
+    {
+      "controlId": "NwMiniUp",
+      "fieldId": "NwTrendTop",
+      "mode": "OneWay",
+      "property": "top"
+    },
+    {
+      "controlId": "NwDownTrend",
+      "fieldId": "NwDownTrendPoints",
+      "mode": "OneWay",
+      "property": "points"
+    },
+    {
+      "controlId": "NwDownTrend",
+      "fieldId": "NwTrendTop",
+      "mode": "OneWay",
+      "property": "top"
+    },
+    {
+      "controlId": "NwUpTrend",
+      "fieldId": "NwUpTrendPoints",
+      "mode": "OneWay",
+      "property": "points"
+    },
+    {
+      "controlId": "NwUpTrend",
+      "fieldId": "NwTrendTop",
+      "mode": "OneWay",
+      "property": "top"
+    },
+    {
+      "controlId": "NwAxis0",
+      "fieldId": "NwAxis0",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "NwAxis1",
+      "fieldId": "NwAxis1",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "NwAxis2",
+      "fieldId": "NwAxis2",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "NwCtxVal0",
+      "fieldId": "NwCtxVal0",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "NwCtxVal1",
+      "fieldId": "NwCtxVal1",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "NwCtxVal2",
+      "fieldId": "NwCtxVal2",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "NwCtxVal3",
+      "fieldId": "NwCtxVal3",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyCnt",
+      "fieldId": "SyCnt",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyDot0",
+      "fieldId": "SyDot0Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "SyDock0",
+      "fieldId": "SyDock0",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyDockState0",
+      "fieldId": "SyDockState0",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyDockState0",
+      "fieldId": "SyDockState0Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "SyDot1",
+      "fieldId": "SyDot1Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "SyDock1",
+      "fieldId": "SyDock1",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyDockState1",
+      "fieldId": "SyDockState1",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyDockState1",
+      "fieldId": "SyDockState1Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "SyDot2",
+      "fieldId": "SyDot2Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "SyDock2",
+      "fieldId": "SyDock2",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyDockState2",
+      "fieldId": "SyDockState2",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyDockState2",
+      "fieldId": "SyDockState2Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "SyDot3",
+      "fieldId": "SyDot3Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "SyDock3",
+      "fieldId": "SyDock3",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyDockState3",
+      "fieldId": "SyDockState3",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyDockState3",
+      "fieldId": "SyDockState3Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "SyDot4",
+      "fieldId": "SyDot4Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "SyDock4",
+      "fieldId": "SyDock4",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyDockState4",
+      "fieldId": "SyDockState4",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyDockState4",
+      "fieldId": "SyDockState4Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "SyDot5",
+      "fieldId": "SyDot5Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "SyDock5",
+      "fieldId": "SyDock5",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyDockState5",
+      "fieldId": "SyDockState5",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyDockState5",
+      "fieldId": "SyDockState5Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "SyAlertDot0",
+      "fieldId": "SyAlertDot0Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "SyAlertLbl0",
+      "fieldId": "SyAlertLbl0",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyAlertLbl0",
+      "fieldId": "SyAlertLbl0Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "SyAlertDot1",
+      "fieldId": "SyAlertDot1Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "SyAlertLbl1",
+      "fieldId": "SyAlertLbl1",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyAlertLbl1",
+      "fieldId": "SyAlertLbl1Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "SyAlertDot2",
+      "fieldId": "SyAlertDot2Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "SyAlertLbl2",
+      "fieldId": "SyAlertLbl2",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyAlertLbl2",
+      "fieldId": "SyAlertLbl2Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "SyTName0",
+      "fieldId": "SyTName0",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyTVal0",
+      "fieldId": "SyTVal0",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyTVal0",
+      "fieldId": "SyTVal0Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "SyTBar0",
+      "fieldId": "SyTBar0Value",
+      "mode": "OneWay",
+      "property": "value"
+    },
+    {
+      "controlId": "SyTName1",
+      "fieldId": "SyTName1",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyTVal1",
+      "fieldId": "SyTVal1",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyTVal1",
+      "fieldId": "SyTVal1Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "SyTBar1",
+      "fieldId": "SyTBar1Value",
+      "mode": "OneWay",
+      "property": "value"
+    },
+    {
+      "controlId": "SyTName2",
+      "fieldId": "SyTName2",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyTVal2",
+      "fieldId": "SyTVal2",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyTVal2",
+      "fieldId": "SyTVal2Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "SyTBar2",
+      "fieldId": "SyTBar2Value",
+      "mode": "OneWay",
+      "property": "value"
+    },
+    {
+      "controlId": "SyTName3",
+      "fieldId": "SyTName3",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyTVal3",
+      "fieldId": "SyTVal3",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyTVal3",
+      "fieldId": "SyTVal3Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "SyTBar3",
+      "fieldId": "SyTBar3Value",
+      "mode": "OneWay",
+      "property": "value"
+    },
+    {
+      "controlId": "SyTName4",
+      "fieldId": "SyTName4",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyTVal4",
+      "fieldId": "SyTVal4",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyTVal4",
+      "fieldId": "SyTVal4Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "SyTBar4",
+      "fieldId": "SyTBar4Value",
+      "mode": "OneWay",
+      "property": "value"
+    },
+    {
+      "controlId": "SyTName5",
+      "fieldId": "SyTName5",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyTVal5",
+      "fieldId": "SyTVal5",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyTVal5",
+      "fieldId": "SyTVal5Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "SyTBar5",
+      "fieldId": "SyTBar5Value",
+      "mode": "OneWay",
+      "property": "value"
+    },
+    {
+      "controlId": "SyTName6",
+      "fieldId": "SyTName6",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyTVal6",
+      "fieldId": "SyTVal6",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyTVal6",
+      "fieldId": "SyTVal6Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "SyTBar6",
+      "fieldId": "SyTBar6Value",
+      "mode": "OneWay",
+      "property": "value"
+    },
+    {
+      "controlId": "SyKvVal0",
+      "fieldId": "SyKvVal0",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyKvVal1",
+      "fieldId": "SyKvVal1",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyKvVal2",
+      "fieldId": "SyKvVal2",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyKvVal3",
+      "fieldId": "SyKvVal3",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyKvVal4",
+      "fieldId": "SyKvVal4",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyKvVal5",
+      "fieldId": "SyKvVal5",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyKvVal6",
+      "fieldId": "SyKvVal6",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyKvVal7",
+      "fieldId": "SyKvVal7",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "OvTempTrend",
+      "fieldId": "OvTempTrendPoints",
+      "mode": "OneWay",
+      "property": "points"
+    },
+    {
+      "controlId": "StZfsArc",
+      "fieldId": "StZfsArc",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StZfsHit",
+      "fieldId": "StZfsHit",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "StZfsBar",
+      "fieldId": "StZfsBarValue",
+      "mode": "OneWay",
+      "property": "value"
+    },
+    {
+      "controlId": "StRaidBar0",
+      "fieldId": "StRaidBar0Value",
+      "mode": "OneWay",
+      "property": "value"
+    },
+    {
+      "controlId": "StRaidBar1",
+      "fieldId": "StRaidBar1Value",
+      "mode": "OneWay",
+      "property": "value"
+    },
+    {
+      "controlId": "StRaidBar2",
+      "fieldId": "StRaidBar2Value",
+      "mode": "OneWay",
+      "property": "value"
+    },
+    {
+      "controlId": "StRaidBar3",
+      "fieldId": "StRaidBar3Value",
+      "mode": "OneWay",
+      "property": "value"
+    },
+    {
+      "controlId": "NwTotalVal",
+      "fieldId": "NwTotalVal",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyDock6",
+      "fieldId": "SyDock6",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyDockState6",
+      "fieldId": "SyDockState6",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyDockState6",
+      "fieldId": "SyDockState6Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "SyDot6",
+      "fieldId": "SyDot6Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "SyDock7",
+      "fieldId": "SyDock7",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyDockState7",
+      "fieldId": "SyDockState7",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyDockState7",
+      "fieldId": "SyDockState7Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "SyDot7",
+      "fieldId": "SyDot7Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "SyAlertLbl3",
+      "fieldId": "SyAlertLbl3",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyAlertLbl3",
+      "fieldId": "SyAlertLbl3Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "SyAlertDot3",
+      "fieldId": "SyAlertDot3Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "SyTName7",
+      "fieldId": "SyTName7",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyTVal7",
+      "fieldId": "SyTVal7",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyTVal7",
+      "fieldId": "SyTVal7Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "SyTBar7",
+      "fieldId": "SyTBar7Value",
+      "mode": "OneWay",
+      "property": "value"
+    },
+    {
+      "controlId": "SyTName8",
+      "fieldId": "SyTName8",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyTVal8",
+      "fieldId": "SyTVal8",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyTVal8",
+      "fieldId": "SyTVal8Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "SyTBar8",
+      "fieldId": "SyTBar8Value",
+      "mode": "OneWay",
+      "property": "value"
+    },
+    {
+      "controlId": "SyTName9",
+      "fieldId": "SyTName9",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyTVal9",
+      "fieldId": "SyTVal9",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyTVal9",
+      "fieldId": "SyTVal9Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "SyTBar9",
+      "fieldId": "SyTBar9Value",
+      "mode": "OneWay",
+      "property": "value"
+    },
+    {
+      "controlId": "SyKvVal8",
+      "fieldId": "SyKvVal8",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyKvVal9",
+      "fieldId": "SyKvVal9",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyKvVal10",
+      "fieldId": "SyKvVal10",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "SyKvVal11",
+      "fieldId": "SyKvVal11",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "OvLegendCpuLbl",
+      "fieldId": "OvLegendCpuLbl",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "OvLegendMemLbl",
+      "fieldId": "OvLegendMemLbl",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "OvLegendTempLbl",
+      "fieldId": "OvLegendTempLbl",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "OvHealthAccent",
+      "fieldId": "OvHealthAccentColor",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "OvVal0",
+      "fieldId": "OvVal0Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "OvVal1",
+      "fieldId": "OvVal1Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "OvVal2",
+      "fieldId": "OvVal2Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "OvVal3",
+      "fieldId": "OvVal3Color",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "StHero",
+      "fieldId": "StHeroColor",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "NwDownVal",
+      "fieldId": "NwDownValColor",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "NwUpVal",
+      "fieldId": "NwUpValColor",
+      "mode": "OneWay",
+      "property": "color"
+    },
+    {
+      "controlId": "OvCpu",
+      "fieldId": "OvTrendTop",
+      "mode": "OneWay",
+      "property": "top"
+    },
+    {
+      "controlId": "OvMem",
+      "fieldId": "OvTrendTop",
+      "mode": "OneWay",
+      "property": "top"
+    },
+    {
+      "controlId": "SyDockRow0",
+      "fieldId": "SyDockRow0Alpha",
+      "mode": "OneWay",
+      "property": "alpha"
+    },
+    {
+      "controlId": "SyDockRow1",
+      "fieldId": "SyDockRow1Alpha",
+      "mode": "OneWay",
+      "property": "alpha"
+    },
+    {
+      "controlId": "SyDockRow2",
+      "fieldId": "SyDockRow2Alpha",
+      "mode": "OneWay",
+      "property": "alpha"
+    },
+    {
+      "controlId": "SyDockRow3",
+      "fieldId": "SyDockRow3Alpha",
+      "mode": "OneWay",
+      "property": "alpha"
+    },
+    {
+      "controlId": "SyDockRow4",
+      "fieldId": "SyDockRow4Alpha",
+      "mode": "OneWay",
+      "property": "alpha"
+    },
+    {
+      "controlId": "SyDockRow5",
+      "fieldId": "SyDockRow5Alpha",
+      "mode": "OneWay",
+      "property": "alpha"
+    },
+    {
+      "controlId": "SyDockRow6",
+      "fieldId": "SyDockRow6Alpha",
+      "mode": "OneWay",
+      "property": "alpha"
+    },
+    {
+      "controlId": "SyDockRow7",
+      "fieldId": "SyDockRow7Alpha",
+      "mode": "OneWay",
+      "property": "alpha"
+    },
+    {
+      "controlId": "SyTempRow0",
+      "fieldId": "SyTempRow0Alpha",
+      "mode": "OneWay",
+      "property": "alpha"
+    },
+    {
+      "controlId": "SyTempRow1",
+      "fieldId": "SyTempRow1Alpha",
+      "mode": "OneWay",
+      "property": "alpha"
+    },
+    {
+      "controlId": "SyTempRow2",
+      "fieldId": "SyTempRow2Alpha",
+      "mode": "OneWay",
+      "property": "alpha"
+    },
+    {
+      "controlId": "SyTempRow3",
+      "fieldId": "SyTempRow3Alpha",
+      "mode": "OneWay",
+      "property": "alpha"
+    },
+    {
+      "controlId": "SyTempRow4",
+      "fieldId": "SyTempRow4Alpha",
+      "mode": "OneWay",
+      "property": "alpha"
+    },
+    {
+      "controlId": "SyTempRow5",
+      "fieldId": "SyTempRow5Alpha",
+      "mode": "OneWay",
+      "property": "alpha"
+    },
+    {
+      "controlId": "SyTempRow6",
+      "fieldId": "SyTempRow6Alpha",
+      "mode": "OneWay",
+      "property": "alpha"
+    },
+    {
+      "controlId": "SyTempRow7",
+      "fieldId": "SyTempRow7Alpha",
+      "mode": "OneWay",
+      "property": "alpha"
+    },
+    {
+      "controlId": "SyTempRow8",
+      "fieldId": "SyTempRow8Alpha",
+      "mode": "OneWay",
+      "property": "alpha"
+    },
+    {
+      "controlId": "SyTempRow9",
+      "fieldId": "SyTempRow9Alpha",
+      "mode": "OneWay",
+      "property": "alpha"
+    }
+  ],
+  "events": [
+    {
+      "controlId": "NavOverview",
+      "event": "onClick",
+      "handler": "OnNavOverviewRequested"
+    },
+    {
+      "controlId": "NavStorage",
+      "event": "onClick",
+      "handler": "OnNavStorageRequested"
+    },
+    {
+      "controlId": "NavNetwork",
+      "event": "onClick",
+      "handler": "OnNavNetworkRequested"
+    },
+    {
+      "controlId": "NavSystem",
+      "event": "onClick",
+      "handler": "OnNavSystemRequested"
+    },
+    {
+      "controlId": "P0Overview",
+      "event": "onSwipeLeft",
+      "handler": "OnOverviewNextRequested"
+    },
+    {
+      "controlId": "P0Overview",
+      "event": "onSwipeRight",
+      "handler": "OnOverviewPrevRequested"
+    },
+    {
+      "controlId": "P1Storage",
+      "event": "onSwipeLeft",
+      "handler": "OnStorageNextRequested"
+    },
+    {
+      "controlId": "P1Storage",
+      "event": "onSwipeRight",
+      "handler": "OnStoragePrevRequested"
+    },
+    {
+      "controlId": "P2Network",
+      "event": "onSwipeLeft",
+      "handler": "OnNetworkNextRequested"
+    },
+    {
+      "controlId": "P2Network",
+      "event": "onSwipeRight",
+      "handler": "OnNetworkPrevRequested"
+    },
+    {
+      "controlId": "P3System",
+      "event": "onSwipeLeft",
+      "handler": "OnSystemNextRequested"
+    },
+    {
+      "controlId": "P3System",
+      "event": "onSwipeRight",
+      "handler": "OnSystemPrevRequested"
+    }
+  ]
+}

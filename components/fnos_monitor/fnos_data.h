@@ -44,8 +44,8 @@ typedef struct {
     char     host[32];
     uint32_t uptime_s;
 
-    struct { float pct, load1, load5, load15, temp_c; int cores, runq; } cpu;
-    struct { float total_mb, used_mb, avail_mb, pct; } mem;
+    struct { float pct, load1, load5, load15, temp_c; int cores, runq, procs; } cpu;
+    struct { float total_mb, used_mb, avail_mb, pct, swap_total_mb, swap_used_mb; } mem;
     struct { char ifname[16]; float rx_kbs, tx_kbs, rx_total_gb, tx_total_gb; } net;
 
     int nvols;   fnos_vol_t   vols[FNOS_MAX_VOLS];

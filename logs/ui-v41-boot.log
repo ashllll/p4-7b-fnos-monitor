@@ -1,0 +1,3 @@
+I (94052) main: heap periodic       internal=223KB largest=180KB dma=185KB psram=27349KB
+I (98563) fnos_data: poll ok=90 fail=0 47ms cpu=2.2% mem=44.5% rx=19.9 tx=120.3 KB/s alerts=0 internal=223KB dma=185KB psram=27349KB
+I (104052) main: heap periodic       internal=223KB largest=180KB dma=185KB psram=27349KB

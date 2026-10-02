@@ -1,0 +1,152 @@
+I (44036) main: heap periodic       internal=223KB largest=180KB dma=185KB psram=27415KB
+ESP-ROM:esp32p4-eco7-20260109
+Build:Jan  9 2026
+rst:0x1 (POWERON),boot:0xf (SPI_FAST_FLASH_BOOT)
+SPI mode:DIO, clock div:1
+load:0x4ffb60d0,len:0x11f0
+load:0x4ffac2c0,len:0xd5c
+load:0x4ffaefc0,len:0x3408
+entry 0x4ffac2c0
+I (276) hex_psram: vendor id    : 0x0d (AP)
+I (276) hex_psram: Latency      : 0x01 (Fixed)
+I (277) hex_psram: DriveStr.    : 0x00 (25 Ohm)
+I (277) hex_psram: dev id       : 0x03 (generation 4)
+I (282) hex_psram: density      : 0x07 (256 Mbit)
+I (286) hex_psram: good-die     : 0x06 (Pass)
+I (290) hex_psram: SRF          : 0x02 (Slow Refresh)
+I (295) hex_psram: BurstType    : 0x00 ( Wrap)
+I (299) hex_psram: BurstLen     : 0x03 (2048 Byte)
+I (304) hex_psram: BitMode      : 0x01 (X16 Mode)
+I (308) hex_psram: Readlatency  : 0x04 (14 cycles@Fixed)
+I (313) hex_psram: DriveStrength: 0x00 (1/1)
+I (317) MSPI Timing: Enter psram timing tuning
+I esp_psram: Found 32MB PSRAM device
+I esp_psram: Speed: 200MHz
+I (504) mmu_psram: .rodata xip on psram
+I (558) mmu_psram: .text xip on psram
+I (558) hex_psram: psram CS IO is dedicated
+I (558) cpu_start: Multicore app
+I (984) esp_psram: SPI SRAM memory test OK
+I (994) cpu_start: GPIO 38 and 37 are used as console UART I/O pins
+I (994) cpu_start: Pro cpu start user code
+I (994) cpu_start: cpu freq: 400000000 Hz
+I (996) app_init: Application information:
+I (1000) app_init: Project name:     fnos_monitor
+I (1004) app_init: App version:      0.1.0
+I (1008) app_init: Compile time:     Sep 28 2026 07:59:20
+I (1013) app_init: ELF file SHA256:  0afae38c3...
+I (1018) app_init: ESP-IDF:          5.5.3
+I (1022) efuse_init: Min chip rev:     v3.0
+I (1026) efuse_init: Max chip rev:     v3.99 
+I (1030) efuse_init: Chip rev:         v3.2
+I (1034) heap_init: Initializing. RAM available for dynamic allocation:
+I (1040) heap_init: At 4FF61030 len 00059F90 (359 KiB): RETENT_RAM
+I (1046) heap_init: At 4FFBAFC0 len 00004BF0 (18 KiB): RAM
+I (1051) heap_init: At 501080D8 len 00000028 (0 KiB): RTCRAM
+I (1057) heap_init: At 501081A0 len 00007E60 (31 KiB): RTCRAM
+I (1062) heap_init: At 30100198 len 00001E68 (7 KiB): TCM
+I (1067) esp_psram: Adding pool of 31089K of PSRAM memory to heap allocator
+I (1074) esp_psram: Adding pool of 39K of PSRAM memory gap generated due to end address alignment of irom to the heap allocator
+I (1085) esp_psram: Adding pool of 34K of PSRAM memory gap generated due to end address alignment of drom to the heap allocator
+I (1096) spi_flash: detected chip: gd
+I (1099) spi_flash: flash io: qio
+I (1102) host_init: ESP Hosted : Host chip_ip[18]
+I (1107) H_API: ESP-Hosted starting. Hosted_Tasks: prio:23, stack: 5120 RPC_task_stack: 5120
+sdio_mempool_create free:32304192 min-free:32304192 lfb-def:31457280 lfb-8bit:31457280
+I (1123) H_API: ** add_esp_wifi_remote_channels **
+I (1127) transport: Add ESP-Hosted channel IF[1]: S[0] Tx[0x4800b7f8] Rx[0x4801aa3e]
+I (1135) transport: Add ESP-Hosted channel IF[2]: S[0] Tx[0x4800b73e] Rx[0x4801aa3e]
+I (1142) sleep_gpio: Configure to isolate all GPIO pins in sleep state
+I (1149) sleep_gpio: Enable automatic switching of GPIO sleep configuration
+I (1156) main_task: Started on CPU0
+I (1160) main_task: Calling app_main()
+I (1166) main: fnOS NAS dashboard booting (agent http://192.168.0.119:8799)
+I (1169) main: heap boot           internal=352KB largest=296KB dma=314KB psram=31159KB
+I (1178) transport: Attempt connection with slave: retry[0]
+I (1182) transport: Reset slave using GPIO[54]
+I (1186) os_wrapper_esp: GPIO [54] configured
+I (2356) sdio_wrapper: SDIO master: Data-Lines: 4-bit Freq(KHz)[40000 KHz]
+I (2356) sdio_wrapper: GPIOs: CLK[18] CMD[19] D0[14] D1[15] D2[16] D3[17] Slave_Reset[54]
+I (2356) H_SDIO_DRV: Starting SDIO process rx task
+I (2359) sdio_wrapper: Queues: Tx[20] Rx[20] SDIO-Rx-Mode[1]
+Name: 
+Type: SDIO
+Speed: 40.00 MHz (limit: 40.00 MHz)
+Size: 0MB
+CSD: ver=1, sector_size=0, capacity=0 read_bl_len=0
+SCR: sd_spec=0, bus_width=0
+TUPLE: DEVICE, size: 3: D9 01 FF 
+TUPLE: MANFID, size: 4
+  MANF: 0092, CARD: 6666
+TUPLE: FUNCID, size: 2: 0C 00 
+TUPLE: FUNCE, size: 4: 00 00 02 32 
+TUPLE: CONFIG, size: 5: 01 01 00 02 07 
+TUPLE: CFTABLE_ENTRY, size: 8
+  INDX: C1, Intface: 1, Default: 1, Conf-Entry-Num: 1
+  IF: 41
+  FS: 30, misc: 0, mem_space: 1, irq: 1, io_space: 0, timing: 0, power: 0
+  IR: 30, mask: 1,   IRQ: FF FF
+  LEN: FFFF
+TUPLE: END
+I (2442) sdio_wrapper: Function 0 Blocksize: 512
+I (2446) sdio_wrapper: Function 1 Blocksize: 512
+I (2450) H_SDIO_DRV: SDIO Host operating in STREAMING MODE
+I (2455) H_SDIO_DRV: generate slave intr
+I (2469) transport: Received INIT event from ESP32 peripheral
+I (2469) transport: EVENT: 12
+I (2469) transport: EVENT: 11
+I (2470) transport: capabilities: 0xd
+I (2473) transport: Features supported are:
+I (2477) transport: 	 * WLAN
+I (2480) transport: 	   - HCI over SDIO
+I (2483) transport: 	   - BLE only
+I (2486) transport: EVENT: 13
+I (2489) transport: ESP board type is : 13 
+I (2493) transport: Base transport is set-up
+I (2497) transport: Slave chip Id[12]
+I (2501) hci_stub_drv: Host BT Support: Disabled
+I (2505) H_SDIO_DRV: Received INIT event
+I (3510) fnos_net: wifi station started; awaiting ip
+I (3511) esp_lvgl:adapter: LVGL adapter initialized successfully
+W (3511) ledc: GPIO 32 is not usable, maybe conflict with others
+I (3515) ESP32_P4_EV: MIPI DSI PHY Powered on
+I (3521) ESP32_P4_EV: Install MIPI DSI LCD control panel
+I (3525) ESP32_P4_EV: Install EK79007 LCD control panel
+I (3529) ek79007: version: 2.0.2
+I (3531) H_API: esp_wifi_remote_connect
+I (3706) ESP32_P4_EV: Display initialized
+I (3707) esp_lvgl:bridge_v9: Initializing hardware resources
+I (3707) esp_lvgl:bridge_v9: Hardware resources initialized successfully
+I (3710) esp_lvgl:bridge: Initializing hardware resources
+I (3715) esp_lvgl:bridge: Hardware resources initialized successfully
+W (3721) esp_lvgl:bridge_v9: on_frame_buf_complete unavailable; buffer-switch release and dummy-draw may not function on MIPI DSI
+I (3733) ESP32_P4_EV: Touch 0x5d found
+I (3736) GT911: I2C address initialization procedure skipped - using default GT9xx setup
+I (3744) GT911: TouchPad_ID:0x39,0x31,0x31
+I (3748) GT911: TouchPad_Config_Version:91
+W (3752) esp_lvgl:touch: LV_USE_GESTURE_RECOGNITION is disabled; only single-point pointer events are available
+I (3761) esp_lvgl:touch: Touch input device registered successfully (IRQ mode: disabled)
+I (3770) esp_lvgl:adapter: LVGL task started successfully
+I (3774) ESP32_P4_EV: Setting LCD backlight: 100%
+I (3779) ESP32_P4_EV: Setting LCD backlight: 45%
+I (3783) main: heap display        internal=232KB largest=192KB dma=194KB psram=27516KB
+I (3985) fnos_ui: probe top_bar  x=0 y=0 w=0 h=0 hidden=0
+I (3985) fnos_ui: probe hd_host  text='NAS' x=0 y=0 w=0 h=0 opa=255 font=num_28
+I (3986) fnos_ui: probe hd_chip  x=0 y=0 w=0 h=0 child_cnt=1 text='等待数据'
+I (3993) fnos_ui: probe ft_poll  text='采集 192.168.0.119:8799 · 等待首个数据帧' x=0 y=0 w=0 h=0 opa=255
+I (4003) fnos_ui: ui created (pages=4)
+I (4006) main: heap ui             internal=232KB largest=192KB dma=194KB psram=27425KB
+I (4014) fnos_data: polling http://192.168.0.119:8799/api/v1/status every 1000 ms
+I (4021) main: heap polling        internal=231KB largest=192KB dma=193KB psram=27411KB
+I (4029) ESP32_P4_EV: Setting LCD backlight: 45%
+I (4033) main: backlight 45% (day)
+I (4036) main: boot complete
+I (4039) main_task: Returned from app_main()
+I (6474) esp_wifi_remote: esp_wifi_internal_reg_rxcb: sta: 0x480ce73a
+I (7489) esp_netif_handlers: sta ip: 192.168.0.214, mask: 255.255.255.0, gw: 192.168.0.1
+I (7489) fnos_net: got ip 192.168.0.214
+I (7612) fnos_data: history backfilled: 300 samples
+I (14036) main: heap periodic       internal=226KB largest=184KB dma=188KB psram=27412KB
+I (24036) main: heap periodic       internal=226KB largest=184KB dma=188KB psram=27413KB
+I (34036) main: heap periodic       internal=226KB largest=184KB dma=188KB psram=27415KB
+I (37092) fnos_data: poll ok=30 fail=0 4ms cpu=1.4% mem=45.4% rx=11.6 tx=115.7 KB/s alerts=0 internal=226KB dma=188KB psram=27415KB

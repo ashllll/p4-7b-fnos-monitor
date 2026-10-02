@@ -1,0 +1,14 @@
+      internal=224KB largest=180KB dma=186KB psram=27415KB
+I (1240sram=27415KB
+I (374007) main: heap periodic       internal=224KB largest=180KB dma=186KB psram=27415KB
+I (374436) fnos_data: poll ok=360 fail=0 5ms cpu=2.1% mem=47.1% rx=14.9 tx=95.1 KB/s alerts=0 internal=224KB dma=186KB psram=27415KB
+I (384007) main: heap periodic       internal=224KB largest=180KB dma=186KB psram=27415KB
+I (394007) main: heap periodic       internal=224KB largest=180KB dma=186KB psram=27415KB
+I (404007) main: heap periodic       internal=224KB largest=180KB dma=186KB psram=27415KB
+I (405020) fnos_data: poll ok=390 fail=0 6ms cpu=1.8% mem=47.5% rx=15.3 tx=58.9 KB/s alerts=0 internal=224KB dma=186KB psram=27415KB
+I (414007) main: heap periodic       internal=224KB largest=180KB dma=186KB psram=27415KB
+I (424007) main: heap periodic       internal=224KB largest=180KB dma=186KB psram=27415KB
+I (434007) main: heap periodic       internal=224KB largest=180KB dma=186KB psram=27415KB
+I (435570) fnos_data: poll ok=420 fail=0 4ms cpu=1.3% mem=46.1% rx=13.0 tx=115.8 KB/s alerts=0 internal=224KB dma=186KB psram=27415KB
+I (444007) main: heap periodic       internal=224KB largest=180KB dma=186KB psram=27415KB
+I (454007) main: heap periodic       internal=224KB largest=180KB dma=186KB psram=27415KB

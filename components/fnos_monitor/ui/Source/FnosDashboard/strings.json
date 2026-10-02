@@ -1,0 +1,206 @@
+{
+  "schemaVersion": "1.0",
+  "defaultCulture": "zh-Hans",
+  "cultures": [
+    "zh-Hans",
+    "en-US"
+  ],
+  "strings": {
+    "chrome.nav_overview": {
+      "zh-Hans": "总览",
+      "en-US": "Overview"
+    },
+    "chrome.nav_storage": {
+      "zh-Hans": "存储",
+      "en-US": "Storage"
+    },
+    "chrome.nav_network": {
+      "zh-Hans": "网络",
+      "en-US": "Network"
+    },
+    "chrome.nav_system": {
+      "zh-Hans": "系统",
+      "en-US": "System"
+    },
+    "overview.health_title": {
+      "zh-Hans": "NAS 健康",
+      "en-US": "NAS Health"
+    },
+    "overview.alert_label": {
+      "zh-Hans": "告警",
+      "en-US": "Alerts"
+    },
+    "overview.metric_cpu": {
+      "zh-Hans": "CPU",
+      "en-US": "CPU"
+    },
+    "overview.metric_mem": {
+      "zh-Hans": "内存",
+      "en-US": "Memory"
+    },
+    "overview.metric_temp": {
+      "zh-Hans": "最高温度",
+      "en-US": "Max Temp"
+    },
+    "overview.metric_uptime": {
+      "zh-Hans": "运行时长",
+      "en-US": "Uptime"
+    },
+    "overview.unit_pct": {
+      "zh-Hans": "%",
+      "en-US": "%"
+    },
+    "overview.unit_c": {
+      "zh-Hans": "C",
+      "en-US": "C"
+    },
+    "overview.unit_none": {
+      "zh-Hans": "",
+      "en-US": ""
+    },
+    "overview.storage_title": {
+      "zh-Hans": "存储空间",
+      "en-US": "Storage"
+    },
+    "overview.trend_title": {
+      "zh-Hans": "CPU / 内存 / 温度 · 近 3 分钟",
+      "en-US": "CPU / MEM / TEMP · last 3 min"
+    },
+    "overview.legend_cpu": {
+      "zh-Hans": "CPU",
+      "en-US": "CPU"
+    },
+    "overview.legend_mem": {
+      "zh-Hans": "MEM",
+      "en-US": "MEM"
+    },
+    "overview.legend_temp": {
+      "zh-Hans": "温度",
+      "en-US": "TEMP"
+    },
+    "storage.hero_title": {
+      "zh-Hans": "已用容量 / 总容量",
+      "en-US": "Used / Total Capacity"
+    },
+    "storage.volume_title": {
+      "zh-Hans": "存储空间",
+      "en-US": "Volumes"
+    },
+    "storage.raid_title": {
+      "zh-Hans": "RAID 阵列",
+      "en-US": "RAID Arrays"
+    },
+    "storage.io_title": {
+      "zh-Hans": "磁盘活动",
+      "en-US": "Disk Activity"
+    },
+    "storage.zfs_title": {
+      "zh-Hans": "ZFS ARC",
+      "en-US": "ZFS ARC"
+    },
+    "network.down_title": {
+      "zh-Hans": "下行 DOWN",
+      "en-US": "DOWN"
+    },
+    "network.up_title": {
+      "zh-Hans": "上行 UP",
+      "en-US": "UP"
+    },
+    "network.trend_title": {
+      "zh-Hans": "吞吐趋势 · KB/s · 近 3 分钟",
+      "en-US": "Throughput · KB/s · last 3 min"
+    },
+    "network.legend_down": {
+      "zh-Hans": "DOWN",
+      "en-US": "DOWN"
+    },
+    "network.legend_up": {
+      "zh-Hans": "UP",
+      "en-US": "UP"
+    },
+    "network.ctx_peak_down": {
+      "zh-Hans": "峰值下行",
+      "en-US": "Peak Down"
+    },
+    "network.ctx_peak_up": {
+      "zh-Hans": "峰值上行",
+      "en-US": "Peak Up"
+    },
+    "network.ctx_latency": {
+      "zh-Hans": "采集延迟",
+      "en-US": "Poll Latency"
+    },
+    "network.ctx_sampling": {
+      "zh-Hans": "曲线采样",
+      "en-US": "Curve Samples"
+    },
+    "network.ctx_total": {
+      "zh-Hans": "双向合计",
+      "en-US": "Total"
+    },
+    "system.container_title": {
+      "zh-Hans": "容器",
+      "en-US": "Containers"
+    },
+    "system.alert_title": {
+      "zh-Hans": "告警",
+      "en-US": "Alerts"
+    },
+    "system.temp_title": {
+      "zh-Hans": "温度",
+      "en-US": "Temperature"
+    },
+    "system.kv_title": {
+      "zh-Hans": "采集端点",
+      "en-US": "Collector Endpoint"
+    },
+    "system.kv_host": {
+      "zh-Hans": "主机",
+      "en-US": "Host"
+    },
+    "system.kv_endpoint": {
+      "zh-Hans": "端点",
+      "en-US": "Addr"
+    },
+    "system.kv_http": {
+      "zh-Hans": "HTTP",
+      "en-US": "HTTP"
+    },
+    "system.kv_poll": {
+      "zh-Hans": "轮询",
+      "en-US": "Poll"
+    },
+    "system.kv_last_error": {
+      "zh-Hans": "最近错误",
+      "en-US": "Error"
+    },
+    "system.kv_data_age": {
+      "zh-Hans": "数据年龄",
+      "en-US": "Age"
+    },
+    "system.kv_wifi": {
+      "zh-Hans": "Wi-Fi",
+      "en-US": "Wi-Fi"
+    },
+    "system.kv_heap": {
+      "zh-Hans": "内部内存",
+      "en-US": "Heap"
+    },
+    "system.kv_procs": {
+      "zh-Hans": "进程",
+      "en-US": "Procs"
+    },
+    "system.kv_swap": {
+      "zh-Hans": "Swap",
+      "en-US": "Swap"
+    },
+    "system.kv_mem_total": {
+      "zh-Hans": "内存",
+      "en-US": "Mem"
+    },
+    "system.kv_uptime": {
+      "zh-Hans": "运行时长",
+      "en-US": "Uptime"
+    }
+  }
+}

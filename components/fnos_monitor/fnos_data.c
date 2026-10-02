@@ -125,6 +125,7 @@ static bool parse_status(const char *js, fnos_status_t *st)
         st->cpu.temp_c  = jnum(cpu, "temp_c");
         st->cpu.cores   = jint(cpu, "cores");
         st->cpu.runq    = jint(cpu, "runq");
+        st->cpu.procs = (int)jnum(cpu, "procs");
     }
     const cJSON *mem = cJSON_GetObjectItemCaseSensitive(root, "mem");
     if (cJSON_IsObject(mem)) {
@@ -132,6 +133,8 @@ static bool parse_status(const char *js, fnos_status_t *st)
         st->mem.used_mb  = jnum(mem, "used_mb");
         st->mem.avail_mb = jnum(mem, "avail_mb");
         st->mem.pct      = jnum(mem, "pct");
+        st->mem.swap_total_mb = jnum(mem, "swap_total_mb");
+        st->mem.swap_used_mb = jnum(mem, "swap_used_mb");
     }
     const cJSON *net = cJSON_GetObjectItemCaseSensitive(root, "net");
     if (cJSON_IsObject(net)) {

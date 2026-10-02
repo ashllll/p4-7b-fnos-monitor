@@ -1,0 +1,4 @@
+I (14115) main: heap periodic       internal=222KB largest=176KB dma=184KB psram=27317KB
+I (24115) main: heap periodic       internal=222KB largest=176KB dma=184KB psram=27317KB
+I (34115) main: heap periodic       internal=222KB largest=176KB dma=184KB psram=27317KB
+I (37387) fnos_data: poll ok=30 fail=0 9ms cpu=1.3% mem=37.1% rx=30.7 tx=132.5 KB/s alerts=0 internal=222KB dma=184KB psram=27317KB

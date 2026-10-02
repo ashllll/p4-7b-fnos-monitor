@@ -1,0 +1,65 @@
+{
+  "schemaVersion": "1.0",
+  "assets": [
+    {
+      "id": "font.hero",
+      "type": "LvglFont",
+      "symbol": "ui_font_num_56",
+      "source": "components/fnos_monitor/fonts/ui_font_num_56.c"
+    },
+    {
+      "id": "font.numL",
+      "type": "LvglFont",
+      "symbol": "ui_font_num_44",
+      "source": "components/fnos_monitor/fonts/ui_font_num_44.c"
+    },
+    {
+      "id": "font.numM",
+      "type": "LvglFont",
+      "symbol": "ui_font_num_28",
+      "source": "components/fnos_monitor/fonts/ui_font_num_28.c"
+    },
+    {
+      "id": "font.numS",
+      "type": "LvglFont",
+      "symbol": "ui_font_num_17",
+      "source": "components/fnos_monitor/fonts/ui_font_num_17.c"
+    },
+    {
+      "id": "font.label",
+      "type": "LvglFont",
+      "symbol": "ui_font_txt_15",
+      "source": "components/fnos_monitor/fonts/ui_font_txt_15.c"
+    },
+    {
+      "id": "font.meta",
+      "type": "LvglFont",
+      "symbol": "ui_font_txt_13",
+      "source": "components/fnos_monitor/fonts/ui_font_txt_13.c"
+    },
+    {
+      "id": "font.cjkVerdict",
+      "type": "LvglFont",
+      "symbol": "ui_font_cjk_40",
+      "source": "components/fnos_monitor/fonts/ui_font_cjk_40.c"
+    },
+    {
+      "id": "font.cjkTitle",
+      "type": "LvglFont",
+      "symbol": "ui_font_cjk_24",
+      "source": "components/fnos_monitor/fonts/ui_font_cjk_24.c"
+    },
+    {
+      "id": "font.cjkLabel",
+      "type": "LvglFont",
+      "symbol": "ui_font_cjk_17",
+      "source": "components/fnos_monitor/fonts/ui_font_cjk_17.c"
+    },
+    {
+      "id": "font.cjkMeta",
+      "type": "LvglFont",
+      "symbol": "ui_font_cjk_13",
+      "source": "components/fnos_monitor/fonts/ui_font_cjk_13.c"
+    }
+  ]
+}

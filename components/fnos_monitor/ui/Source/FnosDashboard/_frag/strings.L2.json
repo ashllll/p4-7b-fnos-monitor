@@ -1,0 +1,88 @@
+{
+  "strings": {
+    "network.down_title": {
+      "zh-Hans": "下行 DOWN",
+      "en-US": "DOWN"
+    },
+    "network.up_title": {
+      "zh-Hans": "上行 UP",
+      "en-US": "UP"
+    },
+    "network.trend_title": {
+      "zh-Hans": "吞吐趋势 · KB/s · 近 3 分钟",
+      "en-US": "Throughput · KB/s · last 3 min"
+    },
+    "network.legend_down": {
+      "zh-Hans": "DOWN",
+      "en-US": "DOWN"
+    },
+    "network.legend_up": {
+      "zh-Hans": "UP",
+      "en-US": "UP"
+    },
+    "network.ctx_peak_down": {
+      "zh-Hans": "峰值下行",
+      "en-US": "Peak Down"
+    },
+    "network.ctx_peak_up": {
+      "zh-Hans": "峰值上行",
+      "en-US": "Peak Up"
+    },
+    "network.ctx_latency": {
+      "zh-Hans": "采集延迟",
+      "en-US": "Poll Latency"
+    },
+    "network.ctx_sampling": {
+      "zh-Hans": "曲线采样",
+      "en-US": "Curve Samples"
+    },
+    "system.container_title": {
+      "zh-Hans": "容器",
+      "en-US": "Containers"
+    },
+    "system.alert_title": {
+      "zh-Hans": "告警",
+      "en-US": "Alerts"
+    },
+    "system.temp_title": {
+      "zh-Hans": "温度",
+      "en-US": "Temperature"
+    },
+    "system.kv_title": {
+      "zh-Hans": "采集端点",
+      "en-US": "Collector Endpoint"
+    },
+    "system.kv_host": {
+      "zh-Hans": "主机",
+      "en-US": "Host"
+    },
+    "system.kv_endpoint": {
+      "zh-Hans": "端点",
+      "en-US": "Endpoint"
+    },
+    "system.kv_http": {
+      "zh-Hans": "HTTP",
+      "en-US": "HTTP"
+    },
+    "system.kv_poll": {
+      "zh-Hans": "轮询",
+      "en-US": "Poll"
+    },
+    "system.kv_last_error": {
+      "zh-Hans": "最近错误",
+      "en-US": "Last Error"
+    },
+    "system.kv_data_age": {
+      "zh-Hans": "数据年龄",
+      "en-US": "Data Age"
+    },
+    "system.kv_wifi": {
+      "zh-Hans": "Wi-Fi",
+      "en-US": "Wi-Fi"
+    },
+    "system.kv_heap": {
+      "zh-Hans": "内部内存",
+      "en-US": "Internal Heap"
+    }
+  }
+}

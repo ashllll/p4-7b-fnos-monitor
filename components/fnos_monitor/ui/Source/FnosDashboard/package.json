@@ -1,0 +1,32 @@
+{
+  "schemaVersion": "1.0",
+  "packageId": "FnosDashboard",
+  "namespace": "Fnos.Ui.Dashboard",
+  "version": "4.0.0",
+  "platform": "esp32-lvgl-9.5",
+  "designResolution": {
+    "width": 1024,
+    "height": 600
+  },
+  "manifests": {
+    "layout": "layout.json",
+    "assets": "assets.json",
+    "bindings": "bindings.json",
+    "codegen": "codegen.json",
+    "strings": "strings.json"
+  },
+  "v1": {
+    "controls": [
+      "Panel",
+      "Text",
+      "Image",
+      "Button",
+      "Divider",
+      "Bar",
+      "Trend",
+      "Chip",
+      "Icon",
+      "SignalBars"
+    ]
+  }
+}

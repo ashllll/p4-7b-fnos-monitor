@@ -1,0 +1,40 @@
+n: heap periodicI (24784007) main: heap periodic       internal=223KB largest=180KB dma=184KB psram=27415KB
+I (24794007) main: heap periodic       internal=223KB largest=180KB dma=184KB psram=27415KB
+I (24794210) fnos_data: poll ok=24240 fail=0 15ms cpu=1.3% mem=44.4% rx=6.3 tx=115.4 KB/s alerts=0 internal=223KB dma=184KB psram=27415KB
+I (24804007) main: heap periodic       internal=223KB largest=180KB dma=184KB psram=27415KB
+I (24814007) main: heap periodic       internal=223KB largest=180KB dma=184KB psram=27415KB
+I (24824007) main: heap periodic       internal=223KB largest=180KB dma=184KB psram=27415KB
+I (24824709) fnos_data: poll ok=24270 fail=0 16ms cpu=3.3% mem=43.4% rx=25.3 tx=50.8 KB/s alerts=0 internal=223KB dma=184KB psram=27415KB
+I (24834007) main: heap periodic       internal=223KB largest=180KB dma=184KB psram=27415KB
+I (24844007) main: heap periodic       internal=223KB largest=180KB dma=184KB psram=27415KB
+I (24854007) main: heap periodic       internal=223KB largest=180KB dma=184KB psram=27415KB
+I (24855324) fnos_data: poll ok=24300 fail=0 7ms cpu=1.7% mem=44.4% rx=6.8 tx=135.5 KB/s alerts=0 internal=223KB dma=184KB psram=27415KB
+I (24864007) main: heap periodic       internal=223KB largest=180KB dma=184KB psram=27415KB
+I (24874007) main: heap periodic       internal=223KB largest=180KB dma=184KB psram=27415KB
+I (24884007) main: heap periodic       internal=223KB largest=180KB dma=184KB psram=27415KB
+I (24885889) fnos_data: poll ok=24330 fail=0 15ms cpu=1.8% mem=43.1% rx=21.7 tx=144.2 KB/s alerts=0 internal=223KB dma=184KB psram=27415KB
+I (24894007) main: heap periodic       internal=223KB largest=180KB dma=184KB psram=27415KB
+I (24904007) main: heap periodic       internal=223KB largest=180KB dma=184KB psram=27415KB
+I (24914007) main: heap periodic       internal=223KB largest=180KB dma=184KB psram=27415KB
+I (24916393) fnos_data: poll ok=24360 fail=0 5ms cpu=1.3% mem=44.4% rx=12.2 tx=118.6 KB/s alerts=0 internal=223KB dma=184KB psram=27415KB
+I (24924007) main: heap periodic       internal=223KB largest=180KB dma=184KB psram=27415KB
+I (24934007) main: heap periodic       internal=223KB largest=180KB dma=184KB psram=27415KB
+I (24944007) main: heap periodic       internal=223KB largest=180KB dma=184KB psram=27415KB
+I (24946897) fnos_data: poll ok=24390 fail=0 19ms cpu=1.5% mem=44.5% rx=17.4 tx=126.5 KB/s alerts=0 internal=223KB dma=184KB psram=27415KB
+I (24954007) main: heap periodic       internal=223KB largest=180KB dma=184KB psram=27415KB
+I (24964007) main: heap periodic       internal=223KB largest=180KB dma=184KB psram=27415KB
+I (24974007) main: heap periodic       internal=223KB largest=180KB dma=184KB psram=27415KB
+I (24977478) fnos_data: poll ok=24420 fail=0 16ms cpu=2.2% mem=43.5% rx=9.9 tx=112.3 KB/s alerts=0 internal=223KB dma=184KB psram=27415KB
+I (24984007) main: heap periodic       internal=223KB largest=180KB dma=184KB psram=27415KB
+I (24994007) main: heap periodic       internal=223KB largest=180KB dma=184KB psram=27415KB
+I (25004007) main: heap periodic       internal=223KB largest=180KB dma=184KB psram=27415KB
+I (25008085) fnos_data: poll ok=24450 fail=0 8ms cpu=1.7% mem=44.5% rx=29.0 tx=189.7 KB/s alerts=0 internal=223KB dma=184KB psram=27415KB
+I (25014007) main: heap periodic       internal=223KB largest=180KB dma=184KB psram=27415KB
+I (25024007) main: heap periodic       internal=223KB largest=180KB dma=184KB psram=27415KB
+I (25034007) main: heap periodic       internal=223KB largest=180KB dma=184KB psram=27415KB
+I (25038698) fnos_data: poll ok=24480 fail=0 6ms cpu=1.7% mem=43.1% rx=6.6 tx=109.3 KB/s alerts=0 internal=223KB dma=184KB psram=27415KB
+I (25044007) main: heap periodic       internal=223KB largest=180KB dma=184KB psram=27415KB
+I (25054007) main: heap periodic       internal=223KB largest=180KB dma=184KB psram=27415KB
+I (25064007) main: heap periodic       internal=223KB largest=180KB dma=184KB psram=27415KB
+I (25069236) fnos_data: poll ok=24510 fail=0 6ms cpu=2.5% mem=44.4% rx=31.4 tx=118.4 KB/s alerts=0 internal=223KB dma=184KB psram=27415KB
+I (25074007) main: heap periodic       internal=223KB largest=180KB dma=184KB psram=27415KB

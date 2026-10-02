@@ -19,7 +19,7 @@
 
 #include "fnos_net.h"
 #include "fnos_data.h"
-#include "fnos_view.h"
+#include "fnos_ui.h"
 #if __has_include("fnos_config.h")
 #include "fnos_config.h"
 #else
@@ -54,7 +54,7 @@ static void night_timer_cb(void *arg)
     first = false;
     last_night = night;
     bsp_display_brightness_set(night ? APP_BL_NIGHT_PCT : APP_BL_PCT);
-    fnos_view_set_night(night);            // 夜间配色：纯黑底 + 面板更暗 + 趋势纹理降透明度
+    fnos_ui_set_night(night);            // 夜间配色：纯黑底 + 面板更暗 + 趋势纹理降透明度
     ESP_LOGI(TAG, "backlight %d%% (%s)", night ? APP_BL_NIGHT_PCT : APP_BL_PCT, night ? "night" : "day");
 }
 
@@ -63,7 +63,7 @@ static void night_timer_cb(void *arg)
 static void auto_page_cb(lv_timer_t *t)
 {
     (void)t;
-    fnos_view_set_page(fnos_view_page() + 1);
+    fnos_ui_set_page(fnos_ui_page() + 1);
 }
 #endif
 
@@ -116,7 +116,7 @@ extern "C" void app_main(void)
     log_heap("display");
 
     if (bsp_display_lock(0)) {
-        fnos_view_create();
+        fnos_ui_create();
 #if CONFIG_FNOS_AUTO_PAGE_SEC > 0
         lv_timer_create(auto_page_cb, CONFIG_FNOS_AUTO_PAGE_SEC * 1000, NULL);
         ESP_LOGW(TAG, "VERIFY MODE: auto page every %d s", CONFIG_FNOS_AUTO_PAGE_SEC);

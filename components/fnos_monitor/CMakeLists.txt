@@ -5,7 +5,13 @@ set(PROJ_SRCS
     "fnos_net.c"
     "fnos_data.c"
     "fnos_ui.c"
-    "fnos_view.c"
+    "kk_ui/kk_rect.c"
+    "kk_ui/kk_widgets.c"
+    "ui/FnosDashboardController.c"
+    "ui/FnosDashboardViewAnim.c"
+    "ui/Generated/FnosDashboard/fnos_dash_view.generated.c"
+    "ui/Generated/FnosDashboard/fnos_dash_store.generated.c"
+    "ui/Generated/FnosDashboard/fnos_dash_binder.generated.c"
     "fonts/ui_font_cjk_13.c"
     "fonts/ui_font_cjk_17.c"
     "fonts/ui_font_cjk_24.c"
@@ -20,7 +26,11 @@ set(PROJ_SRCS
 
 idf_component_register(
     SRCS ${PROJ_SRCS}
-    INCLUDE_DIRS ${CMAKE_CURRENT_LIST_DIR}
+    INCLUDE_DIRS
+        ${CMAKE_CURRENT_LIST_DIR}
+        ${CMAKE_CURRENT_LIST_DIR}/kk_ui
+        ${CMAKE_CURRENT_LIST_DIR}/ui
+        ${CMAKE_CURRENT_LIST_DIR}/ui/Generated/FnosDashboard
     REQUIRES
         esp_wifi
         esp_netif

@@ -18,4 +18,4 @@
 #define APP_BL_PCT 45           // 背光百分比（0-100）
 #define APP_NIGHT_START 23      // 夜间降背光起始小时（含）
 #define APP_NIGHT_END   7       // 夜间降背光结束小时（不含）
-#define APP_BL_NIGHT_PCT 12
+#define APP_BL_NIGHT_PCT 20

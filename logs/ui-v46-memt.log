@@ -1,0 +1,175 @@
+I (6497) esp_wifi_remote: esp_wifi_internal_reg_rxcb: sta: 0x480d4b86
+I (7514) esp_netif_handlers: sta ip: 192.168.0.214, mask: 255.255.255.0, gw: 192.168.0.1
+I (7514) fnos_net: got ip 192.168.0.214
+I (7894) fnos_data: history backfilled: 300 samples
+I (10137) fnos_ui: probe ov_val0    x=12 y=52 w=112 h=37 text='2'
+I (10137) fnos_ui: probe ov_val1    x=12 y=52 w=112 h=37 text='38'
+I (10137) fnos_ui: probe ov_val2    x=12 y=52 w=112 h=37 text='75'
+I (10143) fnos_ui: probe ov_sub0    x=12 y=106 w=138 h=17 text='负载 1.78/1.27/0.82 · 12 核 · 进程 1965'
+I (10153) fnos_ui: probe ov_unit0   x=126 y=69 w=26 h=20 text='%'
+I (10159) fnos_ui: probe series cpu=30 mem=30 temp=30 (cap 90)
+I (10165) fnos_ui: probe trend  cpu x=12 y=52 w=340 h=52
+I (10170) fnos_ui: probe cpu bar y[0..11]=1 14 4 5 6 6 4 8 5 13 5 5 
+I (10176) fnos_ui: probe mem bar y[0..11]=38 39 39 39 39 39 39 38 38 39 39 39 
+I (10183) fnos_ui: probe temp bar y[0..11]=75 75 75 75 75 75 75 75 75 75 75 75 
+I (10190) fnos_ui: probe hidden: cpu=0 mem=0 temp=0
+I (10194) fnos_ui: probe cpu line y[0..11]=1 14 4 5 6 6 4 8 5 13 5 5 
+I (10200) fnos_ui: probe bar opa=31 line_w=2
+ESP-ROM:esp32p4-eco7-20260109
+Build:Jan  9 2026
+rst:0x1 (POWERON),boot:0xf (SPI_FAST_FLASH_BOOT)
+SPI mode:DIO, clock div:1
+load:0x4ffb60d0,len:0x11f0
+load:0x4ffac2c0,len:0xd5c
+load:0x4ffaefc0,len:0x3408
+entry 0x4ffac2c0
+I (286) hex_psram: vendor id    : 0x0d (AP)
+I (286) hex_psram: Latency      : 0x01 (Fixed)
+I (286) hex_psram: DriveStr.    : 0x00 (25 Ohm)
+I (287) hex_psram: dev id       : 0x03 (generation 4)
+I (292) hex_psram: density      : 0x07 (256 Mbit)
+I (296) hex_psram: good-die     : 0x06 (Pass)
+I (300) hex_psram: SRF          : 0x02 (Slow Refresh)
+I (305) hex_psram: BurstType    : 0x00 ( Wrap)
+I (309) hex_psram: BurstLen     : 0x03 (2048 Byte)
+I (313) hex_psram: BitMode      : 0x01 (X16 Mode)
+I (318) hex_psram: Readlatency  : 0x04 (14 cycles@Fixed)
+I (323) hex_psram: DriveStrength: 0x00 (1/1)
+I (327) MSPI Timing: Enter psram timing tuning
+I esp_psram: Found 32MB PSRAM device
+I esp_psram: Speed: 200MHz
+I (517) mmu_psram: .rodata xip on psram
+I (571) mmu_psram: .text xip on psram
+I (571) hex_psram: psram CS IO is dedicated
+I (571) cpu_start: Multicore app
+I (996) esp_psram: SPI SRAM memory test OK
+I (1006) cpu_start: GPIO 38 and 37 are used as console UART I/O pins
+I (1006) cpu_start: Pro cpu start user code
+I (1006) cpu_start: cpu freq: 400000000 Hz
+I (1009) app_init: Application information:
+I (1012) app_init: Project name:     fnos_monitor
+I (1017) app_init: App version:      0.1.0
+I (1021) app_init: Compile time:     Sep 29 2026 02:23:32
+I (1026) app_init: ELF file SHA256:  668cc1dc6...
+I (1030) app_init: ESP-IDF:          5.5.3
+I (1034) efuse_init: Min chip rev:     v3.0
+I (1038) efuse_init: Max chip rev:     v3.99 
+I (1042) efuse_init: Chip rev:         v3.2
+I (1046) heap_init: Initializing. RAM available for dynamic allocation:
+I (1052) heap_init: At 4FF61710 len 000598B0 (358 KiB): RETENT_RAM
+I (1058) heap_init: At 4FFBAFC0 len 00004BF0 (18 KiB): RAM
+I (1063) heap_init: At 501080D8 len 00000028 (0 KiB): RTCRAM
+I (1069) heap_init: At 501081A0 len 00007E60 (31 KiB): RTCRAM
+I (1074) heap_init: At 30100198 len 00001E68 (7 KiB): TCM
+I (1079) esp_psram: Adding pool of 31025K of PSRAM memory to heap allocator
+I (1086) esp_psram: Adding pool of 14K of PSRAM memory gap generated due to end address alignment of irom to the heap allocator
+I (1097) esp_psram: Adding pool of 51K of PSRAM memory gap generated due to end address alignment of drom to the heap allocator
+I (1109) spi_flash: detected chip: gd
+I (1112) spi_flash: flash io: qio
+I (1115) host_init: ESP Hosted : Host chip_ip[18]
+I (1119) H_API: ESP-Hosted starting. Hosted_Tasks: prio:23, stack: 5120 RPC_task_stack: 5120
+sdio_mempool_create free:32229060 min-free:32229060 lfb-def:31457280 lfb-8bit:31457280
+I (1136) H_API: ** add_esp_wifi_remote_channels **
+I (1140) transport: Add ESP-Hosted channel IF[1]: S[0] Tx[0x4800b7f8] Rx[0x4801aa4a]
+I (1147) transport: Add ESP-Hosted channel IF[2]: S[0] Tx[0x4800b73e] Rx[0x4801aa4a]
+I (1155) sleep_gpio: Configure to isolate all GPIO pins in sleep state
+I (1161) sleep_gpio: Enable automatic switching of GPIO sleep configuration
+I (1168) main_task: Started on CPU0
+I (1172) main_task: Calling app_main()
+I (1178) main: fnOS NAS dashboard booting (agent http://192.168.0.119:8799)
+I (1181) main: heap boot           internal=351KB largest=296KB dma=313KB psram=31087KB
+I (1190) transport: Attempt connection with slave: retry[0]
+I (1194) transport: Reset slave using GPIO[54]
+I (1198) os_wrapper_esp: GPIO [54] configured
+I (2368) sdio_wrapper: SDIO master: Data-Lines: 4-bit Freq(KHz)[40000 KHz]
+I (2368) sdio_wrapper: GPIOs: CLK[18] CMD[19] D0[14] D1[15] D2[16] D3[17] Slave_Reset[54]
+I (2368) H_SDIO_DRV: Starting SDIO process rx task
+I (2371) sdio_wrapper: Queues: Tx[20] Rx[20] SDIO-Rx-Mode[1]
+Name: 
+Type: SDIO
+Speed: 40.00 MHz (limit: 40.00 MHz)
+Size: 0MB
+CSD: ver=1, sector_size=0, capacity=0 read_bl_len=0
+SCR: sd_spec=0, bus_width=0
+TUPLE: DEVICE, size: 3: D9 01 FF 
+TUPLE: MANFID, size: 4
+  MANF: 0092, CARD: 6666
+TUPLE: FUNCID, size: 2: 0C 00 
+TUPLE: FUNCE, size: 4: 00 00 02 32 
+TUPLE: CONFIG, size: 5: 01 01 00 02 07 
+TUPLE: CFTABLE_ENTRY, size: 8
+  INDX: C1, Intface: 1, Default: 1, Conf-Entry-Num: 1
+  IF: 41
+  FS: 30, misc: 0, mem_space: 1, irq: 1, io_space: 0, timing: 0, power: 0
+  IR: 30, mask: 1,   IRQ: FF FF
+  LEN: FFFF
+TUPLE: END
+I (2454) sdio_wrapper: Function 0 Blocksize: 512
+I (2458) sdio_wrapper: Function 1 Blocksize: 512
+I (2462) H_SDIO_DRV: SDIO Host operating in STREAMING MODE
+I (2467) H_SDIO_DRV: generate slave intr
+I (2481) transport: Received INIT event from ESP32 peripheral
+I (2481) transport: EVENT: 12
+I (2481) transport: EVENT: 11
+I (2482) transport: capabilities: 0xd
+I (2485) transport: Features supported are:
+I (2489) transport: 	 * WLAN
+I (2492) transport: 	   - HCI over SDIO
+I (2495) transport: 	   - BLE only
+I (2498) transport: EVENT: 13
+I (2501) transport: ESP board type is : 13 
+I (2505) transport: Base transport is set-up
+I (2509) transport: Slave chip Id[12]
+I (2513) hci_stub_drv: Host BT Support: Disabled
+I (2517) H_SDIO_DRV: Received INIT event
+I (3522) fnos_net: wifi station started; awaiting ip
+I (3522) esp_lvgl:adapter: LVGL adapter initialized successfully
+W (3523) ledc: GPIO 32 is not usable, maybe conflict with others
+I (3527) ESP32_P4_EV: MIPI DSI PHY Powered on
+I (3532) ESP32_P4_EV: Install MIPI DSI LCD control panel
+I (3536) ESP32_P4_EV: Install EK79007 LCD control panel
+I (3541) ek79007: version: 2.0.2
+I (3543) H_API: esp_wifi_remote_connect
+I (3718) ESP32_P4_EV: Display initialized
+I (3719) esp_lvgl:bridge_v9: Initializing hardware resources
+I (3719) esp_lvgl:bridge_v9: Hardware resources initialized successfully
+I (3722) esp_lvgl:bridge: Initializing hardware resources
+I (3727) esp_lvgl:bridge: Hardware resources initialized successfully
+W (3733) esp_lvgl:bridge_v9: on_frame_buf_complete unavailable; buffer-switch release and dummy-draw may not function on MIPI DSI
+I (3745) ESP32_P4_EV: Touch 0x5d found
+I (3748) GT911: I2C address initialization procedure skipped - using default GT9xx setup
+I (3756) GT911: TouchPad_ID:0x39,0x31,0x31
+I (3760) GT911: TouchPad_Config_Version:91
+W (3764) esp_lvgl:touch: LV_USE_GESTURE_RECOGNITION is disabled; only single-point pointer events are available
+I (3773) esp_lvgl:touch: Touch input device registered successfully (IRQ mode: disabled)
+I (3782) esp_lvgl:adapter: LVGL task started successfully
+I (3786) ESP32_P4_EV: Setting LCD backlight: 100%
+I (3791) ESP32_P4_EV: Setting LCD backlight: 45%
+I (3795) main: heap display        internal=231KB largest=192KB dma=192KB psram=27445KB
+I (4093) fnos_ui: ui created (pages=4)
+I (4093) main: heap ui             internal=230KB largest=192KB dma=192KB psram=27325KB
+I (4093) fnos_data: polling http://192.168.0.119:8799/api/v1/status every 1000 ms
+I (4100) main: heap polling        internal=230KB largest=188KB dma=192KB psram=27311KB
+I (4108) ESP32_P4_EV: Setting LCD backlight: 45%
+I (4112) main: backlight 45% (day)
+I (4115) main: boot complete
+I (4118) main_task: Returned from app_main()
+I (6521) esp_wifi_remote: esp_wifi_internal_reg_rxcb: sta: 0x480d4b86
+I (7538) esp_netif_handlers: sta ip: 192.168.0.214, mask: 255.255.255.0, gw: 192.168.0.1
+I (7538) fnos_net: got ip 192.168.0.214
+I (7701) fnos_data: history backfilled: 300 samples
+I (10137) fnos_ui: probe ov_val0    x=12 y=52 w=112 h=37 text='3'
+I (10137) fnos_ui: probe ov_val1    x=12 y=52 w=112 h=37 text='38'
+I (10137) fnos_ui: probe ov_val2    x=12 y=52 w=112 h=37 text='75'
+I (10143) fnos_ui: probe ov_sub0    x=12 y=106 w=138 h=17 text='负载 1.74/1.28/0.83 · 12 核 · 进程 1960'
+I (10153) fnos_ui: probe ov_unit0   x=126 y=69 w=26 h=20 text='%'
+I (10159) fnos_ui: probe series cpu=30 mem=30 temp=30 (cap 90)
+I (10165) fnos_ui: probe trend  cpu x=12 y=52 w=340 h=52
+I (10170) fnos_ui: probe cpu bar y[0..11]=2 8 5 13 5 5 4 3 4 4 4 3 
+I (10176) fnos_ui: probe mem bar y[0..11]=38 38 38 39 39 39 38 38 38 38 38 38 
+I (10183) fnos_ui: probe temp bar y[0..11]=76 76 76 76 76 76 76 76 76 76 76 76 
+I (10190) fnos_ui: probe hidden: cpu=0 mem=0 temp=0
+I (10194) fnos_ui: probe cpu line y[0..11]=2 8 5 13 5 5 4 3 4 4 4 3 
+I (10200) fnos_ui: probe bar opa=31 line_w=2
+I (14115) main: heap periodic       internal=222KB largest=176KB dma=184KB psram=27315KB
+I (24115) main: heap periodic       internal=220KB largest=176KB dma=182KB psram=27315KB

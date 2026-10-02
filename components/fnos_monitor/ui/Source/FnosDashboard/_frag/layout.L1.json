@@ -1,0 +1,5638 @@
+{
+  "root": {
+    "type": "Panel",
+    "id": "Root",
+    "children": [
+      {
+        "type": "Panel",
+        "id": "TopBar",
+        "rect": {
+          "anchorMin": [
+            0,
+            0
+          ],
+          "anchorMax": [
+            1,
+            0
+          ],
+          "position": [
+            0,
+            0
+          ],
+          "size": [
+            0,
+            64
+          ]
+        },
+        "image": {
+          "color": "#1C2534FF",
+          "radius": 8
+        },
+        "children": [
+          {
+            "type": "Panel",
+            "id": "HdIconBlock",
+            "rect": {
+              "anchorMin": [
+                0,
+                0
+              ],
+              "anchorMax": [
+                0,
+                0
+              ],
+              "position": [
+                20,
+                12
+              ],
+              "size": [
+                40,
+                40
+              ]
+            },
+            "image": {
+              "color": "#2F80EDFF",
+              "radius": 10
+            },
+            "children": [
+              {
+                "type": "Icon",
+                "id": "HdIcon",
+                "rect": {
+                  "anchorMin": [
+                    0,
+                    0
+                  ],
+                  "anchorMax": [
+                    0,
+                    0
+                  ],
+                  "position": [
+                    7,
+                    7
+                  ],
+                  "size": [
+                    26,
+                    26
+                  ]
+                },
+                "icon": {
+                  "kind": "storage",
+                  "color": "#FFFFFFFF"
+                },
+                "children": []
+              }
+            ]
+          },
+          {
+            "type": "Text",
+            "id": "HdHost",
+            "rect": {
+              "anchorMin": [
+                0,
+                0
+              ],
+              "anchorMax": [
+                0,
+                0
+              ],
+              "position": [
+                72,
+                6
+              ],
+              "size": [
+                240,
+                32
+              ]
+            },
+            "text": {
+              "fontAsset": "font.cjkTitle",
+              "color": "#FFFFFFFF"
+            },
+            "children": []
+          },
+          {
+            "type": "Text",
+            "id": "HdEndpoint",
+            "rect": {
+              "anchorMin": [
+                0,
+                0
+              ],
+              "anchorMax": [
+                0,
+                0
+              ],
+              "position": [
+                72,
+                41
+              ],
+              "size": [
+                320,
+                17
+              ]
+            },
+            "text": {
+              "fontAsset": "font.meta",
+              "color": "#BFC9D7FF"
+            },
+            "children": []
+          },
+          {
+            "type": "Chip",
+            "id": "HdChip",
+            "rect": {
+              "anchorMin": [
+                0,
+                0
+              ],
+              "anchorMax": [
+                0,
+                0
+              ],
+              "position": [
+                665,
+                17
+              ],
+              "size": [
+                184,
+                30
+              ]
+            },
+            "chip": {
+              "color": "#F2B01EFF"
+            },
+            "children": []
+          },
+          {
+            "type": "SignalBars",
+            "id": "HdSignal",
+            "rect": {
+              "anchorMin": [
+                0,
+                0
+              ],
+              "anchorMax": [
+                0,
+                0
+              ],
+              "position": [
+                861,
+                22
+              ],
+              "size": [
+                27,
+                19
+              ]
+            },
+            "children": []
+          },
+          {
+            "type": "Text",
+            "id": "HdClock",
+            "rect": {
+              "anchorMin": [
+                1,
+                0
+              ],
+              "anchorMax": [
+                1,
+                0
+              ],
+              "position": [
+                -120,
+                14
+              ],
+              "size": [
+                100,
+                37
+              ]
+            },
+            "text": {
+              "fontAsset": "font.numM",
+              "color": "#FFFFFFFF",
+              "align": "right"
+            },
+            "children": []
+          }
+        ]
+      },
+      {
+        "type": "Panel",
+        "id": "Rail",
+        "rect": {
+          "anchorMin": [
+            0,
+            0
+          ],
+          "anchorMax": [
+            1,
+            0
+          ],
+          "position": [
+            0,
+            72
+          ],
+          "size": [
+            0,
+            44
+          ]
+        },
+        "children": [
+          {
+            "type": "Button",
+            "id": "NavOverview",
+            "rect": {
+              "anchorMin": [
+                0,
+                0
+              ],
+              "anchorMax": [
+                0,
+                0
+              ],
+              "position": [
+                20,
+                0
+              ],
+              "size": [
+                237,
+                44
+              ]
+            },
+            "image": {
+              "color": "#2F80EDFF",
+              "radius": 8
+            },
+            "button": {
+              "interactable": true
+            },
+            "children": [
+              {
+                "type": "Text",
+                "id": "NavOverviewLabel",
+                "rect": {
+                  "anchorMin": [
+                    0,
+                    0
+                  ],
+                  "anchorMax": [
+                    0,
+                    0
+                  ],
+                  "position": [
+                    0,
+                    10
+                  ],
+                  "size": [
+                    237,
+                    23
+                  ]
+                },
+                "text": {
+                  "fontAsset": "font.cjkLabel",
+                  "color": "#FFFFFFFF",
+                  "align": "center",
+                  "locKey": "chrome.nav_overview"
+                },
+                "children": []
+              }
+            ]
+          },
+          {
+            "type": "Button",
+            "id": "NavStorage",
+            "rect": {
+              "anchorMin": [
+                0,
+                0
+              ],
+              "anchorMax": [
+                0,
+                0
+              ],
+              "position": [
+                269,
+                0
+              ],
+              "size": [
+                237,
+                44
+              ]
+            },
+            "image": {
+              "color": "#1C2534FF",
+              "radius": 8
+            },
+            "button": {
+              "interactable": true
+            },
+            "children": [
+              {
+                "type": "Text",
+                "id": "NavStorageLabel",
+                "rect": {
+                  "anchorMin": [
+                    0,
+                    0
+                  ],
+                  "anchorMax": [
+                    0,
+                    0
+                  ],
+                  "position": [
+                    0,
+                    10
+                  ],
+                  "size": [
+                    237,
+                    23
+                  ]
+                },
+                "text": {
+                  "fontAsset": "font.cjkLabel",
+                  "color": "#BFC9D7FF",
+                  "align": "center",
+                  "locKey": "chrome.nav_storage"
+                },
+                "children": []
+              }
+            ]
+          },
+          {
+            "type": "Button",
+            "id": "NavNetwork",
+            "rect": {
+              "anchorMin": [
+                0,
+                0
+              ],
+              "anchorMax": [
+                0,
+                0
+              ],
+              "position": [
+                518,
+                0
+              ],
+              "size": [
+                237,
+                44
+              ]
+            },
+            "image": {
+              "color": "#1C2534FF",
+              "radius": 8
+            },
+            "button": {
+              "interactable": true
+            },
+            "children": [
+              {
+                "type": "Text",
+                "id": "NavNetworkLabel",
+                "rect": {
+                  "anchorMin": [
+                    0,
+                    0
+                  ],
+                  "anchorMax": [
+                    0,
+                    0
+                  ],
+                  "position": [
+                    0,
+                    10
+                  ],
+                  "size": [
+                    237,
+                    23
+                  ]
+                },
+                "text": {
+                  "fontAsset": "font.cjkLabel",
+                  "color": "#BFC9D7FF",
+                  "align": "center",
+                  "locKey": "chrome.nav_network"
+                },
+                "children": []
+              }
+            ]
+          },
+          {
+            "type": "Button",
+            "id": "NavSystem",
+            "rect": {
+              "anchorMin": [
+                0,
+                0
+              ],
+              "anchorMax": [
+                0,
+                0
+              ],
+              "position": [
+                767,
+                0
+              ],
+              "size": [
+                237,
+                44
+              ]
+            },
+            "image": {
+              "color": "#1C2534FF",
+              "radius": 8
+            },
+            "button": {
+              "interactable": true
+            },
+            "children": [
+              {
+                "type": "Text",
+                "id": "NavSystemLabel",
+                "rect": {
+                  "anchorMin": [
+                    0,
+                    0
+                  ],
+                  "anchorMax": [
+                    0,
+                    0
+                  ],
+                  "position": [
+                    0,
+                    10
+                  ],
+                  "size": [
+                    237,
+                    23
+                  ]
+                },
+                "text": {
+                  "fontAsset": "font.cjkLabel",
+                  "color": "#BFC9D7FF",
+                  "align": "center",
+                  "locKey": "chrome.nav_system"
+                },
+                "children": []
+              }
+            ]
+          },
+          {
+            "type": "Panel",
+            "id": "NavIndicator",
+            "rect": {
+              "anchorMin": [
+                0,
+                0
+              ],
+              "anchorMax": [
+                0,
+                0
+              ],
+              "position": [
+                44,
+                38
+              ],
+              "size": [
+                189,
+                3
+              ]
+            },
+            "image": {
+              "color": "#FFFFFFFF",
+              "radius": 2
+            },
+            "children": []
+          }
+        ]
+      },
+      {
+        "type": "Panel",
+        "id": "Bottom",
+        "rect": {
+          "anchorMin": [
+            0,
+            0
+          ],
+          "anchorMax": [
+            1,
+            0
+          ],
+          "position": [
+            0,
+            564
+          ],
+          "size": [
+            0,
+            36
+          ]
+        },
+        "image": {
+          "color": "#1C2534FF",
+          "radius": 8
+        },
+        "children": [
+          {
+            "type": "Text",
+            "id": "FtPoll",
+            "rect": {
+              "anchorMin": [
+                0,
+                0
+              ],
+              "anchorMax": [
+                0,
+                0
+              ],
+              "position": [
+                20,
+                9
+              ],
+              "size": [
+                520,
+                17
+              ]
+            },
+            "text": {
+              "fontAsset": "font.cjkMeta",
+              "color": "#BFC9D7FF"
+            },
+            "children": []
+          },
+          {
+            "type": "Panel",
+            "id": "FtAlertPill",
+            "rect": {
+              "anchorMin": [
+                0,
+                0
+              ],
+              "anchorMax": [
+                0,
+                0
+              ],
+              "position": [
+                584,
+                4
+              ],
+              "size": [
+                420,
+                28
+              ]
+            },
+            "image": {
+              "color": "#232E3FFF",
+              "radius": 8
+            },
+            "children": [
+              {
+                "type": "Panel",
+                "id": "FtAlertDot",
+                "rect": {
+                  "anchorMin": [
+                    0,
+                    0
+                  ],
+                  "anchorMax": [
+                    0,
+                    0
+                  ],
+                  "position": [
+                    12,
+                    9
+                  ],
+                  "size": [
+                    10,
+                    10
+                  ]
+                },
+                "image": {
+                  "color": "#2FBF71FF",
+                  "radius": 5
+                },
+                "children": []
+              },
+              {
+                "type": "Text",
+                "id": "FtAlertLbl",
+                "rect": {
+                  "anchorMin": [
+                    0,
+                    0
+                  ],
+                  "anchorMax": [
+                    0,
+                    0
+                  ],
+                  "position": [
+                    30,
+                    5
+                  ],
+                  "size": [
+                    378,
+                    17
+                  ]
+                },
+                "text": {
+                  "fontAsset": "font.cjkMeta",
+                  "color": "#2FBF71FF"
+                },
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "Panel",
+        "id": "ContentArea",
+        "rect": {
+          "anchorMin": [
+            0,
+            0
+          ],
+          "anchorMax": [
+            0,
+            0
+          ],
+          "position": [
+            20,
+            124
+          ],
+          "size": [
+            984,
+            432
+          ]
+        },
+        "image": {
+          "color": "#080B10FF",
+          "radius": 0
+        },
+        "children": [
+          {
+            "type": "Panel",
+            "id": "P0Overview",
+            "rect": {
+              "anchorMin": [
+                0,
+                0
+              ],
+              "anchorMax": [
+                0,
+                0
+              ],
+              "position": [
+                0,
+                0
+              ],
+              "size": [
+                984,
+                432
+              ]
+            },
+            "image": {
+              "color": "#080B10FF"
+            },
+            "children": [
+              {
+                "type": "Panel",
+                "id": "OvHealthCard",
+                "rect": {
+                  "anchorMin": [
+                    0,
+                    0
+                  ],
+                  "anchorMax": [
+                    0,
+                    0
+                  ],
+                  "position": [
+                    0,
+                    0
+                  ],
+                  "size": [
+                    300,
+                    138
+                  ]
+                },
+                "image": {
+                  "color": "#161E2BFF",
+                  "radius": 16,
+                  "borderWidth": 1,
+                  "borderColor": "#334052FF"
+                },
+                "children": [
+                  {
+                    "type": "Panel",
+                    "id": "OvHealthAccent",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        0,
+                        16
+                      ],
+                      "size": [
+                        3,
+                        106
+                      ]
+                    },
+                    "image": {
+                      "color": "#2F80EDFF",
+                      "radius": 2
+                    },
+                    "children": []
+                  },
+                  {
+                    "type": "Panel",
+                    "id": "OvHealthHead",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        10
+                      ],
+                      "size": [
+                        276,
+                        34
+                      ]
+                    },
+                    "image": {
+                      "color": "#1C2534FF",
+                      "radius": 8
+                    },
+                    "children": [
+                      {
+                        "type": "Text",
+                        "id": "OvHealthTitle",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            10,
+                            1
+                          ],
+                          "size": [
+                            256,
+                            32
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.cjkTitle",
+                          "color": "#FFFFFFFF",
+                          "locKey": "overview.health_title"
+                        },
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "type": "Text",
+                    "id": "OvVerdict",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        50
+                      ],
+                      "size": [
+                        120,
+                        52
+                      ]
+                    },
+                    "text": {
+                      "fontAsset": "font.cjkVerdict",
+                      "color": "#F2B01EFF"
+                    },
+                    "children": []
+                  },
+                  {
+                    "type": "Panel",
+                    "id": "OvAlertBlock",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        140,
+                        50
+                      ],
+                      "size": [
+                        148,
+                        52
+                      ]
+                    },
+                    "image": {
+                      "color": "#232E3FFF",
+                      "radius": 8
+                    },
+                    "children": [
+                      {
+                        "type": "Text",
+                        "id": "OvAlertLabel",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            10,
+                            7
+                          ],
+                          "size": [
+                            70,
+                            17
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.cjkMeta",
+                          "color": "#5A6B80FF",
+                          "locKey": "overview.alert_label"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "OvVerdictSub",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            10,
+                            28
+                          ],
+                          "size": [
+                            128,
+                            17
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.cjkMeta",
+                          "color": "#BFC9D7FF"
+                        },
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "type": "Text",
+                    "id": "OvReason",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        108
+                      ],
+                      "size": [
+                        276,
+                        17
+                      ]
+                    },
+                    "text": {
+                      "fontAsset": "font.cjkMeta",
+                      "color": "#F0453DFF"
+                    },
+                    "children": []
+                  }
+                ]
+              },
+              {
+                "type": "Panel",
+                "id": "OvCpuCard",
+                "rect": {
+                  "anchorMin": [
+                    0,
+                    0
+                  ],
+                  "anchorMax": [
+                    0,
+                    0
+                  ],
+                  "position": [
+                    309,
+                    0
+                  ],
+                  "size": [
+                    162,
+                    138
+                  ]
+                },
+                "image": {
+                  "color": "#161E2BFF",
+                  "radius": 16,
+                  "borderWidth": 1,
+                  "borderColor": "#334052FF"
+                },
+                "children": [
+                  {
+                    "type": "Panel",
+                    "id": "OvCpuCardAccent",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        0,
+                        16
+                      ],
+                      "size": [
+                        3,
+                        106
+                      ]
+                    },
+                    "image": {
+                      "color": "#2F80EDFF",
+                      "radius": 2
+                    },
+                    "children": []
+                  },
+                  {
+                    "type": "Panel",
+                    "id": "OvCpuHead",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        10
+                      ],
+                      "size": [
+                        138,
+                        34
+                      ]
+                    },
+                    "image": {
+                      "color": "#1C2534FF",
+                      "radius": 8
+                    },
+                    "children": [
+                      {
+                        "type": "Text",
+                        "id": "OvCpuTitle",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            10,
+                            1
+                          ],
+                          "size": [
+                            118,
+                            32
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.cjkTitle",
+                          "color": "#FFFFFFFF",
+                          "locKey": "overview.metric_cpu"
+                        },
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "type": "Text",
+                    "id": "OvVal0",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        52
+                      ],
+                      "size": [
+                        112,
+                        37
+                      ]
+                    },
+                    "text": {
+                      "fontAsset": "font.numM",
+                      "color": "#FFFFFFFF"
+                    },
+                    "children": []
+                  },
+                  {
+                    "type": "Text",
+                    "id": "OvUnit0",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        126,
+                        69
+                      ],
+                      "size": [
+                        26,
+                        20
+                      ]
+                    },
+                    "text": {
+                      "fontAsset": "font.label",
+                      "color": "#BFC9D7FF",
+                      "letterSpace": 1,
+                      "locKey": "overview.unit_pct"
+                    },
+                    "children": []
+                  },
+                  {
+                    "type": "Bar",
+                    "id": "OvMbar0",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        94
+                      ],
+                      "size": [
+                        138,
+                        6
+                      ]
+                    },
+                    "bar": {
+                      "color": "#2F80EDFF",
+                      "radius": 3
+                    },
+                    "children": []
+                  },
+                  {
+                    "type": "Text",
+                    "id": "OvSub0",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        106
+                      ],
+                      "size": [
+                        138,
+                        17
+                      ]
+                    },
+                    "text": {
+                      "fontAsset": "font.cjkMeta",
+                      "color": "#5A6B80FF"
+                    },
+                    "children": []
+                  }
+                ]
+              },
+              {
+                "type": "Panel",
+                "id": "OvMemCard",
+                "rect": {
+                  "anchorMin": [
+                    0,
+                    0
+                  ],
+                  "anchorMax": [
+                    0,
+                    0
+                  ],
+                  "position": [
+                    480,
+                    0
+                  ],
+                  "size": [
+                    162,
+                    138
+                  ]
+                },
+                "image": {
+                  "color": "#161E2BFF",
+                  "radius": 16,
+                  "borderWidth": 1,
+                  "borderColor": "#334052FF"
+                },
+                "children": [
+                  {
+                    "type": "Panel",
+                    "id": "OvMemCardAccent",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        0,
+                        16
+                      ],
+                      "size": [
+                        3,
+                        106
+                      ]
+                    },
+                    "image": {
+                      "color": "#2F80EDFF",
+                      "radius": 2
+                    },
+                    "children": []
+                  },
+                  {
+                    "type": "Panel",
+                    "id": "OvMemHead",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        10
+                      ],
+                      "size": [
+                        138,
+                        34
+                      ]
+                    },
+                    "image": {
+                      "color": "#1C2534FF",
+                      "radius": 8
+                    },
+                    "children": [
+                      {
+                        "type": "Text",
+                        "id": "OvMemTitle",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            10,
+                            1
+                          ],
+                          "size": [
+                            118,
+                            32
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.cjkTitle",
+                          "color": "#FFFFFFFF",
+                          "locKey": "overview.metric_mem"
+                        },
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "type": "Text",
+                    "id": "OvVal1",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        52
+                      ],
+                      "size": [
+                        112,
+                        37
+                      ]
+                    },
+                    "text": {
+                      "fontAsset": "font.numM",
+                      "color": "#FFFFFFFF"
+                    },
+                    "children": []
+                  },
+                  {
+                    "type": "Text",
+                    "id": "OvUnit1",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        126,
+                        69
+                      ],
+                      "size": [
+                        26,
+                        20
+                      ]
+                    },
+                    "text": {
+                      "fontAsset": "font.label",
+                      "color": "#BFC9D7FF",
+                      "letterSpace": 1,
+                      "locKey": "overview.unit_pct"
+                    },
+                    "children": []
+                  },
+                  {
+                    "type": "Bar",
+                    "id": "OvMbar1",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        94
+                      ],
+                      "size": [
+                        138,
+                        6
+                      ]
+                    },
+                    "bar": {
+                      "color": "#4EC9E8FF",
+                      "radius": 3
+                    },
+                    "children": []
+                  },
+                  {
+                    "type": "Text",
+                    "id": "OvSub1",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        106
+                      ],
+                      "size": [
+                        138,
+                        17
+                      ]
+                    },
+                    "text": {
+                      "fontAsset": "font.cjkMeta",
+                      "color": "#5A6B80FF"
+                    },
+                    "children": []
+                  }
+                ]
+              },
+              {
+                "type": "Panel",
+                "id": "OvTempCard",
+                "rect": {
+                  "anchorMin": [
+                    0,
+                    0
+                  ],
+                  "anchorMax": [
+                    0,
+                    0
+                  ],
+                  "position": [
+                    651,
+                    0
+                  ],
+                  "size": [
+                    162,
+                    138
+                  ]
+                },
+                "image": {
+                  "color": "#161E2BFF",
+                  "radius": 16,
+                  "borderWidth": 1,
+                  "borderColor": "#334052FF"
+                },
+                "children": [
+                  {
+                    "type": "Panel",
+                    "id": "OvTempCardAccent",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        0,
+                        16
+                      ],
+                      "size": [
+                        3,
+                        106
+                      ]
+                    },
+                    "image": {
+                      "color": "#2F80EDFF",
+                      "radius": 2
+                    },
+                    "children": []
+                  },
+                  {
+                    "type": "Panel",
+                    "id": "OvTempHead",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        10
+                      ],
+                      "size": [
+                        138,
+                        34
+                      ]
+                    },
+                    "image": {
+                      "color": "#1C2534FF",
+                      "radius": 8
+                    },
+                    "children": [
+                      {
+                        "type": "Text",
+                        "id": "OvTempTitle",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            10,
+                            1
+                          ],
+                          "size": [
+                            118,
+                            32
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.cjkTitle",
+                          "color": "#FFFFFFFF",
+                          "locKey": "overview.metric_temp"
+                        },
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "type": "Text",
+                    "id": "OvVal2",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        52
+                      ],
+                      "size": [
+                        112,
+                        37
+                      ]
+                    },
+                    "text": {
+                      "fontAsset": "font.numM",
+                      "color": "#FFFFFFFF"
+                    },
+                    "children": []
+                  },
+                  {
+                    "type": "Text",
+                    "id": "OvUnit2",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        126,
+                        69
+                      ],
+                      "size": [
+                        26,
+                        20
+                      ]
+                    },
+                    "text": {
+                      "fontAsset": "font.label",
+                      "color": "#BFC9D7FF",
+                      "letterSpace": 1,
+                      "locKey": "overview.unit_c"
+                    },
+                    "children": []
+                  },
+                  {
+                    "type": "Bar",
+                    "id": "OvMbar2",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        94
+                      ],
+                      "size": [
+                        138,
+                        6
+                      ]
+                    },
+                    "bar": {
+                      "color": "#F2B01EFF",
+                      "radius": 3
+                    },
+                    "children": []
+                  },
+                  {
+                    "type": "Text",
+                    "id": "OvSub2",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        106
+                      ],
+                      "size": [
+                        138,
+                        17
+                      ]
+                    },
+                    "text": {
+                      "fontAsset": "font.cjkMeta",
+                      "color": "#5A6B80FF"
+                    },
+                    "children": []
+                  }
+                ]
+              },
+              {
+                "type": "Panel",
+                "id": "OvUptimeCard",
+                "rect": {
+                  "anchorMin": [
+                    0,
+                    0
+                  ],
+                  "anchorMax": [
+                    0,
+                    0
+                  ],
+                  "position": [
+                    822,
+                    0
+                  ],
+                  "size": [
+                    162,
+                    138
+                  ]
+                },
+                "image": {
+                  "color": "#161E2BFF",
+                  "radius": 16,
+                  "borderWidth": 1,
+                  "borderColor": "#334052FF"
+                },
+                "children": [
+                  {
+                    "type": "Panel",
+                    "id": "OvUptimeCardAccent",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        0,
+                        16
+                      ],
+                      "size": [
+                        3,
+                        106
+                      ]
+                    },
+                    "image": {
+                      "color": "#2F80EDFF",
+                      "radius": 2
+                    },
+                    "children": []
+                  },
+                  {
+                    "type": "Panel",
+                    "id": "OvUptimeHead",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        10
+                      ],
+                      "size": [
+                        138,
+                        34
+                      ]
+                    },
+                    "image": {
+                      "color": "#1C2534FF",
+                      "radius": 8
+                    },
+                    "children": [
+                      {
+                        "type": "Text",
+                        "id": "OvUptimeTitle",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            10,
+                            1
+                          ],
+                          "size": [
+                            118,
+                            32
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.cjkTitle",
+                          "color": "#FFFFFFFF",
+                          "locKey": "overview.metric_uptime"
+                        },
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "type": "Text",
+                    "id": "OvVal3",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        52
+                      ],
+                      "size": [
+                        112,
+                        37
+                      ]
+                    },
+                    "text": {
+                      "fontAsset": "font.numM",
+                      "color": "#FFFFFFFF"
+                    },
+                    "children": []
+                  },
+                  {
+                    "type": "Text",
+                    "id": "OvUnit3",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        126,
+                        69
+                      ],
+                      "size": [
+                        26,
+                        20
+                      ]
+                    },
+                    "text": {
+                      "fontAsset": "font.label",
+                      "color": "#BFC9D7FF",
+                      "letterSpace": 1,
+                      "locKey": "overview.unit_none"
+                    },
+                    "children": []
+                  },
+                  {
+                    "type": "Text",
+                    "id": "OvSub3",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        106
+                      ],
+                      "size": [
+                        138,
+                        17
+                      ]
+                    },
+                    "text": {
+                      "fontAsset": "font.cjkMeta",
+                      "color": "#5A6B80FF"
+                    },
+                    "children": []
+                  }
+                ]
+              },
+              {
+                "type": "Panel",
+                "id": "OvStorageCard",
+                "rect": {
+                  "anchorMin": [
+                    0,
+                    0
+                  ],
+                  "anchorMax": [
+                    0,
+                    0
+                  ],
+                  "position": [
+                    0,
+                    150
+                  ],
+                  "size": [
+                    520,
+                    282
+                  ]
+                },
+                "image": {
+                  "color": "#161E2BFF",
+                  "radius": 16,
+                  "borderWidth": 1,
+                  "borderColor": "#334052FF"
+                },
+                "children": [
+                  {
+                    "type": "Panel",
+                    "id": "OvStorageAccent",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        0,
+                        16
+                      ],
+                      "size": [
+                        3,
+                        250
+                      ]
+                    },
+                    "image": {
+                      "color": "#2F80EDFF",
+                      "radius": 2
+                    },
+                    "children": []
+                  },
+                  {
+                    "type": "Panel",
+                    "id": "OvStorageHead",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        10
+                      ],
+                      "size": [
+                        496,
+                        34
+                      ]
+                    },
+                    "image": {
+                      "color": "#1C2534FF",
+                      "radius": 8
+                    },
+                    "children": [
+                      {
+                        "type": "Text",
+                        "id": "OvStorageTitle",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            10,
+                            1
+                          ],
+                          "size": [
+                            476,
+                            32
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.cjkTitle",
+                          "color": "#FFFFFFFF",
+                          "locKey": "overview.storage_title"
+                        },
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "type": "Panel",
+                    "id": "OvVolRow0",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        48
+                      ],
+                      "size": [
+                        496,
+                        36
+                      ]
+                    },
+                    "image": {
+                      "color": "#1C2534FF",
+                      "radius": 8
+                    },
+                    "children": [
+                      {
+                        "type": "Text",
+                        "id": "OvVolName0",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            12,
+                            3
+                          ],
+                          "size": [
+                            120,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.numS",
+                          "color": "#BFC9D7FF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "OvVolPct0",
+                        "rect": {
+                          "anchorMin": [
+                            1,
+                            0
+                          ],
+                          "anchorMax": [
+                            1,
+                            0
+                          ],
+                          "position": [
+                            -92,
+                            3
+                          ],
+                          "size": [
+                            80,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.numS",
+                          "color": "#FFFFFFFF",
+                          "align": "right"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Bar",
+                        "id": "OvVolBar0",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            12,
+                            27
+                          ],
+                          "size": [
+                            472,
+                            6
+                          ]
+                        },
+                        "bar": {
+                          "color": "#2FBF71FF",
+                          "radius": 3
+                        },
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "type": "Panel",
+                    "id": "OvVolRow1",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        86
+                      ],
+                      "size": [
+                        496,
+                        36
+                      ]
+                    },
+                    "image": {
+                      "color": "#1C2534FF",
+                      "radius": 8
+                    },
+                    "children": [
+                      {
+                        "type": "Text",
+                        "id": "OvVolName1",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            12,
+                            3
+                          ],
+                          "size": [
+                            120,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.numS",
+                          "color": "#BFC9D7FF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "OvVolPct1",
+                        "rect": {
+                          "anchorMin": [
+                            1,
+                            0
+                          ],
+                          "anchorMax": [
+                            1,
+                            0
+                          ],
+                          "position": [
+                            -92,
+                            3
+                          ],
+                          "size": [
+                            80,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.numS",
+                          "color": "#FFFFFFFF",
+                          "align": "right"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Bar",
+                        "id": "OvVolBar1",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            12,
+                            27
+                          ],
+                          "size": [
+                            472,
+                            6
+                          ]
+                        },
+                        "bar": {
+                          "color": "#2FBF71FF",
+                          "radius": 3
+                        },
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "type": "Panel",
+                    "id": "OvVolRow2",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        124
+                      ],
+                      "size": [
+                        496,
+                        36
+                      ]
+                    },
+                    "image": {
+                      "color": "#1C2534FF",
+                      "radius": 8
+                    },
+                    "children": [
+                      {
+                        "type": "Text",
+                        "id": "OvVolName2",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            12,
+                            3
+                          ],
+                          "size": [
+                            120,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.numS",
+                          "color": "#BFC9D7FF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "OvVolPct2",
+                        "rect": {
+                          "anchorMin": [
+                            1,
+                            0
+                          ],
+                          "anchorMax": [
+                            1,
+                            0
+                          ],
+                          "position": [
+                            -92,
+                            3
+                          ],
+                          "size": [
+                            80,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.numS",
+                          "color": "#FFFFFFFF",
+                          "align": "right"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Bar",
+                        "id": "OvVolBar2",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            12,
+                            27
+                          ],
+                          "size": [
+                            472,
+                            6
+                          ]
+                        },
+                        "bar": {
+                          "color": "#2FBF71FF",
+                          "radius": 3
+                        },
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "type": "Panel",
+                    "id": "OvVolRow3",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        162
+                      ],
+                      "size": [
+                        496,
+                        36
+                      ]
+                    },
+                    "image": {
+                      "color": "#1C2534FF",
+                      "radius": 8
+                    },
+                    "children": [
+                      {
+                        "type": "Text",
+                        "id": "OvVolName3",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            12,
+                            3
+                          ],
+                          "size": [
+                            120,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.numS",
+                          "color": "#BFC9D7FF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "OvVolPct3",
+                        "rect": {
+                          "anchorMin": [
+                            1,
+                            0
+                          ],
+                          "anchorMax": [
+                            1,
+                            0
+                          ],
+                          "position": [
+                            -92,
+                            3
+                          ],
+                          "size": [
+                            80,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.numS",
+                          "color": "#FFFFFFFF",
+                          "align": "right"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Bar",
+                        "id": "OvVolBar3",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            12,
+                            27
+                          ],
+                          "size": [
+                            472,
+                            6
+                          ]
+                        },
+                        "bar": {
+                          "color": "#2FBF71FF",
+                          "radius": 3
+                        },
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "type": "Panel",
+                    "id": "OvVolRow4",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        200
+                      ],
+                      "size": [
+                        496,
+                        36
+                      ]
+                    },
+                    "image": {
+                      "color": "#1C2534FF",
+                      "radius": 8
+                    },
+                    "children": [
+                      {
+                        "type": "Text",
+                        "id": "OvVolName4",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            12,
+                            3
+                          ],
+                          "size": [
+                            120,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.numS",
+                          "color": "#BFC9D7FF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "OvVolPct4",
+                        "rect": {
+                          "anchorMin": [
+                            1,
+                            0
+                          ],
+                          "anchorMax": [
+                            1,
+                            0
+                          ],
+                          "position": [
+                            -92,
+                            3
+                          ],
+                          "size": [
+                            80,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.numS",
+                          "color": "#FFFFFFFF",
+                          "align": "right"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Bar",
+                        "id": "OvVolBar4",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            12,
+                            27
+                          ],
+                          "size": [
+                            472,
+                            6
+                          ]
+                        },
+                        "bar": {
+                          "color": "#2FBF71FF",
+                          "radius": 3
+                        },
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "type": "Panel",
+                    "id": "OvVolRow5",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        238
+                      ],
+                      "size": [
+                        496,
+                        36
+                      ]
+                    },
+                    "image": {
+                      "color": "#1C2534FF",
+                      "radius": 8
+                    },
+                    "children": [
+                      {
+                        "type": "Text",
+                        "id": "OvVolName5",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            12,
+                            3
+                          ],
+                          "size": [
+                            120,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.numS",
+                          "color": "#BFC9D7FF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "OvVolPct5",
+                        "rect": {
+                          "anchorMin": [
+                            1,
+                            0
+                          ],
+                          "anchorMax": [
+                            1,
+                            0
+                          ],
+                          "position": [
+                            -92,
+                            3
+                          ],
+                          "size": [
+                            80,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.numS",
+                          "color": "#FFFFFFFF",
+                          "align": "right"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Bar",
+                        "id": "OvVolBar5",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            12,
+                            27
+                          ],
+                          "size": [
+                            472,
+                            6
+                          ]
+                        },
+                        "bar": {
+                          "color": "#2FBF71FF",
+                          "radius": 3
+                        },
+                        "children": []
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "Panel",
+                "id": "OvTrendCard",
+                "rect": {
+                  "anchorMin": [
+                    0,
+                    0
+                  ],
+                  "anchorMax": [
+                    0,
+                    0
+                  ],
+                  "position": [
+                    532,
+                    150
+                  ],
+                  "size": [
+                    452,
+                    282
+                  ]
+                },
+                "image": {
+                  "color": "#161E2BFF",
+                  "radius": 16,
+                  "borderWidth": 1,
+                  "borderColor": "#334052FF"
+                },
+                "children": [
+                  {
+                    "type": "Panel",
+                    "id": "OvTrendAccent",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        0,
+                        16
+                      ],
+                      "size": [
+                        3,
+                        250
+                      ]
+                    },
+                    "image": {
+                      "color": "#2F80EDFF",
+                      "radius": 2
+                    },
+                    "children": []
+                  },
+                  {
+                    "type": "Panel",
+                    "id": "OvTrendHead",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        10
+                      ],
+                      "size": [
+                        428,
+                        34
+                      ]
+                    },
+                    "image": {
+                      "color": "#1C2534FF",
+                      "radius": 8
+                    },
+                    "children": [
+                      {
+                        "type": "Text",
+                        "id": "OvTrendTitle",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            10,
+                            1
+                          ],
+                          "size": [
+                            408,
+                            32
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.cjkTitle",
+                          "color": "#FFFFFFFF",
+                          "locKey": "overview.trend_title"
+                        },
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "type": "Trend",
+                    "id": "OvCpu",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        52
+                      ],
+                      "size": [
+                        340,
+                        96
+                      ]
+                    },
+                    "trend": {
+                      "color": "#2F80EDFF",
+                      "points": 90,
+                      "areaOpacity": 12,
+                      "gridLines": 0
+                    },
+                    "children": []
+                  },
+                  {
+                    "type": "Panel",
+                    "id": "OvLegendCpuDot",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        364,
+                        95
+                      ],
+                      "size": [
+                        10,
+                        10
+                      ]
+                    },
+                    "image": {
+                      "color": "#2F80EDFF",
+                      "radius": 5
+                    },
+                    "children": []
+                  },
+                  {
+                    "type": "Text",
+                    "id": "OvLegendCpuLbl",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        380,
+                        90
+                      ],
+                      "size": [
+                        60,
+                        20
+                      ]
+                    },
+                    "text": {
+                      "fontAsset": "font.label",
+                      "color": "#BFC9D7FF",
+                      "letterSpace": 1,
+                      "locKey": "overview.legend_cpu"
+                    },
+                    "children": []
+                  },
+                  {
+                    "type": "Trend",
+                    "id": "OvMem",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        174
+                      ],
+                      "size": [
+                        340,
+                        96
+                      ]
+                    },
+                    "trend": {
+                      "color": "#4EC9E8FF",
+                      "points": 90,
+                      "areaOpacity": 12,
+                      "gridLines": 0
+                    },
+                    "children": []
+                  },
+                  {
+                    "type": "Panel",
+                    "id": "OvLegendMemDot",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        364,
+                        217
+                      ],
+                      "size": [
+                        10,
+                        10
+                      ]
+                    },
+                    "image": {
+                      "color": "#4EC9E8FF",
+                      "radius": 5
+                    },
+                    "children": []
+                  },
+                  {
+                    "type": "Text",
+                    "id": "OvLegendMemLbl",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        380,
+                        212
+                      ],
+                      "size": [
+                        60,
+                        20
+                      ]
+                    },
+                    "text": {
+                      "fontAsset": "font.label",
+                      "color": "#BFC9D7FF",
+                      "letterSpace": 1,
+                      "locKey": "overview.legend_mem"
+                    },
+                    "children": []
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "Panel",
+            "id": "P1Storage",
+            "rect": {
+              "anchorMin": [
+                0,
+                0
+              ],
+              "anchorMax": [
+                0,
+                0
+              ],
+              "position": [
+                0,
+                0
+              ],
+              "size": [
+                984,
+                432
+              ]
+            },
+            "image": {
+              "color": "#080B10FF"
+            },
+            "children": [
+              {
+                "type": "Panel",
+                "id": "StHeroStrip",
+                "rect": {
+                  "anchorMin": [
+                    0,
+                    0
+                  ],
+                  "anchorMax": [
+                    0,
+                    0
+                  ],
+                  "position": [
+                    0,
+                    0
+                  ],
+                  "size": [
+                    984,
+                    138
+                  ]
+                },
+                "image": {
+                  "color": "#1C2534FF",
+                  "radius": 8
+                },
+                "children": [
+                  {
+                    "type": "Text",
+                    "id": "StHeroTitle",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        16,
+                        8
+                      ],
+                      "size": [
+                        260,
+                        32
+                      ]
+                    },
+                    "text": {
+                      "fontAsset": "font.cjkTitle",
+                      "color": "#FFFFFFFF",
+                      "locKey": "storage.hero_title"
+                    },
+                    "children": []
+                  },
+                  {
+                    "type": "Text",
+                    "id": "StHero",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        16,
+                        40
+                      ],
+                      "size": [
+                        170,
+                        73
+                      ]
+                    },
+                    "text": {
+                      "fontAsset": "font.hero",
+                      "color": "#FFFFFFFF"
+                    },
+                    "children": []
+                  },
+                  {
+                    "type": "Text",
+                    "id": "StUsed",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        196,
+                        90
+                      ],
+                      "size": [
+                        130,
+                        23
+                      ]
+                    },
+                    "text": {
+                      "fontAsset": "font.cjkLabel",
+                      "color": "#BFC9D7FF"
+                    },
+                    "children": []
+                  },
+                  {
+                    "type": "Text",
+                    "id": "StCnt",
+                    "rect": {
+                      "anchorMin": [
+                        1,
+                        0
+                      ],
+                      "anchorMax": [
+                        1,
+                        0
+                      ],
+                      "position": [
+                        -336,
+                        12
+                      ],
+                      "size": [
+                        320,
+                        17
+                      ]
+                    },
+                    "text": {
+                      "fontAsset": "font.meta",
+                      "color": "#FFFFFFFF",
+                      "align": "right"
+                    },
+                    "children": []
+                  },
+                  {
+                    "type": "Text",
+                    "id": "StFree",
+                    "rect": {
+                      "anchorMin": [
+                        1,
+                        0
+                      ],
+                      "anchorMax": [
+                        1,
+                        0
+                      ],
+                      "position": [
+                        -336,
+                        40
+                      ],
+                      "size": [
+                        320,
+                        23
+                      ]
+                    },
+                    "text": {
+                      "fontAsset": "font.cjkLabel",
+                      "color": "#FFFFFFFF",
+                      "align": "right"
+                    },
+                    "children": []
+                  },
+                  {
+                    "type": "Panel",
+                    "id": "StSeg0",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        16,
+                        118
+                      ],
+                      "size": [
+                        8,
+                        12
+                      ]
+                    },
+                    "image": {
+                      "color": "#4EC9E8FF",
+                      "radius": 3
+                    },
+                    "children": []
+                  },
+                  {
+                    "type": "Panel",
+                    "id": "StSeg1",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        27,
+                        118
+                      ],
+                      "size": [
+                        8,
+                        12
+                      ]
+                    },
+                    "image": {
+                      "color": "#4EC9E8FF",
+                      "radius": 3
+                    },
+                    "children": []
+                  },
+                  {
+                    "type": "Panel",
+                    "id": "StSeg2",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        38,
+                        118
+                      ],
+                      "size": [
+                        8,
+                        12
+                      ]
+                    },
+                    "image": {
+                      "color": "#4EC9E8FF",
+                      "radius": 3
+                    },
+                    "children": []
+                  },
+                  {
+                    "type": "Panel",
+                    "id": "StSeg3",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        49,
+                        118
+                      ],
+                      "size": [
+                        8,
+                        12
+                      ]
+                    },
+                    "image": {
+                      "color": "#4EC9E8FF",
+                      "radius": 3
+                    },
+                    "children": []
+                  },
+                  {
+                    "type": "Panel",
+                    "id": "StSeg4",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        60,
+                        118
+                      ],
+                      "size": [
+                        8,
+                        12
+                      ]
+                    },
+                    "image": {
+                      "color": "#4EC9E8FF",
+                      "radius": 3
+                    },
+                    "children": []
+                  },
+                  {
+                    "type": "Panel",
+                    "id": "StSeg5",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        71,
+                        118
+                      ],
+                      "size": [
+                        8,
+                        12
+                      ]
+                    },
+                    "image": {
+                      "color": "#4EC9E8FF",
+                      "radius": 3
+                    },
+                    "children": []
+                  }
+                ]
+              },
+              {
+                "type": "Panel",
+                "id": "StVolumeCard",
+                "rect": {
+                  "anchorMin": [
+                    0,
+                    0
+                  ],
+                  "anchorMax": [
+                    0,
+                    0
+                  ],
+                  "position": [
+                    0,
+                    150
+                  ],
+                  "size": [
+                    480,
+                    282
+                  ]
+                },
+                "image": {
+                  "color": "#161E2BFF",
+                  "radius": 16,
+                  "borderWidth": 1,
+                  "borderColor": "#334052FF"
+                },
+                "children": [
+                  {
+                    "type": "Panel",
+                    "id": "StVolumeAccent",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        0,
+                        16
+                      ],
+                      "size": [
+                        3,
+                        250
+                      ]
+                    },
+                    "image": {
+                      "color": "#2F80EDFF",
+                      "radius": 2
+                    },
+                    "children": []
+                  },
+                  {
+                    "type": "Panel",
+                    "id": "StVolumeHead",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        10
+                      ],
+                      "size": [
+                        456,
+                        34
+                      ]
+                    },
+                    "image": {
+                      "color": "#1C2534FF",
+                      "radius": 8
+                    },
+                    "children": [
+                      {
+                        "type": "Text",
+                        "id": "StVolumeTitle",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            10,
+                            1
+                          ],
+                          "size": [
+                            436,
+                            32
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.cjkTitle",
+                          "color": "#FFFFFFFF",
+                          "locKey": "storage.volume_title"
+                        },
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "type": "Panel",
+                    "id": "StVolCard0",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        48
+                      ],
+                      "size": [
+                        456,
+                        36
+                      ]
+                    },
+                    "image": {
+                      "color": "#1C2534FF",
+                      "radius": 8
+                    },
+                    "children": [
+                      {
+                        "type": "Text",
+                        "id": "StVolName0",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            12,
+                            3
+                          ],
+                          "size": [
+                            90,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.numS",
+                          "color": "#FFFFFFFF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "StVolFs0",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            106,
+                            6
+                          ],
+                          "size": [
+                            64,
+                            17
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.meta",
+                          "color": "#5A6B80FF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "StVolUse0",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            174,
+                            6
+                          ],
+                          "size": [
+                            130,
+                            17
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.meta",
+                          "color": "#FFFFFFFF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "StVolPct0",
+                        "rect": {
+                          "anchorMin": [
+                            1,
+                            0
+                          ],
+                          "anchorMax": [
+                            1,
+                            0
+                          ],
+                          "position": [
+                            -92,
+                            3
+                          ],
+                          "size": [
+                            80,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.numS",
+                          "color": "#FFFFFFFF",
+                          "align": "right"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Bar",
+                        "id": "StVolBar0",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            12,
+                            27
+                          ],
+                          "size": [
+                            432,
+                            6
+                          ]
+                        },
+                        "bar": {
+                          "color": "#2FBF71FF",
+                          "radius": 3
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Divider",
+                        "id": "StVol80Tick0",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            358,
+                            18
+                          ],
+                          "size": [
+                            1,
+                            18
+                          ]
+                        },
+                        "divider": {
+                          "color": "#334052FF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Divider",
+                        "id": "StVol90Tick0",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            401,
+                            18
+                          ],
+                          "size": [
+                            1,
+                            18
+                          ]
+                        },
+                        "divider": {
+                          "color": "#334052FF"
+                        },
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "type": "Panel",
+                    "id": "StVolCard1",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        86
+                      ],
+                      "size": [
+                        456,
+                        36
+                      ]
+                    },
+                    "image": {
+                      "color": "#1C2534FF",
+                      "radius": 8
+                    },
+                    "children": [
+                      {
+                        "type": "Text",
+                        "id": "StVolName1",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            12,
+                            3
+                          ],
+                          "size": [
+                            90,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.numS",
+                          "color": "#FFFFFFFF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "StVolFs1",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            106,
+                            6
+                          ],
+                          "size": [
+                            64,
+                            17
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.meta",
+                          "color": "#5A6B80FF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "StVolUse1",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            174,
+                            6
+                          ],
+                          "size": [
+                            130,
+                            17
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.meta",
+                          "color": "#FFFFFFFF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "StVolPct1",
+                        "rect": {
+                          "anchorMin": [
+                            1,
+                            0
+                          ],
+                          "anchorMax": [
+                            1,
+                            0
+                          ],
+                          "position": [
+                            -92,
+                            3
+                          ],
+                          "size": [
+                            80,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.numS",
+                          "color": "#FFFFFFFF",
+                          "align": "right"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Bar",
+                        "id": "StVolBar1",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            12,
+                            27
+                          ],
+                          "size": [
+                            432,
+                            6
+                          ]
+                        },
+                        "bar": {
+                          "color": "#2FBF71FF",
+                          "radius": 3
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Divider",
+                        "id": "StVol80Tick1",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            358,
+                            18
+                          ],
+                          "size": [
+                            1,
+                            18
+                          ]
+                        },
+                        "divider": {
+                          "color": "#334052FF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Divider",
+                        "id": "StVol90Tick1",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            401,
+                            18
+                          ],
+                          "size": [
+                            1,
+                            18
+                          ]
+                        },
+                        "divider": {
+                          "color": "#334052FF"
+                        },
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "type": "Panel",
+                    "id": "StVolCard2",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        124
+                      ],
+                      "size": [
+                        456,
+                        36
+                      ]
+                    },
+                    "image": {
+                      "color": "#1C2534FF",
+                      "radius": 8
+                    },
+                    "children": [
+                      {
+                        "type": "Text",
+                        "id": "StVolName2",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            12,
+                            3
+                          ],
+                          "size": [
+                            90,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.numS",
+                          "color": "#FFFFFFFF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "StVolFs2",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            106,
+                            6
+                          ],
+                          "size": [
+                            64,
+                            17
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.meta",
+                          "color": "#5A6B80FF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "StVolUse2",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            174,
+                            6
+                          ],
+                          "size": [
+                            130,
+                            17
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.meta",
+                          "color": "#FFFFFFFF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "StVolPct2",
+                        "rect": {
+                          "anchorMin": [
+                            1,
+                            0
+                          ],
+                          "anchorMax": [
+                            1,
+                            0
+                          ],
+                          "position": [
+                            -92,
+                            3
+                          ],
+                          "size": [
+                            80,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.numS",
+                          "color": "#FFFFFFFF",
+                          "align": "right"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Bar",
+                        "id": "StVolBar2",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            12,
+                            27
+                          ],
+                          "size": [
+                            432,
+                            6
+                          ]
+                        },
+                        "bar": {
+                          "color": "#2FBF71FF",
+                          "radius": 3
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Divider",
+                        "id": "StVol80Tick2",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            358,
+                            18
+                          ],
+                          "size": [
+                            1,
+                            18
+                          ]
+                        },
+                        "divider": {
+                          "color": "#334052FF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Divider",
+                        "id": "StVol90Tick2",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            401,
+                            18
+                          ],
+                          "size": [
+                            1,
+                            18
+                          ]
+                        },
+                        "divider": {
+                          "color": "#334052FF"
+                        },
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "type": "Panel",
+                    "id": "StVolCard3",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        162
+                      ],
+                      "size": [
+                        456,
+                        36
+                      ]
+                    },
+                    "image": {
+                      "color": "#1C2534FF",
+                      "radius": 8
+                    },
+                    "children": [
+                      {
+                        "type": "Text",
+                        "id": "StVolName3",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            12,
+                            3
+                          ],
+                          "size": [
+                            90,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.numS",
+                          "color": "#FFFFFFFF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "StVolFs3",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            106,
+                            6
+                          ],
+                          "size": [
+                            64,
+                            17
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.meta",
+                          "color": "#5A6B80FF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "StVolUse3",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            174,
+                            6
+                          ],
+                          "size": [
+                            130,
+                            17
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.meta",
+                          "color": "#FFFFFFFF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "StVolPct3",
+                        "rect": {
+                          "anchorMin": [
+                            1,
+                            0
+                          ],
+                          "anchorMax": [
+                            1,
+                            0
+                          ],
+                          "position": [
+                            -92,
+                            3
+                          ],
+                          "size": [
+                            80,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.numS",
+                          "color": "#FFFFFFFF",
+                          "align": "right"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Bar",
+                        "id": "StVolBar3",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            12,
+                            27
+                          ],
+                          "size": [
+                            432,
+                            6
+                          ]
+                        },
+                        "bar": {
+                          "color": "#2FBF71FF",
+                          "radius": 3
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Divider",
+                        "id": "StVol80Tick3",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            358,
+                            18
+                          ],
+                          "size": [
+                            1,
+                            18
+                          ]
+                        },
+                        "divider": {
+                          "color": "#334052FF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Divider",
+                        "id": "StVol90Tick3",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            401,
+                            18
+                          ],
+                          "size": [
+                            1,
+                            18
+                          ]
+                        },
+                        "divider": {
+                          "color": "#334052FF"
+                        },
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "type": "Panel",
+                    "id": "StVolCard4",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        200
+                      ],
+                      "size": [
+                        456,
+                        36
+                      ]
+                    },
+                    "image": {
+                      "color": "#1C2534FF",
+                      "radius": 8
+                    },
+                    "children": [
+                      {
+                        "type": "Text",
+                        "id": "StVolName4",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            12,
+                            3
+                          ],
+                          "size": [
+                            90,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.numS",
+                          "color": "#FFFFFFFF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "StVolFs4",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            106,
+                            6
+                          ],
+                          "size": [
+                            64,
+                            17
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.meta",
+                          "color": "#5A6B80FF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "StVolUse4",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            174,
+                            6
+                          ],
+                          "size": [
+                            130,
+                            17
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.meta",
+                          "color": "#FFFFFFFF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "StVolPct4",
+                        "rect": {
+                          "anchorMin": [
+                            1,
+                            0
+                          ],
+                          "anchorMax": [
+                            1,
+                            0
+                          ],
+                          "position": [
+                            -92,
+                            3
+                          ],
+                          "size": [
+                            80,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.numS",
+                          "color": "#FFFFFFFF",
+                          "align": "right"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Bar",
+                        "id": "StVolBar4",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            12,
+                            27
+                          ],
+                          "size": [
+                            432,
+                            6
+                          ]
+                        },
+                        "bar": {
+                          "color": "#2FBF71FF",
+                          "radius": 3
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Divider",
+                        "id": "StVol80Tick4",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            358,
+                            18
+                          ],
+                          "size": [
+                            1,
+                            18
+                          ]
+                        },
+                        "divider": {
+                          "color": "#334052FF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Divider",
+                        "id": "StVol90Tick4",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            401,
+                            18
+                          ],
+                          "size": [
+                            1,
+                            18
+                          ]
+                        },
+                        "divider": {
+                          "color": "#334052FF"
+                        },
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "type": "Panel",
+                    "id": "StVolCard5",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        238
+                      ],
+                      "size": [
+                        456,
+                        36
+                      ]
+                    },
+                    "image": {
+                      "color": "#1C2534FF",
+                      "radius": 8
+                    },
+                    "children": [
+                      {
+                        "type": "Text",
+                        "id": "StVolName5",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            12,
+                            3
+                          ],
+                          "size": [
+                            90,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.numS",
+                          "color": "#FFFFFFFF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "StVolFs5",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            106,
+                            6
+                          ],
+                          "size": [
+                            64,
+                            17
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.meta",
+                          "color": "#5A6B80FF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "StVolUse5",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            174,
+                            6
+                          ],
+                          "size": [
+                            130,
+                            17
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.meta",
+                          "color": "#FFFFFFFF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "StVolPct5",
+                        "rect": {
+                          "anchorMin": [
+                            1,
+                            0
+                          ],
+                          "anchorMax": [
+                            1,
+                            0
+                          ],
+                          "position": [
+                            -92,
+                            3
+                          ],
+                          "size": [
+                            80,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.numS",
+                          "color": "#FFFFFFFF",
+                          "align": "right"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Bar",
+                        "id": "StVolBar5",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            12,
+                            27
+                          ],
+                          "size": [
+                            432,
+                            6
+                          ]
+                        },
+                        "bar": {
+                          "color": "#2FBF71FF",
+                          "radius": 3
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Divider",
+                        "id": "StVol80Tick5",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            358,
+                            18
+                          ],
+                          "size": [
+                            1,
+                            18
+                          ]
+                        },
+                        "divider": {
+                          "color": "#334052FF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Divider",
+                        "id": "StVol90Tick5",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            401,
+                            18
+                          ],
+                          "size": [
+                            1,
+                            18
+                          ]
+                        },
+                        "divider": {
+                          "color": "#334052FF"
+                        },
+                        "children": []
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "Panel",
+                "id": "StRaidCard",
+                "rect": {
+                  "anchorMin": [
+                    0,
+                    0
+                  ],
+                  "anchorMax": [
+                    0,
+                    0
+                  ],
+                  "position": [
+                    492,
+                    150
+                  ],
+                  "size": [
+                    492,
+                    135
+                  ]
+                },
+                "image": {
+                  "color": "#161E2BFF",
+                  "radius": 16,
+                  "borderWidth": 1,
+                  "borderColor": "#334052FF"
+                },
+                "children": [
+                  {
+                    "type": "Panel",
+                    "id": "StRaidAccent",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        0,
+                        16
+                      ],
+                      "size": [
+                        3,
+                        103
+                      ]
+                    },
+                    "image": {
+                      "color": "#2F80EDFF",
+                      "radius": 2
+                    },
+                    "children": []
+                  },
+                  {
+                    "type": "Panel",
+                    "id": "StRaidHead",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        10
+                      ],
+                      "size": [
+                        468,
+                        34
+                      ]
+                    },
+                    "image": {
+                      "color": "#1C2534FF",
+                      "radius": 8
+                    },
+                    "children": [
+                      {
+                        "type": "Text",
+                        "id": "StRaidTitle",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            10,
+                            1
+                          ],
+                          "size": [
+                            448,
+                            32
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.cjkTitle",
+                          "color": "#FFFFFFFF",
+                          "locKey": "storage.raid_title"
+                        },
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "type": "Panel",
+                    "id": "StRaidRow0",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        46
+                      ],
+                      "size": [
+                        230,
+                        38
+                      ]
+                    },
+                    "image": {
+                      "color": "#1C2534FF",
+                      "radius": 8
+                    },
+                    "children": [
+                      {
+                        "type": "Text",
+                        "id": "StRaidName0",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            10,
+                            7
+                          ],
+                          "size": [
+                            50,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.numS",
+                          "color": "#FFFFFFFF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "StRaidLvl0",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            64,
+                            10
+                          ],
+                          "size": [
+                            44,
+                            17
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.meta",
+                          "color": "#5A6B80FF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "StRaidState0",
+                        "rect": {
+                          "anchorMin": [
+                            1,
+                            0
+                          ],
+                          "anchorMax": [
+                            1,
+                            0
+                          ],
+                          "position": [
+                            -115,
+                            10
+                          ],
+                          "size": [
+                            105,
+                            17
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.cjkMeta",
+                          "color": "#2FBF71FF",
+                          "align": "right"
+                        },
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "type": "Panel",
+                    "id": "StRaidRow1",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        250,
+                        46
+                      ],
+                      "size": [
+                        230,
+                        38
+                      ]
+                    },
+                    "image": {
+                      "color": "#1C2534FF",
+                      "radius": 8
+                    },
+                    "children": [
+                      {
+                        "type": "Text",
+                        "id": "StRaidName1",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            10,
+                            7
+                          ],
+                          "size": [
+                            50,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.numS",
+                          "color": "#FFFFFFFF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "StRaidLvl1",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            64,
+                            10
+                          ],
+                          "size": [
+                            44,
+                            17
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.meta",
+                          "color": "#5A6B80FF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "StRaidState1",
+                        "rect": {
+                          "anchorMin": [
+                            1,
+                            0
+                          ],
+                          "anchorMax": [
+                            1,
+                            0
+                          ],
+                          "position": [
+                            -115,
+                            10
+                          ],
+                          "size": [
+                            105,
+                            17
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.cjkMeta",
+                          "color": "#2FBF71FF",
+                          "align": "right"
+                        },
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "type": "Panel",
+                    "id": "StRaidRow2",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        89
+                      ],
+                      "size": [
+                        230,
+                        38
+                      ]
+                    },
+                    "image": {
+                      "color": "#1C2534FF",
+                      "radius": 8
+                    },
+                    "children": [
+                      {
+                        "type": "Text",
+                        "id": "StRaidName2",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            10,
+                            7
+                          ],
+                          "size": [
+                            50,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.numS",
+                          "color": "#FFFFFFFF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "StRaidLvl2",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            64,
+                            10
+                          ],
+                          "size": [
+                            44,
+                            17
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.meta",
+                          "color": "#5A6B80FF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "StRaidState2",
+                        "rect": {
+                          "anchorMin": [
+                            1,
+                            0
+                          ],
+                          "anchorMax": [
+                            1,
+                            0
+                          ],
+                          "position": [
+                            -115,
+                            10
+                          ],
+                          "size": [
+                            105,
+                            17
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.cjkMeta",
+                          "color": "#2FBF71FF",
+                          "align": "right"
+                        },
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "type": "Panel",
+                    "id": "StRaidRow3",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        250,
+                        89
+                      ],
+                      "size": [
+                        230,
+                        38
+                      ]
+                    },
+                    "image": {
+                      "color": "#1C2534FF",
+                      "radius": 8
+                    },
+                    "children": [
+                      {
+                        "type": "Text",
+                        "id": "StRaidName3",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            10,
+                            7
+                          ],
+                          "size": [
+                            50,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.numS",
+                          "color": "#FFFFFFFF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "StRaidLvl3",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            64,
+                            10
+                          ],
+                          "size": [
+                            44,
+                            17
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.meta",
+                          "color": "#5A6B80FF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "StRaidState3",
+                        "rect": {
+                          "anchorMin": [
+                            1,
+                            0
+                          ],
+                          "anchorMax": [
+                            1,
+                            0
+                          ],
+                          "position": [
+                            -115,
+                            10
+                          ],
+                          "size": [
+                            105,
+                            17
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.cjkMeta",
+                          "color": "#2FBF71FF",
+                          "align": "right"
+                        },
+                        "children": []
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "Panel",
+                "id": "StIoCard",
+                "rect": {
+                  "anchorMin": [
+                    0,
+                    0
+                  ],
+                  "anchorMax": [
+                    0,
+                    0
+                  ],
+                  "position": [
+                    492,
+                    297
+                  ],
+                  "size": [
+                    492,
+                    135
+                  ]
+                },
+                "image": {
+                  "color": "#161E2BFF",
+                  "radius": 16,
+                  "borderWidth": 1,
+                  "borderColor": "#334052FF"
+                },
+                "children": [
+                  {
+                    "type": "Panel",
+                    "id": "StIoAccent",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        0,
+                        16
+                      ],
+                      "size": [
+                        3,
+                        103
+                      ]
+                    },
+                    "image": {
+                      "color": "#2F80EDFF",
+                      "radius": 2
+                    },
+                    "children": []
+                  },
+                  {
+                    "type": "Panel",
+                    "id": "StIoHead",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        10
+                      ],
+                      "size": [
+                        468,
+                        34
+                      ]
+                    },
+                    "image": {
+                      "color": "#1C2534FF",
+                      "radius": 8
+                    },
+                    "children": [
+                      {
+                        "type": "Text",
+                        "id": "StIoTitle",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            10,
+                            1
+                          ],
+                          "size": [
+                            448,
+                            32
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.cjkTitle",
+                          "color": "#FFFFFFFF",
+                          "locKey": "storage.io_title"
+                        },
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "type": "Panel",
+                    "id": "StIoRow0",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        46
+                      ],
+                      "size": [
+                        230,
+                        38
+                      ]
+                    },
+                    "image": {
+                      "color": "#1C2534FF",
+                      "radius": 8
+                    },
+                    "children": [
+                      {
+                        "type": "Text",
+                        "id": "StIoName0",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            10,
+                            7
+                          ],
+                          "size": [
+                            80,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.numS",
+                          "color": "#FFFFFFFF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "StIoVal0",
+                        "rect": {
+                          "anchorMin": [
+                            1,
+                            0
+                          ],
+                          "anchorMax": [
+                            1,
+                            0
+                          ],
+                          "position": [
+                            -120,
+                            7
+                          ],
+                          "size": [
+                            110,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.numS",
+                          "color": "#FFFFFFFF",
+                          "align": "right"
+                        },
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "type": "Panel",
+                    "id": "StIoRow1",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        250,
+                        46
+                      ],
+                      "size": [
+                        230,
+                        38
+                      ]
+                    },
+                    "image": {
+                      "color": "#1C2534FF",
+                      "radius": 8
+                    },
+                    "children": [
+                      {
+                        "type": "Text",
+                        "id": "StIoName1",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            10,
+                            7
+                          ],
+                          "size": [
+                            80,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.numS",
+                          "color": "#FFFFFFFF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "StIoVal1",
+                        "rect": {
+                          "anchorMin": [
+                            1,
+                            0
+                          ],
+                          "anchorMax": [
+                            1,
+                            0
+                          ],
+                          "position": [
+                            -120,
+                            7
+                          ],
+                          "size": [
+                            110,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.numS",
+                          "color": "#FFFFFFFF",
+                          "align": "right"
+                        },
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "type": "Panel",
+                    "id": "StIoRow2",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        12,
+                        89
+                      ],
+                      "size": [
+                        230,
+                        38
+                      ]
+                    },
+                    "image": {
+                      "color": "#1C2534FF",
+                      "radius": 8
+                    },
+                    "children": [
+                      {
+                        "type": "Text",
+                        "id": "StIoName2",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            10,
+                            7
+                          ],
+                          "size": [
+                            80,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.numS",
+                          "color": "#FFFFFFFF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "StIoVal2",
+                        "rect": {
+                          "anchorMin": [
+                            1,
+                            0
+                          ],
+                          "anchorMax": [
+                            1,
+                            0
+                          ],
+                          "position": [
+                            -120,
+                            7
+                          ],
+                          "size": [
+                            110,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.numS",
+                          "color": "#FFFFFFFF",
+                          "align": "right"
+                        },
+                        "children": []
+                      }
+                    ]
+                  },
+                  {
+                    "type": "Panel",
+                    "id": "StIoRow3",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        250,
+                        89
+                      ],
+                      "size": [
+                        230,
+                        38
+                      ]
+                    },
+                    "image": {
+                      "color": "#1C2534FF",
+                      "radius": 8
+                    },
+                    "children": [
+                      {
+                        "type": "Text",
+                        "id": "StIoName3",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            10,
+                            7
+                          ],
+                          "size": [
+                            80,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.numS",
+                          "color": "#FFFFFFFF"
+                        },
+                        "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "StIoVal3",
+                        "rect": {
+                          "anchorMin": [
+                            1,
+                            0
+                          ],
+                          "anchorMax": [
+                            1,
+                            0
+                          ],
+                          "position": [
+                            -120,
+                            7
+                          ],
+                          "size": [
+                            110,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.numS",
+                          "color": "#FFFFFFFF",
+                          "align": "right"
+                        },
+                        "children": []
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
