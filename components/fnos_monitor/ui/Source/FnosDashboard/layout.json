@@ -883,7 +883,7 @@
                         },
                         "text": {
                           "fontAsset": "font.cjkMeta",
-                          "color": "#5A6B80FF",
+                          "color": "#7B8BA1FF",
                           "locKey": "overview.alert_label"
                         },
                         "children": []
@@ -1071,15 +1071,15 @@
                       ],
                       "position": [
                         12,
-                        52
+                        44
                       ],
                       "size": [
                         112,
-                        37
+                        58
                       ]
                     },
                     "text": {
-                      "fontAsset": "font.numM",
+                      "fontAsset": "font.numL",
                       "color": "#FFFFFFFF"
                     },
                     "children": []
@@ -1098,10 +1098,10 @@
                       ],
                       "position": [
                         126,
-                        69
+                        80
                       ],
                       "size": [
-                        26,
+                        36,
                         20
                       ]
                     },
@@ -1127,7 +1127,7 @@
                       ],
                       "position": [
                         12,
-                        94
+                        106
                       ],
                       "size": [
                         138,
@@ -1154,7 +1154,7 @@
                       ],
                       "position": [
                         12,
-                        106
+                        118
                       ],
                       "size": [
                         138,
@@ -1163,7 +1163,7 @@
                     },
                     "text": {
                       "fontAsset": "font.cjkMeta",
-                      "color": "#5A6B80FF"
+                      "color": "#7B8BA1FF"
                     },
                     "children": []
                   }
@@ -1294,15 +1294,15 @@
                       ],
                       "position": [
                         12,
-                        52
+                        44
                       ],
                       "size": [
                         112,
-                        37
+                        58
                       ]
                     },
                     "text": {
-                      "fontAsset": "font.numM",
+                      "fontAsset": "font.numL",
                       "color": "#FFFFFFFF"
                     },
                     "children": []
@@ -1321,10 +1321,10 @@
                       ],
                       "position": [
                         126,
-                        69
+                        80
                       ],
                       "size": [
-                        26,
+                        36,
                         20
                       ]
                     },
@@ -1350,7 +1350,7 @@
                       ],
                       "position": [
                         12,
-                        94
+                        106
                       ],
                       "size": [
                         138,
@@ -1377,7 +1377,7 @@
                       ],
                       "position": [
                         12,
-                        106
+                        118
                       ],
                       "size": [
                         138,
@@ -1386,7 +1386,7 @@
                     },
                     "text": {
                       "fontAsset": "font.cjkMeta",
-                      "color": "#5A6B80FF"
+                      "color": "#7B8BA1FF"
                     },
                     "children": []
                   }
@@ -1517,15 +1517,15 @@
                       ],
                       "position": [
                         12,
-                        52
+                        44
                       ],
                       "size": [
                         112,
-                        37
+                        58
                       ]
                     },
                     "text": {
-                      "fontAsset": "font.numM",
+                      "fontAsset": "font.numL",
                       "color": "#FFFFFFFF"
                     },
                     "children": []
@@ -1544,10 +1544,10 @@
                       ],
                       "position": [
                         126,
-                        69
+                        80
                       ],
                       "size": [
-                        26,
+                        36,
                         20
                       ]
                     },
@@ -1573,7 +1573,7 @@
                       ],
                       "position": [
                         12,
-                        94
+                        106
                       ],
                       "size": [
                         138,
@@ -1600,7 +1600,7 @@
                       ],
                       "position": [
                         12,
-                        106
+                        118
                       ],
                       "size": [
                         138,
@@ -1609,7 +1609,7 @@
                     },
                     "text": {
                       "fontAsset": "font.cjkMeta",
-                      "color": "#5A6B80FF"
+                      "color": "#7B8BA1FF"
                     },
                     "children": []
                   }
@@ -1713,7 +1713,7 @@
                       ],
                       "position": [
                         12,
-                        52
+                        55
                       ],
                       "size": [
                         112,
@@ -1740,10 +1740,10 @@
                       ],
                       "position": [
                         126,
-                        69
+                        80
                       ],
                       "size": [
-                        26,
+                        36,
                         20
                       ]
                     },
@@ -1769,7 +1769,7 @@
                       ],
                       "position": [
                         12,
-                        106
+                        118
                       ],
                       "size": [
                         138,
@@ -1778,7 +1778,7 @@
                     },
                     "text": {
                       "fontAsset": "font.cjkMeta",
-                      "color": "#5A6B80FF"
+                      "color": "#7B8BA1FF"
                     },
                     "children": []
                   }
@@ -1975,6 +1975,32 @@
                           "radius": 3
                         },
                         "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "OvVolUse0",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            144,
+                            3
+                          ],
+                          "size": [
+                            248,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.cjkMeta",
+                          "color": "#7B8BA1FF"
+                        }
                       }
                     ]
                   },
@@ -2085,6 +2111,32 @@
                           "radius": 3
                         },
                         "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "OvVolUse1",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            144,
+                            3
+                          ],
+                          "size": [
+                            248,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.cjkMeta",
+                          "color": "#7B8BA1FF"
+                        }
                       }
                     ]
                   },
@@ -2195,6 +2247,32 @@
                           "radius": 3
                         },
                         "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "OvVolUse2",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            144,
+                            3
+                          ],
+                          "size": [
+                            248,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.cjkMeta",
+                          "color": "#7B8BA1FF"
+                        }
                       }
                     ]
                   },
@@ -2305,6 +2383,32 @@
                           "radius": 3
                         },
                         "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "OvVolUse3",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            144,
+                            3
+                          ],
+                          "size": [
+                            248,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.cjkMeta",
+                          "color": "#7B8BA1FF"
+                        }
                       }
                     ]
                   },
@@ -2415,6 +2519,32 @@
                           "radius": 3
                         },
                         "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "OvVolUse4",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            144,
+                            3
+                          ],
+                          "size": [
+                            248,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.cjkMeta",
+                          "color": "#7B8BA1FF"
+                        }
                       }
                     ]
                   },
@@ -2525,6 +2655,32 @@
                           "radius": 3
                         },
                         "children": []
+                      },
+                      {
+                        "type": "Text",
+                        "id": "OvVolUse5",
+                        "rect": {
+                          "anchorMin": [
+                            0,
+                            0
+                          ],
+                          "anchorMax": [
+                            0,
+                            0
+                          ],
+                          "position": [
+                            144,
+                            3
+                          ],
+                          "size": [
+                            248,
+                            23
+                          ]
+                        },
+                        "text": {
+                          "fontAsset": "font.cjkMeta",
+                          "color": "#7B8BA1FF"
+                        }
                       }
                     ]
                   }
@@ -2741,7 +2897,7 @@
                       ],
                       "position": [
                         340,
-                        118
+                        134
                       ],
                       "size": [
                         10,
@@ -2768,7 +2924,7 @@
                       ],
                       "position": [
                         352,
-                        113
+                        129
                       ],
                       "size": [
                         100,
@@ -2825,7 +2981,7 @@
                       ],
                       "position": [
                         340,
-                        198
+                        180
                       ],
                       "size": [
                         10,
@@ -2852,7 +3008,7 @@
                       ],
                       "position": [
                         352,
-                        193
+                        175
                       ],
                       "size": [
                         100,
@@ -2865,6 +3021,84 @@
                       "letterSpace": 1
                     },
                     "children": []
+                  },
+                  {
+                    "type": "Text",
+                    "id": "OvPeakCpu",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        352,
+                        105
+                      ],
+                      "size": [
+                        100,
+                        17
+                      ]
+                    },
+                    "text": {
+                      "fontAsset": "font.cjkMeta",
+                      "color": "#7B8BA1FF"
+                    }
+                  },
+                  {
+                    "type": "Text",
+                    "id": "OvPeakMem",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        352,
+                        151
+                      ],
+                      "size": [
+                        100,
+                        17
+                      ]
+                    },
+                    "text": {
+                      "fontAsset": "font.cjkMeta",
+                      "color": "#7B8BA1FF"
+                    }
+                  },
+                  {
+                    "type": "Text",
+                    "id": "OvPeakTemp",
+                    "rect": {
+                      "anchorMin": [
+                        0,
+                        0
+                      ],
+                      "anchorMax": [
+                        0,
+                        0
+                      ],
+                      "position": [
+                        352,
+                        197
+                      ],
+                      "size": [
+                        100,
+                        17
+                      ]
+                    },
+                    "text": {
+                      "fontAsset": "font.cjkMeta",
+                      "color": "#7B8BA1FF"
+                    }
                   }
                 ]
               }
@@ -3522,7 +3756,7 @@
                         },
                         "text": {
                           "fontAsset": "font.meta",
-                          "color": "#5A6B80FF"
+                          "color": "#7B8BA1FF"
                         },
                         "children": []
                       },
@@ -3738,7 +3972,7 @@
                         },
                         "text": {
                           "fontAsset": "font.meta",
-                          "color": "#5A6B80FF"
+                          "color": "#7B8BA1FF"
                         },
                         "children": []
                       },
@@ -3954,7 +4188,7 @@
                         },
                         "text": {
                           "fontAsset": "font.meta",
-                          "color": "#5A6B80FF"
+                          "color": "#7B8BA1FF"
                         },
                         "children": []
                       },
@@ -4170,7 +4404,7 @@
                         },
                         "text": {
                           "fontAsset": "font.meta",
-                          "color": "#5A6B80FF"
+                          "color": "#7B8BA1FF"
                         },
                         "children": []
                       },
@@ -4386,7 +4620,7 @@
                         },
                         "text": {
                           "fontAsset": "font.meta",
-                          "color": "#5A6B80FF"
+                          "color": "#7B8BA1FF"
                         },
                         "children": []
                       },
@@ -4602,7 +4836,7 @@
                         },
                         "text": {
                           "fontAsset": "font.meta",
-                          "color": "#5A6B80FF"
+                          "color": "#7B8BA1FF"
                         },
                         "children": []
                       },
@@ -4931,7 +5165,7 @@
                         },
                         "text": {
                           "fontAsset": "font.meta",
-                          "color": "#5A6B80FF"
+                          "color": "#7B8BA1FF"
                         },
                         "children": []
                       },
@@ -5068,7 +5302,7 @@
                         },
                         "text": {
                           "fontAsset": "font.meta",
-                          "color": "#5A6B80FF"
+                          "color": "#7B8BA1FF"
                         },
                         "children": []
                       },
@@ -5205,7 +5439,7 @@
                         },
                         "text": {
                           "fontAsset": "font.meta",
-                          "color": "#5A6B80FF"
+                          "color": "#7B8BA1FF"
                         },
                         "children": []
                       },
@@ -5342,7 +5576,7 @@
                         },
                         "text": {
                           "fontAsset": "font.meta",
-                          "color": "#5A6B80FF"
+                          "color": "#7B8BA1FF"
                         },
                         "children": []
                       },
@@ -6007,7 +6241,7 @@
                     },
                     "text": {
                       "fontAsset": "font.cjkMeta",
-                      "color": "#5A6B80FF"
+                      "color": "#7B8BA1FF"
                     }
                   },
                   {
@@ -6197,7 +6431,7 @@
                     },
                     "text": {
                       "fontAsset": "font.cjkMeta",
-                      "color": "#5A6B80FF"
+                      "color": "#7B8BA1FF"
                     }
                   },
                   {
@@ -6597,15 +6831,15 @@
                       ],
                       "position": [
                         16,
-                        10
+                        8
                       ],
                       "size": [
                         150,
-                        23
+                        18
                       ]
                     },
                     "text": {
-                      "fontAsset": "font.cjkLabel",
+                      "fontAsset": "font.cjkMeta",
                       "color": "#BFC9D7FF",
                       "locKey": "network.ctx_peak_down"
                     }
@@ -6624,15 +6858,15 @@
                       ],
                       "position": [
                         16,
-                        35
+                        28
                       ],
                       "size": [
-                        158,
-                        23
+                        166,
+                        34
                       ]
                     },
                     "text": {
-                      "fontAsset": "font.numS",
+                      "fontAsset": "font.numM",
                       "color": "#FFFFFFFF"
                     }
                   }
@@ -6678,15 +6912,15 @@
                       ],
                       "position": [
                         16,
-                        10
+                        8
                       ],
                       "size": [
                         150,
-                        23
+                        18
                       ]
                     },
                     "text": {
-                      "fontAsset": "font.cjkLabel",
+                      "fontAsset": "font.cjkMeta",
                       "color": "#BFC9D7FF",
                       "locKey": "network.ctx_peak_up"
                     }
@@ -6705,15 +6939,15 @@
                       ],
                       "position": [
                         16,
-                        35
+                        28
                       ],
                       "size": [
-                        158,
-                        23
+                        166,
+                        34
                       ]
                     },
                     "text": {
-                      "fontAsset": "font.numS",
+                      "fontAsset": "font.numM",
                       "color": "#FFFFFFFF"
                     }
                   }
@@ -6759,15 +6993,15 @@
                       ],
                       "position": [
                         16,
-                        10
+                        8
                       ],
                       "size": [
                         150,
-                        23
+                        18
                       ]
                     },
                     "text": {
-                      "fontAsset": "font.cjkLabel",
+                      "fontAsset": "font.cjkMeta",
                       "color": "#BFC9D7FF",
                       "locKey": "network.ctx_latency"
                     }
@@ -6786,15 +7020,15 @@
                       ],
                       "position": [
                         16,
-                        35
+                        28
                       ],
                       "size": [
-                        158,
-                        23
+                        166,
+                        34
                       ]
                     },
                     "text": {
-                      "fontAsset": "font.numS",
+                      "fontAsset": "font.numM",
                       "color": "#FFFFFFFF"
                     }
                   }
@@ -6840,15 +7074,15 @@
                       ],
                       "position": [
                         16,
-                        10
+                        8
                       ],
                       "size": [
                         150,
-                        23
+                        18
                       ]
                     },
                     "text": {
-                      "fontAsset": "font.cjkLabel",
+                      "fontAsset": "font.cjkMeta",
                       "color": "#BFC9D7FF",
                       "locKey": "network.ctx_sampling"
                     }
@@ -6867,15 +7101,15 @@
                       ],
                       "position": [
                         16,
-                        35
+                        28
                       ],
                       "size": [
-                        158,
-                        23
+                        166,
+                        34
                       ]
                     },
                     "text": {
-                      "fontAsset": "font.numS",
+                      "fontAsset": "font.numM",
                       "color": "#FFFFFFFF"
                     }
                   }
@@ -6921,15 +7155,15 @@
                       ],
                       "position": [
                         16,
-                        10
+                        8
                       ],
                       "size": [
                         150,
-                        23
+                        18
                       ]
                     },
                     "text": {
-                      "fontAsset": "font.cjkLabel",
+                      "fontAsset": "font.cjkMeta",
                       "color": "#BFC9D7FF",
                       "locKey": "network.ctx_total"
                     }
@@ -6948,15 +7182,15 @@
                       ],
                       "position": [
                         16,
-                        35
+                        28
                       ],
                       "size": [
-                        158,
-                        23
+                        166,
+                        34
                       ]
                     },
                     "text": {
-                      "fontAsset": "font.numS",
+                      "fontAsset": "font.numM",
                       "color": "#FFFFFFFF"
                     }
                   }

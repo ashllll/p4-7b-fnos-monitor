@@ -880,5 +880,32 @@ void fnos_dash_binder_flush(fnos_dash_view_t *v, fnos_dash_store_t *s)
     if (fnos_dash_field_dirty(s, FNOS_DASH_FIELD_SyTempRow9Alpha)) {
         lv_obj_set_style_opa(v->sy_temp_row9, kk_opa_pct(s->sy_temp_row9_alpha), 0);
     }
+    if (fnos_dash_field_dirty(s, FNOS_DASH_FIELD_OvVolUse0)) {
+        lv_label_set_text(v->ov_vol_use0, s->ov_vol_use0);
+    }
+    if (fnos_dash_field_dirty(s, FNOS_DASH_FIELD_OvVolUse1)) {
+        lv_label_set_text(v->ov_vol_use1, s->ov_vol_use1);
+    }
+    if (fnos_dash_field_dirty(s, FNOS_DASH_FIELD_OvVolUse2)) {
+        lv_label_set_text(v->ov_vol_use2, s->ov_vol_use2);
+    }
+    if (fnos_dash_field_dirty(s, FNOS_DASH_FIELD_OvVolUse3)) {
+        lv_label_set_text(v->ov_vol_use3, s->ov_vol_use3);
+    }
+    if (fnos_dash_field_dirty(s, FNOS_DASH_FIELD_OvVolUse4)) {
+        lv_label_set_text(v->ov_vol_use4, s->ov_vol_use4);
+    }
+    if (fnos_dash_field_dirty(s, FNOS_DASH_FIELD_OvVolUse5)) {
+        lv_label_set_text(v->ov_vol_use5, s->ov_vol_use5);
+    }
+    if (fnos_dash_field_dirty(s, FNOS_DASH_FIELD_OvPeakCpu)) {
+        lv_label_set_text(v->ov_peak_cpu, s->ov_peak_cpu);
+    }
+    if (fnos_dash_field_dirty(s, FNOS_DASH_FIELD_OvPeakMem)) {
+        lv_label_set_text(v->ov_peak_mem, s->ov_peak_mem);
+    }
+    if (fnos_dash_field_dirty(s, FNOS_DASH_FIELD_OvPeakTemp)) {
+        lv_label_set_text(v->ov_peak_temp, s->ov_peak_temp);
+    }
     memset(s->dirty, 0, sizeof(s->dirty));
 }

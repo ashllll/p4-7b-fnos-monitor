@@ -62,6 +62,7 @@ static bool s_mb_down, s_mb_up;      /* fmt_rate 的 MB 切换迟滞状态 */
 #define F_OV_VOL_NAME(i)   ((fnos_dash_field_id_t[]){ FNOS_DASH_FIELD_OvVolName0, FNOS_DASH_FIELD_OvVolName1, FNOS_DASH_FIELD_OvVolName2, FNOS_DASH_FIELD_OvVolName3, FNOS_DASH_FIELD_OvVolName4, FNOS_DASH_FIELD_OvVolName5 }[(i)])
 #define F_OV_VOL_PCT(i)    ((fnos_dash_field_id_t[]){ FNOS_DASH_FIELD_OvVolPct0, FNOS_DASH_FIELD_OvVolPct1, FNOS_DASH_FIELD_OvVolPct2, FNOS_DASH_FIELD_OvVolPct3, FNOS_DASH_FIELD_OvVolPct4, FNOS_DASH_FIELD_OvVolPct5 }[(i)])
 #define F_OV_VOL_BAR(i)    ((fnos_dash_field_id_t[]){ FNOS_DASH_FIELD_OvVolBar0Value, FNOS_DASH_FIELD_OvVolBar1Value, FNOS_DASH_FIELD_OvVolBar2Value, FNOS_DASH_FIELD_OvVolBar3Value, FNOS_DASH_FIELD_OvVolBar4Value, FNOS_DASH_FIELD_OvVolBar5Value }[(i)])
+#define F_OV_VOL_USE(i)    ((fnos_dash_field_id_t[]){ FNOS_DASH_FIELD_OvVolUse0, FNOS_DASH_FIELD_OvVolUse1, FNOS_DASH_FIELD_OvVolUse2, FNOS_DASH_FIELD_OvVolUse3, FNOS_DASH_FIELD_OvVolUse4, FNOS_DASH_FIELD_OvVolUse5 }[(i)])
 #define F_ST_SEG_X(i)      ((fnos_dash_field_id_t[]){ FNOS_DASH_FIELD_StSeg0X, FNOS_DASH_FIELD_StSeg1X, FNOS_DASH_FIELD_StSeg2X, FNOS_DASH_FIELD_StSeg3X, FNOS_DASH_FIELD_StSeg4X, FNOS_DASH_FIELD_StSeg5X }[(i)])
 #define F_ST_SEG_W(i)      ((fnos_dash_field_id_t[]){ FNOS_DASH_FIELD_StSeg0Width, FNOS_DASH_FIELD_StSeg1Width, FNOS_DASH_FIELD_StSeg2Width, FNOS_DASH_FIELD_StSeg3Width, FNOS_DASH_FIELD_StSeg4Width, FNOS_DASH_FIELD_StSeg5Width }[(i)])
 #define F_ST_SEG_C(i)      ((fnos_dash_field_id_t[]){ FNOS_DASH_FIELD_StSeg0Color, FNOS_DASH_FIELD_StSeg1Color, FNOS_DASH_FIELD_StSeg2Color, FNOS_DASH_FIELD_StSeg3Color, FNOS_DASH_FIELD_StSeg4Color, FNOS_DASH_FIELD_StSeg5Color }[(i)])
@@ -290,6 +291,10 @@ static void update_overview(const fnos_status_t *st)
         SETS(OvLegendCpuLbl, "CPU %.0f%%", (double)st->cpu.pct);
         SETS(OvLegendMemLbl, "MEM %.0f%%", (double)st->mem.pct);
         SETS(OvLegendTempLbl, "温度 %.0f°", (double)hot);
+        /* V5.1：曲线窗口的峰值统计行（与曲线同源，全部走 series_peak） */
+        SETS(OvPeakCpu, "峰 %d%%", series_peak(&s_s->ov_cpu_points));
+        SETS(OvPeakMem, "峰 %d%%", series_peak(&s_s->ov_mem_points));
+        SETS(OvPeakTemp, "峰 %d°", series_peak(&s_s->ov_temp_trend_points));
         if (st->ntemps > 0) SETS(OvSub2, "CPU %.0f°C · 最高 %s", (double)st->cpu.temp_c, st->temps[0].n);
         else                SETS(OvSub2, "CPU %.0f°C", (double)st->cpu.temp_c);
         SETF(OvMbar2Value, hot);
@@ -303,6 +308,9 @@ static void update_overview(const fnos_status_t *st)
         SETS(OvLegendCpuLbl, "CPU --");
         SETS(OvLegendMemLbl, "MEM --");
         SETS(OvLegendTempLbl, "温度 --");
+        SETS(OvPeakCpu, "%s", "");
+        SETS(OvPeakMem, "%s", "");
+        SETS(OvPeakTemp, "%s", "");
     }
 
     for (int i = 0; i < 4; i++) SETS_F(F_OV_VALC(i), "%s", val_color(tr));   /* A3：可信度降级 */
@@ -316,11 +324,17 @@ static void update_overview(const fnos_status_t *st)
     // 存储空间 6 行（数值白色；条走能量渐变）
     for (int i = 0; i < 6; i++) {
         if (i < st->nvols && i < FNOS_MAX_VOLS) {
+            char bu[24], bf[24];
+            fmt_cap(bu, sizeof bu, st->vols[i].used_gb);
+            fmt_cap(bf, sizeof bf, st->vols[i].free_gb);
             SETS_F(F_OV_VOL_NAME(i), "%s", st->vols[i].mnt);
+            /* V5.0-B：填补"名称 120px"与"百分比 80px"之间约 250px 的空白（单位随量级） */
+            SETS_F(F_OV_VOL_USE(i), "已用 %s · 可用 %s", bu, bf);
             SETS_F(F_OV_VOL_PCT(i), "%.0f%%", (double)st->vols[i].pct);
             SETF_F(F_OV_VOL_BAR(i), st->vols[i].pct);
         } else {
             SETS_F(F_OV_VOL_NAME(i), "%s", "");
+            SETS_F(F_OV_VOL_USE(i), "%s", "");
             SETS_F(F_OV_VOL_PCT(i), "%s", "");
             SETF_F(F_OV_VOL_BAR(i), 0);
         }

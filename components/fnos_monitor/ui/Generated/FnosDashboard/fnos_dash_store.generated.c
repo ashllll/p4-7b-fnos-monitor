@@ -289,6 +289,15 @@ void fnos_dash_store_init(fnos_dash_store_t *s)
     s->sy_temp_row7_alpha = 1.0f;
     s->sy_temp_row8_alpha = 1.0f;
     s->sy_temp_row9_alpha = 1.0f;
+    snprintf(s->ov_vol_use0, sizeof(s->ov_vol_use0), "%s", "");
+    snprintf(s->ov_vol_use1, sizeof(s->ov_vol_use1), "%s", "");
+    snprintf(s->ov_vol_use2, sizeof(s->ov_vol_use2), "%s", "");
+    snprintf(s->ov_vol_use3, sizeof(s->ov_vol_use3), "%s", "");
+    snprintf(s->ov_vol_use4, sizeof(s->ov_vol_use4), "%s", "");
+    snprintf(s->ov_vol_use5, sizeof(s->ov_vol_use5), "%s", "");
+    snprintf(s->ov_peak_cpu, sizeof(s->ov_peak_cpu), "%s", "");
+    snprintf(s->ov_peak_mem, sizeof(s->ov_peak_mem), "%s", "");
+    snprintf(s->ov_peak_temp, sizeof(s->ov_peak_temp), "%s", "");
     memset(s->dirty, 0, sizeof(s->dirty));
 }
 
@@ -1115,6 +1124,42 @@ bool fnos_dash_store_update_str(fnos_dash_store_t *s, fnos_dash_field_id_t f, co
     case FNOS_DASH_FIELD_NwUpValColor:
         if (strcmp(s->nw_up_val_color, v ? v : "") == 0) return true;
         snprintf(s->nw_up_val_color, sizeof(s->nw_up_val_color), "%s", v ? v : "");
+        break;
+    case FNOS_DASH_FIELD_OvVolUse0:
+        if (strcmp(s->ov_vol_use0, v ? v : "") == 0) return true;
+        snprintf(s->ov_vol_use0, sizeof(s->ov_vol_use0), "%s", v ? v : "");
+        break;
+    case FNOS_DASH_FIELD_OvVolUse1:
+        if (strcmp(s->ov_vol_use1, v ? v : "") == 0) return true;
+        snprintf(s->ov_vol_use1, sizeof(s->ov_vol_use1), "%s", v ? v : "");
+        break;
+    case FNOS_DASH_FIELD_OvVolUse2:
+        if (strcmp(s->ov_vol_use2, v ? v : "") == 0) return true;
+        snprintf(s->ov_vol_use2, sizeof(s->ov_vol_use2), "%s", v ? v : "");
+        break;
+    case FNOS_DASH_FIELD_OvVolUse3:
+        if (strcmp(s->ov_vol_use3, v ? v : "") == 0) return true;
+        snprintf(s->ov_vol_use3, sizeof(s->ov_vol_use3), "%s", v ? v : "");
+        break;
+    case FNOS_DASH_FIELD_OvVolUse4:
+        if (strcmp(s->ov_vol_use4, v ? v : "") == 0) return true;
+        snprintf(s->ov_vol_use4, sizeof(s->ov_vol_use4), "%s", v ? v : "");
+        break;
+    case FNOS_DASH_FIELD_OvVolUse5:
+        if (strcmp(s->ov_vol_use5, v ? v : "") == 0) return true;
+        snprintf(s->ov_vol_use5, sizeof(s->ov_vol_use5), "%s", v ? v : "");
+        break;
+    case FNOS_DASH_FIELD_OvPeakCpu:
+        if (strcmp(s->ov_peak_cpu, v ? v : "") == 0) return true;
+        snprintf(s->ov_peak_cpu, sizeof(s->ov_peak_cpu), "%s", v ? v : "");
+        break;
+    case FNOS_DASH_FIELD_OvPeakMem:
+        if (strcmp(s->ov_peak_mem, v ? v : "") == 0) return true;
+        snprintf(s->ov_peak_mem, sizeof(s->ov_peak_mem), "%s", v ? v : "");
+        break;
+    case FNOS_DASH_FIELD_OvPeakTemp:
+        if (strcmp(s->ov_peak_temp, v ? v : "") == 0) return true;
+        snprintf(s->ov_peak_temp, sizeof(s->ov_peak_temp), "%s", v ? v : "");
         break;
     default:
         return false;

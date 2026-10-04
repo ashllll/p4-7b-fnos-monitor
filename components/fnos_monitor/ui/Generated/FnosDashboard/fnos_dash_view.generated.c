@@ -359,7 +359,7 @@ static void __attribute__((noinline)) build_ov_alert_label(fnos_dash_view_t *v, 
     lv_obj_remove_flag(v->ov_alert_label, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(v->ov_alert_label, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_text_font(v->ov_alert_label, &ui_font_cjk_13, 0);
-    lv_obj_set_style_text_color(v->ov_alert_label, kk_c(0x5A6B80), 0);
+    lv_obj_set_style_text_color(v->ov_alert_label, kk_c(0x7B8BA1), 0);
     lv_obj_set_style_text_opa(v->ov_alert_label, kk_opa(0xFF), 0);
     lv_label_set_text(v->ov_alert_label, FNOS_STR_OVERVIEW_ALERT_LABEL);
     kk_label_vcenter(v->ov_alert_label, 17);
@@ -450,19 +450,19 @@ static void __attribute__((noinline)) build_ov_cpu_head(fnos_dash_view_t *v, lv_
 
 static void __attribute__((noinline)) build_ov_val0(fnos_dash_view_t *v, lv_obj_t *parent)
 {
-    v->ov_val0 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 12, 52, 112, 37));
+    v->ov_val0 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 12, 44, 112, 58));
     lv_obj_remove_flag(v->ov_val0, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(v->ov_val0, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_text_font(v->ov_val0, &ui_font_num_28, 0);
+    lv_obj_set_style_text_font(v->ov_val0, &ui_font_num_44, 0);
     lv_obj_set_style_text_color(v->ov_val0, kk_c(0xFFFFFF), 0);
     lv_obj_set_style_text_opa(v->ov_val0, kk_opa(0xFF), 0);
     lv_label_set_text(v->ov_val0, "");
-    kk_label_vcenter(v->ov_val0, 37);
+    kk_label_vcenter(v->ov_val0, 58);
 }
 
 static void __attribute__((noinline)) build_ov_unit0(fnos_dash_view_t *v, lv_obj_t *parent)
 {
-    v->ov_unit0 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 126, 69, 26, 20));
+    v->ov_unit0 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 126, 80, 36, 20));
     lv_obj_remove_flag(v->ov_unit0, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(v->ov_unit0, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_text_font(v->ov_unit0, &ui_font_txt_15, 0);
@@ -475,16 +475,16 @@ static void __attribute__((noinline)) build_ov_unit0(fnos_dash_view_t *v, lv_obj
 
 static void __attribute__((noinline)) build_ov_mbar0(fnos_dash_view_t *v, lv_obj_t *parent)
 {
-    kk_bar_create(&v->ov_mbar0, parent, kk_rect(0, 0, 0, 0, 12, 94, 138, 6), kk_c(0x2F80ED), 3);
+    kk_bar_create(&v->ov_mbar0, parent, kk_rect(0, 0, 0, 0, 12, 106, 138, 6), kk_c(0x2F80ED), 3);
 }
 
 static void __attribute__((noinline)) build_ov_sub0(fnos_dash_view_t *v, lv_obj_t *parent)
 {
-    v->ov_sub0 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 12, 106, 138, 17));
+    v->ov_sub0 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 12, 118, 138, 17));
     lv_obj_remove_flag(v->ov_sub0, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(v->ov_sub0, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_text_font(v->ov_sub0, &ui_font_cjk_13, 0);
-    lv_obj_set_style_text_color(v->ov_sub0, kk_c(0x5A6B80), 0);
+    lv_obj_set_style_text_color(v->ov_sub0, kk_c(0x7B8BA1), 0);
     lv_obj_set_style_text_opa(v->ov_sub0, kk_opa(0xFF), 0);
     lv_label_set_text(v->ov_sub0, "");
     kk_label_vcenter(v->ov_sub0, 17);
@@ -541,19 +541,19 @@ static void __attribute__((noinline)) build_ov_mem_head(fnos_dash_view_t *v, lv_
 
 static void __attribute__((noinline)) build_ov_val1(fnos_dash_view_t *v, lv_obj_t *parent)
 {
-    v->ov_val1 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 12, 52, 112, 37));
+    v->ov_val1 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 12, 44, 112, 58));
     lv_obj_remove_flag(v->ov_val1, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(v->ov_val1, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_text_font(v->ov_val1, &ui_font_num_28, 0);
+    lv_obj_set_style_text_font(v->ov_val1, &ui_font_num_44, 0);
     lv_obj_set_style_text_color(v->ov_val1, kk_c(0xFFFFFF), 0);
     lv_obj_set_style_text_opa(v->ov_val1, kk_opa(0xFF), 0);
     lv_label_set_text(v->ov_val1, "");
-    kk_label_vcenter(v->ov_val1, 37);
+    kk_label_vcenter(v->ov_val1, 58);
 }
 
 static void __attribute__((noinline)) build_ov_unit1(fnos_dash_view_t *v, lv_obj_t *parent)
 {
-    v->ov_unit1 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 126, 69, 26, 20));
+    v->ov_unit1 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 126, 80, 36, 20));
     lv_obj_remove_flag(v->ov_unit1, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(v->ov_unit1, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_text_font(v->ov_unit1, &ui_font_txt_15, 0);
@@ -566,16 +566,16 @@ static void __attribute__((noinline)) build_ov_unit1(fnos_dash_view_t *v, lv_obj
 
 static void __attribute__((noinline)) build_ov_mbar1(fnos_dash_view_t *v, lv_obj_t *parent)
 {
-    kk_bar_create(&v->ov_mbar1, parent, kk_rect(0, 0, 0, 0, 12, 94, 138, 6), kk_c(0x4EC9E8), 3);
+    kk_bar_create(&v->ov_mbar1, parent, kk_rect(0, 0, 0, 0, 12, 106, 138, 6), kk_c(0x4EC9E8), 3);
 }
 
 static void __attribute__((noinline)) build_ov_sub1(fnos_dash_view_t *v, lv_obj_t *parent)
 {
-    v->ov_sub1 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 12, 106, 138, 17));
+    v->ov_sub1 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 12, 118, 138, 17));
     lv_obj_remove_flag(v->ov_sub1, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(v->ov_sub1, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_text_font(v->ov_sub1, &ui_font_cjk_13, 0);
-    lv_obj_set_style_text_color(v->ov_sub1, kk_c(0x5A6B80), 0);
+    lv_obj_set_style_text_color(v->ov_sub1, kk_c(0x7B8BA1), 0);
     lv_obj_set_style_text_opa(v->ov_sub1, kk_opa(0xFF), 0);
     lv_label_set_text(v->ov_sub1, "");
     kk_label_vcenter(v->ov_sub1, 17);
@@ -632,19 +632,19 @@ static void __attribute__((noinline)) build_ov_temp_head(fnos_dash_view_t *v, lv
 
 static void __attribute__((noinline)) build_ov_val2(fnos_dash_view_t *v, lv_obj_t *parent)
 {
-    v->ov_val2 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 12, 52, 112, 37));
+    v->ov_val2 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 12, 44, 112, 58));
     lv_obj_remove_flag(v->ov_val2, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(v->ov_val2, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_text_font(v->ov_val2, &ui_font_num_28, 0);
+    lv_obj_set_style_text_font(v->ov_val2, &ui_font_num_44, 0);
     lv_obj_set_style_text_color(v->ov_val2, kk_c(0xFFFFFF), 0);
     lv_obj_set_style_text_opa(v->ov_val2, kk_opa(0xFF), 0);
     lv_label_set_text(v->ov_val2, "");
-    kk_label_vcenter(v->ov_val2, 37);
+    kk_label_vcenter(v->ov_val2, 58);
 }
 
 static void __attribute__((noinline)) build_ov_unit2(fnos_dash_view_t *v, lv_obj_t *parent)
 {
-    v->ov_unit2 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 126, 69, 26, 20));
+    v->ov_unit2 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 126, 80, 36, 20));
     lv_obj_remove_flag(v->ov_unit2, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(v->ov_unit2, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_text_font(v->ov_unit2, &ui_font_txt_15, 0);
@@ -657,16 +657,16 @@ static void __attribute__((noinline)) build_ov_unit2(fnos_dash_view_t *v, lv_obj
 
 static void __attribute__((noinline)) build_ov_mbar2(fnos_dash_view_t *v, lv_obj_t *parent)
 {
-    kk_bar_create(&v->ov_mbar2, parent, kk_rect(0, 0, 0, 0, 12, 94, 138, 6), kk_c(0xFF7A1A), 3);
+    kk_bar_create(&v->ov_mbar2, parent, kk_rect(0, 0, 0, 0, 12, 106, 138, 6), kk_c(0xFF7A1A), 3);
 }
 
 static void __attribute__((noinline)) build_ov_sub2(fnos_dash_view_t *v, lv_obj_t *parent)
 {
-    v->ov_sub2 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 12, 106, 138, 17));
+    v->ov_sub2 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 12, 118, 138, 17));
     lv_obj_remove_flag(v->ov_sub2, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(v->ov_sub2, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_text_font(v->ov_sub2, &ui_font_cjk_13, 0);
-    lv_obj_set_style_text_color(v->ov_sub2, kk_c(0x5A6B80), 0);
+    lv_obj_set_style_text_color(v->ov_sub2, kk_c(0x7B8BA1), 0);
     lv_obj_set_style_text_opa(v->ov_sub2, kk_opa(0xFF), 0);
     lv_label_set_text(v->ov_sub2, "");
     kk_label_vcenter(v->ov_sub2, 17);
@@ -714,7 +714,7 @@ static void __attribute__((noinline)) build_ov_uptime_head(fnos_dash_view_t *v, 
 
 static void __attribute__((noinline)) build_ov_val3(fnos_dash_view_t *v, lv_obj_t *parent)
 {
-    v->ov_val3 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 12, 52, 112, 37));
+    v->ov_val3 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 12, 55, 112, 37));
     lv_obj_remove_flag(v->ov_val3, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(v->ov_val3, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_text_font(v->ov_val3, &ui_font_num_28, 0);
@@ -726,7 +726,7 @@ static void __attribute__((noinline)) build_ov_val3(fnos_dash_view_t *v, lv_obj_
 
 static void __attribute__((noinline)) build_ov_unit3(fnos_dash_view_t *v, lv_obj_t *parent)
 {
-    v->ov_unit3 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 126, 69, 26, 20));
+    v->ov_unit3 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 126, 80, 36, 20));
     lv_obj_remove_flag(v->ov_unit3, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(v->ov_unit3, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_text_font(v->ov_unit3, &ui_font_txt_15, 0);
@@ -739,11 +739,11 @@ static void __attribute__((noinline)) build_ov_unit3(fnos_dash_view_t *v, lv_obj
 
 static void __attribute__((noinline)) build_ov_sub3(fnos_dash_view_t *v, lv_obj_t *parent)
 {
-    v->ov_sub3 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 12, 106, 138, 17));
+    v->ov_sub3 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 12, 118, 138, 17));
     lv_obj_remove_flag(v->ov_sub3, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(v->ov_sub3, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_text_font(v->ov_sub3, &ui_font_cjk_13, 0);
-    lv_obj_set_style_text_color(v->ov_sub3, kk_c(0x5A6B80), 0);
+    lv_obj_set_style_text_color(v->ov_sub3, kk_c(0x7B8BA1), 0);
     lv_obj_set_style_text_opa(v->ov_sub3, kk_opa(0xFF), 0);
     lv_label_set_text(v->ov_sub3, "");
     kk_label_vcenter(v->ov_sub3, 17);
@@ -817,6 +817,18 @@ static void __attribute__((noinline)) build_ov_vol_bar0(fnos_dash_view_t *v, lv_
     kk_bar_create(&v->ov_vol_bar0, parent, kk_rect(0, 0, 0, 0, 12, 27, 472, 6), kk_c(0x2FBF71), 3);
 }
 
+static void __attribute__((noinline)) build_ov_vol_use0(fnos_dash_view_t *v, lv_obj_t *parent)
+{
+    v->ov_vol_use0 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 144, 3, 248, 23));
+    lv_obj_remove_flag(v->ov_vol_use0, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(v->ov_vol_use0, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_text_font(v->ov_vol_use0, &ui_font_cjk_13, 0);
+    lv_obj_set_style_text_color(v->ov_vol_use0, kk_c(0x7B8BA1), 0);
+    lv_obj_set_style_text_opa(v->ov_vol_use0, kk_opa(0xFF), 0);
+    lv_label_set_text(v->ov_vol_use0, "");
+    kk_label_vcenter(v->ov_vol_use0, 23);
+}
+
 static void __attribute__((noinline)) build_ov_vol_row0(fnos_dash_view_t *v, lv_obj_t *parent)
 {
     v->ov_vol_row0 = kk_panel_create(parent, kk_rect(0, 0, 0, 0, 12, 48, 496, 36));
@@ -827,6 +839,7 @@ static void __attribute__((noinline)) build_ov_vol_row0(fnos_dash_view_t *v, lv_
     build_ov_vol_name0(v, v->ov_vol_row0);
     build_ov_vol_pct0(v, v->ov_vol_row0);
     build_ov_vol_bar0(v, v->ov_vol_row0);
+    build_ov_vol_use0(v, v->ov_vol_row0);
 }
 
 static void __attribute__((noinline)) build_ov_vol_name1(fnos_dash_view_t *v, lv_obj_t *parent)
@@ -859,6 +872,18 @@ static void __attribute__((noinline)) build_ov_vol_bar1(fnos_dash_view_t *v, lv_
     kk_bar_create(&v->ov_vol_bar1, parent, kk_rect(0, 0, 0, 0, 12, 27, 472, 6), kk_c(0x2FBF71), 3);
 }
 
+static void __attribute__((noinline)) build_ov_vol_use1(fnos_dash_view_t *v, lv_obj_t *parent)
+{
+    v->ov_vol_use1 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 144, 3, 248, 23));
+    lv_obj_remove_flag(v->ov_vol_use1, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(v->ov_vol_use1, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_text_font(v->ov_vol_use1, &ui_font_cjk_13, 0);
+    lv_obj_set_style_text_color(v->ov_vol_use1, kk_c(0x7B8BA1), 0);
+    lv_obj_set_style_text_opa(v->ov_vol_use1, kk_opa(0xFF), 0);
+    lv_label_set_text(v->ov_vol_use1, "");
+    kk_label_vcenter(v->ov_vol_use1, 23);
+}
+
 static void __attribute__((noinline)) build_ov_vol_row1(fnos_dash_view_t *v, lv_obj_t *parent)
 {
     v->ov_vol_row1 = kk_panel_create(parent, kk_rect(0, 0, 0, 0, 12, 86, 496, 36));
@@ -869,6 +894,7 @@ static void __attribute__((noinline)) build_ov_vol_row1(fnos_dash_view_t *v, lv_
     build_ov_vol_name1(v, v->ov_vol_row1);
     build_ov_vol_pct1(v, v->ov_vol_row1);
     build_ov_vol_bar1(v, v->ov_vol_row1);
+    build_ov_vol_use1(v, v->ov_vol_row1);
 }
 
 static void __attribute__((noinline)) build_ov_vol_name2(fnos_dash_view_t *v, lv_obj_t *parent)
@@ -901,6 +927,18 @@ static void __attribute__((noinline)) build_ov_vol_bar2(fnos_dash_view_t *v, lv_
     kk_bar_create(&v->ov_vol_bar2, parent, kk_rect(0, 0, 0, 0, 12, 27, 472, 6), kk_c(0x2FBF71), 3);
 }
 
+static void __attribute__((noinline)) build_ov_vol_use2(fnos_dash_view_t *v, lv_obj_t *parent)
+{
+    v->ov_vol_use2 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 144, 3, 248, 23));
+    lv_obj_remove_flag(v->ov_vol_use2, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(v->ov_vol_use2, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_text_font(v->ov_vol_use2, &ui_font_cjk_13, 0);
+    lv_obj_set_style_text_color(v->ov_vol_use2, kk_c(0x7B8BA1), 0);
+    lv_obj_set_style_text_opa(v->ov_vol_use2, kk_opa(0xFF), 0);
+    lv_label_set_text(v->ov_vol_use2, "");
+    kk_label_vcenter(v->ov_vol_use2, 23);
+}
+
 static void __attribute__((noinline)) build_ov_vol_row2(fnos_dash_view_t *v, lv_obj_t *parent)
 {
     v->ov_vol_row2 = kk_panel_create(parent, kk_rect(0, 0, 0, 0, 12, 124, 496, 36));
@@ -911,6 +949,7 @@ static void __attribute__((noinline)) build_ov_vol_row2(fnos_dash_view_t *v, lv_
     build_ov_vol_name2(v, v->ov_vol_row2);
     build_ov_vol_pct2(v, v->ov_vol_row2);
     build_ov_vol_bar2(v, v->ov_vol_row2);
+    build_ov_vol_use2(v, v->ov_vol_row2);
 }
 
 static void __attribute__((noinline)) build_ov_vol_name3(fnos_dash_view_t *v, lv_obj_t *parent)
@@ -943,6 +982,18 @@ static void __attribute__((noinline)) build_ov_vol_bar3(fnos_dash_view_t *v, lv_
     kk_bar_create(&v->ov_vol_bar3, parent, kk_rect(0, 0, 0, 0, 12, 27, 472, 6), kk_c(0x2FBF71), 3);
 }
 
+static void __attribute__((noinline)) build_ov_vol_use3(fnos_dash_view_t *v, lv_obj_t *parent)
+{
+    v->ov_vol_use3 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 144, 3, 248, 23));
+    lv_obj_remove_flag(v->ov_vol_use3, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(v->ov_vol_use3, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_text_font(v->ov_vol_use3, &ui_font_cjk_13, 0);
+    lv_obj_set_style_text_color(v->ov_vol_use3, kk_c(0x7B8BA1), 0);
+    lv_obj_set_style_text_opa(v->ov_vol_use3, kk_opa(0xFF), 0);
+    lv_label_set_text(v->ov_vol_use3, "");
+    kk_label_vcenter(v->ov_vol_use3, 23);
+}
+
 static void __attribute__((noinline)) build_ov_vol_row3(fnos_dash_view_t *v, lv_obj_t *parent)
 {
     v->ov_vol_row3 = kk_panel_create(parent, kk_rect(0, 0, 0, 0, 12, 162, 496, 36));
@@ -953,6 +1004,7 @@ static void __attribute__((noinline)) build_ov_vol_row3(fnos_dash_view_t *v, lv_
     build_ov_vol_name3(v, v->ov_vol_row3);
     build_ov_vol_pct3(v, v->ov_vol_row3);
     build_ov_vol_bar3(v, v->ov_vol_row3);
+    build_ov_vol_use3(v, v->ov_vol_row3);
 }
 
 static void __attribute__((noinline)) build_ov_vol_name4(fnos_dash_view_t *v, lv_obj_t *parent)
@@ -985,6 +1037,18 @@ static void __attribute__((noinline)) build_ov_vol_bar4(fnos_dash_view_t *v, lv_
     kk_bar_create(&v->ov_vol_bar4, parent, kk_rect(0, 0, 0, 0, 12, 27, 472, 6), kk_c(0x2FBF71), 3);
 }
 
+static void __attribute__((noinline)) build_ov_vol_use4(fnos_dash_view_t *v, lv_obj_t *parent)
+{
+    v->ov_vol_use4 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 144, 3, 248, 23));
+    lv_obj_remove_flag(v->ov_vol_use4, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(v->ov_vol_use4, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_text_font(v->ov_vol_use4, &ui_font_cjk_13, 0);
+    lv_obj_set_style_text_color(v->ov_vol_use4, kk_c(0x7B8BA1), 0);
+    lv_obj_set_style_text_opa(v->ov_vol_use4, kk_opa(0xFF), 0);
+    lv_label_set_text(v->ov_vol_use4, "");
+    kk_label_vcenter(v->ov_vol_use4, 23);
+}
+
 static void __attribute__((noinline)) build_ov_vol_row4(fnos_dash_view_t *v, lv_obj_t *parent)
 {
     v->ov_vol_row4 = kk_panel_create(parent, kk_rect(0, 0, 0, 0, 12, 200, 496, 36));
@@ -995,6 +1059,7 @@ static void __attribute__((noinline)) build_ov_vol_row4(fnos_dash_view_t *v, lv_
     build_ov_vol_name4(v, v->ov_vol_row4);
     build_ov_vol_pct4(v, v->ov_vol_row4);
     build_ov_vol_bar4(v, v->ov_vol_row4);
+    build_ov_vol_use4(v, v->ov_vol_row4);
 }
 
 static void __attribute__((noinline)) build_ov_vol_name5(fnos_dash_view_t *v, lv_obj_t *parent)
@@ -1027,6 +1092,18 @@ static void __attribute__((noinline)) build_ov_vol_bar5(fnos_dash_view_t *v, lv_
     kk_bar_create(&v->ov_vol_bar5, parent, kk_rect(0, 0, 0, 0, 12, 27, 472, 6), kk_c(0x2FBF71), 3);
 }
 
+static void __attribute__((noinline)) build_ov_vol_use5(fnos_dash_view_t *v, lv_obj_t *parent)
+{
+    v->ov_vol_use5 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 144, 3, 248, 23));
+    lv_obj_remove_flag(v->ov_vol_use5, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(v->ov_vol_use5, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_text_font(v->ov_vol_use5, &ui_font_cjk_13, 0);
+    lv_obj_set_style_text_color(v->ov_vol_use5, kk_c(0x7B8BA1), 0);
+    lv_obj_set_style_text_opa(v->ov_vol_use5, kk_opa(0xFF), 0);
+    lv_label_set_text(v->ov_vol_use5, "");
+    kk_label_vcenter(v->ov_vol_use5, 23);
+}
+
 static void __attribute__((noinline)) build_ov_vol_row5(fnos_dash_view_t *v, lv_obj_t *parent)
 {
     v->ov_vol_row5 = kk_panel_create(parent, kk_rect(0, 0, 0, 0, 12, 238, 496, 36));
@@ -1037,6 +1114,7 @@ static void __attribute__((noinline)) build_ov_vol_row5(fnos_dash_view_t *v, lv_
     build_ov_vol_name5(v, v->ov_vol_row5);
     build_ov_vol_pct5(v, v->ov_vol_row5);
     build_ov_vol_bar5(v, v->ov_vol_row5);
+    build_ov_vol_use5(v, v->ov_vol_row5);
 }
 
 static void __attribute__((noinline)) build_ov_storage_card(fnos_dash_view_t *v, lv_obj_t *parent)
@@ -1114,7 +1192,7 @@ static void __attribute__((noinline)) build_ov_mem(fnos_dash_view_t *v, lv_obj_t
 
 static void __attribute__((noinline)) build_ov_legend_mem_dot(fnos_dash_view_t *v, lv_obj_t *parent)
 {
-    v->ov_legend_mem_dot = kk_panel_create(parent, kk_rect(0, 0, 0, 0, 340, 118, 10, 10));
+    v->ov_legend_mem_dot = kk_panel_create(parent, kk_rect(0, 0, 0, 0, 340, 134, 10, 10));
     kk_style_bg(v->ov_legend_mem_dot, kk_c(0x4EC9E8), kk_opa(0xFF));
     lv_obj_set_style_radius(v->ov_legend_mem_dot, 5, 0);
     lv_obj_remove_flag(v->ov_legend_mem_dot, LV_OBJ_FLAG_CLICKABLE);
@@ -1123,7 +1201,7 @@ static void __attribute__((noinline)) build_ov_legend_mem_dot(fnos_dash_view_t *
 
 static void __attribute__((noinline)) build_ov_legend_mem_lbl(fnos_dash_view_t *v, lv_obj_t *parent)
 {
-    v->ov_legend_mem_lbl = kk_label_create(parent, kk_rect(0, 0, 0, 0, 352, 113, 100, 20));
+    v->ov_legend_mem_lbl = kk_label_create(parent, kk_rect(0, 0, 0, 0, 352, 129, 100, 20));
     lv_obj_remove_flag(v->ov_legend_mem_lbl, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(v->ov_legend_mem_lbl, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_text_font(v->ov_legend_mem_lbl, &ui_font_cjk_17, 0);
@@ -1141,7 +1219,7 @@ static void __attribute__((noinline)) build_ov_temp_trend(fnos_dash_view_t *v, l
 
 static void __attribute__((noinline)) build_ov_legend_temp_dot(fnos_dash_view_t *v, lv_obj_t *parent)
 {
-    v->ov_legend_temp_dot = kk_panel_create(parent, kk_rect(0, 0, 0, 0, 340, 198, 10, 10));
+    v->ov_legend_temp_dot = kk_panel_create(parent, kk_rect(0, 0, 0, 0, 340, 180, 10, 10));
     kk_style_bg(v->ov_legend_temp_dot, kk_c(0xFF7A1A), kk_opa(0xFF));
     lv_obj_set_style_radius(v->ov_legend_temp_dot, 5, 0);
     lv_obj_remove_flag(v->ov_legend_temp_dot, LV_OBJ_FLAG_CLICKABLE);
@@ -1150,7 +1228,7 @@ static void __attribute__((noinline)) build_ov_legend_temp_dot(fnos_dash_view_t 
 
 static void __attribute__((noinline)) build_ov_legend_temp_lbl(fnos_dash_view_t *v, lv_obj_t *parent)
 {
-    v->ov_legend_temp_lbl = kk_label_create(parent, kk_rect(0, 0, 0, 0, 352, 193, 100, 20));
+    v->ov_legend_temp_lbl = kk_label_create(parent, kk_rect(0, 0, 0, 0, 352, 175, 100, 20));
     lv_obj_remove_flag(v->ov_legend_temp_lbl, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(v->ov_legend_temp_lbl, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_text_font(v->ov_legend_temp_lbl, &ui_font_cjk_17, 0);
@@ -1159,6 +1237,42 @@ static void __attribute__((noinline)) build_ov_legend_temp_lbl(fnos_dash_view_t 
     lv_obj_set_style_text_letter_space(v->ov_legend_temp_lbl, 1, 0);
     lv_label_set_text(v->ov_legend_temp_lbl, "");
     kk_label_vcenter(v->ov_legend_temp_lbl, 20);
+}
+
+static void __attribute__((noinline)) build_ov_peak_cpu(fnos_dash_view_t *v, lv_obj_t *parent)
+{
+    v->ov_peak_cpu = kk_label_create(parent, kk_rect(0, 0, 0, 0, 352, 105, 100, 17));
+    lv_obj_remove_flag(v->ov_peak_cpu, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(v->ov_peak_cpu, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_text_font(v->ov_peak_cpu, &ui_font_cjk_13, 0);
+    lv_obj_set_style_text_color(v->ov_peak_cpu, kk_c(0x7B8BA1), 0);
+    lv_obj_set_style_text_opa(v->ov_peak_cpu, kk_opa(0xFF), 0);
+    lv_label_set_text(v->ov_peak_cpu, "");
+    kk_label_vcenter(v->ov_peak_cpu, 17);
+}
+
+static void __attribute__((noinline)) build_ov_peak_mem(fnos_dash_view_t *v, lv_obj_t *parent)
+{
+    v->ov_peak_mem = kk_label_create(parent, kk_rect(0, 0, 0, 0, 352, 151, 100, 17));
+    lv_obj_remove_flag(v->ov_peak_mem, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(v->ov_peak_mem, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_text_font(v->ov_peak_mem, &ui_font_cjk_13, 0);
+    lv_obj_set_style_text_color(v->ov_peak_mem, kk_c(0x7B8BA1), 0);
+    lv_obj_set_style_text_opa(v->ov_peak_mem, kk_opa(0xFF), 0);
+    lv_label_set_text(v->ov_peak_mem, "");
+    kk_label_vcenter(v->ov_peak_mem, 17);
+}
+
+static void __attribute__((noinline)) build_ov_peak_temp(fnos_dash_view_t *v, lv_obj_t *parent)
+{
+    v->ov_peak_temp = kk_label_create(parent, kk_rect(0, 0, 0, 0, 352, 197, 100, 17));
+    lv_obj_remove_flag(v->ov_peak_temp, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(v->ov_peak_temp, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_text_font(v->ov_peak_temp, &ui_font_cjk_13, 0);
+    lv_obj_set_style_text_color(v->ov_peak_temp, kk_c(0x7B8BA1), 0);
+    lv_obj_set_style_text_opa(v->ov_peak_temp, kk_opa(0xFF), 0);
+    lv_label_set_text(v->ov_peak_temp, "");
+    kk_label_vcenter(v->ov_peak_temp, 17);
 }
 
 static void __attribute__((noinline)) build_ov_trend_card(fnos_dash_view_t *v, lv_obj_t *parent)
@@ -1181,6 +1295,9 @@ static void __attribute__((noinline)) build_ov_trend_card(fnos_dash_view_t *v, l
     build_ov_temp_trend(v, v->ov_trend_card);
     build_ov_legend_temp_dot(v, v->ov_trend_card);
     build_ov_legend_temp_lbl(v, v->ov_trend_card);
+    build_ov_peak_cpu(v, v->ov_trend_card);
+    build_ov_peak_mem(v, v->ov_trend_card);
+    build_ov_peak_temp(v, v->ov_trend_card);
 }
 
 static void __attribute__((noinline)) build_p0_overview(fnos_dash_view_t *v, lv_obj_t *parent)
@@ -1431,7 +1548,7 @@ static void __attribute__((noinline)) build_st_vol_fs0(fnos_dash_view_t *v, lv_o
     lv_obj_remove_flag(v->st_vol_fs0, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(v->st_vol_fs0, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_text_font(v->st_vol_fs0, &ui_font_txt_13, 0);
-    lv_obj_set_style_text_color(v->st_vol_fs0, kk_c(0x5A6B80), 0);
+    lv_obj_set_style_text_color(v->st_vol_fs0, kk_c(0x7B8BA1), 0);
     lv_obj_set_style_text_opa(v->st_vol_fs0, kk_opa(0xFF), 0);
     lv_label_set_text(v->st_vol_fs0, "");
     kk_label_vcenter(v->st_vol_fs0, 17);
@@ -1517,7 +1634,7 @@ static void __attribute__((noinline)) build_st_vol_fs1(fnos_dash_view_t *v, lv_o
     lv_obj_remove_flag(v->st_vol_fs1, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(v->st_vol_fs1, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_text_font(v->st_vol_fs1, &ui_font_txt_13, 0);
-    lv_obj_set_style_text_color(v->st_vol_fs1, kk_c(0x5A6B80), 0);
+    lv_obj_set_style_text_color(v->st_vol_fs1, kk_c(0x7B8BA1), 0);
     lv_obj_set_style_text_opa(v->st_vol_fs1, kk_opa(0xFF), 0);
     lv_label_set_text(v->st_vol_fs1, "");
     kk_label_vcenter(v->st_vol_fs1, 17);
@@ -1603,7 +1720,7 @@ static void __attribute__((noinline)) build_st_vol_fs2(fnos_dash_view_t *v, lv_o
     lv_obj_remove_flag(v->st_vol_fs2, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(v->st_vol_fs2, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_text_font(v->st_vol_fs2, &ui_font_txt_13, 0);
-    lv_obj_set_style_text_color(v->st_vol_fs2, kk_c(0x5A6B80), 0);
+    lv_obj_set_style_text_color(v->st_vol_fs2, kk_c(0x7B8BA1), 0);
     lv_obj_set_style_text_opa(v->st_vol_fs2, kk_opa(0xFF), 0);
     lv_label_set_text(v->st_vol_fs2, "");
     kk_label_vcenter(v->st_vol_fs2, 17);
@@ -1689,7 +1806,7 @@ static void __attribute__((noinline)) build_st_vol_fs3(fnos_dash_view_t *v, lv_o
     lv_obj_remove_flag(v->st_vol_fs3, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(v->st_vol_fs3, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_text_font(v->st_vol_fs3, &ui_font_txt_13, 0);
-    lv_obj_set_style_text_color(v->st_vol_fs3, kk_c(0x5A6B80), 0);
+    lv_obj_set_style_text_color(v->st_vol_fs3, kk_c(0x7B8BA1), 0);
     lv_obj_set_style_text_opa(v->st_vol_fs3, kk_opa(0xFF), 0);
     lv_label_set_text(v->st_vol_fs3, "");
     kk_label_vcenter(v->st_vol_fs3, 17);
@@ -1775,7 +1892,7 @@ static void __attribute__((noinline)) build_st_vol_fs4(fnos_dash_view_t *v, lv_o
     lv_obj_remove_flag(v->st_vol_fs4, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(v->st_vol_fs4, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_text_font(v->st_vol_fs4, &ui_font_txt_13, 0);
-    lv_obj_set_style_text_color(v->st_vol_fs4, kk_c(0x5A6B80), 0);
+    lv_obj_set_style_text_color(v->st_vol_fs4, kk_c(0x7B8BA1), 0);
     lv_obj_set_style_text_opa(v->st_vol_fs4, kk_opa(0xFF), 0);
     lv_label_set_text(v->st_vol_fs4, "");
     kk_label_vcenter(v->st_vol_fs4, 17);
@@ -1861,7 +1978,7 @@ static void __attribute__((noinline)) build_st_vol_fs5(fnos_dash_view_t *v, lv_o
     lv_obj_remove_flag(v->st_vol_fs5, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(v->st_vol_fs5, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_text_font(v->st_vol_fs5, &ui_font_txt_13, 0);
-    lv_obj_set_style_text_color(v->st_vol_fs5, kk_c(0x5A6B80), 0);
+    lv_obj_set_style_text_color(v->st_vol_fs5, kk_c(0x7B8BA1), 0);
     lv_obj_set_style_text_opa(v->st_vol_fs5, kk_opa(0xFF), 0);
     lv_label_set_text(v->st_vol_fs5, "");
     kk_label_vcenter(v->st_vol_fs5, 17);
@@ -1997,7 +2114,7 @@ static void __attribute__((noinline)) build_st_raid_lvl0(fnos_dash_view_t *v, lv
     lv_obj_remove_flag(v->st_raid_lvl0, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(v->st_raid_lvl0, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_text_font(v->st_raid_lvl0, &ui_font_txt_13, 0);
-    lv_obj_set_style_text_color(v->st_raid_lvl0, kk_c(0x5A6B80), 0);
+    lv_obj_set_style_text_color(v->st_raid_lvl0, kk_c(0x7B8BA1), 0);
     lv_obj_set_style_text_opa(v->st_raid_lvl0, kk_opa(0xFF), 0);
     lv_label_set_text(v->st_raid_lvl0, "");
     kk_label_vcenter(v->st_raid_lvl0, 17);
@@ -2052,7 +2169,7 @@ static void __attribute__((noinline)) build_st_raid_lvl1(fnos_dash_view_t *v, lv
     lv_obj_remove_flag(v->st_raid_lvl1, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(v->st_raid_lvl1, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_text_font(v->st_raid_lvl1, &ui_font_txt_13, 0);
-    lv_obj_set_style_text_color(v->st_raid_lvl1, kk_c(0x5A6B80), 0);
+    lv_obj_set_style_text_color(v->st_raid_lvl1, kk_c(0x7B8BA1), 0);
     lv_obj_set_style_text_opa(v->st_raid_lvl1, kk_opa(0xFF), 0);
     lv_label_set_text(v->st_raid_lvl1, "");
     kk_label_vcenter(v->st_raid_lvl1, 17);
@@ -2107,7 +2224,7 @@ static void __attribute__((noinline)) build_st_raid_lvl2(fnos_dash_view_t *v, lv
     lv_obj_remove_flag(v->st_raid_lvl2, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(v->st_raid_lvl2, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_text_font(v->st_raid_lvl2, &ui_font_txt_13, 0);
-    lv_obj_set_style_text_color(v->st_raid_lvl2, kk_c(0x5A6B80), 0);
+    lv_obj_set_style_text_color(v->st_raid_lvl2, kk_c(0x7B8BA1), 0);
     lv_obj_set_style_text_opa(v->st_raid_lvl2, kk_opa(0xFF), 0);
     lv_label_set_text(v->st_raid_lvl2, "");
     kk_label_vcenter(v->st_raid_lvl2, 17);
@@ -2162,7 +2279,7 @@ static void __attribute__((noinline)) build_st_raid_lvl3(fnos_dash_view_t *v, lv
     lv_obj_remove_flag(v->st_raid_lvl3, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(v->st_raid_lvl3, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_text_font(v->st_raid_lvl3, &ui_font_txt_13, 0);
-    lv_obj_set_style_text_color(v->st_raid_lvl3, kk_c(0x5A6B80), 0);
+    lv_obj_set_style_text_color(v->st_raid_lvl3, kk_c(0x7B8BA1), 0);
     lv_obj_set_style_text_opa(v->st_raid_lvl3, kk_opa(0xFF), 0);
     lv_label_set_text(v->st_raid_lvl3, "");
     kk_label_vcenter(v->st_raid_lvl3, 17);
@@ -2464,7 +2581,7 @@ static void __attribute__((noinline)) build_nw_down_sub(fnos_dash_view_t *v, lv_
     lv_obj_remove_flag(v->nw_down_sub, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(v->nw_down_sub, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_text_font(v->nw_down_sub, &ui_font_cjk_13, 0);
-    lv_obj_set_style_text_color(v->nw_down_sub, kk_c(0x5A6B80), 0);
+    lv_obj_set_style_text_color(v->nw_down_sub, kk_c(0x7B8BA1), 0);
     lv_obj_set_style_text_opa(v->nw_down_sub, kk_opa(0xFF), 0);
     lv_label_set_text(v->nw_down_sub, "");
     kk_label_vcenter(v->nw_down_sub, 17);
@@ -2545,7 +2662,7 @@ static void __attribute__((noinline)) build_nw_up_sub(fnos_dash_view_t *v, lv_ob
     lv_obj_remove_flag(v->nw_up_sub, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(v->nw_up_sub, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_text_font(v->nw_up_sub, &ui_font_cjk_13, 0);
-    lv_obj_set_style_text_color(v->nw_up_sub, kk_c(0x5A6B80), 0);
+    lv_obj_set_style_text_color(v->nw_up_sub, kk_c(0x7B8BA1), 0);
     lv_obj_set_style_text_opa(v->nw_up_sub, kk_opa(0xFF), 0);
     lv_label_set_text(v->nw_up_sub, "");
     kk_label_vcenter(v->nw_up_sub, 17);
@@ -2710,26 +2827,26 @@ static void __attribute__((noinline)) build_nw_trend_panel(fnos_dash_view_t *v, 
 
 static void __attribute__((noinline)) build_nw_ctx_lbl0(fnos_dash_view_t *v, lv_obj_t *parent)
 {
-    v->nw_ctx_lbl0 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 16, 10, 150, 23));
+    v->nw_ctx_lbl0 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 16, 8, 150, 18));
     lv_obj_remove_flag(v->nw_ctx_lbl0, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(v->nw_ctx_lbl0, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_text_font(v->nw_ctx_lbl0, &ui_font_cjk_17, 0);
+    lv_obj_set_style_text_font(v->nw_ctx_lbl0, &ui_font_cjk_13, 0);
     lv_obj_set_style_text_color(v->nw_ctx_lbl0, kk_c(0xBFC9D7), 0);
     lv_obj_set_style_text_opa(v->nw_ctx_lbl0, kk_opa(0xFF), 0);
     lv_label_set_text(v->nw_ctx_lbl0, FNOS_STR_NETWORK_CTX_PEAK_DOWN);
-    kk_label_vcenter(v->nw_ctx_lbl0, 23);
+    kk_label_vcenter(v->nw_ctx_lbl0, 18);
 }
 
 static void __attribute__((noinline)) build_nw_ctx_val0(fnos_dash_view_t *v, lv_obj_t *parent)
 {
-    v->nw_ctx_val0 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 16, 35, 158, 23));
+    v->nw_ctx_val0 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 16, 28, 166, 34));
     lv_obj_remove_flag(v->nw_ctx_val0, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(v->nw_ctx_val0, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_text_font(v->nw_ctx_val0, &ui_font_num_17, 0);
+    lv_obj_set_style_text_font(v->nw_ctx_val0, &ui_font_num_28, 0);
     lv_obj_set_style_text_color(v->nw_ctx_val0, kk_c(0xFFFFFF), 0);
     lv_obj_set_style_text_opa(v->nw_ctx_val0, kk_opa(0xFF), 0);
     lv_label_set_text(v->nw_ctx_val0, "");
-    kk_label_vcenter(v->nw_ctx_val0, 23);
+    kk_label_vcenter(v->nw_ctx_val0, 34);
 }
 
 static void __attribute__((noinline)) build_nw_ctx_card0(fnos_dash_view_t *v, lv_obj_t *parent)
@@ -2745,26 +2862,26 @@ static void __attribute__((noinline)) build_nw_ctx_card0(fnos_dash_view_t *v, lv
 
 static void __attribute__((noinline)) build_nw_ctx_lbl1(fnos_dash_view_t *v, lv_obj_t *parent)
 {
-    v->nw_ctx_lbl1 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 16, 10, 150, 23));
+    v->nw_ctx_lbl1 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 16, 8, 150, 18));
     lv_obj_remove_flag(v->nw_ctx_lbl1, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(v->nw_ctx_lbl1, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_text_font(v->nw_ctx_lbl1, &ui_font_cjk_17, 0);
+    lv_obj_set_style_text_font(v->nw_ctx_lbl1, &ui_font_cjk_13, 0);
     lv_obj_set_style_text_color(v->nw_ctx_lbl1, kk_c(0xBFC9D7), 0);
     lv_obj_set_style_text_opa(v->nw_ctx_lbl1, kk_opa(0xFF), 0);
     lv_label_set_text(v->nw_ctx_lbl1, FNOS_STR_NETWORK_CTX_PEAK_UP);
-    kk_label_vcenter(v->nw_ctx_lbl1, 23);
+    kk_label_vcenter(v->nw_ctx_lbl1, 18);
 }
 
 static void __attribute__((noinline)) build_nw_ctx_val1(fnos_dash_view_t *v, lv_obj_t *parent)
 {
-    v->nw_ctx_val1 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 16, 35, 158, 23));
+    v->nw_ctx_val1 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 16, 28, 166, 34));
     lv_obj_remove_flag(v->nw_ctx_val1, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(v->nw_ctx_val1, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_text_font(v->nw_ctx_val1, &ui_font_num_17, 0);
+    lv_obj_set_style_text_font(v->nw_ctx_val1, &ui_font_num_28, 0);
     lv_obj_set_style_text_color(v->nw_ctx_val1, kk_c(0xFFFFFF), 0);
     lv_obj_set_style_text_opa(v->nw_ctx_val1, kk_opa(0xFF), 0);
     lv_label_set_text(v->nw_ctx_val1, "");
-    kk_label_vcenter(v->nw_ctx_val1, 23);
+    kk_label_vcenter(v->nw_ctx_val1, 34);
 }
 
 static void __attribute__((noinline)) build_nw_ctx_card1(fnos_dash_view_t *v, lv_obj_t *parent)
@@ -2780,26 +2897,26 @@ static void __attribute__((noinline)) build_nw_ctx_card1(fnos_dash_view_t *v, lv
 
 static void __attribute__((noinline)) build_nw_ctx_lbl2(fnos_dash_view_t *v, lv_obj_t *parent)
 {
-    v->nw_ctx_lbl2 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 16, 10, 150, 23));
+    v->nw_ctx_lbl2 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 16, 8, 150, 18));
     lv_obj_remove_flag(v->nw_ctx_lbl2, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(v->nw_ctx_lbl2, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_text_font(v->nw_ctx_lbl2, &ui_font_cjk_17, 0);
+    lv_obj_set_style_text_font(v->nw_ctx_lbl2, &ui_font_cjk_13, 0);
     lv_obj_set_style_text_color(v->nw_ctx_lbl2, kk_c(0xBFC9D7), 0);
     lv_obj_set_style_text_opa(v->nw_ctx_lbl2, kk_opa(0xFF), 0);
     lv_label_set_text(v->nw_ctx_lbl2, FNOS_STR_NETWORK_CTX_LATENCY);
-    kk_label_vcenter(v->nw_ctx_lbl2, 23);
+    kk_label_vcenter(v->nw_ctx_lbl2, 18);
 }
 
 static void __attribute__((noinline)) build_nw_ctx_val2(fnos_dash_view_t *v, lv_obj_t *parent)
 {
-    v->nw_ctx_val2 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 16, 35, 158, 23));
+    v->nw_ctx_val2 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 16, 28, 166, 34));
     lv_obj_remove_flag(v->nw_ctx_val2, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(v->nw_ctx_val2, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_text_font(v->nw_ctx_val2, &ui_font_num_17, 0);
+    lv_obj_set_style_text_font(v->nw_ctx_val2, &ui_font_num_28, 0);
     lv_obj_set_style_text_color(v->nw_ctx_val2, kk_c(0xFFFFFF), 0);
     lv_obj_set_style_text_opa(v->nw_ctx_val2, kk_opa(0xFF), 0);
     lv_label_set_text(v->nw_ctx_val2, "");
-    kk_label_vcenter(v->nw_ctx_val2, 23);
+    kk_label_vcenter(v->nw_ctx_val2, 34);
 }
 
 static void __attribute__((noinline)) build_nw_ctx_card2(fnos_dash_view_t *v, lv_obj_t *parent)
@@ -2815,26 +2932,26 @@ static void __attribute__((noinline)) build_nw_ctx_card2(fnos_dash_view_t *v, lv
 
 static void __attribute__((noinline)) build_nw_ctx_lbl3(fnos_dash_view_t *v, lv_obj_t *parent)
 {
-    v->nw_ctx_lbl3 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 16, 10, 150, 23));
+    v->nw_ctx_lbl3 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 16, 8, 150, 18));
     lv_obj_remove_flag(v->nw_ctx_lbl3, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(v->nw_ctx_lbl3, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_text_font(v->nw_ctx_lbl3, &ui_font_cjk_17, 0);
+    lv_obj_set_style_text_font(v->nw_ctx_lbl3, &ui_font_cjk_13, 0);
     lv_obj_set_style_text_color(v->nw_ctx_lbl3, kk_c(0xBFC9D7), 0);
     lv_obj_set_style_text_opa(v->nw_ctx_lbl3, kk_opa(0xFF), 0);
     lv_label_set_text(v->nw_ctx_lbl3, FNOS_STR_NETWORK_CTX_SAMPLING);
-    kk_label_vcenter(v->nw_ctx_lbl3, 23);
+    kk_label_vcenter(v->nw_ctx_lbl3, 18);
 }
 
 static void __attribute__((noinline)) build_nw_ctx_val3(fnos_dash_view_t *v, lv_obj_t *parent)
 {
-    v->nw_ctx_val3 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 16, 35, 158, 23));
+    v->nw_ctx_val3 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 16, 28, 166, 34));
     lv_obj_remove_flag(v->nw_ctx_val3, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(v->nw_ctx_val3, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_text_font(v->nw_ctx_val3, &ui_font_num_17, 0);
+    lv_obj_set_style_text_font(v->nw_ctx_val3, &ui_font_num_28, 0);
     lv_obj_set_style_text_color(v->nw_ctx_val3, kk_c(0xFFFFFF), 0);
     lv_obj_set_style_text_opa(v->nw_ctx_val3, kk_opa(0xFF), 0);
     lv_label_set_text(v->nw_ctx_val3, "");
-    kk_label_vcenter(v->nw_ctx_val3, 23);
+    kk_label_vcenter(v->nw_ctx_val3, 34);
 }
 
 static void __attribute__((noinline)) build_nw_ctx_card3(fnos_dash_view_t *v, lv_obj_t *parent)
@@ -2850,26 +2967,26 @@ static void __attribute__((noinline)) build_nw_ctx_card3(fnos_dash_view_t *v, lv
 
 static void __attribute__((noinline)) build_nw_ctx_lbl4(fnos_dash_view_t *v, lv_obj_t *parent)
 {
-    v->nw_ctx_lbl4 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 16, 10, 150, 23));
+    v->nw_ctx_lbl4 = kk_label_create(parent, kk_rect(0, 0, 0, 0, 16, 8, 150, 18));
     lv_obj_remove_flag(v->nw_ctx_lbl4, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(v->nw_ctx_lbl4, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_text_font(v->nw_ctx_lbl4, &ui_font_cjk_17, 0);
+    lv_obj_set_style_text_font(v->nw_ctx_lbl4, &ui_font_cjk_13, 0);
     lv_obj_set_style_text_color(v->nw_ctx_lbl4, kk_c(0xBFC9D7), 0);
     lv_obj_set_style_text_opa(v->nw_ctx_lbl4, kk_opa(0xFF), 0);
     lv_label_set_text(v->nw_ctx_lbl4, FNOS_STR_NETWORK_CTX_TOTAL);
-    kk_label_vcenter(v->nw_ctx_lbl4, 23);
+    kk_label_vcenter(v->nw_ctx_lbl4, 18);
 }
 
 static void __attribute__((noinline)) build_nw_total_val(fnos_dash_view_t *v, lv_obj_t *parent)
 {
-    v->nw_total_val = kk_label_create(parent, kk_rect(0, 0, 0, 0, 16, 35, 158, 23));
+    v->nw_total_val = kk_label_create(parent, kk_rect(0, 0, 0, 0, 16, 28, 166, 34));
     lv_obj_remove_flag(v->nw_total_val, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(v->nw_total_val, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_text_font(v->nw_total_val, &ui_font_num_17, 0);
+    lv_obj_set_style_text_font(v->nw_total_val, &ui_font_num_28, 0);
     lv_obj_set_style_text_color(v->nw_total_val, kk_c(0xFFFFFF), 0);
     lv_obj_set_style_text_opa(v->nw_total_val, kk_opa(0xFF), 0);
     lv_label_set_text(v->nw_total_val, "");
-    kk_label_vcenter(v->nw_total_val, 23);
+    kk_label_vcenter(v->nw_total_val, 34);
 }
 
 static void __attribute__((noinline)) build_nw_ctx_card4(fnos_dash_view_t *v, lv_obj_t *parent)

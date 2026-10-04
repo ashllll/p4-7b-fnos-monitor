@@ -280,6 +280,15 @@ typedef enum {
     FNOS_DASH_FIELD_SyTempRow7Alpha = 272,
     FNOS_DASH_FIELD_SyTempRow8Alpha = 273,
     FNOS_DASH_FIELD_SyTempRow9Alpha = 274,
+    FNOS_DASH_FIELD_OvVolUse0 = 275,
+    FNOS_DASH_FIELD_OvVolUse1 = 276,
+    FNOS_DASH_FIELD_OvVolUse2 = 277,
+    FNOS_DASH_FIELD_OvVolUse3 = 278,
+    FNOS_DASH_FIELD_OvVolUse4 = 279,
+    FNOS_DASH_FIELD_OvVolUse5 = 280,
+    FNOS_DASH_FIELD_OvPeakCpu = 281,
+    FNOS_DASH_FIELD_OvPeakMem = 282,
+    FNOS_DASH_FIELD_OvPeakTemp = 283,
     FNOS_DASH_FIELD_COUNT
 } fnos_dash_field_id_t;
 
@@ -568,6 +577,15 @@ typedef struct fnos_dash_store {
     float sy_temp_row7_alpha;
     float sy_temp_row8_alpha;
     float sy_temp_row9_alpha;
+    char ov_vol_use0[48];
+    char ov_vol_use1[48];
+    char ov_vol_use2[48];
+    char ov_vol_use3[48];
+    char ov_vol_use4[48];
+    char ov_vol_use5[48];
+    char ov_peak_cpu[16];
+    char ov_peak_mem[16];
+    char ov_peak_temp[16];
     uint32_t dirty[FNOS_DASH_DIRTY_WORDS];
 } fnos_dash_store_t;
 

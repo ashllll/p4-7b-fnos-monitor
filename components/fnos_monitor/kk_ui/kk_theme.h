@@ -16,12 +16,16 @@
 #define KK_TRACK     0x3A516B   /* 轨道 / 弱元素（KK 次级填充）          */
 #define KK_ACCENT    0x2F80ED   /* 强调蓝（KK 唯一强调色）               */
 
-/* ── 文本四级（KK 样例原色）──────────────────────────────────────── */
+/* ── 文本四级（KK 样例原色）＋ 二级弱化文本 ─────────────────────── */
 #define KK_TEXT1     0xFFFFFF   /* 主数值 / 标题                         */
 #define KK_TEXT2     0xBFC9D7   /* 标签 / 正文                           */
 #define KK_TEXT3     0xD7DEE8   /* 次级正文                              */
 #define KK_TEXT4     0xC8D2E0   /* 辅助 / meta                           */
-#define KK_IDLE      0x5A6B80   /* 弱化 / 休眠（数据 idle 态，文本层级第 5 级） */
+/* V5.0-D：弱化文本与"数据 idle 色"必须分开。
+ * 原先把 KK_IDLE 同时当弱文本用，对 KK_PANEL 只有 3.07:1（低于 WCAG AA 4.5:1），
+ * 实机反光下几乎读不出；本令牌 4.83:1。KK_IDLE 从此只表示数据 idle 态（圆点/状态点）。 */
+#define KK_TEXT5     0x7B8BA1   /* 弱化文本：单位/坐标/说明（对 KK_PANEL 4.83:1）*/
+#define KK_IDLE      0x5A6B80   /* 数据 idle 态（圆点、状态点；不作正文）        */
 
 /* ── 语义扩展（数据编码：严重度 + 身份色，饱和度对齐 KK_ACCENT）──── */
 #define KK_OK        0x2FBF71

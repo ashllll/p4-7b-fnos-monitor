@@ -1642,6 +1642,60 @@
         "type": "float",
         "maxLen": null,
         "default": 1.0
+      },
+      {
+        "id": "OvVolUse0",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "OvVolUse1",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "OvVolUse2",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "OvVolUse3",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "OvVolUse4",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "OvVolUse5",
+        "type": "string",
+        "maxLen": 48,
+        "default": ""
+      },
+      {
+        "id": "OvPeakCpu",
+        "type": "string",
+        "maxLen": 16,
+        "default": ""
+      },
+      {
+        "id": "OvPeakMem",
+        "type": "string",
+        "maxLen": 16,
+        "default": ""
+      },
+      {
+        "id": "OvPeakTemp",
+        "type": "string",
+        "maxLen": 16,
+        "default": ""
       }
     ]
   },
@@ -3319,6 +3373,60 @@
       "fieldId": "SyTempRow9Alpha",
       "mode": "OneWay",
       "property": "alpha"
+    },
+    {
+      "controlId": "OvVolUse0",
+      "fieldId": "OvVolUse0",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "OvVolUse1",
+      "fieldId": "OvVolUse1",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "OvVolUse2",
+      "fieldId": "OvVolUse2",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "OvVolUse3",
+      "fieldId": "OvVolUse3",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "OvVolUse4",
+      "fieldId": "OvVolUse4",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "OvVolUse5",
+      "fieldId": "OvVolUse5",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "OvPeakCpu",
+      "fieldId": "OvPeakCpu",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "OvPeakMem",
+      "fieldId": "OvPeakMem",
+      "mode": "OneWay",
+      "property": "text"
+    },
+    {
+      "controlId": "OvPeakTemp",
+      "fieldId": "OvPeakTemp",
+      "mode": "OneWay",
+      "property": "text"
     }
   ],
   "events": [

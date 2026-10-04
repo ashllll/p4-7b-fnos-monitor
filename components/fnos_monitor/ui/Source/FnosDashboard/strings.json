@@ -23,8 +23,8 @@
       "en-US": "System"
     },
     "overview.health_title": {
-      "zh-Hans": "NAS 健康",
-      "en-US": "NAS Health"
+      "zh-Hans": "系统状态",
+      "en-US": "System Status"
     },
     "overview.alert_label": {
       "zh-Hans": "告警",
@@ -87,11 +87,11 @@
       "en-US": "Volumes"
     },
     "storage.raid_title": {
-      "zh-Hans": "RAID 阵列",
-      "en-US": "RAID Arrays"
+      "zh-Hans": "阵列状态",
+      "en-US": "Array Status"
     },
     "storage.io_title": {
-      "zh-Hans": "磁盘活动",
+      "zh-Hans": "硬盘活动",
       "en-US": "Disk Activity"
     },
     "storage.zfs_title": {
@@ -183,8 +183,8 @@
       "en-US": "Wi-Fi"
     },
     "system.kv_heap": {
-      "zh-Hans": "内部内存",
-      "en-US": "Heap"
+      "zh-Hans": "固件内存",
+      "en-US": "FW Mem"
     },
     "system.kv_procs": {
       "zh-Hans": "进程",
