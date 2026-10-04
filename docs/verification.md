@@ -399,3 +399,30 @@ F 检查据此发现 3 处字段缓冲偏紧并已放宽：`FtPoll` 80 → 96、
 * 改用 `ocr scan`（整文件、不需要 git）跑三路（固件 9 文件 / NAS 5 文件 / 数据层 4 文件）：
   三个进程均 0% CPU 长时间挂起（16 分钟后仍无输出文件），判定为 provider 端无响应，已终止。
   本轮复审以人工逐文件细读 + 自建审计工具完成。
+
+## 14. 界面 v5 迭代（2026-10-02 晚：密度优先 + 大数字 + fnOS 术语对齐）
+
+**范围**：在 v4 语法不变的前提下做六组改动（设计推导与逐项落点见 `docs/ui-kk-iteration-v5.md`）：
+V5.0-A P0 三张 KPI 主值 28→44px、V5.0-B 存储行补 `已用 … · 可用 …`、V5.0-C P2 五块瓦片数值 17→28px、
+V5.0-D 弱色正文与"数据 idle 色"分离（`KK_TEXT5 0x7B8BA1`，3.07:1 → 4.83:1）、V5.1 趋势卡峰值行、
+V5.2 四条 fnOS 术语（系统状态 / 阵列状态 / 硬盘活动 / 固件内存）。
+
+**静态验证链**（全绿）：`tools/text_width.py --layout`（0 问题）→ `bash tools/gen_fonts.sh`（10 字库 1.7 MB，
+cjk_13 补 硬/固/件）→ `python3 tools/ui_gen.py` → `python3 tools/ui_validate.py`（nodes 384→393、fields 275→284、
+bindings 279→288、lint 0 warning）→ `python3 tools/audit_fonts.py`（0 error / 0 warning）→ `./idf.sh build`（EXIT=0）。
+
+**manifest 完整性复核**（对 HEAD 做节点级 diff）：新增 9 个节点（`OvVolUse0..5`、`OvPeakCpu/OvPeakMem/OvPeakTemp`）、
+零删除；改动集中在 4 张 KPI 卡内部几何 + 图例三行行距 30→46 + P2 五块瓦片 + 17 个弱色文本节点，
+其余 300+ 节点逐字未动。
+
+**实机验证**：交付固件 `build/fnos_monitor.bin` 1823696 B（19:27，`CONFIG_FNOS_AUTO_PAGE_SEC=0`），
+烧录后串口 45 s `logs/v5-final-nocarousel.log`（`poll ok=30 fail=0 45ms cpu=2.2%`、internal 221KB、
+psram 27304KB、无 watchdog/断言）；**复位重启捕获** `logs/v5-final-boot.log`（142 行，从
+`[4.08] fnos_ui: ui created (pages=4)` 起完整启动链，`VERIFY MODE` 0 次 = 该固件未建自动翻页定时器）。
+逐页拍照用临时轮播构建（8 s，原 sdkconfig 备份后恢复）取证：P0 两帧相隔 38 s 同页同钟点而轮询计数在走、
+P1/P2/P3 全部无越界/截断/豆腐块/空槽（P2 实测 `双向合计 157 KB/s`、`曲线采样 288`、`采集延迟 9 ms`；
+P3 温度栏 7 条全满、`固件内存 221 KB`）。结论与台账见
+`components/fnos_monitor/ui/Source/FnosDashboard/validation.md`（Runtime=Verified）。
+
+**新增工具**：`tools/text_width.py`（读生成字库 `adv_w` 的真实字宽核对，`--layout` 遍历全部 Text 节点）。
+它的第一件功劳就否掉了 lint 的乐观估宽：`NwTotalVal` 原 158px 框放不下 `118.00 MB/s`（162.3px）。

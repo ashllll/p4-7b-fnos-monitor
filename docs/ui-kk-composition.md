@@ -90,3 +90,19 @@
 
 **验证口径**：`python3 tools/ui_validate.py`（含 lint，0 warning）→ `python3 tools/ui_gen.py` → `./idf.sh build` 全绿；
 实机视觉仍按 §7 走拍照验收（本次改动尚未烧录实机，`validation.md` 台账 Runtime 回到 `Pending`）。
+
+## 7. v5 优化落点（2026-10-02，密度优先 + 大数字 + fnOS 术语）
+
+完整推导、真实字宽量测与验收流程见 `docs/ui-kk-iteration-v5.md`；本节只记落点与它对本合同的影响。
+
+| 层 | 方向 | 落点 |
+| --- | --- | --- |
+| L1 版面语法 | 信息密度优先 | V5.0-A KPI 卡内部分层（`OvVal0..2` `[12,44] 112×58` `font.numL`、`OvVal3` 保持 numM、`OvUnit0..3` `[126,80]`、`OvMbar0..2` `[12,106]`、`OvSub0..3` `[12,118]`）；V5.0-B 存储行新增 `OvVolUse0..5` `[144,3] 248×23`（`已用 … · 可用 …` 表格化）；V5.0-C P2 五块瓦片标签降级 + 数值放大 |
+| L2 数字排版 | 极简大数字 | 三张 KPI 主值 28→**44px**（36px 中间档不存在于现有字库，故一刀切到 44）；单位列右移贴基线 |
+| L3 术语与信息架构 | fnOS 对齐 | "NAS 健康"→**系统状态**、"RAID 阵列"→**阵列状态**、"磁盘活动"→**硬盘活动**、"内部内存"→**固件内存**（zh-Hans + en-US 同步，改的是 `strings.json`，不动布局） |
+| 可读性 | 弱色正文与 idle 色分离 | 17 个 Text 节点 `#5A6B80`→`#7B8BA1`（= 新令牌 `KK_TEXT5`）；`KK_IDLE` 不再用于文本 |
+| 统计列 | 趋势卡峰值 | 新增 `OvPeakCpu/OvPeakMem/OvPeakTemp`（`[352,105/151/197] 100×17`），图例行距 30→46 |
+
+**对硬约束的影响**：本次**只改位置/尺寸/字体/色值与文案**——id、控件类型、绑定属性、行高（36）、间距三档（8/12/16）全部不变；新增节点仍走 locKey XOR 动态文本绑定（KK TXT003）。`tools/text_width.py`（读生成字库 `adv_w` 的真实字宽量测）成为字号/框宽变更的前置手段（lint 的估宽偏乐观，见 v5 文档 §3 的 `NwTotalVal` 实例）。
+
+**验证口径（v5）**：`tools/text_width.py --layout`（真实字宽，0 问题）→ `bash tools/gen_fonts.sh` → `python3 tools/ui_gen.py` → `python3 tools/ui_validate.py`（0 warning）→ `python3 tools/audit_fonts.py`（0/0）→ `./idf.sh build` → 烧录 + 串口 + 拍照（P0 已验收；P2 瓦片见 v5 文档 §6）。

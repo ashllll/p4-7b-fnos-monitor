@@ -1,0 +1,84 @@
+[   0.20] I (2369) sdio_wrapper: SDIO master: Data-Lines: 4-bit Freq(KHz)[40000 KHz]
+[   0.20] I (2369) sdio_wrapper: GPIOs: CLK[18] CMD[19] D0[14] D1[15] D2[16] D3[17] Slave_Reset[54]
+[   0.20] I (2369) H_SDIO_DRV: Starting SDIO process rx task
+[   0.20] I (2372) sdio_wrapper: Queues: Tx[20] Rx[20] SDIO-Rx-Mode[1]
+[   0.41] Name: 
+[   0.41] Type: SDIO
+[   0.41] Speed: 40.00 MHz (limit: 40.00 MHz)
+[   0.41] Size: 0MB
+[   0.41] CSD: ver=1, sector_size=0, capacity=0 read_bl_len=0
+[   0.41] SCR: sd_spec=0, bus_width=0
+[   0.41] TUPLE: DEVICE, size: 3: D9 01 FF 
+[   0.41] TUPLE: MANFID, size: 4
+[   0.41]   MANF: 0092, CARD: 6666
+[   0.41] TUPLE: FUNCID, size: 2: 0C 00 
+[   0.41] TUPLE: FUNCE, size: 4: 00 00 02 32 
+[   0.41] TUPLE: CONFIG, size: 5: 01 01 00 02 07 
+[   0.41] TUPLE: CFTABLE_ENTRY, size: 8
+[   0.41]   INDX: C1, Intface: 1, Default: 1, Conf-Entry-Num: 1
+[   0.41]   IF: 41
+[   0.41]   FS: 30, misc: 0, mem_space: 1, irq: 1, io_space: 0, timing: 0, power: 0
+[   0.41]   IR: 30, mask: 1,   IRQ: FF FF
+[   0.41]   LEN: FFFF
+[   0.41] TUPLE: END
+[   0.41] I (2455) sdio_wrapper: Function 0 Blocksize: 512
+[   0.41] I (2459) sdio_wrapper: Function 1 Blocksize: 512
+[   0.41] I (2463) H_SDIO_DRV: SDIO Host operating in STREAMING MODE
+[   0.41] I (2468) H_SDIO_DRV: generate slave intr
+[   0.41] I (2474) transport: Received INIT event from ESP32 peripheral
+[   0.41] I (2477) transport: EVENT: 12
+[   0.41] I (2480) transport: EVENT: 11
+[   0.41] I (2483) transport: capabilities: 0xd
+[   0.41] I (2486) transport: Features supported are:
+[   0.41] I (2490) transport: 	 * WLAN
+[   0.41] I (2493) transport: 	   - HCI over SDIO
+[   0.41] I (2496) transport: 	   - BLE only
+[   0.41] I (2499) transport: EVENT: 13
+[   0.41] I (2502) transport: ESP board type is : 13 
+[   0.41] 
+[   0.41] I (2506) transport: Base transport is set-up
+[   0.41] 
+[   0.41] I (2510) transport: Slave chip Id[12]
+[   0.41] I (2514) hci_stub_drv: Host BT Support: Disabled
+[   0.41] I (2518) H_SDIO_DRV: Received INIT event
+[   1.43] I (3523) fnos_net: wifi station started; awaiting ip
+[   1.43] I (3523) esp_lvgl:adapter: LVGL adapter initialized successfully
+[   1.43] W (3524) ledc: GPIO 32 is not usable, maybe conflict with others
+[   1.43] I (3528) ESP32_P4_EV: MIPI DSI PHY Powered on
+[   1.43] I (3533) ESP32_P4_EV: Install MIPI DSI LCD control panel
+[   1.43] I (3537) ESP32_P4_EV: Install EK79007 LCD control panel
+[   1.43] I (3542) ek79007: version: 2.0.2
+[   1.43] I (3544) H_API: esp_wifi_remote_connect
+[   1.64] I (3719) ESP32_P4_EV: Display initialized
+[   1.64] I (3720) esp_lvgl:bridge_v9: Initializing hardware resources
+[   1.64] I (3720) esp_lvgl:bridge_v9: Hardware resources initialized successfully
+[   1.64] I (3723) esp_lvgl:bridge: Initializing hardware resources
+[   1.64] I (3728) esp_lvgl:bridge: Hardware resources initialized successfully
+[   1.64] W (3734) esp_lvgl:bridge_v9: on_frame_buf_complete unavailable; buffer-switch release and dummy-draw may not function on MIPI DSI
+[   1.64] I (3746) ESP32_P4_EV: Touch 0x5d found
+[   1.64] I (3749) GT911: I2C address initialization procedure skipped - using default GT9xx setup
+[   1.64] I (3757) GT911: TouchPad_ID:0x39,0x31,0x31
+[   1.64] I (3761) GT911: TouchPad_Config_Version:91
+[   1.64] W (3765) esp_lvgl:touch: LV_USE_GESTURE_RECOGNITION is disabled; only single-point pointer events are available
+[   1.64] I (3774) esp_lvgl:touch: Touch input device registered successfully (IRQ mode: disabled)
+[   1.64] I (3783) esp_lvgl:adapter: LVGL task started successfully
+[   1.64] I (3787) ESP32_P4_EV: Setting LCD backlight: 100%
+[   1.64] I (3792) ESP32_P4_EV: Setting LCD backlight: 45%
+[   1.64] I (3796) main: heap display        internal=230KB largest=188KB dma=192KB psram=27434KB
+[   2.05] I (4111) fnos_ui: ui created (pages=4)
+[   2.05] I (4111) main: heap ui             internal=229KB largest=188KB dma=191KB psram=27314KB
+[   2.05] I (4112) fnos_data: polling http://192.168.0.119:8799/api/v1/status every 1000 ms
+[   2.05] I (4119) main: heap polling        internal=229KB largest=188KB dma=191KB psram=27300KB
+[   2.05] I (4126) ESP32_P4_EV: Setting LCD backlight: 45%
+[   2.05] I (4131) main: backlight 45% (day)
+[   2.05] I (4134) main: boot complete
+[   2.05] I (4137) main_task: Returned from app_main()
+[   4.50] I (6581) esp_wifi_remote: esp_wifi_internal_reg_rxcb: sta: 0x480d6a8e
+[   5.72] I (7821) esp_netif_handlers: sta ip: 192.168.0.214, mask: 255.255.255.0, gw: 192.168.0.1
+[   5.73] I (7821) fnos_net: got ip 192.168.0.214
+[   6.13] I (8279) fnos_data: history backfilled: 300 samples
+[  12.05] I (14134) main: heap periodic       internal=223KB largest=176KB dma=184KB psram=27304KB
+[  22.05] I (24134) main: heap periodic       internal=223KB largest=176KB dma=184KB psram=27304KB
+[  32.04] I (34134) main: heap periodic       internal=223KB largest=176KB dma=184KB psram=27304KB
+[  35.92] I (38051) fnos_data: poll ok=30 fail=0 30ms cpu=1.9% mem=64.5% rx=8.9 tx=109.1 KB/s alerts=0 internal=223KB dma=184KB psram=27304KB
+[  42.04] I (44134) main: heap periodic       internal=222KB largest=176KB dma=184KB psram=27304KB

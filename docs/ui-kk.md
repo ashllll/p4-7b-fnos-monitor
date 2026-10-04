@@ -12,6 +12,9 @@
 > skill 本体是 Unity UGUI 流水线（C# / Prefab / Addressables），本机无 Unity。
 > 本文件记录它在 ESP32-P4 + LVGL 9.5 上的等价移植：**Manifest → 代码生成 → MVVM-C**。
 > 上游 skill 已安装在 `~/.agents/skills/kk-ui-umg/`（schema 见其 `references/schema-v054.md`）。
+>
+> **v5 迭代（2026-10-02）**：在 v4 语法不变的前提下做"密度优先 + 大数字 + fnOS 术语对齐"，
+> 逐项落点、真实字宽量测与实机结论见 `docs/ui-kk-iteration-v5.md`；本文件 §3 已含新增令牌 `KK_TEXT5`。
 
 ## 1. 设计取舍（与 KK 核心合同一致）
 
@@ -49,7 +52,9 @@ components/fnos_monitor/
 └─ fnos_ui.c/h                         # UIManager：页面生命周期 + LVGL tick
 tools/
 ├─ ui_gen.py                           # Manifest → Generated C（对应 Editor/Generators）
-└─ ui_validate.py                      # Manifest 校验 + 写台账（对应 Editor/Validators）
+├─ ui_validate.py                      # Manifest 校验 + 写台账（对应 Editor/Validators）
+├─ text_width.py                       # 真实字宽量测（读生成字库 adv_w；改字号/框宽前必跑）
+└─ audit_fonts.py                      # 豆腐块 / RLE / 僵尸字库 / 字段缓冲预算审计
 ```
 
 ## 3. 视觉令牌（KK 语法 = 结构色 + 文本层级；语义色为数据编码扩展）
@@ -72,6 +77,7 @@ KK_TEXT1     0xFFFFFF   /* 主数值、标题                              */
 KK_TEXT2     0xBFC9D7   /* 标签、正文                                */
 KK_TEXT3     0xD7DEE8   /* 次级正文                                  */
 KK_TEXT4     0xC8D2E0   /* 辅助、meta                                */
+KK_TEXT5     0x7B8BA1   /* 弱化文本：单位/量程/说明（v5 新增，对 KK_PANEL 4.83:1）*/
 
 /* 语义扩展（数据编码：身份色 + 严重度；饱和度与 KK_ACCENT 同级） */
 KK_OK 0x2FBF71   KK_WARN 0xF2B01E   KK_DANGER 0xF0453D
@@ -85,6 +91,9 @@ KK_OK 0x2FBF71   KK_WARN 0xF2B01E   KK_DANGER 0xF0453D
 
 - **数值统一白（KK_TEXT1），颜色只给条/点**（沿用 v3 评审结论，属于数据可读性约束）。
   例外（状态色照旧）：可信度非 LIVE 时主值降为 `#FFFFFF7A`（白 48%，A3），温度数值按分级给 OK/WARN/DANGER。
+- **弱化文本与"数据 idle 色"分离（v5）**：正文性质的弱色一律用 `KK_TEXT5 0x7B8BA1`（对 `KK_PANEL` 4.83:1，
+  WCAG 正文需 4.5:1）；`KK_IDLE 0x5A6B80` 只有 3.07:1，语义收窄为**数据 idle 态**（状态圆点、离线点），
+  不得再用于任何 Text 节点。两者在节点上的区分方式：Text → KK_TEXT5，Dot/圆点 → KK_IDLE。
 - **卡片左强调条＝语义，不是装饰（v4.2）**：有身份对象给身份色（CPU/MEM/TEMP/NET/ZFS）、健康卡给严重度色（动态绑定 `OvHealthAccentColor`）、聚合卡不加条。
 - 形状令牌沿用 v3 实践（KK 样例的形状由 sprite 承载、manifest 无形状令牌）：
   卡片圆角 16 / 胶囊 999 / 细条 4 / hairline 1（KK_GUIDE）/ 内边距 18。

@@ -132,4 +132,8 @@ handler 全局唯一、`OnXxx` 驼峰（校验器强制）。翻页不使用 LVG
    （Text 节点 locKey/默认值 + Controller `SETS/SETS_F` 格式串）、字库 RLE、僵尸字库，
    以及字段缓冲预算（格式串最坏字节数 vs `maxLen`，v4.2.2 的截断就是这么漏出去的）；
    改过中文字形就重跑 `bash tools/gen_fonts.sh`（它会顺带清掉非本次产出的旧字库）；
-6. 换色先查语义：**身份色不得与 OK/WARN/DANGER 同值**（v4.2 的 TEMP 撞 WARN 就是这么来的）。
+   **动过字号或框宽**再跑 `python3 tools/text_width.py --layout`（读生成字库的真实 `adv_w`，0 问题才交稿）——
+   lint 的 0.55em 估算偏乐观：v5 就是它把 `NwTotalVal` 的 158px 框算过关、真实字宽 162.3px 放不下
+   `118.00 MB/s`；两者互补，改版面时都要过；
+6. 换色先查语义：**身份色不得与 OK/WARN/DANGER 同值**（v4.2 的 TEMP 撞 WARN 就是这么来的）；
+   文本弱色用 `KK_TEXT5`（≥4.5:1），`KK_IDLE` 只给数据 idle 圆点（v5）。
