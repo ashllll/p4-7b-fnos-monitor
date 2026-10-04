@@ -360,8 +360,6 @@ typedef struct fnos_dash_view {
     lv_obj_t *sy_tname9;
     kk_bar_t sy_tbar9;
     lv_obj_t *sy_tval9;
-    lv_obj_t *sy_ttick60;
-    lv_obj_t *sy_ttick75;
     lv_obj_t *sy_kv_panel;
     lv_obj_t *sy_kv_title;
     lv_obj_t *sy_kv_row0;

@@ -3998,22 +3998,6 @@ static void __attribute__((noinline)) build_sy_temp_row9(fnos_dash_view_t *v, lv
     build_sy_tval9(v, v->sy_temp_row9);
 }
 
-static void __attribute__((noinline)) build_sy_ttick60(fnos_dash_view_t *v, lv_obj_t *parent)
-{
-    v->sy_ttick60 = kk_panel_create(parent, kk_rect(0, 0, 0, 0, 172, 44, 1, 378));
-    kk_style_bg(v->sy_ttick60, kk_c(0x334052), kk_opa(0xFF));
-    lv_obj_remove_flag(v->sy_ttick60, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_remove_flag(v->sy_ttick60, LV_OBJ_FLAG_SCROLLABLE);
-}
-
-static void __attribute__((noinline)) build_sy_ttick75(fnos_dash_view_t *v, lv_obj_t *parent)
-{
-    v->sy_ttick75 = kk_panel_create(parent, kk_rect(0, 0, 0, 0, 183, 44, 1, 378));
-    kk_style_bg(v->sy_ttick75, kk_c(0x334052), kk_opa(0xFF));
-    lv_obj_remove_flag(v->sy_ttick75, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_remove_flag(v->sy_ttick75, LV_OBJ_FLAG_SCROLLABLE);
-}
-
 static void __attribute__((noinline)) build_sy_temp_panel(fnos_dash_view_t *v, lv_obj_t *parent)
 {
     v->sy_temp_panel = kk_panel_create(parent, kk_rect(0, 0, 0, 0, 332, 0, 320, 432));
@@ -4036,8 +4020,6 @@ static void __attribute__((noinline)) build_sy_temp_panel(fnos_dash_view_t *v, l
     build_sy_temp_row7(v, v->sy_temp_panel);
     build_sy_temp_row8(v, v->sy_temp_panel);
     build_sy_temp_row9(v, v->sy_temp_panel);
-    build_sy_ttick60(v, v->sy_temp_panel);
-    build_sy_ttick75(v, v->sy_temp_panel);
 }
 
 static void __attribute__((noinline)) build_sy_kv_title(fnos_dash_view_t *v, lv_obj_t *parent)

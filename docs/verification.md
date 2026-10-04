@@ -426,3 +426,37 @@ P3 温度栏 7 条全满、`固件内存 221 KB`）。结论与台账见
 
 **新增工具**：`tools/text_width.py`（读生成字库 `adv_w` 的真实字宽核对，`--layout` 遍历全部 Text 节点）。
 它的第一件功劳就否掉了 lint 的乐观估宽：`NwTotalVal` 原 158px 框放不下 `118.00 MB/s`（162.3px）。
+
+## 15. v5.1 修复（2026-10-05：删掉系统页温度卡两条全高竖刻度）
+
+**用户报障**（原文）："系统界面 温度模块有两条竖线bug 需要处理解决 一直在显示着"。
+
+**定位**：P3 温度卡（`SyTempPanel` 320×432）内只有两个 1px `Divider`：`SyTTick60`/`SyTTick75`，
+尺寸 **[1, 378]**、位置 [172,44]/[183,44]。它们是 v4.2 B7"温度栏 60/75 档刻度"的遗留物，
+x 坐标正确（温度条卡内 x=126..202、76px 宽 ⇒ 60% = 171.6、75% = 183），**长度是错的**：
+378px 恰好等于 10 行行高之和，于是 1px 灰线（Divider 默认 `#334052`）从 y=44 一直拉到 y=422，
+纵穿每一行的行底与条轨；右对齐数值文字框卡内 x=148..228（`73.0°C` 实占 ~183..228）紧贴刻度线，
+线又静止不动 ⇒ 实机读作"两条一直在的竖线 / 渲染残迹"，而不是刻度。
+分级信息本来就有两条通道：数值文本（`73.0°C`）与条的分级色（`KK_BAR_WARM/FULL`，实测 71°C 走黄、31°C 走青）。
+
+**修法**：删除这两个节点（脚本 `/tmp/patch_ui_v51.py`：先断言父节点、几何、无子节点、四类源文件无引用，
+再写盘；改动前 `layout.json` 备份 `/tmp/v51_backup/layout.json`）。`layout.json` −1456 B / −50 行；
+生成物 `fnos_dash_view.generated.c` −18 行、`fnos_dash_view.generated.h` −2 行。
+**容量页不动**：`StVolTick60*/85*` 是每行 1×18 的短刻度，被约束在行内、读作刻度（见 §7 B7 注记）。
+
+**静态链**（全绿）：`python3 tools/ui_gen.py` → `python3 tools/ui_validate.py`（nodes 393 → **391**，
+fields 284 / bindings 288 / lint 0 warning 不变）→ `python3 tools/audit_fonts.py`（0 error / 0 warning）
+→ `python3 tools/text_width.py --layout`（111 条文案 0 问题）→ `./idf.sh build`（EXIT=0）。
+台账 `validation.md` 在拍照前先置 Runtime=Pending，实机确认后回写 Runtime=Verified。
+
+**实机复验**：仍按 §14 的取证法——临时把 `CONFIG_FNOS_AUTO_PAGE_SEC` 改 8（原 `sdkconfig` 备份
+`/tmp/sdkconfig.v51_off.bak`，diff 只有这一行）→ 构建 1823488 B → 烧录 → 唤醒手机相机（`adb shell input tap`）
+→ 每 3–4 s 抓帧（`/tmp/v51p_1..26.png`）。P3 命中 `/tmp/v51p_21.png`（03:15；`轮询 118 · 失败 0 · 24 ms · 数据 0s 前`）：
+温度栏 7 条（NIC 71.0°C、NVME2 41.9°C、NVME3 37.9°C、iGPU 31.0°C、CPU 31.0°C、NVME1 29.9°C、NVME0 27.9°C）
+的条与数值干净，放大裁切 `/tmp/v51_temp_zoom.png` **确认无任何纵向穿行线**；对照修复前 `/tmp/v5p_5.png`
+与 `/tmp/p3_temp_zoom.png` 可见同位置灰线。同页其余元素（采集端点卡 12 行含 `固件内存 221 KB`、容器 4/4、
+`无告警`）无回归。改回 `0` 后重新构建 + 烧录：**交付固件 `build/fnos_monitor.bin` 1823440 B（03:17，
+`CONFIG_FNOS_AUTO_PAGE_SEC=0`）**；串口 `logs/v51-final-nocarousel.log`（143 行）从
+`[1.23] main_task: Calling app_main()` 到 `[4.09] fnos_ui: ui created (pages=4)` 完整启动链，
+**`VERIFY MODE` 0 次**、无 `task_wdt`/断言/Guru，稳态 `poll ok=30 fail=0 11ms cpu=1.6% mem=41.2%`、
+`internal=225KB largest=184KB dma=187KB psram=27304KB`。

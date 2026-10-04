@@ -77,7 +77,7 @@
 | A4 | 趋势可比 + 有刻度 | P0：CPU+MEM **合轨**（共 `OvTrendTop` 量程）+ 温度独立轨；P2：DOWN/UP **合轨**（共享 `NwTrendTop`），`NwAxis0..2` 三档刻度与轨道对齐；全部 Trend `gridLines: 2` |
 | A5 | 动态名称字体回退 | 卷名/RAID/磁盘/容器/温度名 → `font.cjkLabel`；`StVolUse`（含"余"）→ `font.cjkMeta`（原来用无汉字的 txt 字体会画豆腐块） |
 | B6 | 容量堆叠段 | 铺满 Hero 条带（x20→964，总宽 929），段高 12→14 |
-| B7 | 阈值刻度统一档位 | 容量刻度 80/90 → **60/85**（`StVolTick60*`/`StVolTick85*`）；温度栏新增 `SyTTick60`/`SyTTick75` 竖刻度；数值分级与 `KK_BAR_WARM/FULL` 同档 |
+| B7 | 阈值刻度统一档位 | 容量刻度 80/90 → **60/85**（`StVolTick60*`/`StVolTick85*`）；温度栏新增 `SyTTick60`/`SyTTick75` 竖刻度；数值分级与 `KK_BAR_WARM/FULL` 同档（**v5.1 已删除这两条**：尺寸 1×378，纵穿 10 行并从数值文字左侧擦过，实机读作"一直在的两条竖线"，见 `ui-kk-iteration-v5.md` §6.1；容量页的 `StVolTick60*/85*` 是行内 1×18 短刻度，保留） |
 | B8 | 顶栏/底栏去重 | 端点只在顶栏（"采集 host:port"）；底栏专管采集质量 + **数据年龄**（"轮询 n · 失败 n · n ms · 数据 Ns 前"） |
 | B9 | P0 主次 | 健康卡 300→**304**（唯一主对象），遥测卡去装饰条 |
 | C10 | 版面节奏三档 | 卡缝：P0 行 8、P2 卡组 16→12、P2 瓦片行居中（左右各 1px）；`KK_GAP_ROW/GAP/GAP_SEC` = 8/12/16 |

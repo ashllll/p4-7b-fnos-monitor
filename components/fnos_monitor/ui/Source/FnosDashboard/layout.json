@@ -9603,56 +9603,6 @@
                         }
                       }
                     ]
-                  },
-                  {
-                    "type": "Divider",
-                    "id": "SyTTick60",
-                    "rect": {
-                      "anchorMin": [
-                        0,
-                        0
-                      ],
-                      "anchorMax": [
-                        0,
-                        0
-                      ],
-                      "position": [
-                        172,
-                        44
-                      ],
-                      "size": [
-                        1,
-                        378
-                      ]
-                    },
-                    "divider": {
-                      "color": "#334052FF"
-                    }
-                  },
-                  {
-                    "type": "Divider",
-                    "id": "SyTTick75",
-                    "rect": {
-                      "anchorMin": [
-                        0,
-                        0
-                      ],
-                      "anchorMax": [
-                        0,
-                        0
-                      ],
-                      "position": [
-                        183,
-                        44
-                      ],
-                      "size": [
-                        1,
-                        378
-                      ]
-                    },
-                    "divider": {
-                      "color": "#334052FF"
-                    }
                   }
                 ]
               },

@@ -11,7 +11,7 @@
 | Verify | Pass |
 | Runtime | Verified |
 
-_pipeline: ui_gen/ui_validate（KK_UI_UMG LVGL 移植）· 2026-10-02 19:32_
+_pipeline: ui_gen/ui_validate（KK_UI_UMG LVGL 移植）· 2026-10-05 03:19_
 
 <!-- ui-pipeline:validation-ledger:end -->
 
@@ -64,3 +64,25 @@ _pipeline: ui_gen/ui_validate（KK_UI_UMG LVGL 移植）· 2026-10-02 19:32_
 - 工具链：`tools/text_width.py --layout`（真实字宽，抓出 `NwTotalVal` 158px 框放不下 `118.00 MB/s` 162.3px）
   → `gen_fonts.sh`（cjk_13 补 硬/固/件）→ `ui_gen.py` → `ui_validate.py`（nodes 393 / fields 284 / bindings 288，
   lint 0 warning）→ `audit_fonts.py`（0/0）→ `idf.sh build`。
+
+## 2026-10-05 v5.1 修复（用户报障：系统页温度卡"两条竖线一直在"）
+
+- 报障原文："系统界面 温度模块有两条竖线bug 需要处理解决 一直在显示着"。
+- 根因：P3 温度卡的 `SyTTick60`/`SyTTick75` 两个 `Divider` 是 **1×378**（x=172/183 本身没错，
+  正是 76px 宽温度条的 60%/75% 档位），但 378px = 10 行行高之和 → 1px 灰线（Divider 默认 `#334052`）
+  纵穿所有行底与条轨，且右对齐数值文字框卡内 x=148..228（`73.0°C` 实占 ~183..228）正好贴它，
+  静止不动 ⇒ 读作渲染残迹而非刻度。分级语义本就由**数值文本 + 条的分级色**（`KK_BAR_WARM/FULL`）承担。
+- 修法：删掉这两个节点（`/tmp/patch_ui_v51.py`：断言父节点 `SyTempPanel`、几何 [1,378]@[172,44]/[183,44]、
+  无子节点、四类源文件无引用，再写盘；改动前 layout.json 备份 `/tmp/v51_backup/`）。`layout.json` −1456 B；
+  生成物 `fnos_dash_view.generated.c` −18 行、`.h` −2 行；`ui_validate` nodes 393 → **391**，
+  fields/bindings/lint 不变（0 warning）。容量页行内 1×18 刻度（`StVolTick60*/85*`）**保留**：被约束在行内，读作刻度。
+- 实机复验（临时轮播 8 s 构建，拍完改回 0 重建交付）：P3 照片 `/tmp/v51p_21.png`（03:15，`轮询 118 · 失败 0 · 24 ms`）
+  + 放大裁切 `/tmp/v51_temp_zoom.png` —— 温度栏 7 条（NIC 71.0°C、NVME2 41.9°C、NVME3 37.9°C、iGPU/CPU 31.0°C、
+  NVME1 29.9°C、NVME0 27.9°C）条与数值干净，**无任何纵向穿行线**；对照修复前 `/tmp/v5p_5.png` 与
+  `/tmp/p3_temp_zoom.png` 可见同位置灰线。其余元素（采集端点卡 12 行、容器 4/4、无告警）无回归。
+- 交付态：改回 `CONFIG_FNOS_AUTO_PAGE_SEC=0` 重建 + 烧录，**交付固件 1823440 B（03:17）**；
+  `logs/v51-final-nocarousel.log`（143 行）`[4.09] fnos_ui: ui created (pages=4)`、`VERIFY MODE` 0 次、
+  无 watchdog/断言，`poll ok=30 fail=0 11ms cpu=1.6% mem=41.2%`、internal 225KB / psram 27304KB。
+- 交付固件 P0 抽检 `/tmp/v51final_2.png`（03:19，停在总览页）：`系统状态 正常`、`运行时长 10d 03h`、
+  三张 KPI 卡 `71 / 42 / 2`、存储六行 `已用 … · 可用 …`、趋势三行峰值 `峰 6% / 峰 43% / 峰 71°`、
+  底栏 `轮询 53 · 失败 0 · 14 ms · 数据 0s 前` —— 无回归。
