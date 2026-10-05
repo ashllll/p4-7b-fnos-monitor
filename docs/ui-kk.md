@@ -54,7 +54,9 @@ tools/
 ├─ ui_gen.py                           # Manifest → Generated C（对应 Editor/Generators）
 ├─ ui_validate.py                      # Manifest 校验 + 写台账（对应 Editor/Validators）
 ├─ text_width.py                       # 真实字宽量测（读生成字库 adv_w；改字号/框宽前必跑）
-└─ audit_fonts.py                      # 豆腐块 / RLE / 僵尸字库 / 字段缓冲预算审计
+├─ audit_fonts.py                      # 豆腐块 / RLE / 僵尸字库 / 字段缓冲预算审计
+└─ preview/                            # 主机预览：同一份 LVGL+字库+kk_widgets 在 macOS 渲染 4 页×3 状态 PNG
+                                       # （run.sh；不烧录先看图，见 tools/preview/README.md）
 ```
 
 ## 3. 视觉令牌（KK 语法 = 结构色 + 文本层级；语义色为数据编码扩展）

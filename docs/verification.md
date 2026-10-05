@@ -460,3 +460,33 @@ fields 284 / bindings 288 / lint 0 warning 不变）→ `python3 tools/audit_fon
 `[1.23] main_task: Calling app_main()` 到 `[4.09] fnos_ui: ui created (pages=4)` 完整启动链，
 **`VERIFY MODE` 0 次**、无 `task_wdt`/断言/Guru，稳态 `poll ok=30 fail=0 11ms cpu=1.6% mem=41.2%`、
 `internal=225KB largest=184KB dma=187KB psram=27304KB`。
+
+## 16. 主机预览（2026-10-05 下午：把"改 JSON→烧录→拍照"换成 8 秒离线渲染）
+
+**动机**：v4.2/v5 每一轮视觉验收都是"改 manifest → `ui_gen.py` → `./idf.sh build` → 烧录 → 唤醒手机相机 → 抓帧"，
+一轮十几分钟，且受拍照角度、反光、相机画幅漂移影响（§14/§15 的证据都要先判"板子在不在框里"）。
+`tools/preview/` 把**设备端真实的那套 UI 代码**（同一份 LVGL 9.5 + 同一份生成字库 + `kk_widgets.c`/`kk_rect.c` +
+View/Store/Binder/Controller）编译到 macOS，只替身板级接口（`stub/` 里的 `esp_timer.h`/`esp_heap_caps.h`/`esp_log.h`/
+`sdkconfig.h`/`fnos_config.h`），fixture 直接填 `fnos_status_t` ⇒ 渲染出的就是会烧进板子的像素，
+`bash tools/preview/run.sh` 一次出 4 页 × 3 状态（live/offline/warming）共 12 张 1024×600 PNG。
+
+**入库前的自洽性验证**：`git worktree add --detach /tmp/prev-clean HEAD`（= `a45c394`）+ 软链 `managed_components` +
+拷 `build/config/sdkconfig.h` ⇒ `run.sh` 构建成功并产出 **12/12 PNG**（`preview: 4 page(s)/state` + `ppm2png: 12 file(s)`），
+证明入库状态不依赖任何本地残留；增量重跑 **8 s wall**（渲染本身 0.45 s CPU），`tools/preview/build` 49 MB（`build/` 已在 `.gitignore`）。
+
+**离线交叉验证 §15 的修复**：`01-live-p3.png` 里温度卡 10 行**无任何纵向穿行线**，而修复前同一位置可复现灰线 ⇒
+报障修复在离线渲染上也可见；`01-live-p0.png`（系统状态/告警卡、三张 KPI 卡、存储 `已用 … · 可用 …` 六行、
+趋势卡、导航与底栏）与 §14/§15 的实机照片逐项一致。
+
+**已知边界**（详见 `tools/preview/README.md`）：① 只认生成物，改 manifest 必须先 `ui_gen.py`；② 字库是真子集，
+改文案要重跑 `gen_fonts.sh`；③ fixture 里手写的告警文案是假造中文，可能落在子集外显示方块——真实采集器
+`nas/fnos-agent.py:420-444` 的告警**全是 ASCII 英文**（`"%s %s %.1f%%"`、`"RAID %s degraded (%s)"`、
+`"%s free %.1f%% left"`、`"%s used %.0f%%"`、`"CPU temp %.0fC"`、`"MEM used %.0f%%"`、`"LOAD high %.2f"`、
+`"container %s down"`），不要把 fixture 的方块当固件豆腐块 bug；④ 主机三处 Kconfig 必须偏离设备
+（`LV_USE_OS 0`、libc malloc、`LV_DRAW_SW_DRAW_UNIT_CNT 1`，语义等价替身），且断言改成 stderr + `abort()`
+（设备端默认 `LV_ASSERT_HANDLER` 是 `while(1);`，断言失败表现为无声 100% CPU 死循环——当初 `./build/preview`
+"卡死"就是它）；⑤ 不能替代实机：触摸/手势、刷新率、PSRAM/DMA 采样路径、真实 Wi-Fi 时序仍要烧录验证。
+
+**流程落点**：`tools/preview/`（含 `README.md`）入库；`docs/ui-kk-authoring.md` §H 增第 7 条（改完版面先看预览再烧录）；
+`docs/ui-kk.md` §2 工具树补 `preview/`；`.gitignore` 补 `tools/preview/out/` 与 `*.ppm`。
+完整验收链变为：`ui_gen.py` → `ui_validate.py` → `audit_fonts.py` → `text_width.py --layout` → **`preview/run.sh` 看图** → 烧录 + 实机取证。

@@ -6,6 +6,9 @@ nas/deploy.local.sh
 
 # 构建产物
 build/
+tools/preview/out/
+tools/preview/lv_kconfig_host.h
+*.ppm
 sdkconfig
 sdkconfig.old
 managed_components/

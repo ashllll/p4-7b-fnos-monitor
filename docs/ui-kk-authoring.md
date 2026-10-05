@@ -137,3 +137,8 @@ handler 全局唯一、`OnXxx` 驼峰（校验器强制）。翻页不使用 LVG
    `118.00 MB/s`；两者互补，改版面时都要过；
 6. 换色先查语义：**身份色不得与 OK/WARN/DANGER 同值**（v4.2 的 TEMP 撞 WARN 就是这么来的）；
    文本弱色用 `KK_TEXT5`（≥4.5:1），`KK_IDLE` 只给数据 idle 圆点（v5）。
+7. **改完版面先看主机预览再烧录**：`python3 tools/ui_gen.py` 之后跑 `bash tools/preview/run.sh`，
+   看 `out/01-live-p0..p3.png`（另含 `02-offline-*` / `03-warming-*`，共 12 张）——同一份 LVGL + 字库 +
+   `kk_widgets`/Controller 在 macOS 上渲染，像素级可信，增量一轮 8 s，替代"构建→烧录→拍照"的十几分钟。
+   静态工具管"放不放得下/有没有豆腐块"，预览管"好不好看、对不对齐"；触摸手势、刷新率、PSRAM/DMA 采样路径
+   与真实 Wi-Fi 时序仍必须烧录实机验证（前置与坑见 `tools/preview/README.md`）。
