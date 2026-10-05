@@ -490,3 +490,78 @@ View/Store/Binder/Controller）编译到 macOS，只替身板级接口（`stub/`
 **流程落点**：`tools/preview/`（含 `README.md`）入库；`docs/ui-kk-authoring.md` §H 增第 7 条（改完版面先看预览再烧录）；
 `docs/ui-kk.md` §2 工具树补 `preview/`；`.gitignore` 补 `tools/preview/out/` 与 `*.ppm`。
 完整验收链变为：`ui_gen.py` → `ui_validate.py` → `audit_fonts.py` → `text_width.py --layout` → **`preview/run.sh` 看图** → 烧录 + 实机取证。
+
+---
+
+## 17. 删除 ui/ 生成框架，界面改为手写 C + kk_ui（2026-10-05）
+
+**用户指令（原文）**："只需要保留 kkui 其余的 ui 框架全部删除"；追问后的选择：**现在就物理删除**，
+并且**要我按 kk_ui 写骨架**（保证固件能编译、屏幕有画面、preview 能跑）。
+
+### 17.1 删除范围与备份
+
+| 删除对象 | 规模 |
+| --- | --- |
+| `components/fnos_monitor/ui/`（Source JSON + Generated + Controller/ViewAnim） | 23 个跟踪文件 / 30,635 行 |
+| `tools/ui_gen.py` `tools/ui_validate.py` `tools/text_width.py` `tools/audit_fonts.py` | 4 个脚本 |
+
+删除前整份备份到 `/tmp/v6_backup/`：`wip_full.patch`（`git diff --binary HEAD`，含另一会话全部未提交改动）、
+`ui_snapshot/`（23 文件）、`fnos_monitor_snapshot/`（2.4 MB 组件快照）、`README.txt`（还原命令）。
+还原：`cp -a /tmp/v6_backup/ui_snapshot/<相对路径> …` 或 `git apply /tmp/v6_backup/wip_full.patch`。
+**保留**：`components/fnos_monitor/kk_ui/`（`kk_theme.h` / `kk_rect.c/h` / `kk_widgets.c/h`）、`fonts/`、
+`tools/gen_fonts.sh`（改文案来源）、`tools/preview/`（改编译清单）、`fnos_data.c` / `fnos_net.c`。
+
+### 17.2 骨架（`components/fnos_monitor/fnos_ui.c`，手写）
+
+四页 = 左 rail（`KK_RAIL_W`）+ 顶栏（`KK_HEAD_H`：主机 / `采集 <ip>:<port> · 本机 <ip>` / 信号条 / 状态胶囊三态
+"等待数据 / 在线 / 离线"）+ 内容区；P0 总览（四张 KPI 卡 + 存储六行分级条 + CPU/MEM 双线趋势）、
+P1 存储（卷 + 阵列状态 + ZFS + 硬盘活动）、P2 网络（上/下行/合计/延迟 + 流量双线 + 容器）、
+P3 系统（温度十行分级条 + 采集端点七行 + 告警）。刷新 `ui_tick` 500 ms：`fnos_data_get()` 快照 +
+`fnos_data_hist_read()` 灌 `kk_series_t` → `refresh()` 刷全部页；`fnos_ui_set_page()` 仍是原子换页。
+`fnos_ui.h` 增 `FNOS_UI_PAGE_COUNT 4`（`main/main.cpp` 的三处调用无需改动）。
+
+### 17.3 见证与踩坑
+
+- **字库来源改写**：`tools/gen_fonts.sh` 的中文字形清单从"strings.json + bindings.json + Controller + ViewAnim +
+  生成头"改为**只扫界面源码的字符串字面量**（`fnos_ui.c/h`、`kk_ui/kk_widgets.c`、`main/main.cpp`），重建 10 个字库（1.2 MB）。
+- **字体规则（新）**：`ui_font_num_*` / `ui_font_txt_*` **只含 ASCII**，含中文的标签必须用 `ui_font_cjk_*`。
+  据此修 8 处（顶栏端点行、KPI 副行、四条趋势图例值、P2 大卡副行），阵列行的"正常/降级"画在百分比位
+  ⇒ 运行时对该 label 覆盖 `ui_font_cjk_13`。`—`(U+2014) 不在任何子集里（显示方块），6 处占位符改回 ASCII `-`。
+- **行宽两级**：普通行 = 名字 130 + 详情 + 百分比 70；长文案行（硬盘"读 x · 写 y"、容器状态）用
+  `row_full_detail()` 铺满并隐藏百分比位（否则被 `LV_LABEL_LONG_DOT` 截成 `写 1...`）。
+  踩坑：该助手最初写 `lv_obj_set_pos(detail, x, lv_obj_get_y(detail))`——`lv_obj_get_y()` 是**绝对坐标**，
+  导致详情行整体下移错位；改成只设 x 与宽度。
+- **真 bug：实机内容区一片黑（预览看不见）**。首版 `fnos_ui_create()` 把 `s_page = -1; fnos_ui_set_page(0);`
+  放在 `s_created = true;` **之前**，而 `fnos_ui_set_page()` 见到 `!s_created` 直接 return ⇒ 四页全部停在
+  `LV_OBJ_FLAG_HIDDEN`，实机只有左导航与顶栏，内容区全黑；**预览掩盖了它**，因为 `run_state()` 会逐页
+  `fnos_ui_set_page(p)` 再截图。修法：先置 `s_created = true` 再激活首页（并给预览加了"create 后、
+  任何 set_page 之前"的初始帧快照 `01-live-init.png`，专门盯这类只在设备上暴露的问题）。
+- **离线证据**：`bash tools/preview/run.sh /tmp/prev_skel5` → **12/12 PNG**（4 页 × 活/离线/预热），
+  逐页判读无豆腐块、无截断、无重叠；离线态状态胶囊为琥珀"离线"，活态为绿"在线"。
+- **构建**：`./idf.sh build` EXIT=0，`build/fnos_monitor.bin` **1556384 B**（较 v5.1 的 1823440 B 减少 ~267 KB，
+  即被删框架的静态体积）。
+- **提交内的字库兼容窗口**：本次提交把字库阶梯换成了 v6 的一套（`cjk_{13,15,20,30}` / `num_{16,22,30,44}` /
+  `txt_{12,14}`），但**已提交的 v5 版 `kk_ui/kk_widgets.c` 仍引用 `ui_font_txt_13`**（v6 版才改引用 `txt_12`，
+  那份改动还没提交）。为了让 HEAD 单独可构建、又不动别人的在写文件，`tools/gen_fonts.sh` 的 `EXPECT` 与
+  `components/fnos_monitor/CMakeLists.txt` 里**同时保留 `ui_font_txt_13`**（只有 ASCII 字形），并在两处写明
+  "v6 落地后删"。**自洽性证据**：`git worktree add --detach /tmp/skel-clean3 HEAD` + 软链 `managed_components`
+  + 拷 `build/config/sdkconfig.h` + `bash tools/preview/run.sh` ⇒ **13/13 PNG**（不依赖工作树里任何未提交文件）。
+- **兼容垫片**：同一次提交里 `fnos_ui.c` 顶部对 kk_ui v6 的令牌（`KK_S1`/`KK_T1`…/`KK_RAIL_W`/`KK_HEAD_H`）
+  加了 `#ifndef` 兜底，值同 v6；kk_ui 侧定义齐全时自动失效。踩坑：垫片注释里写 `KK_T*`，其中的 `*/`
+  提前结束块注释，编译直接炸——注释里不要出现 `*/`。
+- **文档**：`docs/ui-kk.md` 增 §8（手写页面约定）并改写"结构语言/工具树/验收合同"；
+  `docs/ui-kk-authoring.md`、`docs/ui-kk-composition.md`、`docs/ui-kk-iteration-v5.md` 标为历史文档（只留设计史与判据）。
+
+### 17.4 交付态与实机证据
+
+- 固件：`build/fnos_monitor.bin` **1556384 B**（14:20 构建，`CONFIG_FNOS_AUTO_PAGE_SEC=0` 未改动），已烧录运行。
+- 串口 `logs/skeleton-boot.log`（143 行，复位后捕获）：`[3.92] fnos_ui: ui created (pages=4)` →
+  `[7.70] fnos_net: got ip 192.168.0.214` → `[8.11] fnos_data: history backfilled: 300 samples`，
+  无 watchdog / 断言 / `VERIFY MODE`，堆稳态 `internal=230KB dma=192KB psram=27602KB`。
+- 实机（`adb` 唤醒相机后间隔 10 s 两帧，md5 不同 ⇒ 界面活着）：P0 全量显示——顶栏 `采集 192.168.0.119:8799 · 本机 192.168.0.214`
+  + 绿色"在线"胶囊、四张 KPI（`CPU 2` / `内存 51` / `最高温度 33` / `运行时长 10d 15h`，
+  副行 `负载 0.21/0.57/0.75`、`15.9/31.0 GB · 余 15.2`、`CPU 33°C · 12 核`、`进程 2012 · runq 1`）、
+  存储六行 `已用 … · 可用 …` + 分级条（36% / 60% / 66% / 6% / 0% / 10%，60% 与 66% 转橙）、
+  趋势 CPU 蓝线 + MEM 青线与图例 `23% · 峰 69%` / `51% · 峰 51%`。
+- 说明：本次工作树里 `components/fnos_monitor/kk_ui/*` 仍是**另一会话（UniFi v6 重构）未提交的改动**，
+  本提交不含这些文件；固件是用工作树现状构建的。

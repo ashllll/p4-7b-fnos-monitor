@@ -7,21 +7,17 @@ set(PROJ_SRCS
     "fnos_ui.c"
     "kk_ui/kk_rect.c"
     "kk_ui/kk_widgets.c"
-    "ui/FnosDashboardController.c"
-    "ui/FnosDashboardViewAnim.c"
-    "ui/Generated/FnosDashboard/fnos_dash_view.generated.c"
-    "ui/Generated/FnosDashboard/fnos_dash_store.generated.c"
-    "ui/Generated/FnosDashboard/fnos_dash_binder.generated.c"
     "fonts/ui_font_cjk_13.c"
-    "fonts/ui_font_cjk_17.c"
-    "fonts/ui_font_cjk_24.c"
-    "fonts/ui_font_cjk_40.c"
-    "fonts/ui_font_num_17.c"
-    "fonts/ui_font_num_28.c"
+    "fonts/ui_font_cjk_15.c"
+    "fonts/ui_font_cjk_20.c"
+    "fonts/ui_font_cjk_30.c"
+    "fonts/ui_font_num_16.c"
+    "fonts/ui_font_num_22.c"
+    "fonts/ui_font_num_30.c"
     "fonts/ui_font_num_44.c"
-    "fonts/ui_font_num_56.c"
-    "fonts/ui_font_txt_13.c"
-    "fonts/ui_font_txt_15.c"
+    "fonts/ui_font_txt_12.c"
+    "fonts/ui_font_txt_13.c"   # 兼容窗口：v5 版 kk_widgets.c 引用，v6 落地后删
+    "fonts/ui_font_txt_14.c"
 )
 
 idf_component_register(
@@ -29,8 +25,6 @@ idf_component_register(
     INCLUDE_DIRS
         ${CMAKE_CURRENT_LIST_DIR}
         ${CMAKE_CURRENT_LIST_DIR}/kk_ui
-        ${CMAKE_CURRENT_LIST_DIR}/ui
-        ${CMAKE_CURRENT_LIST_DIR}/ui/Generated/FnosDashboard
     REQUIRES
         esp_wifi
         esp_netif

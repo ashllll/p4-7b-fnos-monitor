@@ -1,5 +1,10 @@
 # KK Manifest 编写合同（LVGL 移植版）
 
+> ⚠ **历史文档（2026-10-05 归档）**：JSON Manifest（`ui/Source/FnosDashboard/*.json`）与生成管线
+> （`tools/{ui_gen,ui_validate,text_width,audit_fonts}.py`）已按用户要求整体删除，界面改为手写 C
+> （`components/fnos_monitor/fnos_ui.c` + `kk_ui/`）。本文只作设计史与判据来源保留，
+> **其中的流程/命令不再可执行**；当前写法见 `docs/ui-kk.md` §8，删除记录见 `docs/verification.md` §17。
+
 给编写 `ui/Source/FnosDashboard/*.json` 的人/代理用。上位合同：`docs/ui-kk.md`（设计语言）。
 先读 `tools/ui_gen.py`（schema 与校验规则的最终定义）与 `docs/ui-audit-v3.md`（v3 现状：几何、文案、格式串的唯一事实来源）。
 

@@ -1,4 +1,10 @@
-# 界面 v4：KK_UI_UMG 设计语言全量移植
+# 界面 v4：KK_UI_UMG 设计语言全量移植（视觉语言有效 / 结构管线已删）
+
+> ⚠ **状态（2026-10-05）**：本文的**结构语言（JSON Manifest + 生成管线）已删除**——用户要求
+> "只需要保留 kkui 其余的 ui 框架全部删除"，`ui/`（23 文件）与 `tools/{ui_gen,ui_validate,text_width,audit_fonts}.py`
+> 已移除，界面改为**手写 C**（`components/fnos_monitor/fnos_ui.c`）+ kk_ui 构件。
+> 本文的**视觉语言（§3 令牌、§4 构件语义、§5 构图语法）继续有效**，是当前界面的设计合同；
+> 手写页面的写法见文末 **§8**，删除记录见 `docs/verification.md` §17。
 
 用户指定**完全使用 [KK_UI_UMG](https://github.com/KyleKK04/KK_UI_UMG) 的设计语言**重构四页仪表盘。
 该 skill 的设计语言有两层，本次两层都移植：
@@ -34,27 +40,14 @@
 
 ```text
 components/fnos_monitor/
-├─ ui/
-│  ├─ Source/FnosDashboard/            # 人和 AI 维护的唯一源头
-│  │  ├─ package.json  layout.json  bindings.json  codegen.json
-│  │  ├─ strings.json  assets.json  README.md  validation.md
-│  ├─ Generated/FnosDashboard/         # 生成物，可删除后重建
-│  │  ├─ fnos_dash_view.generated.c/h      # View.Generated：对象树 + 事件转发
-│  │  ├─ fnos_dash_store.generated.c/h     # ViewModelStore：字段 + 脏位 + Update
-│  │  ├─ fnos_dash_binder.generated.c      # Binder：Store → LVGL（唯一刷屏点）
-│  │  └─ fnos_dash_strings.generated.h     # 静态文案
-│  ├─ FnosDashboardController.c/.h     # 手写业务 partial（唯一写 Store 的地方）
-│  └─ FnosDashboardViewAnim.c          # 手写视觉动效 partial（只动视觉属性）
+├─ fnos_ui.c/h                         # 四页骨架（手写：数据 → 构件，§8）
 ├─ kk_ui/                              # LVGL 版 KK Runtime 适配层
 │  ├─ kk_theme.h                       # 视觉令牌（§3）
 │  ├─ kk_rect.c/h                      # anchor/position/size → LVGL 坐标
 │  └─ kk_widgets.c/h                   # Bar/Arc/Trend/Chip/Icon/Signal/Divider 构件
 └─ fnos_ui.c/h                         # UIManager：页面生命周期 + LVGL tick
 tools/
-├─ ui_gen.py                           # Manifest → Generated C（对应 Editor/Generators）
-├─ ui_validate.py                      # Manifest 校验 + 写台账（对应 Editor/Validators）
-├─ text_width.py                       # 真实字宽量测（读生成字库 adv_w；改字号/框宽前必跑）
-├─ audit_fonts.py                      # 豆腐块 / RLE / 僵尸字库 / 字段缓冲预算审计
+├─ gen_fonts.sh                        # 从界面源码的字符串字面量生成 10 个字库子集（改文案后必跑）
 └─ preview/                            # 主机预览：同一份 LVGL+字库+kk_widgets 在 macOS 渲染 4 页×3 状态 PNG
                                        # （run.sh；不烧录先看图，见 tools/preview/README.md）
 ```
@@ -160,10 +153,28 @@ python3 tools/ui_gen.py             # 生成 ui/Generated/FnosDashboard/*
 
 | 证据层级 | 本项目做法 |
 | --- | --- |
-| 结构 | 本文件 + Source package（manifest 即版面/绑定/文案合同） |
-| 构建 | `python3 tools/ui_validate.py && python3 tools/ui_gen.py && ./idf.sh build` 全绿 |
+| 结构 | 本文件（版面/文案合同已转为 §8 的手写 C 约定） |
+| 构建 | `bash tools/gen_fonts.sh`（改过文案时）+ `./idf.sh build` 全绿 |
 | 烧录 | `idf.py flash` + hash 校验（需用户授权） |
 | 运行 | 串口：首帧、首个样本、轮询统计、无断言 |
 | 实机视觉 | 手机固定机位逐页拍照 + 判读：裁切、字糊、对比度、切页残留 |
 
 不得用"构建成功/烧录成功/串口正常"替代实机视觉验收。
+
+## 8. 手写页面（2026-10-05 起）
+
+界面不再有 JSON 源头，**`components/fnos_monitor/fnos_ui.c` 就是版面与文案的唯一事实来源**：
+
+- 三块骨架：左导航 rail（`KK_RAIL_W`）+ 顶栏（`KK_HEAD_H`，主机 / 端点 / 信号条 / 状态胶囊）+ 内容区；
+  四页各是一个 `mk_page()` 出来的透明容器，`fnos_ui_set_page()` 原子换页（隐藏旧页 + 显示目标页 + 整屏 invalidate）。
+- 造行/造卡只用本地助手：`mk_card()`（KK_S1 底 + `KK_RADIUS` + cjk_15 标题）、`mk_label()/mk_right()`、
+  `mk_row()`（名字 + 详情 + 百分比 + 可选分级条）、`row_full_detail()`（长文案行铺满整行、隐藏百分比位）、
+  `mk_kpi()/mk_big()`。构件来自 `kk_ui/`（`kk_bar_*` / `kk_trend_*` / `kk_chip_*` / `kk_signal_*` / `kk_swipe_attach`）。
+- 刷新：`ui_tick`（500 ms）取 `fnos_data_get()` 快照 + `fnos_data_hist_read()` 灌 `kk_series_t` → `refresh()` 一次刷全部页
+  （隐藏页的 label 更新几乎不花钱，换来"切页即正确"）。趋势图一条数据一个 `kk_trend_t`，两条线就叠两个同 rect 的 trend。
+- **字库规则（踩过坑）**：`ui_font_num_*` / `ui_font_txt_*` 只有 ASCII，任何可能出现中文的标签必须用 `ui_font_cjk_*`；
+  文案里不要用 `—`、`≈` 这类子集外字符（会显示方块），`°`(0xB0) 与 `·`(0xB7) 已在全部字库里。
+- **create 顺序**：`fnos_ui_create()` 必须先置内部 `s_created = true` 再调 `fnos_ui_set_page(0)`——换页函数
+  在 `!s_created` 时直接返回，写反了会出现"实机内容区全黑、预览正常"（2026-10-05 实例，`docs/verification.md` §17.3）。
+- 改文案/加字后：`bash tools/gen_fonts.sh`（重扫字符串字面量）→ `bash tools/preview/run.sh` 看图 → 再烧录；
+  预览的 `01-live-init.png` 是"create 后未调 set_page"的初始帧，专抓上面那类问题。

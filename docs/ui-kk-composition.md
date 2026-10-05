@@ -1,5 +1,10 @@
 # v4.1 版面重排合同（KK_UI_UMG 构图语言）
 
+> ⚠ **历史文档（2026-10-05 归档）**：JSON Manifest（`ui/Source/FnosDashboard/*.json`）与生成管线
+> （`tools/{ui_gen,ui_validate,text_width,audit_fonts}.py`）已按用户要求整体删除，界面改为手写 C
+> （`components/fnos_monitor/fnos_ui.c` + `kk_ui/`）。本文只作设计史与判据来源保留，
+> **其中的流程/命令不再可执行**；当前写法见 `docs/ui-kk.md` §8，删除记录见 `docs/verification.md` §17。
+
 用户口径：**连版面一起按 KK 样例的风格重排**——不只是换色，构图、密度、卡片形态都要一眼看出是 KK 的设计语言。
 信息架构（四页各回答什么问题）与数据合同（`docs/ui-redesign.md` v2 §2-4）**不变**；已验证的可读性约束（数值统一白、语义色只给条/点/描边、no-data 显示 `--`）**不变**。
 

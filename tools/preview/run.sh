@@ -3,8 +3,8 @@
 #
 #   tools/preview/run.sh [输出目录]     默认 out/
 #
-# 前置：先跑过一次 ./idf.sh build（要有 build/config/sdkconfig.h）。改完 layout.json 记得先
-# 跑 tools/ui_gen.py 重新生成 C，预览读的是生成物，不是 JSON。
+# 前置：先跑过一次 ./idf.sh build（要有 build/config/sdkconfig.h）。改完 fnos_ui.c 的文案
+# 记得先跑 tools/gen_fonts.sh 重建字库子集，否则新字在预览里是方块。
 set -euo pipefail
 cd "$(dirname "$0")"
 REPO=$(cd ../.. && pwd)

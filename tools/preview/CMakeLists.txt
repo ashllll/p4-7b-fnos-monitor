@@ -9,7 +9,6 @@ endif()
 
 get_filename_component(REPO "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
 set(COMP "${REPO}/components/fnos_monitor")
-set(GEN  "${COMP}/ui/Generated/FnosDashboard")
 
 # LVGL 桌面版 CMake 用的名字是 CONFIG_LV_BUILD_*（不是 LV_BUILD_*）
 set(CONFIG_LV_BUILD_DEMOS    OFF CACHE BOOL "" FORCE)
@@ -33,13 +32,8 @@ file(GLOB FONT_SRC "${COMP}/fonts/*.c")
 add_executable(preview
   preview.c
   "${COMP}/fnos_ui.c"
-  "${COMP}/ui/FnosDashboardController.c"
-  "${COMP}/ui/FnosDashboardViewAnim.c"
   "${COMP}/kk_ui/kk_widgets.c"
   "${COMP}/kk_ui/kk_rect.c"
-  "${GEN}/fnos_dash_view.generated.c"
-  "${GEN}/fnos_dash_store.generated.c"
-  "${GEN}/fnos_dash_binder.generated.c"
   ${FONT_SRC}
 )
 
@@ -49,8 +43,6 @@ target_include_directories(preview PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}"
   "${COMP}"
   "${COMP}/kk_ui"
-  "${COMP}/ui"
-  "${GEN}"
 )
 
 # 设备端真实 Kconfig（CONFIG_LV_*）已由上面的 add_compile_options 全局注入

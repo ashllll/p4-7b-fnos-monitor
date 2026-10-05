@@ -1,16 +1,15 @@
 # tools/preview —— 主机预览（不烧录的像素级验收）
 
 把**设备端真实的那套 UI 代码**编译到 macOS 上渲染成 PNG：同一份 LVGL 9.5、
-同一份生成字库、同一份 `kk_ui/kk_widgets.c` + `kk_rect.c`、同一份 View/Store/Binder/Controller。
+同一份生成字库、同一份 `kk_ui/kk_widgets.c` + `kk_rect.c` + 同一份 `fnos_ui.c`（四页版面）。
 只有板级接口是替身（`stub/`：`esp_timer.h` / `esp_heap_caps.h` / `esp_log.h` / `sdkconfig.h` / `fnos_config.h`），
-fixture 直接填 `fnos_status_t`，格式化串、阈值配色、可信度降级全部走真实 Controller ⇒ **看到的就是会烧进板子的像素**。
+fixture 直接填 `fnos_status_t`，格式化串、阈值配色、可信度降级全部走真实刷新逻辑 ⇒ **看到的就是会烧进板子的像素**。
 
-替代的是"改 JSON → 构建 → 烧录 → 手机拍照"那十几分钟一轮：改完 manifest 重生成、跑一次预览即可看图。
+替代的是"构建 → 烧录 → 手机拍照"那十几分钟一轮：改完 `fnos_ui.c` 跑一次预览即可看图。
 
 ## 用法
 
 ```bash
-python3 tools/ui_gen.py                 # 预览读生成物，不读 layout.json
 bash tools/preview/run.sh [输出目录]     # 默认 out/；内部已 export DEVELOPER_DIR
 open out/01-live-p0.png
 ```
@@ -32,10 +31,11 @@ open out/01-live-p0.png
 
 ## 边界与坑
 
-- **只认生成物**：改 `layout.json`/`strings.json` 后必须先 `python3 tools/ui_gen.py`，否则预览还是旧版面。
-- **字库是真子集**：改文案后跑 `bash tools/gen_fonts.sh`，否则新字在预览里就是方块（实机同样方块）。
-- **fixture 的告警文案是假造中文**（`preview.c` 里手写的"退出码/正在重建"等），可能落在字库子集外而显示方块。
-  真实采集器 `nas/fnos-agent.py:420-444` 的告警**全是 ASCII 英文**，不要把 fixture 的方块当成固件豆腐块 bug。
+- **字库是真子集**：改文案后跑 `bash tools/gen_fonts.sh`（它扫 `fnos_ui.c/h` + `kk_widgets.c` + `main.cpp`
+  的字符串字面量），否则新字在预览里就是方块（实机同样方块）。
+- **fixture 的告警文案已按 agent 真实格式造**（`preview.c` 里 `"/vol4 used 95%"` / `"container ... down"` 等，
+  全 ASCII、级别 `crit`/`warn`/`info`）。若在 fixture 里手写中文，很可能落在字库子集外而显示方块——
+  那不是固件豆腐块 bug。
 - **主机三处 Kconfig 必须偏离设备**（见 `run.sh` 内注释）：`LV_USE_OS 0`（`LV_OS_NONE`）、libc malloc、
   `LV_DRAW_SW_DRAW_UNIT_CNT 1`。偏离点仅限这三处语义等价替身。
 - **断言在主机上改成 stderr + `abort()`**：设备端 LVGL 默认 `LV_ASSERT_HANDLER` 是 `while(1);`，
@@ -44,6 +44,5 @@ open out/01-live-p0.png
 
 ## 在验收流程里的位置
 
-`python3 tools/ui_gen.py` → `python3 tools/ui_validate.py` → `python3 tools/audit_fonts.py`
-→ `python3 tools/text_width.py --layout` → **`bash tools/preview/run.sh` 看图** → 烧录 + 实机取证（§14/§15 的取证法）。
-静态工具管"放不放得下/有没有豆腐块"，预览管"好不好看、对不对齐"，实机管"真的能跑"。
+`bash tools/gen_fonts.sh`（改过文案时）→ **`bash tools/preview/run.sh` 看图** → 烧录 + 实机取证（`docs/verification.md` §14/§15 的取证法）。
+预览管"好不好看、对不对齐、有没有方块"，实机管"真的能跑"。

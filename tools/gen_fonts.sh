@@ -27,25 +27,22 @@ cd "$SRC"
 # 本次要产出的字库（与下面每条生成命令一一对应）。生成完会删掉 OUT 里其余的 ui_font_*.c：
 # 上一代字库留在目录里没有任何东西引用，却会被下面的 glob 声明进 fnos_fonts.h，白占仓库体积、
 # 也让"到底哪些字体在用"变得难查（v1 的 9 个 sans/mono/cjk 字库就是这么残留了 ≈1.0 MB）。
-EXPECT="ui_font_num_56 ui_font_num_44 ui_font_num_28 ui_font_num_17 \
-        ui_font_txt_15 ui_font_txt_13 \
-        ui_font_cjk_40 ui_font_cjk_24 ui_font_cjk_17 ui_font_cjk_13"
+# ui_font_txt_13 是**兼容窗口**里的老字号：已提交的 kk_ui（v5 版 kk_widgets.c）引用它，
+# 正在写的 v6 版 kk_widgets.c 改引用 ui_font_txt_12。两者都产出，等 v6 落地后删掉这一项。
+EXPECT="ui_font_num_44 ui_font_num_30 ui_font_num_22 ui_font_num_16 \
+        ui_font_txt_14 ui_font_txt_12 ui_font_txt_13 \
+        ui_font_cjk_30 ui_font_cjk_20 ui_font_cjk_15 ui_font_cjk_13"
 
 # 1) 只从界面源码的**字符串字面量**里扫中文（先剥掉注释）：
 #    注释里也有大量中文，全扫进来会让字体白胖好几倍（562 vs 约 90 个字）。
-#    清单必须覆盖"所有能把文字送上屏的文件"：strings.json（locKey）+ bindings.json
-#    （字段默认值，例如"等待数据"）+ Controller（格式化串）+ ViewAnim/fnos_ui/main/kk_widgets。
+#    清单必须覆盖"所有能把文字送上屏的文件"：fnos_ui.c/h（版面文案与格式化串）
+#    + kk_widgets.c（构件内建文案）+ main.cpp。v6 起 JSON 清单与代码生成物已删除。
 #    漏一个文件就可能出现"库里有这个字、字库里没有"的豆腐块（v4.2 的"前"就是这么来的）。
-#    对照检查：python3 tools/audit_fonts.py（会校验本清单的产物是否覆盖全部文案）。
+#    对照检查：build 后看预览/实机截图，或 `strings` 扫 elf 里的中文字面量。
 CJK=$(python3 - "$ROOT" <<'PYEOF'
 import io, os, re, sys
 root = sys.argv[1]
-UI = ['components/fnos_monitor/ui/Source/FnosDashboard/strings.json',
-      'components/fnos_monitor/ui/Source/FnosDashboard/bindings.json',
-      'components/fnos_monitor/ui/FnosDashboardController.c',
-      'components/fnos_monitor/ui/FnosDashboardViewAnim.c',
-      'components/fnos_monitor/ui/Generated/FnosDashboard/fnos_dash_strings.generated.h',
-      'components/fnos_monitor/fnos_ui.c', 'components/fnos_monitor/fnos_ui.h',
+UI = ['components/fnos_monitor/fnos_ui.c', 'components/fnos_monitor/fnos_ui.h',
       'components/fnos_monitor/kk_ui/kk_widgets.c',
       'main/main.cpp']
 pat = re.compile(r'[\u3000-\u303f\u4e00-\u9fff\uff00-\uffef]')
@@ -79,24 +76,29 @@ PYEOF
 )
 echo "中文字形数: $(printf '%s' "$CJK" | python3 -c 'import sys;print(len(sys.stdin.read().strip()))')"
 
+# v6（UniFi）字号阶梯：KPI 数字一律 600（SemiBold），次级数字与标签 500（Medium），
+# 元信息 400（Regular）。整套比 v5 小一档 —— 这是"克制"的一半，别随手调大。
 echo "== 数值（Inter SemiBold/Medium，UniFi 风格） =="
-$LV --font Inter-SemiBold.ttf --size 56 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
-    --symbols "0123456789.,:%-+/ °" --lv-include lvgl.h -o "$OUT/ui_font_num_56.c"
 $LV --font Inter-SemiBold.ttf --size 44 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
     -r 0x20-0x7E -r 0xB0 -r 0xB7 --lv-include lvgl.h -o "$OUT/ui_font_num_44.c"
-$LV --font Inter-Medium.ttf --size 28 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
-    -r 0x20-0x7E -r 0xB0 -r 0xB7 --lv-include lvgl.h -o "$OUT/ui_font_num_28.c"
-$LV --font Inter-Medium.ttf --size 17 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
-    -r 0x20-0x7E -r 0xB0 -r 0xB7 --lv-include lvgl.h -o "$OUT/ui_font_num_17.c"
+$LV --font Inter-SemiBold.ttf --size 30 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
+    -r 0x20-0x7E -r 0xB0 -r 0xB7 --lv-include lvgl.h -o "$OUT/ui_font_num_30.c"
+$LV --font Inter-SemiBold.ttf --size 22 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
+    -r 0x20-0x7E -r 0xB0 -r 0xB7 --lv-include lvgl.h -o "$OUT/ui_font_num_22.c"
+$LV --font Inter-Medium.ttf --size 16 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
+    -r 0x20-0x7E -r 0xB0 -r 0xB7 --lv-include lvgl.h -o "$OUT/ui_font_num_16.c"
 
 echo "== 文本（Inter Medium/Regular） =="
-$LV --font Inter-Medium.ttf --size 15 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
-    -r 0x20-0x7E -r 0xB0 -r 0xB7 --lv-include lvgl.h -o "$OUT/ui_font_txt_15.c"
+$LV --font Inter-Medium.ttf --size 14 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
+    -r 0x20-0x7E -r 0xB0 -r 0xB7 --lv-include lvgl.h -o "$OUT/ui_font_txt_14.c"
+$LV --font Inter-Regular.ttf --size 12 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
+    -r 0x20-0x7E -r 0xB0 -r 0xB7 --lv-include lvgl.h -o "$OUT/ui_font_txt_12.c"
+# 兼容窗口用（只有 ASCII 字形）：见上面 EXPECT 的说明，v6 kk_ui 落地后删
 $LV --font Inter-Regular.ttf --size 13 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
     -r 0x20-0x7E -r 0xB0 -r 0xB7 --lv-include lvgl.h -o "$OUT/ui_font_txt_13.c"
 
 echo "== 中文标签（Noto Sans SC 子集，含 ASCII 便于混排） =="
-for spec in "40:Medium:ui_font_cjk_40" "24:Medium:ui_font_cjk_24" "17:Medium:ui_font_cjk_17" "13:Regular:ui_font_cjk_13"; do
+for spec in "30:Medium:ui_font_cjk_30" "20:Medium:ui_font_cjk_20" "15:Medium:ui_font_cjk_15" "13:Regular:ui_font_cjk_13"; do
   size="${spec%%:*}"; rest="${spec#*:}"; weight="${rest%%:*}"; name="${rest#*:}"
   $LV --font "NotoSansSC-${weight}.ttf" --size "$size" --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
       -r 0x20-0x7E -r 0xB0 -r 0xB7 --symbols "$CJK" --lv-include lvgl.h -o "$OUT/$name.c"

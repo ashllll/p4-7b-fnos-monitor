@@ -1,5 +1,10 @@
 # UI 迭代 v5：密度优先 + 大数字 + fnOS 术语对齐
 
+> ⚠ **历史文档（2026-10-05 归档）**：JSON Manifest（`ui/Source/FnosDashboard/*.json`）与生成管线
+> （`tools/{ui_gen,ui_validate,text_width,audit_fonts}.py`）已按用户要求整体删除，界面改为手写 C
+> （`components/fnos_monitor/fnos_ui.c` + `kk_ui/`）。本文只作设计史与判据来源保留，
+> **其中的流程/命令不再可执行**；当前写法见 `docs/ui-kk.md` §8，删除记录见 `docs/verification.md` §17。
+
 > 状态：**V5.0-A/B/C/D + V5.1 + V5.2 已实施**（manifest + 生成物 + Controller + 字库），待实机复验（§5.7）。
 > 基线：v4.2.2（`build/fnos_monitor.bin` 1816544 B，实机 7/7 PASS，轮播已关）。
 > 方向来源：用户在参考清单上的多选答案 —— ①信息密度优先（Beszel / Grafana 风）②与飞牛 NAS 原生 UI 对齐 ③极简大数字（车载 / 传感器面板风）。

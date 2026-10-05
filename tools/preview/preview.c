@@ -1,12 +1,12 @@
-// 主机预览：在不烧录的情况下把真实的 View/Store/Binder/Controller 编译到 macOS 上渲染成 PPM。
+// 主机预览：不烧录，把真实的 fnos_ui（kk_ui 构件 + 字库）+ fnos_data 编译到 macOS 上渲染成 PPM。
 //
 // 为什么值得存在：v4/v5 的视觉迭代全靠"改 JSON → 生成 → 构建 → 烧录 → 拍照"，一轮十几分钟且
-// 受手机翻拍质量影响。这里把生成物原样搬到主机（同一份 LVGL 9.5.0 + 同一份字库 + 同一份
-// kk_widgets），换页/取图/写盘全在进程内完成，一轮几秒，且像素级可信。
+// 受手机翻拍质量影响。这里把同一份 LVGL 9.5.0 + 同一份字库 + 同一份 kk_widgets 搬到主机，
+// 换页/取图/写盘全在进程内完成，一轮几秒，且像素级可信（v6 起界面由 fnos_ui.c 手写，不再有生成物）。
 //
 // 边界：只替身"板级"接口（esp_timer / esp_heap_caps / esp_log / fnos_data 轮询 / fnos_net Wi-Fi），
 // 业务与 UI 代码一行不改。fixture 打在 fnos_status_t 上，因此格式化串、阈值配色、可信度降级
-// 全都走真实 Controller 逻辑。
+// 全都走真实的 fnos_ui 刷屏逻辑。
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,7 +17,6 @@
 #include "lvgl.h"
 #include "fnos_data.h"
 #include "fnos_ui.h"
-#include "fnos_dash_view.generated.h"
 
 /* ── 板级替身 ─────────────────────────────────────────────────────── */
 
@@ -139,14 +138,15 @@ static void fill_live(fnos_status_t *s)
 
     s->has_zfs = true; s->zfs_arc_gb = 12.4f; s->zfs_hit_pct = 96.3f;
 
+    /* 告警文案按 nas/fnos-agent.py:_alerts() 的真实格式造（全 ASCII，级别 crit/warn/info） */
     snprintf(s->alerts[0].lv, sizeof s->alerts[0].lv, "%s", "warn");
-    snprintf(s->alerts[0].m,  sizeof s->alerts[0].m,  "%s", "存储空间 /vol4 用量 95%");
-    snprintf(s->alerts[1].lv, sizeof s->alerts[1].lv, "%s", "err");
-    snprintf(s->alerts[1].m,  sizeof s->alerts[1].m,  "%s", "容器 redis 退出码 137");
+    snprintf(s->alerts[0].m,  sizeof s->alerts[0].m,  "%s", "/vol4 used 95%");
+    snprintf(s->alerts[1].lv, sizeof s->alerts[1].lv, "%s", "crit");
+    snprintf(s->alerts[1].m,  sizeof s->alerts[1].m,  "%s", "/vol3 free 4.6% left");
     snprintf(s->alerts[2].lv, sizeof s->alerts[2].lv, "%s", "warn");
-    snprintf(s->alerts[2].m,  sizeof s->alerts[2].m,  "%s", "阵列 md1 正在重建 47%");
+    snprintf(s->alerts[2].m,  sizeof s->alerts[2].m,  "%s", "container qbittorrentee down");
     snprintf(s->alerts[3].lv, sizeof s->alerts[3].lv, "%s", "info");
-    snprintf(s->alerts[3].m,  sizeof s->alerts[3].m,  "%s", "NVMe1 温度 38°C 正常");
+    snprintf(s->alerts[3].m,  sizeof s->alerts[3].m,  "%s", "md1 resync 47.3%");
     s->nalerts = 4;
 }
 
@@ -248,7 +248,11 @@ static void run_state(preview_state_t st, int index)
         vtick_advance(500);
         lv_timer_handler();
     }
-    for (int p = 0; p < FNOS_DASH_PAGE_COUNT; p++) {
+    /* create() 之后、任何 set_page 之前的"初始帧"：这一帧专抓"create 时没把初始页显示出来"
+     * 这类只在设备上暴露的 bug（2026-10-05 实例见 docs/verification.md §17.3）。 */
+    if (index == 1) snapshot("01-live-init");
+
+    for (int p = 0; p < FNOS_UI_PAGE_COUNT; p++) {
         fnos_ui_set_page(p);
         vtick_advance(300);
         lv_timer_handler();
@@ -280,6 +284,6 @@ int main(int argc, char **argv)
     run_state(ST_OFFLINE, 2);
     run_state(ST_WARMING, 3);
 
-    printf("preview: %d page(s)/state → %s\n", FNOS_DASH_PAGE_COUNT, s_outdir);
+    printf("preview: %d page(s)/state → %s\n", FNOS_UI_PAGE_COUNT, s_outdir);
     return 0;
 }
