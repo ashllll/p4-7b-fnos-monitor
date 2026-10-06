@@ -506,7 +506,10 @@ static void do_pair(void)
     bool ok = http_oneshot(true, url, body, s_http_cert[0] ? s_http_cert : NULL, rx, 2048,
                            &status, &len);
 
-    cJSON *root = ok ? cJSON_Parse(rx) : NULL;
+    /* 服务端在非 200 时也会给 {"ok":false,"error":"…"}（比如"配对码已过期，请重新生成"）。
+       只在 ok 时才解析，屏幕上就永远只有一句"HTTP 403"——把可执行的话丢掉了。
+       所以：只要收到了字节就解析。 */
+    cJSON *root = (ok || len > 0) ? cJSON_Parse(rx) : NULL;
     const cJSON *jtok = root ? cJSON_GetObjectItemCaseSensitive(root, "token") : NULL;
     const char *token = (jtok && cJSON_IsString(jtok) && jtok->valuestring) ? jtok->valuestring : NULL;
 
