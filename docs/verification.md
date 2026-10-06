@@ -814,3 +814,51 @@ POST 拿到 403 且**服务端的错误文案能上屏** —— 说明请求体�
 
 **顺带**：`tls` 命令临时把 `esp-tls` / `mbedtls` / `HTTP_CLIENT` 抬到 DEBUG，握手细节直接
 进串口；探针跑在独立的 PSRAM 栈任务里（mbedTLS 握手吃栈，串口命令任务的 4 KB 不够）。
+
+## 22. 板上配网卡（2026-10-06 晚：刷完固件自己提示连 Wi-Fi）
+
+**需求**：用户原话"这个开发版 WiFi 在固件刷好之后，也需要提示用户接入内网 WiFi"。
+出厂固件里 `APP_WIFI_SSID` 是占位值 `your-ssid`，板子以前只会静静地显示"离线"。
+
+**做法**（方案 A，用户选定）：板上扫描 + 全键盘输口令 + 存 NVS。
+
+| 层 | 落地 | 关键约定 |
+| --- | --- | --- |
+| 数据 | `components/fnos_monitor/fnos_net.{h,c}` 新增 `fnos_ap_t`、`FNOS_AP_MAX 24`、`fnos_net_scan_request/busy/failed/results/clear` | `esp_wifi_*` 是到 C6 的**同步 RPC**（最坏阻塞数秒），所以界面只调 `*_request()` 置位，真正的 `esp_wifi_scan_start()` 在服务任务里跑；结果按 rssi 降序、丢空 SSID、同 SSID 去重留最强，回填时**先清零再收尾赋值**，读侧永不看到半批 |
+| 状态 | `fnos_net_ssid()` / `fnos_net_state()`（`UNCONFIGURED/CONNECTING/ONLINE/FAILED`） | 界面**不许从中文字符串反推状态**，状态由网络层直接给 |
+| 界面 | `components/fnos_monitor/fnos_ui.c` 配网卡（扫描 / 口令 / 连接三阶段，41 键两套键表，口令可显示、8 位校验） | 与配对卡、诊断面板**同槽位互斥**；顶栏常驻入口（未配置=橙色「Wi-Fi 未配置」，配好后是网络名）；`fnos_ui_set_page()` 会收起它 |
+| 提示 | `ui_tick` 开机 ~3 秒（`boot_ticks > 6`）后若 `!fnos_net_configured()` 就自动弹卡 | 用户关过就本次开机不再弹（`s_wifi_dismissed`），入口留在顶栏 |
+
+**预览（主机）**：`tools/preview` 加了可控 Wi-Fi 替身与 `verify_wifi()`，出图
+`10-wifi-scan / 10-wifi-pass / 10-wifi-symbols / 10-wifi-linking / 10-wifi-linked / 10-wifi-failed`。
+配套审计抓出三处真问题（固件构建都不会报）：
+
+1. `missing glyph U+21E7 in ⇧ 小写` —— 键帽的 `⇧`/`⌫` 不在字库子集的正则范围内
+   （只扫 `[\u2010-\u205e\u3000-\u303f\u4e00-\u9fff\uff00-\uffef]`），改成中文"大写"/"退格"；
+2. `child out of parent … [668,461]-[1067,504]` —— 键盘底排误用了按 10 列算出的 `gap`，
+   空格键 400 宽超出右缘 71px，改成 220/380/240 定宽（x = 12/246/640）；
+3. `tappable overlap` —— 「关闭」(744,458,164) 与「连接」(原 700,458,208) 在输口令阶段同时可见，
+   把连接/完成移到 x=520 w=200。
+
+还修了一条**只有断言能发现的逻辑错**：校验失败的说明每 500ms 被 `wifi_refresh()` 用阶段提示
+盖掉（用户根本看不清）。现在错误串"粘"在 `s_wifi_err` 里，任何一次按键/换页才清。
+
+**审计基线**：从未露面构件 169 → **175**（配网卡扫描行池 7 行只用到 4 行 ⇒ 3 行 × 2 构件）。
+预览 57 张图、四项审计（越界 / 缺字 / 重叠 / 从未露面）全绿。
+
+**真机验收（2026-10-06 19:1x，占位凭据固件）**：串口实录
+
+```
+W (3399) fnos_net: Wi-Fi 未配置（NVS 与编译期都没有可用 SSID）——起站但不自动连接
+I (5297) fnos_ui: ui created (pages=5)
+I (8797) fnos_ui: 没有 Wi-Fi 凭据：自动弹出配网卡（顶栏按钮同样能打开）   ← 自动弹卡
+I (9306) fnos_net: scan started
+I (11819) fnos_net: scan done: 17 个 AP                                   ← 真机扫到 17 个
+I (34485) wifi_store: 凭据已保存（ssid 4 字符，口令 13 字符）              ← 用户在屏上输入
+I (38628) fnos_net: got ip 192.168.0.214                                  ← 连上内网
+I (68963) fnos_data: poll ok=30 fail=0 11ms …                             ← 数据照常进来
+```
+
+即：**刷完固件 → 自动弹卡 → 屏上选网络输口令 → 存 NVS → 拿到 IP → 继续走 HTTPS 读 NAS**，
+全程没有电脑参与。凭据落在 NVS（`fnos_wifi_store.c`），NVS 优先于编译期默认；`wifi clear`
+退回默认、`wifi show` 只报"有/没有"不读口令。

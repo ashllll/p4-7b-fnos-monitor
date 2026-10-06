@@ -38,6 +38,21 @@ static volatile uint8_t s_wifi_retry_count;
 static esp_timer_handle_t s_wifi_retry_timer;
 static bool s_started;                  // fnos_net_start() 幂等标志
 static bool s_wifi_inited;
+
+/* ── 扫描缓存（板上配网用）──────────────────────────────────────────────
+   写入方是 fnos_net_service()（普通任务），读取方是 LVGL 任务。跨任务靠"先清零
+   条数、填完再放条数"来保证一致：读侧只会看到空表或完整的一批，不会看到半条。 */
+static fnos_ap_t s_aps[FNOS_AP_MAX];
+static volatile int  s_ap_n;
+static volatile bool s_scan_busy;
+static volatile bool s_scan_failed;
+static volatile bool s_scan_want;       // 界面请求扫描 → service() 里真正发起
+static volatile bool s_scan_done;       // 事件任务收到 SCAN_DONE → service() 里取结果
+
+static int ap_cmp_rssi(const void *a, const void *b) {
+    int ra = ((const wifi_ap_record_t *)a)->rssi, rb = ((const wifi_ap_record_t *)b)->rssi;
+    return rb - ra;                     // 信号强的排前面（rssi 是负值，越大越强）
+}
 static bool s_handlers_registered;
 // ── 给用户看的 Wi-Fi 状态 ──────────────────────────────────────────
 // 以前只有 ESP_LOG，屏幕上看不到"为什么连不上"。配网引导要靠这两样：
@@ -114,6 +129,8 @@ static void on_net_event(void *arg, esp_event_base_t base, int32_t id, void *dat
         else    snprintf(s_reason, sizeof s_reason, "原因码 %u", (unsigned)rs);
         ESP_LOGW(TAG, "wifi disconnected reason=%u (%s) retry=%u", (unsigned)rs,
                  s_reason, (unsigned)s_wifi_retry_count);
+    } else if (base == WIFI_EVENT && id == WIFI_EVENT_SCAN_DONE) {
+        s_scan_done = true;             // 只置位：取结果是 RPC，放到 service() 里做
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *e = (ip_event_got_ip_t *)data;
         if (!e || e->ip_info.ip.addr == 0) {   // 不把 0.0.0.0 当在线
@@ -226,6 +243,19 @@ const char *fnos_net_state_str(void)
     return buf;
 }
 
+const char *fnos_net_ssid(void)
+{
+    return s_ssid;
+}
+
+fnos_net_state_t fnos_net_state(void)
+{
+    if (!s_configured)     return FNOS_NET_UNCONFIGURED;
+    if (s_online)          return FNOS_NET_ONLINE;
+    if (s_reason[0])       return FNOS_NET_FAILED;
+    return FNOS_NET_CONNECTING;
+}
+
 void fnos_net_set_credentials(const char *ssid, const char *pass)
 {
     if (!ssid || !ssid[0]) return;
@@ -263,8 +293,7 @@ int8_t fnos_net_rssi(void) {
 }
 
 // 只在非 UI 任务里调用：短 TTL 的 RSSI 刷新
-void fnos_net_poll_rssi(void) {
-    int64_t now = esp_timer_get_time() / 1000;
+void fnos_net_poll_rssi(void) {    int64_t now = esp_timer_get_time() / 1000;
     if (now - s_rssi_ms < 5000) return;
     s_rssi_ms = now;
     if (!s_online) return;
@@ -272,8 +301,93 @@ void fnos_net_poll_rssi(void) {
     if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) s_rssi = (int8_t)ap.rssi;
 }
 
-// 只在非 UI 任务里调用：重连 + 起站重试
+/* ── 扫描实现（两个都只能在普通任务里跑，见 fnos_net.h 的说明）────────── */
+
+static void scan_begin(void) {
+    wifi_scan_config_t cfg = { 0 };
+    cfg.show_hidden = false;                    // 隐藏网络没名字，配网列表里选了也没法确认
+    cfg.scan_type = WIFI_SCAN_TYPE_ACTIVE;      // 主动扫描：结果全、快；代价是稍微费点电
+    s_scan_failed = false;
+    s_scan_busy = true;
+    esp_err_t err = esp_wifi_scan_start(&cfg, false);   // false = 异步，扫完发 SCAN_DONE
+    if (err != ESP_OK) {
+        s_scan_busy = false;
+        s_scan_failed = true;
+        ESP_LOGW(TAG, "scan start failed: %s", esp_err_to_name(err));
+    } else {
+        ESP_LOGI(TAG, "scan started");
+    }
+}
+
+static void scan_collect(void) {
+    uint16_t num = 0;
+    if (esp_wifi_scan_get_ap_num(&num) != ESP_OK || num == 0) {
+        s_ap_n = 0;
+        s_scan_busy = false;
+        ESP_LOGI(TAG, "scan done: 0 个 AP");
+        return;
+    }
+    if (num > 64) num = 64;                     // 驱动上限内收一批，再按信号筛
+    wifi_ap_record_t *recs = calloc(num, sizeof *recs);
+    if (!recs) { s_scan_busy = false; s_scan_failed = true; return; }
+    uint16_t got = num;
+    if (esp_wifi_scan_get_ap_records(&got, recs) != ESP_OK) {
+        free(recs);
+        s_scan_busy = false;
+        s_scan_failed = true;
+        return;
+    }
+    qsort(recs, got, sizeof *recs, ap_cmp_rssi);        // 先排序：同名去重留下的就是最强的那条
+    s_ap_n = 0;                                         // ← 先清零：读侧不会看到半批数据
+    int n = 0;
+    for (int i = 0; i < (int)got && n < FNOS_AP_MAX; i++) {
+        if (recs[i].ssid[0] == 0) continue;
+        bool dup = false;
+        for (int k = 0; k < n; k++) {
+            if (strcmp(s_aps[k].ssid, (const char *)recs[i].ssid) == 0) { dup = true; break; }
+        }
+        if (dup) continue;                              // 同一 SSID 的多个 BSS：只留最强
+        snprintf(s_aps[n].ssid, sizeof s_aps[n].ssid, "%s", (const char *)recs[i].ssid);
+        s_aps[n].rssi = (int8_t)recs[i].rssi;
+        s_aps[n].secure = recs[i].authmode != WIFI_AUTH_OPEN;
+        n++;
+    }
+    free(recs);
+    s_ap_n = n;                                         // ← 填完再放条数
+    s_scan_busy = false;
+    ESP_LOGI(TAG, "scan done: %d 个 AP", n);
+}
+
+void fnos_net_scan_request(void) {
+    s_scan_failed = false;
+    s_scan_want = true;
+}
+
+bool fnos_net_scan_busy(void)   { return s_scan_busy || s_scan_want; }
+bool fnos_net_scan_failed(void) { return s_scan_failed; }
+
+int fnos_net_scan_results(fnos_ap_t *out, int max) {
+    int n = s_ap_n;
+    if (n > max) n = max;
+    for (int i = 0; i < n; i++) out[i] = s_aps[i];
+    return n;
+}
+
+void fnos_net_scan_clear(void) {
+    s_ap_n = 0;
+    s_scan_failed = false;
+}
+
+// 只在非 UI 任务里调用：重连 + 起站重试 + 扫描（扫描是 RPC，绝不能进 UI 任务）
 void fnos_net_service(void) {
+    if (s_scan_want && s_wifi_inited && !s_scan_busy) {
+        s_scan_want = false;
+        scan_begin();
+    }
+    if (s_scan_done) {
+        s_scan_done = false;
+        scan_collect();
+    }
     if (s_connect_wanted) {
         s_connect_wanted = false;
         esp_wifi_connect();

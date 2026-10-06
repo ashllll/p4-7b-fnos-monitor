@@ -88,6 +88,13 @@ typedef struct {
     lv_obj_t *value, *sub;
 } ui_big_t;
 
+/* ── 板上配网卡的几何与状态（定义在 s_ui 之前：结构体里要按这些尺寸开数组） ── */
+#define WIFI_AP_ROWS  7          /* 扫描列表一屏显示几条（按信号取前 7） */
+#define WIFI_KB_KEYS  41         /* 10 + 10 + 9 + 9 + 3 */
+#define WIFI_PW_MAX   63         /* WPA2 口令最长 63 个 ASCII 字符 */
+#define WIFI_SSID_MAX 32
+enum { WIFI_ST_SCAN = 0, WIFI_ST_PASS, WIFI_ST_LINK };
+
 static struct {
     lv_obj_t *screen;
     lv_obj_t *cards[UI_CARDS];
@@ -144,6 +151,16 @@ static struct {
     lv_obj_t *pair_code_lbl, *pair_code_sub, *pair_slot[PAIR_CODE_LEN];
     lv_obj_t *pair_pad, *pair_pad_lbl, *pair_key[PAIR_PAD_KEYS];
     lv_obj_t *pair_ok, *pair_cancel, *pair_forget;
+
+    /* 配网卡（与配对卡同槽位：盖在系统页上的整页卡，互斥显示） */
+    lv_obj_t *wifi_btn, *wifi_btn_lbl;       /* 顶栏那颗常驻按钮 */
+    lv_obj_t *wifi_card, *wifi_title, *wifi_hint, *wifi_list_hint;
+    lv_obj_t *wifi_ap_row[WIFI_AP_ROWS], *wifi_ap_name[WIFI_AP_ROWS], *wifi_ap_meta[WIFI_AP_ROWS];
+    lv_obj_t *wifi_input_panel, *wifi_ssid_box, *wifi_ssid_lbl;
+    lv_obj_t *wifi_pw_box, *wifi_pw_lbl, *wifi_eye, *wifi_eye_lbl;
+    lv_obj_t *wifi_kb, *wifi_key[WIFI_KB_KEYS], *wifi_shift_btn, *wifi_shift_lbl;
+    lv_obj_t *wifi_rescan, *wifi_manual, *wifi_close, *wifi_back, *wifi_connect;
+    lv_obj_t *wifi_link_panel, *wifi_link_big, *wifi_link_sub, *wifi_done, *wifi_again;
 } s_ui;
 
 /* 温度页每列的**可用文字宽度**（建页时量一次）。刷新时要按行的数据形态改标签宽度：
@@ -208,6 +225,8 @@ static uint32_t      s_pair_alert = 0xE79913;
    所以先声明。 */
 static void pair_build(lv_obj_t *page);
 static void pair_btn_cb(lv_event_t *e);
+static void wifi_btn_cb(lv_event_t *e);
+static void wifi_build(lv_obj_t *page);
 static void pair_show(bool on);
 static void pair_refresh(void);
 /* 左栏的表面色由 theme_apply() 统一落地（建树、换页、夜间、配对状态都走它一处），
@@ -614,7 +633,7 @@ static void build_header(lv_obj_t *scr)
 {
     lv_obj_t *h = kk_panel_create(scr, kk_rect(0, 0, 0, 0, KK_RAIL_W, 0, UI_CONTENT_W, KK_HEAD_H));
     s_ui.h_host = mk_label(h, 16, 2, 380, 24, &ui_font_cjk_20, KK_T1, "fnOS");
-    s_ui.h_ep   = mk_label(h, 16, 32, 530, 16, &ui_font_cjk_12, KK_T3, "等待采集");
+    s_ui.h_ep   = mk_label(h, 16, 32, 400, 16, &ui_font_cjk_12, KK_T3, "等待采集");
     kk_signal_bars(h, kk_rect(0, 0, 0, 0, 760, 18, 32, 24), s_ui.h_bars);
     s_ui.h_chip = kk_chip_create(h, kk_rect(0, 0, 0, 0, 802, 12, 130, 32), kk_c(KK_OFF));
     chip_set_glow(s_ui.h_chip, "等待数据", KK_T3);
@@ -625,6 +644,17 @@ static void build_header(lv_obj_t *scr)
     s_ui.diagnostics_label = mk_label(s_ui.diagnostics_button, 14, 12, 120, 24, &ui_font_cjk_16, KK_T2, "采集诊断");
     lv_obj_add_event_cb(s_ui.diagnostics_button, diagnostics_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_add_flag(s_ui.diagnostics_button, LV_OBJ_FLAG_HIDDEN);
+
+    /* 顶栏常驻的配网入口。位置与"采集诊断"同一条横带（430+150=580 < 588），
+       两者不重叠；诊断按钮只在系统页露面，配网按钮一直在 —— 出厂固件没凭据时
+       它就是屏幕上唯一橙色的东西，用户照着点即可。 */
+    s_ui.wifi_btn = kk_button_create(h, kk_rect(0, 0, 0, 0, 430, 4, 150, 48));
+    lv_obj_set_style_bg_color(s_ui.wifi_btn, kk_c(KK_S2), 0);
+    lv_obj_set_style_bg_opa(s_ui.wifi_btn, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(s_ui.wifi_btn, KK_RADIUS, 0);
+    s_ui.wifi_btn_lbl = mk_label(s_ui.wifi_btn, 12, 12, 126, 24,
+                                 &ui_font_cjk_16, KK_T2, "Wi-Fi 未配置");
+    lv_obj_add_event_cb(s_ui.wifi_btn, wifi_btn_cb, LV_EVENT_CLICKED, NULL);
 }
 
 static void mk_kpi(ui_kpi_t *k, lv_obj_t *card, const char *title,
@@ -876,6 +906,7 @@ static void build_p3(lv_obj_t *page)
     lv_obj_add_flag(s_ui.diagnostics, LV_OBJ_FLAG_HIDDEN);
 
     pair_build(page);   /* 同槽位的第二张整页卡，见 pair_show() */
+    wifi_build(page);   /* 第三张：板上配网（出厂固件没有凭据时开机自动弹，见 ui_tick） */
 }
 
 /* ── P4：温度（全部传感器通道）──────────────────────────────────────
@@ -1135,6 +1166,621 @@ static void pair_btn_cb(lv_event_t *e)
     pair_show(true);
     /* 立刻按当前阶段摆一次，否则最长 500ms 里会先闪一下"键盘+指纹"混在一起的样子 */
     pair_refresh();
+}
+
+/* ── 板上配网卡 ──────────────────────────────────────────────────────────
+   用户的原话："固件刷好之后，也需要提示用户接入内网 WiFi。" 出厂固件没有凭据，
+   所以第一次开机要做的不是看数据，而是让用户在现场把 SSID 与口令填进去。
+
+   与配对卡同槽位（整页覆盖、互斥显示），三个阶段、一屏一个问题：
+     ① 扫描   附近有哪些网络（信号从强到弱），点一条继续；也能手动输入隐藏网络；
+     ② 输密码 上半屏是选中的 SSID 与口令（可显示/隐藏），下半屏是键盘；
+     ③ 连接   把 fnos_net_state_str() 的进展放大显示，成功或失败都能重来。
+
+   两条必须守的约束：
+   * esp_wifi_* 在本板是到 C6 的**同步 RPC**：扫描只能"请求"，由网络任务发起
+     （见 fnos_net.h），界面这边只读缓存。
+   * 键盘一次建 41 个键，字母层与数字符号层**复用同一批按钮**，只换文案与键值 ——
+     不然光键盘就多出 40 个构件，还要多一份几何审计。
+   WIFI_AP_ROWS / WIFI_KB_KEYS / WIFI_PW_MAX / WIFI_SSID_MAX / WIFI_ST_* 定义在
+   文件上方 —— s_ui 要按它们开数组，所以不能挪到这里。 */
+
+/* 键的行为：字符 / 大小写 / 退格 / 换层 / 空格 / 连接 */
+enum { WK_CH = 0, WK_SHIFT, WK_BACK, WK_LAYER, WK_SPACE, WK_OK };
+typedef struct { const char *txt; uint8_t kind; char ch; } wifi_key_t;
+#define K_CH(c, t) { t, WK_CH, c }
+
+static const wifi_key_t WIFI_KB_LETTERS[WIFI_KB_KEYS] = {
+    K_CH('1', "1"), K_CH('2', "2"), K_CH('3', "3"), K_CH('4', "4"), K_CH('5', "5"),
+    K_CH('6', "6"), K_CH('7', "7"), K_CH('8', "8"), K_CH('9', "9"), K_CH('0', "0"),
+    K_CH('q', "q"), K_CH('w', "w"), K_CH('e', "e"), K_CH('r', "r"), K_CH('t', "t"),
+    K_CH('y', "y"), K_CH('u', "u"), K_CH('i', "i"), K_CH('o', "o"), K_CH('p', "p"),
+    K_CH('a', "a"), K_CH('s', "s"), K_CH('d', "d"), K_CH('f', "f"), K_CH('g', "g"),
+    K_CH('h', "h"), K_CH('j', "j"), K_CH('k', "k"), K_CH('l', "l"),
+    { "大写", WK_SHIFT, 0 },
+    K_CH('z', "z"), K_CH('x', "x"), K_CH('c', "c"), K_CH('v', "v"), K_CH('b', "b"),
+    K_CH('n', "n"), K_CH('m', "m"),
+    { "退格", WK_BACK, 0 },
+    { "123", WK_LAYER, 0 }, { "空格", WK_SPACE, 0 }, { "连接", WK_OK, 0 },
+};
+static const wifi_key_t WIFI_KB_SYMBOLS[WIFI_KB_KEYS] = {
+    K_CH('1', "1"), K_CH('2', "2"), K_CH('3', "3"), K_CH('4', "4"), K_CH('5', "5"),
+    K_CH('6', "6"), K_CH('7', "7"), K_CH('8', "8"), K_CH('9', "9"), K_CH('0', "0"),
+    K_CH('!', "!"), K_CH('@', "@"), K_CH('#', "#"), K_CH('$', "$"), K_CH('%', "%"),
+    K_CH('^', "^"), K_CH('&', "&"), K_CH('*', "*"), K_CH('(', "("), K_CH(')', ")"),
+    K_CH('-', "-"), K_CH('_', "_"), K_CH('=', "="), K_CH('+', "+"), K_CH('[', "["),
+    K_CH(']', "]"), K_CH('{', "{"), K_CH('}', "}"), K_CH('\\', "\\"),
+    { "abc", WK_LAYER, 0 },
+    K_CH(';', ";"), K_CH(':', ":"), K_CH('\'', "'"), K_CH('"', "\""), K_CH(',', ","),
+    K_CH('.', "."), K_CH('?', "?"),
+    { "退格", WK_BACK, 0 },
+    { "ABC", WK_LAYER, 0 }, { "空格", WK_SPACE, 0 }, { "连接", WK_OK, 0 },
+};
+
+static bool s_wifi_open;
+/* 校验失败的说明要"粘"住：刷新每 500ms 跑一次，如果只 set_txt 一次，用户还没看清
+   就被下一拍的阶段提示盖掉（预览就是靠这条断言抓出来的）。任何一次按键/换页都清掉它。 */
+static char s_wifi_err[120];
+static int  s_wifi_stage = WIFI_ST_SCAN;
+static bool s_wifi_dismissed;            /* 本次开机用户主动关过：不再自动弹 */
+static bool s_wifi_manual;               /* 手动输入模式（隐藏网络）：SSID 也可编辑 */
+static int  s_wifi_field;                /* 手动模式下正在编辑哪个：0=SSID 1=口令 */
+static char s_wifi_ssid[WIFI_SSID_MAX + 1];
+static char s_wifi_pw[WIFI_PW_MAX + 1];
+static int  s_wifi_pw_n;
+static bool s_wifi_reveal;               /* 口令是否明文显示 */
+static int  s_wifi_layer;                /* 键盘层 0=字母 1=数字符号 */
+static bool s_wifi_shift;
+static int  s_wifi_sel = -1;             /* 选中的 AP 下标（-1 = 手动输入） */
+static lv_obj_t *s_wifi_key_lbl[WIFI_KB_KEYS];
+
+static void wifi_refresh(void);          /* 前置声明：回调里要用 */
+static void wifi_ap_cb(lv_event_t *e);
+static void wifi_key_cb(lv_event_t *e);
+static void wifi_rescan_cb(lv_event_t *e);
+static void wifi_manual_cb(lv_event_t *e);
+static void wifi_close_cb(lv_event_t *e);
+static void wifi_field_cb(lv_event_t *e);
+static void wifi_eye_cb(lv_event_t *e);
+static void wifi_back_cb(lv_event_t *e);
+static void wifi_connect_cb(lv_event_t *e);
+static void wifi_again_cb(lv_event_t *e);
+
+/* 一行可点的网络：整行都是热区（配网列表要能点，和只读的监控行不是一回事） */
+static lv_obj_t *mk_tap_row(lv_obj_t *parent, int x, int y, int w, int h,
+                            lv_obj_t **name_out, lv_obj_t **meta_out)
+{
+    lv_obj_t *b = kk_button_create(parent, kk_rect(0, 0, 0, 0, x, y, w, h));
+    lv_obj_set_style_bg_color(b, kk_c(KK_S1), 0);
+    lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(b, KK_RADIUS_SM, 0);
+    *name_out = mk_label(b, 14, (h - 22) / 2, w - 176, 22, &ui_font_cjk_16, KK_T1, NULL);
+    *meta_out = mk_label(b, w - 156, (h - 18) / 2, 142, 18, &ui_font_cjk_12, KK_T3, NULL);
+    if (*meta_out) lv_obj_set_style_text_align(*meta_out, LV_TEXT_ALIGN_RIGHT, 0);
+    return b;
+}
+
+/* 信号强度：用"格数 + dBm"两种说法（颜色之外还有文字，见版面合同第 9 条） */
+static int wifi_bars(int8_t rssi)
+{
+    if (rssi >= -55) return 4;
+    if (rssi >= -65) return 3;
+    if (rssi >= -75) return 2;
+    if (rssi >= -85) return 1;
+    return 0;
+}
+
+static void wifi_apply_layer(void)
+{
+    const wifi_key_t *tab = s_wifi_layer ? WIFI_KB_SYMBOLS : WIFI_KB_LETTERS;
+    for (int i = 0; i < WIFI_KB_KEYS; i++) {
+        if (!s_wifi_key_lbl[i]) continue;
+        const char *t = tab[i].txt;
+        char up[2] = { 0, 0 };
+        if (tab[i].kind == WK_CH && s_wifi_shift && !s_wifi_layer &&
+            tab[i].ch >= 'a' && tab[i].ch <= 'z') {
+            up[0] = (char)(tab[i].ch - 'a' + 'A');
+            t = up;
+        }
+        lv_label_set_text(s_wifi_key_lbl[i], t);
+        /* 换层只换文案与键值，样式一起跟着走：连接键永远是主色，退格/换层是弱色 */
+        int kind = tab[i].kind;
+        lv_obj_t *btn = lv_obj_get_parent(s_wifi_key_lbl[i]);
+        if (kind == WK_OK)       btn_style(btn, BTN_PRIMARY, NULL, KK_T1, KK_BLUE);
+        else if (kind == WK_SHIFT && s_wifi_shift && !s_wifi_layer)
+                                 btn_style(btn, BTN_PRIMARY, NULL, KK_T1, KK_BLUE);
+        else if (kind == WK_CH)  btn_style(btn, BTN_NEUTRAL, NULL, KK_T1, KK_S2);
+        else                     btn_style(btn, BTN_SECONDARY, NULL, KK_T2, KK_S1);
+    }
+    /* 大写键的文案说"按下去会得到什么"（现在是"大写"= 按了就变大写）。
+       数字符号层那一位是"回字母层"，文案由键表决定，别在这里覆盖掉。 */
+    if (s_ui.wifi_shift_btn && !s_wifi_layer) {
+        set_txt(s_ui.wifi_shift_lbl, "%s", s_wifi_shift ? "小写" : "大写");
+    }
+}
+
+static void wifi_render_input(void)
+{
+    /* 手动模式两行都能编辑；扫描模式只编辑口令。正在编辑的那一行描边高亮。 */
+    bool manual = s_wifi_manual;
+    if (s_ui.wifi_ssid_lbl) {
+        set_txt(s_ui.wifi_ssid_lbl, "%s", s_wifi_ssid[0] ? s_wifi_ssid : "（点这里输入网络名）");
+        lv_obj_set_style_text_color(s_ui.wifi_ssid_lbl,
+                                    kk_c(s_wifi_ssid[0] ? KK_T1 : KK_T3), 0);
+        lv_obj_set_style_border_opa(s_ui.wifi_ssid_box,
+                                    (manual && s_wifi_field == 0) ? KK_FOCUS_RING_OPA : KK_EDGE_CTRL, 0);
+    }
+    if (s_ui.wifi_pw_lbl) {
+        if (s_wifi_reveal || s_wifi_pw_n == 0) {
+            set_txt(s_ui.wifi_pw_lbl, "%s", s_wifi_pw_n ? s_wifi_pw : "口令");
+        } else {
+            char mask[WIFI_PW_MAX + 1];
+            int n = s_wifi_pw_n > WIFI_PW_MAX ? WIFI_PW_MAX : s_wifi_pw_n;
+            for (int i = 0; i < n; i++) mask[i] = '*';
+            mask[n] = 0;
+            set_txt(s_ui.wifi_pw_lbl, "%s", mask);
+        }
+        lv_obj_set_style_text_color(s_ui.wifi_pw_lbl,
+                                    kk_c(s_wifi_pw_n ? KK_T1 : KK_T3), 0);
+        lv_obj_set_style_border_opa(s_ui.wifi_pw_box,
+                                    (!manual || s_wifi_field == 1) ? KK_FOCUS_RING_OPA : KK_EDGE_CTRL, 0);
+    }
+    if (s_ui.wifi_eye_lbl) set_txt(s_ui.wifi_eye_lbl, "%s", s_wifi_reveal ? "隐藏" : "显示");
+}
+
+static void wifi_set_stage(int st)
+{
+    s_wifi_stage = st;
+    s_wifi_err[0] = 0;
+    bool scan = (st == WIFI_ST_SCAN), pass = (st == WIFI_ST_PASS), link = (st == WIFI_ST_LINK);
+    /* 扫描页：列表 + 底部三键；输密码页：输入行 + 键盘 + 返回/连接；连接页：一行大字 */
+    for (int i = 0; i < WIFI_AP_ROWS; i++) {
+        if (!s_ui.wifi_ap_row[i]) continue;
+        if (scan) lv_obj_remove_flag(s_ui.wifi_ap_row[i], LV_OBJ_FLAG_HIDDEN);
+        else      lv_obj_add_flag(s_ui.wifi_ap_row[i], LV_OBJ_FLAG_HIDDEN);
+    }
+    if (s_ui.wifi_list_hint) {
+        if (scan) lv_obj_remove_flag(s_ui.wifi_list_hint, LV_OBJ_FLAG_HIDDEN);
+        else      lv_obj_add_flag(s_ui.wifi_list_hint, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (s_ui.wifi_input_panel) {
+        if (pass) lv_obj_remove_flag(s_ui.wifi_input_panel, LV_OBJ_FLAG_HIDDEN);
+        else      lv_obj_add_flag(s_ui.wifi_input_panel, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (s_ui.wifi_kb) {
+        if (pass) lv_obj_remove_flag(s_ui.wifi_kb, LV_OBJ_FLAG_HIDDEN);
+        else      lv_obj_add_flag(s_ui.wifi_kb, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (s_ui.wifi_link_panel) {
+        if (link) lv_obj_remove_flag(s_ui.wifi_link_panel, LV_OBJ_FLAG_HIDDEN);
+        else      lv_obj_add_flag(s_ui.wifi_link_panel, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (s_ui.wifi_rescan) {
+        if (scan) lv_obj_remove_flag(s_ui.wifi_rescan, LV_OBJ_FLAG_HIDDEN);
+        else      lv_obj_add_flag(s_ui.wifi_rescan, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (s_ui.wifi_manual) {
+        if (scan) lv_obj_remove_flag(s_ui.wifi_manual, LV_OBJ_FLAG_HIDDEN);
+        else      lv_obj_add_flag(s_ui.wifi_manual, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (s_ui.wifi_back) {
+        if (pass) lv_obj_remove_flag(s_ui.wifi_back, LV_OBJ_FLAG_HIDDEN);
+        else      lv_obj_add_flag(s_ui.wifi_back, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (s_ui.wifi_connect) {
+        if (pass) lv_obj_remove_flag(s_ui.wifi_connect, LV_OBJ_FLAG_HIDDEN);
+        else      lv_obj_add_flag(s_ui.wifi_connect, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (s_ui.wifi_done) {
+        if (link) lv_obj_remove_flag(s_ui.wifi_done, LV_OBJ_FLAG_HIDDEN);
+        else      lv_obj_add_flag(s_ui.wifi_done, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (s_ui.wifi_again) {
+        if (link) lv_obj_remove_flag(s_ui.wifi_again, LV_OBJ_FLAG_HIDDEN);
+        else      lv_obj_add_flag(s_ui.wifi_again, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (pass) { wifi_apply_layer(); wifi_render_input(); }
+    if (link && s_ui.wifi_link_sub) set_txt(s_ui.wifi_link_sub, "%s", "");
+}
+
+static void wifi_build(lv_obj_t *page)
+{
+    lv_obj_t *c = mk_card(page, 12, 8, 924, 522, NULL);
+    s_ui.wifi_card = c;
+    s_ui.wifi_title = mk_label(c, 16, 12, 892, 26, &ui_font_cjk_20, KK_T1, "接入 Wi-Fi");
+    s_ui.wifi_hint  = mk_label(c, 16, 40, 892, 22, &ui_font_cjk_12, KK_T3, NULL);
+    kk_panel_box(c, 16, 68, 892, 1, KK_LINE, 0);
+
+    /* ── ① 扫描：七行网络（整行可点） + 底部三键 ───────────────────────── */
+    for (int i = 0; i < WIFI_AP_ROWS; i++) {
+        s_ui.wifi_ap_row[i] = mk_tap_row(c, 16, 80 + i * 48, 892, 44,
+                                         &s_ui.wifi_ap_name[i], &s_ui.wifi_ap_meta[i]);
+        lv_obj_add_event_cb(s_ui.wifi_ap_row[i], wifi_ap_cb, LV_EVENT_CLICKED,
+                            (void *)(intptr_t)i);
+    }
+    s_ui.wifi_list_hint = mk_label(c, 16, 80 + WIFI_AP_ROWS * 48 + 6, 892, 22,
+                                   &ui_font_cjk_12, KK_T3, "正在扫描…");
+    s_ui.wifi_rescan = mk_btn(c, 16, 458, 180, 52, &ui_font_cjk_16, KK_T1, KK_S2, "重新扫描");
+    s_ui.wifi_manual = mk_btn(c, 208, 458, 200, 52, &ui_font_cjk_16, KK_T2, KK_S1, "手动输入");
+    s_ui.wifi_close  = mk_btn(c, 744, 458, 164, 52, &ui_font_cjk_16, KK_T2, KK_S1, "关闭");
+    btn_style(s_ui.wifi_rescan, BTN_SECONDARY, NULL, 0, 0);
+    btn_style(s_ui.wifi_manual, BTN_NEUTRAL, NULL, 0, 0);
+    btn_style(s_ui.wifi_close,  BTN_NEUTRAL, NULL, 0, 0);
+    lv_obj_add_event_cb(s_ui.wifi_rescan, wifi_rescan_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(s_ui.wifi_manual, wifi_manual_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(s_ui.wifi_close,  wifi_close_cb,  LV_EVENT_CLICKED, NULL);
+
+    /* ── ② 输密码：两行输入 + 键盘 ─────────────────────────────────────── */
+    s_ui.wifi_input_panel = kk_panel_box(c, 16, 80, 892, 108, KK_S0, KK_RADIUS);
+    s_ui.wifi_ssid_box = kk_panel_box(s_ui.wifi_input_panel, 12, 8, 868, 40, KK_S1, KK_RADIUS_SM);
+    s_ui.wifi_ssid_lbl = mk_label(s_ui.wifi_ssid_box, 12, 9, 844, 24, &ui_font_cjk_16, KK_T1, NULL);
+    s_ui.wifi_pw_box = kk_panel_box(s_ui.wifi_input_panel, 12, 56, 700, 40, KK_S1, KK_RADIUS_SM);
+    s_ui.wifi_pw_lbl = mk_label(s_ui.wifi_pw_box, 12, 9, 676, 24, &ui_font_cjk_16, KK_T1, NULL);
+    s_ui.wifi_eye = mk_btn(s_ui.wifi_input_panel, 720, 56, 160, 40,
+                           &ui_font_cjk_16, KK_T2, KK_S2, "显示");
+    s_ui.wifi_eye_lbl = lv_obj_get_child(s_ui.wifi_eye, 0);
+    btn_style(s_ui.wifi_eye, BTN_SECONDARY, NULL, 0, 0);
+    lv_obj_add_event_cb(s_ui.wifi_ssid_box, wifi_field_cb, LV_EVENT_CLICKED, (void *)(intptr_t)0);
+    lv_obj_add_event_cb(s_ui.wifi_pw_box,   wifi_field_cb, LV_EVENT_CLICKED, (void *)(intptr_t)1);
+    lv_obj_add_event_cb(s_ui.wifi_eye,      wifi_eye_cb,   LV_EVENT_CLICKED, NULL);
+
+    s_ui.wifi_kb = kk_panel_box(c, 16, 196, 892, 250, KK_S0, KK_RADIUS);
+    for (int i = 0; i < WIFI_KB_KEYS; i++) {
+        int row = i < 10 ? 0 : i < 20 ? 1 : i < 29 ? 2 : i < 38 ? 3 : 4;
+        int col = (row == 0) ? i : (row == 1) ? i - 10 : (row == 2) ? i - 20
+                : (row == 3) ? i - 29 : i - 38;
+        int ncol = (row < 2) ? 10 : (row < 4) ? 9 : 3;
+        int kw = (row >= 4 && col == 1) ? 400 : (row == 4 ? 240 : 82);
+        int gap = (892 - 24 - ncol * 82) / (ncol > 1 ? ncol - 1 : 1);
+        int x = 12 + col * (82 + gap);
+        if (row == 4) {                     /* 底排：换层 / 空格 / 连接（220 + 380 + 240 + 2×14 = 868） */
+            x  = (col == 0) ? 12 : (col == 1) ? 246 : 640;
+            kw = (col == 1) ? 380 : (col == 0) ? 220 : 240;
+        }
+        const wifi_key_t *tab = WIFI_KB_LETTERS;
+        lv_obj_t *b = mk_btn(s_ui.wifi_kb, x, 8 + row * 48, kw, 44,
+                             tab[i].kind == WK_CH ? &ui_font_cjk_16 : &ui_font_cjk_12,
+                             KK_T1, KK_S2, tab[i].txt);
+        s_ui.wifi_key[i] = b;
+        s_wifi_key_lbl[i] = lv_obj_get_child(b, 0);
+        lv_obj_add_event_cb(b, wifi_key_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+    }
+    if (s_ui.wifi_kb) {                      /* 换层键的文案提示放在键盘右上角的说明里 */
+        s_ui.wifi_shift_btn = s_ui.wifi_key[29];
+        s_ui.wifi_shift_lbl = s_wifi_key_lbl[29];
+    }
+    s_ui.wifi_back = mk_btn(c, 16, 458, 160, 52, &ui_font_cjk_16, KK_T2, KK_S1, "返回");
+    s_ui.wifi_connect = mk_btn(c, 520, 458, 200, 52, &ui_font_cjk_16, KK_T1, KK_BLUE, "连接");
+    btn_style(s_ui.wifi_back, BTN_NEUTRAL, NULL, 0, 0);
+    btn_style(s_ui.wifi_connect, BTN_PRIMARY, NULL, KK_T1, KK_BLUE);
+    lv_obj_add_event_cb(s_ui.wifi_back, wifi_back_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(s_ui.wifi_connect, wifi_connect_cb, LV_EVENT_CLICKED, NULL);
+
+    /* ── ③ 连接中/结果：一句话说清现在到哪一步了 ───────────────────────── */
+    s_ui.wifi_link_panel = kk_panel_box(c, 16, 96, 892, 300, KK_S0, KK_RADIUS);
+    s_ui.wifi_link_big = mk_label(s_ui.wifi_link_panel, 24, 60, 844, 60,
+                                  &ui_font_cjk_20, KK_T1, "正在连接…");
+    s_ui.wifi_link_sub = mk_label(s_ui.wifi_link_panel, 24, 140, 844, 120,
+                                  &ui_font_cjk_16, KK_T3, NULL);
+    lv_label_set_long_mode(s_ui.wifi_link_sub, LV_LABEL_LONG_WRAP);
+    s_ui.wifi_done  = mk_btn(c, 520, 458, 200, 52, &ui_font_cjk_16, KK_T1, KK_BLUE, "完成");
+    s_ui.wifi_again = mk_btn(c, 16, 458, 200, 52, &ui_font_cjk_16, KK_T2, KK_S1, "换一个网络");
+    btn_style(s_ui.wifi_done, BTN_PRIMARY, NULL, KK_T1, KK_BLUE);
+    btn_style(s_ui.wifi_again, BTN_NEUTRAL, NULL, 0, 0);
+    lv_obj_add_event_cb(s_ui.wifi_done, wifi_close_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(s_ui.wifi_again, wifi_again_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_add_flag(c, LV_OBJ_FLAG_HIDDEN);
+    wifi_set_stage(WIFI_ST_SCAN);
+}
+
+static void wifi_show(bool on)
+{
+    s_wifi_open = on;
+    if (!s_ui.wifi_card) return;
+    if (on) {
+        s_wifi_dismissed = false;
+        lv_obj_remove_flag(s_ui.wifi_card, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(s_ui.wifi_card, LV_OBJ_FLAG_HIDDEN);
+    }
+    /* 同槽位互斥：配网卡开了就把配对卡与诊断面板收起来，否则三层会叠在一起 */
+    if (on && s_pair_open) pair_show(false);
+    if (on && s_diagnostics) {
+        s_diagnostics = false;
+        if (s_ui.diagnostics) lv_obj_add_flag(s_ui.diagnostics, LV_OBJ_FLAG_HIDDEN);
+        set_txt(s_ui.diagnostics_label, "%s", "采集诊断");
+    }
+    theme_apply();
+}
+
+static void wifi_btn_cb(lv_event_t *e)
+{
+    (void)e;
+    if (s_wifi_open) { wifi_show(false); return; }
+    fnos_ui_set_page(3);
+    s_wifi_manual = false;
+    s_wifi_sel = -1;
+    wifi_set_stage(WIFI_ST_SCAN);
+    fnos_net_scan_request();
+    wifi_show(true);
+    wifi_refresh();
+}
+
+/* ── 刷新：把"网络层的事实"翻到卡上（每 500ms 由 ui_tick 调一次） ─────────
+   这张卡的每一句话都必须来自 fnos_net_* 的实际状态，不能靠界面自己记：
+   连接可能在任何时刻成功或失败，界面只负责如实显示。 */
+
+static const char *wifi_stage_hint(void)
+{
+    if (s_wifi_err[0]) return s_wifi_err;        /* 用户刚犯的错，先说这个 */
+    switch (s_wifi_stage) {
+    case WIFI_ST_PASS:
+        if (s_wifi_pw_n > 0 && s_wifi_pw_n < 8)
+            return "WPA2 口令至少 8 位 —— 现在还不够，检查一下有没有漏字符";
+        return s_wifi_manual ? "填网络名（SSID）与口令：点输入框切换正在编辑的那一行"
+                             : "输入这个网络的口令（区分大小写）";
+    case WIFI_ST_LINK:
+        return "用刚填的凭据连过去，成功后会写进板子的 NVS，下次开机自动连";
+    default:
+        return "板子的 Wi-Fi 是 2.4G，所以这里只列 2.4G 的网络（按信号从强到弱）";
+    }
+}
+
+/* 扫描列表：行数固定建好（WIFI_AP_ROWS 行），用不上的隐藏 —— 与页面其他列表同规矩 */
+static void wifi_fill_list(void)
+{
+    fnos_ap_t aps[FNOS_AP_MAX];
+    int n = fnos_net_scan_results(aps, FNOS_AP_MAX);
+    for (int i = 0; i < WIFI_AP_ROWS; i++) {
+        if (!s_ui.wifi_ap_row[i]) continue;
+        if (i < n) {
+            const fnos_ap_t *a = &aps[i];
+            int  bars = wifi_bars(a->rssi);
+            char meta[48];
+            snprintf(meta, sizeof meta, "%d 格 · %d dBm · %s", bars, (int)a->rssi,
+                     a->secure ? "加密" : "开放");
+            set_txt(s_ui.wifi_ap_name[i], "%s", a->ssid);
+            set_txt(s_ui.wifi_ap_meta[i], "%s", meta);
+            /* 颜色之外还有"格数 + dBm"两种说法，色弱也读得出（版面合同第 9 条） */
+            lv_obj_set_style_text_color(s_ui.wifi_ap_meta[i],
+                                        kk_c(bars >= 3 ? KK_OK : bars == 2 ? KK_WARN : KK_T3), 0);
+            lv_obj_remove_flag(s_ui.wifi_ap_row[i], LV_OBJ_FLAG_HIDDEN);
+            /* 从输密码页退回来时，让用户一眼看到刚才点的是哪一条 */
+            lv_obj_set_style_bg_color(s_ui.wifi_ap_row[i],
+                                      kk_c(s_wifi_sel == i ? KK_S2 : KK_S1), 0);
+        } else {
+            lv_obj_add_flag(s_ui.wifi_ap_row[i], LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    if (!s_ui.wifi_list_hint) return;
+    if (fnos_net_scan_busy())        set_txt(s_ui.wifi_list_hint, "%s", "正在扫描…");
+    else if (fnos_net_scan_failed()) set_txt(s_ui.wifi_list_hint, "%s",
+                                             "扫描没成功：Wi-Fi 还没起好，点「重新扫描」再试一次");
+    else if (n == 0)                 set_txt(s_ui.wifi_list_hint, "%s",
+                                             "没扫到网络：点「重新扫描」；隐藏网络点「手动输入」直接填名字");
+    else {
+        /* 有网络时这行留给"有多少个、怎么下手"，别再重复卡片副标题（预览截图里一眼看出的重复） */
+        char b[96];
+        snprintf(b, sizeof b, "共 %d 个网络（2.4G），按信号从强到弱 —— 点一行填口令", n);
+        set_txt(s_ui.wifi_list_hint, "%s", b);
+    }
+}
+
+static void wifi_refresh(void)
+{
+    if (!s_ui.wifi_card) return;
+
+    /* 顶栏那颗常驻按钮：任何时候都要说清"板子现在有没有网"。
+       没配置 = 橙色（要去处理）；配了但没连上 = 普通色 + "连接中"；连上了 = 亮色 SSID。 */
+    if (s_ui.wifi_btn_lbl) {
+        char b[40];
+        const char *ssid = fnos_net_ssid();
+        if (!fnos_net_configured())       snprintf(b, sizeof b, "Wi-Fi 未配置");
+        else if (fnos_net_online())       snprintf(b, sizeof b, "%s", ssid);
+        else if (ssid[0])                 snprintf(b, sizeof b, "%s 连接中…", ssid);
+        else                              snprintf(b, sizeof b, "连接中…");
+        set_txt(s_ui.wifi_btn_lbl, "%s", b);
+        lv_obj_set_style_text_color(s_ui.wifi_btn_lbl,
+                                    kk_c(!fnos_net_configured() ? KK_WARN
+                                        : fnos_net_online()     ? KK_T1 : KK_T2), 0);
+    }
+
+    if (!s_wifi_open) return;
+    if (s_ui.wifi_hint) set_txt(s_ui.wifi_hint, "%s", wifi_stage_hint());
+
+    if (s_wifi_stage == WIFI_ST_SCAN) {
+        wifi_fill_list();
+    } else if (s_wifi_stage == WIFI_ST_PASS) {
+        wifi_render_input();
+    } else {                                     /* WIFI_ST_LINK */
+        fnos_net_state_t ns = fnos_net_state();
+        bool on = (ns == FNOS_NET_ONLINE);
+        bool bad = (ns == FNOS_NET_FAILED);
+        if (s_ui.wifi_link_big) {
+            set_txt(s_ui.wifi_link_big, "%s", on ? "连接成功" : bad ? "没连上" : "正在连接…");
+            lv_obj_set_style_text_color(s_ui.wifi_link_big,
+                                        kk_c(on ? KK_OK : bad ? KK_WARN : KK_T1), 0);
+        }
+        if (s_ui.wifi_link_sub) {
+            char b[220];
+            if (on) {
+                snprintf(b, sizeof b, "%s · 信号 %d dBm\n板子已经记住这个网络，下次开机自动连。",
+                         fnos_net_state_str(), (int)fnos_net_rssi());
+            } else {
+                snprintf(b, sizeof b,
+                         "%s\n一直连不上就点「换一个网络」重来：口令区分大小写，"
+                         "也确认一下这个网络是不是 2.4G。", fnos_net_state_str());
+            }
+            set_txt(s_ui.wifi_link_sub, "%s", b);
+        }
+    }
+}
+
+/* ── 交互 ─────────────────────────────────────────────────────────────── */
+
+/* 选中一个网络：开放的直接连，加密的进输密码页。
+   选中的 SSID 不给编辑（想改就点「手动输入」）—— 手滑改错一个字符的失败最难查。 */
+static void wifi_pick(const fnos_ap_t *a)
+{
+    snprintf(s_wifi_ssid, sizeof s_wifi_ssid, "%s", a->ssid);
+    s_wifi_manual = false;
+    s_wifi_field  = 1;
+    s_wifi_pw[0]  = 0;
+    s_wifi_pw_n   = 0;
+    s_wifi_reveal = false;
+    s_wifi_layer  = 0;
+    s_wifi_shift  = false;
+    if (!a->secure) {
+        wifi_set_stage(WIFI_ST_LINK);
+        fnos_net_set_credentials(s_wifi_ssid, "");
+    } else {
+        wifi_set_stage(WIFI_ST_PASS);
+    }
+    wifi_refresh();
+}
+
+static void wifi_ap_cb(lv_event_t *e)
+{
+    int idx = (int)(intptr_t)lv_event_get_user_data(e);
+    fnos_ap_t aps[FNOS_AP_MAX];
+    int n = fnos_net_scan_results(aps, FNOS_AP_MAX);
+    if (idx < 0 || idx >= n) return;
+    s_wifi_sel = idx;
+    s_wifi_err[0] = 0;
+    wifi_pick(&aps[idx]);
+}
+
+static void wifi_key_cb(lv_event_t *e)
+{
+    int i = (int)(intptr_t)lv_event_get_user_data(e);
+    if (i < 0 || i >= WIFI_KB_KEYS) return;
+    s_wifi_err[0] = 0;                       /* 用户一动键盘，刚才那句错误就该消失 */
+    const wifi_key_t k = (s_wifi_layer ? WIFI_KB_SYMBOLS : WIFI_KB_LETTERS)[i];
+
+    bool edit_ssid = (s_wifi_manual && s_wifi_field == 0);
+    char  *buf = edit_ssid ? s_wifi_ssid : s_wifi_pw;
+    size_t cap = edit_ssid ? WIFI_SSID_MAX : WIFI_PW_MAX;
+    bool consumed = false;
+
+    switch (k.kind) {
+    case WK_CH:
+    case WK_SPACE: {
+        char ch = (k.kind == WK_SPACE) ? ' ' : k.ch;
+        if (s_wifi_shift && !s_wifi_layer && ch >= 'a' && ch <= 'z') ch = (char)(ch - 'a' + 'A');
+        size_t n = strlen(buf);
+        if (n < cap) { buf[n] = ch; buf[n + 1] = 0; }
+        consumed = true;
+        break;
+    }
+    case WK_BACK: {
+        size_t n = strlen(buf);
+        if (n) buf[n - 1] = 0;
+        break;
+    }
+    case WK_SHIFT:
+        s_wifi_shift = !s_wifi_shift;
+        break;
+    case WK_LAYER:
+        s_wifi_layer = !s_wifi_layer;
+        s_wifi_shift = false;
+        break;
+    case WK_OK:
+        wifi_connect_cb(NULL);
+        return;
+    }
+    if (consumed) s_wifi_shift = false;          /* 打完一个字符自动回小写，和手机一致 */
+    s_wifi_pw_n = (int)strlen(s_wifi_pw);
+    wifi_apply_layer();
+    wifi_render_input();
+    wifi_refresh();
+}
+
+static void wifi_rescan_cb(lv_event_t *e)
+{
+    (void)e;
+    fnos_net_scan_clear();
+    fnos_net_scan_request();
+    wifi_refresh();
+}
+
+static void wifi_manual_cb(lv_event_t *e)
+{
+    (void)e;
+    s_wifi_manual = true;
+    s_wifi_sel    = -1;
+    s_wifi_field  = 0;
+    s_wifi_ssid[0] = 0;
+    s_wifi_pw[0]   = 0;
+    s_wifi_pw_n    = 0;
+    s_wifi_reveal  = false;
+    s_wifi_layer   = 0;
+    s_wifi_shift   = false;
+    wifi_set_stage(WIFI_ST_PASS);
+    wifi_refresh();
+}
+
+static void wifi_close_cb(lv_event_t *e)
+{
+    (void)e;
+    /* 关掉 = 这次开机不再自动弹（用户明确表示"我知道，先不看"），
+       但入口一直在顶栏上，橙色提醒也一直在。 */
+    s_wifi_dismissed = true;
+    wifi_show(false);
+}
+
+static void wifi_field_cb(lv_event_t *e)
+{
+    if (!s_wifi_manual) return;                  /* 选中的网络名不给改 */
+    s_wifi_field = (int)(intptr_t)lv_event_get_user_data(e) ? 1 : 0;
+    wifi_render_input();
+}
+
+static void wifi_eye_cb(lv_event_t *e)
+{
+    (void)e;
+    s_wifi_reveal = !s_wifi_reveal;
+    if (s_ui.wifi_eye_lbl) set_txt(s_ui.wifi_eye_lbl, "%s", s_wifi_reveal ? "隐藏" : "显示");
+    wifi_render_input();
+}
+
+static void wifi_back_cb(lv_event_t *e)
+{
+    (void)e;
+    wifi_set_stage(WIFI_ST_SCAN);
+    fnos_net_scan_request();                     /* 列表可能是空的（刚开机就进来的） */
+    wifi_refresh();
+}
+
+static void wifi_connect_cb(lv_event_t *e)
+{
+    (void)e;
+    if (!s_wifi_ssid[0]) {
+        snprintf(s_wifi_err, sizeof s_wifi_err, "先填网络名（SSID）再连接");
+        wifi_refresh();
+        return;
+    }
+    if (s_wifi_pw_n > 0 && s_wifi_pw_n < 8) {
+        snprintf(s_wifi_err, sizeof s_wifi_err,
+                 "WPA2 口令至少 8 位 —— 再检查一遍（区分大小写），现在是 %d 位", s_wifi_pw_n);
+        wifi_refresh();
+        return;
+    }
+    wifi_set_stage(WIFI_ST_LINK);
+    fnos_net_set_credentials(s_wifi_ssid, s_wifi_pw);
+    wifi_refresh();
+}
+
+static void wifi_again_cb(lv_event_t *e)
+{
+    (void)e;
+    s_wifi_pw[0]  = 0;
+    s_wifi_pw_n   = 0;
+    s_wifi_reveal = false;
+    wifi_set_stage(WIFI_ST_SCAN);
+    fnos_net_scan_clear();
+    fnos_net_scan_request();
+    wifi_refresh();
 }
 
 /* 把采集端的失败标记（fnos_data.c 的 classify_conn_err / note_failure 写的
@@ -1914,6 +2560,24 @@ static void ui_tick(lv_timer_t *t)
         night_apply();
     }
 
+    /* 出厂固件没有 Wi-Fi 凭据：开机 ~3 秒（等网络层读完 NVS 再判断）后自动把配网卡
+       推出来 —— 用户的原话是"固件刷好之后，也需要提示用户接入内网 WiFi"，而他看到的
+       本来只是一块"离线"的屏，不知道该点哪里。用户主动关过就不再弹（入口留在顶栏）。 */
+    static int boot_ticks;
+    if (boot_ticks >= 0 && ++boot_ticks > 6) {
+        boot_ticks = -1;
+        if (!fnos_net_configured() && !s_wifi_dismissed && !s_wifi_open && s_ui.wifi_card) {
+            ESP_LOGI(TAG, "没有 Wi-Fi 凭据：自动弹出配网卡（顶栏按钮同样能打开）");
+            fnos_ui_set_page(3);
+            s_wifi_manual = false;
+            s_wifi_sel    = -1;
+            wifi_set_stage(WIFI_ST_SCAN);
+            fnos_net_scan_request();
+            wifi_show(true);
+        }
+    }
+    wifi_refresh();
+
     /* 直接读进 s_st：fnos_data_get 拿不到锁时**不碰 out**（保留上一帧），
        成功时整份覆盖 —— 语义与"先拷一份、再拷回来"完全一致，但少一个
        fnos_status_t 的栈上副本。这个结构有 2 KB 量级，而本函数跑在
@@ -2054,6 +2718,7 @@ void fnos_ui_set_page(int idx)
     while (idx >= n) idx -= n;
     /* 导航选择页面，即使点的是当前系统页，也要退出配对/诊断覆盖层。 */
     pair_show(false);
+    if (s_wifi_open) wifi_show(false);
     s_diagnostics = false;
     lv_obj_add_flag(s_ui.diagnostics, LV_OBJ_FLAG_HIDDEN);
     set_txt(s_ui.diagnostics_label, "%s", "采集诊断");

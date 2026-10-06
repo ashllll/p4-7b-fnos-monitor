@@ -19,6 +19,7 @@
 #include "src/misc/lv_text_private.h"
 #include "fnos_data.h"
 #include "fnos_ui.h"
+#include "fnos_net.h"
 #include "kk_theme.h"
 
 /* ── 板级替身 ─────────────────────────────────────────────────────── */
@@ -35,6 +36,84 @@ size_t esp_get_free_heap_size(void)      { return 214 * 1024; }
 
 const char *fnos_net_ip(void)  { return "192.168.0.42"; }
 int8_t      fnos_net_rssi(void){ return -54; }   /* 0 = 未知 */
+
+/* ── Wi-Fi 替身 ────────────────────────────────────────────────────────
+   配网卡（fnos_ui.c 的 wifi_* ）的真实数据全部来自 fnos_net_*：扫描列表、
+   连接状态、当前 SSID。所以这里给一组**可控**的替身，让预览能把四个阶段都拍下来：
+   没配网（顶栏橙字）/ 扫到网络 / 输口令 / 连上或连不上。
+   真机上这些函数是 ESP-Hosted 的同步 RPC + NVS，这里只是几个静态变量。 */
+static bool        s_wifi_cfg;                 /* 有凭据 */
+static bool        s_wifi_on;                  /* 已连接（拿到 IP） */
+static char        s_wifi_ssid_stub[33] = "";
+static char        s_wifi_reason[64]    = "";  /* 非空 = 连不上的原因 */
+static fnos_ap_t   s_wifi_aps[FNOS_AP_MAX];
+static int         s_wifi_ap_n;
+
+/* 固定的一批网络：和真机现场看到的形状一致（一个自己的、几个邻居、一个开放网络） */
+static void wifi_stub_reset(void)
+{
+    static const struct { const char *ssid; int8_t rssi; bool secure; } def[] = {
+        { "llll",           -46, true  },
+        { "ChinaNet-8x2K",  -61, true  },
+        { "HONOR-203",      -72, true  },
+        { "Guest-Open",     -80, false },
+    };
+    s_wifi_ap_n = (int)(sizeof def / sizeof def[0]);
+    for (int i = 0; i < s_wifi_ap_n; i++) {
+        snprintf(s_wifi_aps[i].ssid, sizeof s_wifi_aps[i].ssid, "%s", def[i].ssid);
+        s_wifi_aps[i].rssi   = def[i].rssi;
+        s_wifi_aps[i].secure = def[i].secure;
+    }
+}
+static void wifi_stub(bool cfg, bool online, const char *ssid, const char *reason)
+{
+    s_wifi_cfg  = cfg;
+    s_wifi_on   = online;
+    snprintf(s_wifi_ssid_stub, sizeof s_wifi_ssid_stub, "%s", ssid ? ssid : "");
+    snprintf(s_wifi_reason, sizeof s_wifi_reason, "%s", reason ? reason : "");
+    wifi_stub_reset();
+}
+bool        fnos_net_configured(void) { return s_wifi_cfg; }
+bool        fnos_net_online(void)     { return s_wifi_on; }
+const char *fnos_net_ssid(void)       { return s_wifi_ssid_stub; }
+fnos_net_state_t fnos_net_state(void)
+{
+    if (!s_wifi_cfg)          return FNOS_NET_UNCONFIGURED;
+    if (s_wifi_on)            return FNOS_NET_ONLINE;
+    if (s_wifi_reason[0])     return FNOS_NET_FAILED;
+    return FNOS_NET_CONNECTING;
+}
+const char *fnos_net_state_str(void)
+{
+    static char b[160];
+    if (!s_wifi_cfg)          snprintf(b, sizeof b, "未配置 Wi-Fi");
+    else if (s_wifi_on)       snprintf(b, sizeof b, "已连接 %s（192.168.0.42）", s_wifi_ssid_stub);
+    else if (s_wifi_reason[0])snprintf(b, sizeof b, "连不上 %s：%s（第 2 次重试）",
+                                       s_wifi_ssid_stub, s_wifi_reason);
+    else                      snprintf(b, sizeof b, "正在连接 %s…", s_wifi_ssid_stub);
+    return b;
+}
+/* 真机是"存 NVS + 立刻重连"：这里等价地进入"正在连接" */
+void fnos_net_set_credentials(const char *ssid, const char *pass)
+{
+    (void)pass;
+    if (!ssid || !ssid[0]) return;
+    s_wifi_cfg = true;
+    s_wifi_on  = false;
+    s_wifi_reason[0] = 0;
+    snprintf(s_wifi_ssid_stub, sizeof s_wifi_ssid_stub, "%s", ssid);
+}
+void fnos_net_scan_request(void) { wifi_stub_reset(); }
+bool fnos_net_scan_busy(void)    { return false; }
+bool fnos_net_scan_failed(void)  { return false; }
+void fnos_net_scan_clear(void)   { }
+int  fnos_net_scan_results(fnos_ap_t *out, int max)
+{
+    int n = s_wifi_ap_n < max ? s_wifi_ap_n : max;
+    for (int i = 0; i < n; i++) out[i] = s_wifi_aps[i];
+    return n;
+}
+
 
 /* ── 数据替身：一份打到上限的 NAS 快照 ────────────────────────────── */
 
@@ -586,8 +665,12 @@ static void audit_overlap(void)
           （两行式行只有 设备名/通道名/数值，没有条，所以每行少一个构件）；
       1 = 温度页空态标签"未采集到温度通道"：只在"采集成功但一路温度都没有"时露面，
           而预览没有这个状态 —— 这是**已知的一处没被审计到的构件**，单独列在这里
-          而不是混进行池。想收紧就给预览加一个"temps 为空"的状态，那时基线应回到 73。 */
-#define NEVER_VISIBLE_BASELINE 169
+          而不是混进行池。想收紧就给预览加一个"temps 为空"的状态，那时基线应回到 73。
+   2026-10-06 板上配网卡再抬到 175，只多一项：
+      6 = 配网卡的扫描行池 7 行（WIFI_AP_ROWS）里没用到的 3 行 × 2 构件（网络名/元信息）。
+          替身只给 4 个网络，所以第 5~7 行永远不露面；41 个键两套键表都真的画过（见
+          verify_wifi 里"换到数字符号层"那一步），没有进这份名单。 */
+#define NEVER_VISIBLE_BASELINE 175
 
 #define SEEN_MAX 4096
 static const void *s_seen[SEEN_MAX];
@@ -1347,6 +1430,82 @@ static void verify_pair_messages(void)
     snapshot("07-pair-failed");
 }
 
+/* 板上配网卡：出厂固件没有凭据时用户要走的整条路。
+   这张卡是新加的，四个阶段（扫描 / 输口令 / 连接中 / 结果）各拍一张，
+   顺带把 41 键键盘的两层键表都渲染过 —— 否则"字库覆盖"就是假的。 */
+static void wifi_click(const char *txt)
+{
+    printf("  [wifi] 点 \"%s\"\n", txt);
+    fflush(stdout);
+    click_text(txt);
+}
+
+static void verify_wifi(void)
+{
+    s_state = ST_LIVE;
+    wifi_stub(false, false, "", "");
+    vtick_advance(500); lv_timer_handler();
+    assert(visible_text(lv_screen_active(), "Wi-Fi 未配置"));
+    wifi_click("Wi-Fi 未配置");                    /* 顶栏入口（真机首次开机由 ui_tick 自动弹） */
+    vtick_advance(500); lv_timer_handler();
+    assert(visible_text(lv_screen_active(), "接入 Wi-Fi"));
+    assert(visible_text(lv_screen_active(), "重新扫描"));
+    assert(visible_text(lv_screen_active(), "ChinaNet-8x2K"));   /* 扫描结果真的填进去了 */
+    snapshot("10-wifi-scan");
+
+    /* 选一个加密网络 → 输口令页：整块键盘第一次露面（41 键 + 两行输入 + 显示/隐藏） */
+    wifi_click("llll");
+    vtick_advance(500); lv_timer_handler();
+    assert(visible_text(lv_screen_active(), "空格"));
+    snapshot("10-wifi-pass");
+
+    /* 口令不足 8 位：必须拒绝并说明原因 —— 真机上这条最容易白折腾 */
+    wifi_click("a"); wifi_click("b"); wifi_click("c");
+    wifi_click("连接");
+    vtick_advance(500); lv_timer_handler();
+    assert(visible_text(lv_screen_active(),
+           "WPA2 口令至少 8 位 —— 再检查一遍（区分大小写），现在是 3 位"));
+
+    /* 大写（⇧）与退格各走一遍，再把键表换到数字符号层 —— 两套键表都要真的画过 */
+    wifi_click("大写"); wifi_click("A");
+    wifi_click("退格"); wifi_click("c");
+    wifi_click("123");
+    vtick_advance(300); lv_timer_handler();
+    snapshot("10-wifi-symbols");
+    wifi_click("abc");
+
+    /* 够 8 位就放行 → 连接页 */
+    for (const char *k = "abcdefgh"; *k; k++) { char t[2] = { *k, 0 }; wifi_click(t); }
+    wifi_click("连接");
+    vtick_advance(500); lv_timer_handler();
+    assert(visible_text(lv_screen_active(), "正在连接…"));
+    snapshot("10-wifi-linking");
+
+    s_wifi_on = true;                              /* 替身：连上了 */
+    vtick_advance(500); lv_timer_handler();
+    assert(visible_text(lv_screen_active(), "连接成功"));
+    assert(visible_text(lv_screen_active(),
+           "已连接 llll（192.168.0.42） · 信号 -54 dBm\n"
+           "板子已经记住这个网络，下次开机自动连。"));
+    snapshot("10-wifi-linked");
+
+    /* 连不上：标题与原因都要说人话（不能一直写"正在连接…"） */
+    wifi_stub(true, false, "llll", "密码不对（认证失败）");
+    vtick_advance(500); lv_timer_handler();
+    assert(visible_text(lv_screen_active(), "没连上"));
+    assert(!visible_text(lv_screen_active(), "连接成功"));
+    snapshot("10-wifi-failed");
+
+    /* 关掉卡：顶栏要一直看得见状态；配好了就该是 SSID，不是"未配置" */
+    wifi_click("关闭");
+    vtick_advance(500); lv_timer_handler();
+    assert(!visible_text(lv_screen_active(), "接入 Wi-Fi"));
+    wifi_stub(true, true, "llll", "");
+    vtick_advance(500); lv_timer_handler();
+    assert(visible_text(lv_screen_active(), "llll"));
+    assert(!visible_text(lv_screen_active(), "Wi-Fi 未配置"));
+}
+
 static void verify_pairing(void)
 {
     s_state = ST_HEALTHY;   /* 只有健康快照才有完整的温度通道，用 ST_LIVE 会断言到空数据 */
@@ -1526,6 +1685,7 @@ int main(int argc, char **argv)
     verify_reasons();
     verify_pairing();
     verify_pair_messages();
+    verify_wifi();
 
     /* ── 夜间模式：一整套独立配色，预览从来没渲染过 ──
        run_state 会把四页都拍一遍，所以这里先量白天的对比度、再开夜间量一次。 */
