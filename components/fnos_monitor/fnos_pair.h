@@ -75,6 +75,12 @@ void fnos_pair_confirm(bool accept);
 // 忘掉本机保存的配对（清 NVS，退回编译期默认）。NAS 侧的设备记录要在管理页撤销。
 void fnos_pair_forget(void);
 
+// 串口自检：真跑一次 HTTPS（先明文取 identity，再用那张证书探 /api/v1/health）。
+// **不碰配对码、不改 NVS、不改配对状态** —— 换 NAS、换证书、TLS 握手出问题时用它，
+// 比在配对流程里猜快得多。异步版自己起一个 PSRAM 栈任务（mbedTLS 握手吃栈）。
+bool     fnos_pair_tls_probe(char *out, size_t out_cap);
+void     fnos_pair_tls_probe_async(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -7,6 +7,7 @@
 //
 // 口令只写不读：`wifi show` 只报"有没有凭据、SSID 是什么、连到哪了"，永不回显口令。
 #include "fnos_net.h"
+#include "fnos_pair.h"
 #include "fnos_wifi_store.h"
 
 #include <stdio.h>
@@ -16,14 +17,15 @@
 #include "esp_log.h"
 
 static const char *TAG = "wifi_cli";
-#define LINE_MAX 192
+#define CLI_LINE_MAX 192
 
 static void usage(void)
 {
-    printf("\n配网命令：\n"
+    printf("\n串口命令：\n"
            "  wifi show                     看当前状态（不回显口令）\n"
            "  wifi set <SSID> <口令>        写入并立刻重连（口令里有空格也没关系）\n"
            "  wifi clear                    清掉保存的凭据（退回出厂默认）\n"
+           "  tls                           HTTPS 自检：明文取证书 + 用证书探一次 /health\n"
            "  help                          显示这段说明\n\n");
 }
 
@@ -60,6 +62,17 @@ static void handle(char *line)
     if (!n) return;
 
     if (!strcmp(line, "help") || !strcmp(line, "?")) { usage(); return; }
+    if (!strcmp(line, "tls")) {
+        /* 只读自检：开详细日志 → 跑一次真 HTTPS → 关回去。
+           mbedTLS/esp-tls 的失败原因只有 DEBUG 级别才打得出来，而这条命令
+           正是为"配对握手失败"准备的，所以在这里临时抬高日志级别。 */
+        esp_log_level_set("esp-tls", ESP_LOG_DEBUG);
+        esp_log_level_set("mbedtls", ESP_LOG_DEBUG);
+        esp_log_level_set("HTTP_CLIENT", ESP_LOG_DEBUG);
+        printf("正在跑 HTTPS 自检（下面几行是 mbedTLS/esp-tls 的细节）…\n");
+        fnos_pair_tls_probe_async();
+        return;
+    }
     if (!strncmp(line, "wifi", 4)) {
         char *sub = line + 4;
         while (*sub == ' ') sub++;
@@ -74,10 +87,10 @@ static void handle(char *line)
 
 static void cli_task(void *arg)
 {
-    static char line[LINE_MAX];
+    static char line[CLI_LINE_MAX];
     // 起站之后再等一下，免得和开机日志抢串口
     vTaskDelay(pdMS_TO_TICKS(3000));
-    printf("\n[配网] 串口命令可用：wifi set <SSID> <口令> / wifi show / help\n");
+    printf("\n[串口] 命令可用：wifi set <SSID> <口令> / wifi show / tls（HTTPS 自检）/ help\n");
     for (;;) {
         if (!fgets(line, sizeof line, stdin)) { vTaskDelay(pdMS_TO_TICKS(200)); continue; }
         handle(line);

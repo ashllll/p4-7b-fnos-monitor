@@ -779,3 +779,38 @@ P3 系统（温度十行分级条 + 采集端点七行 + 告警）。刷新 `ui_
   `PCIe-8 SSD 512GB`、`Intel UHD Graphics 630`），第二行通道名 + 数值，76.0°C 走危险色；
   页头 `24 路传感器 · 最热 Aquantia atlantic 10GbE · MAC 76.0°C` +
   `2 路 ≥75°C 危险 · 0 路 ≥60°C 注意`。行序按设备名稳定（CPU → enp1s0 → i915 → nvme0…3）。
+
+## 21. 配对 POST 卡死：请求体根本没发出去（2026-10-06）
+
+**症状**：板子明文取 `identity` ✓、证书指纹算得出 ✓，但 `POST /api/v1/pair` 6 秒超时
+（串口 `fnos_pair: http fetch_headers failed: errno=0 internal_heap=210288` +
+`HTTP_CLIENT: Connection timed out before data was ready!`），同时 NAS 应用日志出现
+`SSLEOFError: EOF occurred in violation of protocol` 与 403/500。
+
+**定位手法（关键）**：给配对流加了一条**只读自检** —— `fnos_pair_tls_probe()`
+（`components/fnos_monitor/fnos_pair.c`）+ 串口命令 `tls`（`fnos_wifi_cli.c`）：
+明文取 identity → 用那张证书 `GET /api/v1/health` → 再 `POST /api/v1/pair` 一个假码。
+第一次跑就分流了问题：**GET 一直 `ok=1 status=200`** ⇒ 证书 / 时钟 / TLS 版本 / 应用侧
+TLS 服务 / 6 秒超时全部排除，问题只能在 POST 这一段。
+
+**真因**：`http_oneshot()` 里 `esp_http_client_open(c, strlen(body))` 只负责**连接 +
+记住 Content-Length**，请求头与请求体是在第一次 `write`/`fetch_headers` 时才发的。
+原代码没写 body 就 `esp_http_client_fetch_headers()` ⇒ 服务端等 body、板子等响应，
+双向死等到超时；板子一断开，应用侧就报 `SSLEOFError`。GET 没有 body，所以从来没暴露。
+
+**修**：open 之后补 `esp_http_client_write(c, body, blen)` 并校验返回值，失败时把
+`写请求体失败 n/m（errno N）` 写上屏。
+
+**证据**（修复后同一条 `tls` 命令，真机串口）：
+
+```
+探针：identity 来自 192.168.0.119:8798，证书 1184 字节
+[tls] HTTPS 通过 https://192.168.0.119:8798/api/v1/health（ok=1 status=200 len=106）
+      ｜ POST /api/v1/pair ok=1 status=403：配对码已过期，请重新生成
+```
+
+POST 拿到 403 且**服务端的错误文案能上屏** —— 说明请求体发出去了、响应也收全了
+（假码 `000000` 必然 403，这正是探针的预期结果）。
+
+**顺带**：`tls` 命令临时把 `esp-tls` / `mbedtls` / `HTTP_CLIENT` 抬到 DEBUG，握手细节直接
+进串口；探针跑在独立的 PSRAM 栈任务里（mbedTLS 握手吃栈，串口命令任务的 4 KB 不够）。

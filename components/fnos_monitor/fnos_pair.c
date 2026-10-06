@@ -215,6 +215,114 @@ static char s_http_diag[96];
 
 const char *fnos_pair_last_http_diag(void) { return s_http_diag; }
 
+// 探针要先于定义处使用 http_oneshot（它在本文件后面）
+static bool http_oneshot(bool post, const char *url, const char *body, const char *cert_pem,
+                         char *rx, size_t rx_cap, int *out_status, int *out_len);
+
+/* ── 串口 / 屏幕都能用的 HTTPS 自检 ─────────────────────────────────────
+   配对卡在"握手没完成"时，屏幕只有一句话，而真正的原因（mbedTLS/esp-tls）只在
+   日志里。这个探针**不碰配对码、不改任何状态**：明文取一次 identity 拿到要固定的
+   那张证书 → 用这张证书 HTTPS 探一次 /api/v1/health → 把每一层的结果打出来。
+   换 NAS、换证书、TLS 握手出问题时用它自检，比在配对流里猜快得多。 */
+#define PROBE_HEALTH_PATH "/api/v1/health"
+static EXT_RAM_BSS_ATTR char s_probe_pem[FNOS_PAIR_PEM_MAX];
+
+bool fnos_pair_tls_probe(char *out, size_t out_cap)
+{
+    if (out_cap) out[0] = 0;
+    char *rx = heap_caps_malloc(RX_MAX, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!rx) rx = malloc(RX_MAX);
+    if (!rx) { snprintf(out, out_cap, "内存不足（%d 字节）", (int)RX_MAX); return false; }
+
+    const char *host = s_cfg.host[0] ? s_cfg.host : "?";
+    int ports[2] = { PAIR_APP_PORT, s_cfg.port };
+    int nports = (s_cfg.port == PAIR_APP_PORT) ? 1 : 2;
+    char url[160];
+    int status = 0, len = 0, port = 0;
+    bool got = false;
+
+    for (int i = 0; i < nports; i++) {
+        snprintf(url, sizeof url, "http://%s:%d%s", host, ports[i], IDENT_PATH);
+        status = 0; len = 0;
+        if (http_oneshot(false, url, NULL, NULL, rx, RX_MAX, &status, &len) && status == 200) {
+            port = ports[i];
+            got = true;
+            break;
+        }
+        ESP_LOGW(TAG, "探针：明文 identity 没通 %s ok_status=%d diag=%s", url, status, s_http_diag);
+    }
+    if (!got) {
+        snprintf(out, out_cap, "明文 identity 没通（%s）：%s", url, s_http_diag);
+        free(rx);
+        return false;
+    }
+
+    cJSON *root = cJSON_Parse(rx);
+    const cJSON *jpem = root ? cJSON_GetObjectItemCaseSensitive(root, "cert_pem") : NULL;
+    const cJSON *jtls = root ? cJSON_GetObjectItemCaseSensitive(root, "tls") : NULL;
+    if (!cJSON_IsString(jpem) || !jpem->valuestring || !jpem->valuestring[0]) {
+        snprintf(out, out_cap, "identity 里没有 cert_pem（应用没开 TLS？tls=%d）",
+                 (int)cJSON_IsTrue(jtls));
+        if (root) cJSON_Delete(root);
+        free(rx);
+        return false;
+    }
+    /* 先拷出来再删 cJSON：jpem 的指针随 root 一起失效 */
+    snprintf(s_probe_pem, sizeof s_probe_pem, "%s", jpem->valuestring);
+    if (root) cJSON_Delete(root);
+    ESP_LOGI(TAG, "探针：identity 来自 %s:%d，证书 %d 字节", host, port, (int)strlen(s_probe_pem));
+
+    snprintf(url, sizeof url, "https://%s:%d%s", host, port, PROBE_HEALTH_PATH);
+    status = 0; len = 0;
+    bool replied = http_oneshot(false, url, NULL, s_probe_pem, rx, RX_MAX, &status, &len);
+    bool ok = replied && status == 200;
+    snprintf(out, out_cap, "%s %s（ok=%d status=%d len=%d%s%s）",
+             ok ? "HTTPS 通过" : "HTTPS 失败", url, (int)replied, status, len,
+             s_http_diag[0] ? " · " : "", s_http_diag);
+    if (!ok) { free(rx); return false; }
+
+    /* 再走一遍**真正会失败的那条路**：POST 一个假配对码。
+       期望服务端回 403 + {"error":"配对码不正确"} —— 这也算通过：说明请求体发出去了、
+       响应也收回来了（这一步以前必挂：body 根本没写出去，6 秒后超时）。 */
+    snprintf(url, sizeof url, "https://%s:%d%s", host, port, PAIR_PATH);
+    status = 0; len = 0;
+    bool posted = http_oneshot(true, url, "{\"code\":\"000000\",\"name\":\"probe\"}",
+                               s_probe_pem, rx, RX_MAX, &status, &len);
+    char body[96] = "";
+    if (posted && len > 0) {
+        cJSON *r = cJSON_Parse(rx);
+        const cJSON *je = r ? cJSON_GetObjectItemCaseSensitive(r, "error") : NULL;
+        if (cJSON_IsString(je) && je->valuestring) snprintf(body, sizeof body, "：%s", je->valuestring);
+        if (r) cJSON_Delete(r);
+    }
+    char tail[160];
+    snprintf(tail, sizeof tail, " ｜ POST %s ok=%d status=%d%s%s", PAIR_PATH, (int)posted, status,
+             body, s_http_diag[0] ? " · " : "");
+    strncat(out, tail, out_cap - strlen(out) - 1);
+    free(rx);
+    return posted && status > 0;
+}
+
+/* 探针要跑 mbedTLS 握手，栈不能小；从串口命令里直接跑会撑爆命令任务的栈，
+   所以丢到一个 PSRAM 栈的一次性任务里跑。 */
+static void probe_task(void *arg)
+{
+    char msg[240];
+    bool ok = fnos_pair_tls_probe(msg, sizeof msg);
+    printf("\n[tls] %s%s\n> ", msg, ok ? "" : "  ← 见上面 mbedTLS/esp-tls 的详细日志");
+    fflush(stdout);
+    vTaskDelete(NULL);
+}
+
+void fnos_pair_tls_probe_async(void)
+{
+    if (xTaskCreatePinnedToCoreWithCaps(probe_task, "tls_probe", 8 * 1024, NULL, 4,
+                                        NULL, tskNO_AFFINITY, MALLOC_CAP_SPIRAM) != pdPASS) {
+        printf("\n[tls] 起不了探针任务（内存不足）\n> ");
+    }
+}
+
+
 // 一次性请求（配对是低频操作，不复用连接）。cert_pem 非空才走证书校验。
 static bool http_oneshot(bool post, const char *url, const char *body, const char *cert_pem,
                          char *rx, size_t rx_cap, int *out_status, int *out_len)
@@ -259,6 +367,24 @@ static bool http_oneshot(bool post, const char *url, const char *body, const cha
         *out_status = 0;
         *out_len = 0;
         return false;
+    }
+    /* **必须自己把请求体写出去**：esp_http_client_open(len) 只负责连接 + 记住
+       Content-Length，headers/body 是在第一次 write/fetch_headers 时才发的。
+       少了这一步，服务端会一直等 body、板子一直等响应，直到 6 秒超时 ——
+       应用侧日志里那句 SSLEOFError 就是这么来的（2026-10-06 实测：GET 通、POST 必挂）。 */
+    if (post && body) {
+        int blen = (int)strlen(body);
+        int wrote = esp_http_client_write(c, body, blen);
+        if (wrote != blen) {
+            snprintf(s_http_diag, sizeof s_http_diag, "写请求体失败 %d/%d（errno %d）",
+                     wrote, blen, esp_http_client_get_errno(c));
+            ESP_LOGE(TAG, "http write body failed: %d/%d errno=%d", wrote, blen,
+                     esp_http_client_get_errno(c));
+            esp_http_client_cleanup(c);
+            *out_status = 0;
+            *out_len = 0;
+            return false;
+        }
     }
     if (esp_http_client_fetch_headers(c) < 0) {
         snprintf(s_http_diag, sizeof s_http_diag, "读响应头失败（errno %d）",
