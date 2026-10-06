@@ -3,6 +3,8 @@
 # 增删字体时同步改这里的列表（gen_fonts.sh 会打印需要的行）。
 set(PROJ_SRCS
     "fnos_net.c"
+    "fnos_wifi_store.c"
+    "fnos_wifi_cli.c"
     "fnos_data.c"
     "fnos_pair.c"
     "fnos_ui.c"

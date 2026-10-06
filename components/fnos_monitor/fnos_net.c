@@ -7,6 +7,7 @@
 #include "fnos_config.example.h"
 #endif
 #include "fnos_data.h"
+#include "fnos_wifi_store.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -38,6 +39,12 @@ static esp_timer_handle_t s_wifi_retry_timer;
 static bool s_started;                  // fnos_net_start() 幂等标志
 static bool s_wifi_inited;
 static bool s_handlers_registered;
+// ── 给用户看的 Wi-Fi 状态 ──────────────────────────────────────────
+// 以前只有 ESP_LOG，屏幕上看不到"为什么连不上"。配网引导要靠这两样：
+// 有没有凭据（configured）、以及最近一次失败的人话原因。
+static bool s_configured;               // NVS/编译期里有可用凭据
+static char s_ssid[64] = "";
+static char s_reason[72] = "";          // 最近一次断线原因（人话），连上就清空
 
 // 断线重连：指数退避，最长 30s；凭据只在配置头里，日志永不打印。
 // 回调跑在 esp_timer 任务里（LVGL 的 tick 也在那个任务），而 esp_wifi_connect() 是
@@ -76,16 +83,37 @@ static void sntp_start_once(void) {
     esp_sntp_init();
 }
 
+// 断线原因 → 人话。只覆盖现场最可能遇到的几种；其余留给数字兜底，
+// 宁可说"原因码 205"也不要编一句错的解释。
+static const char *reason_text(uint8_t r)
+{
+    switch (r) {
+    case WIFI_REASON_NO_AP_FOUND:            return "找不到这个 Wi-Fi（名字不对或不在范围内）";
+    case WIFI_REASON_AUTH_FAIL:              return "认证失败（口令不对）";
+    case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT: return "握手超时（多半是口令不对）";
+    case WIFI_REASON_HANDSHAKE_TIMEOUT:      return "握手超时（多半是口令不对）";
+    case WIFI_REASON_ASSOC_FAIL:             return "路由器拒绝了连接";
+    case WIFI_REASON_CONNECTION_FAIL:        return "连接失败（信号太弱？）";
+    case WIFI_REASON_BEACON_TIMEOUT:         return "与路由器失联（信号不好）";
+    default:                                 return NULL;
+    }
+}
+
 static void on_net_event(void *arg, esp_event_base_t base, int32_t id, void *data) {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
-        esp_wifi_connect();
+        if (s_configured) esp_wifi_connect();
+        else ESP_LOGW(TAG, "没有 Wi-Fi 凭据：不自动连接，等待现场配网");
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         s_wifi_retry_count = s_wifi_retry_count < 15 ? s_wifi_retry_count + 1 : 15;
         mark_offline();
         wifi_schedule_retry();
         wifi_event_sta_disconnected_t *d = (wifi_event_sta_disconnected_t *)data;
-        ESP_LOGW(TAG, "wifi disconnected reason=%d retry=%u", d ? d->reason : 0,
-                 (unsigned)s_wifi_retry_count);
+        uint8_t rs = d ? d->reason : 0;
+        const char *rt = reason_text(rs);
+        if (rt) snprintf(s_reason, sizeof s_reason, "%s", rt);
+        else    snprintf(s_reason, sizeof s_reason, "原因码 %u", (unsigned)rs);
+        ESP_LOGW(TAG, "wifi disconnected reason=%u (%s) retry=%u", (unsigned)rs,
+                 s_reason, (unsigned)s_wifi_retry_count);
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *e = (ip_event_got_ip_t *)data;
         if (!e || e->ip_info.ip.addr == 0) {   // 不把 0.0.0.0 当在线
@@ -98,6 +126,7 @@ static void on_net_event(void *arg, esp_event_base_t base, int32_t id, void *dat
         memcpy(s_ip, ipstr, sizeof(s_ip));
         portEXIT_CRITICAL(&s_ip_mux);
         s_online = true;
+        s_reason[0] = 0;                    // 连上了，上一次的失败原因作废
         s_wifi_retry_count = 0;
         if (s_wifi_retry_timer) esp_timer_stop(s_wifi_retry_timer);
         if (s_eg) xEventGroupSetBits(s_eg, BIT_IP);
@@ -144,9 +173,17 @@ static bool wifi_start(void) {
             ESP_LOGW(TAG, "wifi retry timer unavailable: %s", esp_err_to_name(err));
         }
     }
+    char ssid[64] = "", pass[96] = "";
+    s_configured = fnos_wifi_store_load(ssid, sizeof ssid, pass, sizeof pass);
+    snprintf(s_ssid, sizeof s_ssid, "%s", ssid);
+    if (!s_configured) {
+        ESP_LOGW(TAG, "Wi-Fi 未配置（NVS 与编译期都没有可用 SSID）——起站但不自动连接");
+    }
     wifi_config_t cfg = { 0 };
-    strncpy((char *)cfg.sta.ssid, APP_WIFI_SSID, sizeof(cfg.sta.ssid) - 1);
-    strncpy((char *)cfg.sta.password, APP_WIFI_PASS, sizeof(cfg.sta.password) - 1);
+    // 用 snprintf 而不是 strncpy：源缓冲比 wifi_config_t 的字段大，strncpy 会触发
+    // -Werror=stringop-truncation（构建直接失败）。两者都是"截断即安全"的语义。
+    snprintf((char *)cfg.sta.ssid, sizeof(cfg.sta.ssid), "%s", ssid);
+    snprintf((char *)cfg.sta.password, sizeof(cfg.sta.password), "%s", pass);
     cfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
     err = esp_wifi_set_mode(WIFI_MODE_STA);
     if (err == ESP_OK) err = esp_wifi_set_config(WIFI_IF_STA, &cfg);
@@ -164,6 +201,47 @@ void fnos_net_start(void) {
     if (!wifi_start()) return;             // 失败时保持未启动，允许稍后重试
     s_started = true;
     ESP_LOGI(TAG, "wifi station started; awaiting ip");
+    fnos_wifi_cli_start();      // 串口配网兜底：屏幕配网不可用时的唯一入口
+}
+
+bool fnos_net_configured(void) { return s_configured; }
+
+const char *fnos_net_state_str(void)
+{
+    static char buf[160];
+    if (!s_configured) {
+        snprintf(buf, sizeof buf, "未配置 Wi-Fi");
+    } else if (s_online) {
+        char ip[16];
+        portENTER_CRITICAL(&s_ip_mux);
+        snprintf(ip, sizeof ip, "%s", s_ip);
+        portEXIT_CRITICAL(&s_ip_mux);
+        snprintf(buf, sizeof buf, "已连接 %s（%s）", s_ssid, ip);
+    } else if (s_reason[0]) {
+        snprintf(buf, sizeof buf, "连不上 %s：%s（第 %u 次重试）", s_ssid, s_reason,
+                 (unsigned)s_wifi_retry_count);
+    } else {
+        snprintf(buf, sizeof buf, "正在连接 %s…", s_ssid);
+    }
+    return buf;
+}
+
+void fnos_net_set_credentials(const char *ssid, const char *pass)
+{
+    if (!ssid || !ssid[0]) return;
+    if (!fnos_wifi_store_save(ssid, pass)) return;
+    s_configured = true;
+    snprintf(s_ssid, sizeof s_ssid, "%s", ssid);
+    s_reason[0] = 0;
+    s_wifi_retry_count = 0;
+    // 立刻按新凭据重连：先断开（可能正连着旧的），再 set_config + connect
+    wifi_config_t cfg = { 0 };
+    snprintf((char *)cfg.sta.ssid, sizeof(cfg.sta.ssid), "%s", ssid);
+    snprintf((char *)cfg.sta.password, sizeof(cfg.sta.password), "%s", pass ? pass : "");
+    cfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+    esp_wifi_disconnect();
+    if (esp_wifi_set_config(WIFI_IF_STA, &cfg) == ESP_OK) esp_wifi_connect();
+    else ESP_LOGE(TAG, "set_config 失败，新凭据要重启后才生效");
 }
 
 bool fnos_net_online(void) {

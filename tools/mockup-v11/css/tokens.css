@@ -1,0 +1,127 @@
+/* ==========================================================================
+   v11 设计令牌 —— 「机箱前面板」设计方向
+   产品世界：阳极氧化机箱 / 钢板 / 蚀刻丝印 / LED 指示灯 / 盘位导轨
+   1rem = 1u（设计像素）。u = min(100vw/1024, 100vh/600) —— 分辨率自适应的唯一缩放源。
+   ========================================================================== */
+:root {
+  /* 缩放单位：1024×600 时 1u = 1px */
+  font-size: min(calc(100vw / 1024), calc(100vh / 600));
+
+  /* ---- 表面（机箱钣金）：深度只靠色阶 + 蚀刻线，无渐变无阴影（RGB565 红线） ---- */
+  --chassis:      #0A0C0F;   /* 页面地：阳极氧化黑铝 */
+  --plate:        #14181D;   /* 卡面：深灰钢板 */
+  --plate-lift:   #1B2027;   /* 抬起面：顶栏 / 选中项 / 嵌槽面板 */
+  --slot:         #0E1216;   /* 凹槽：进度条轨道 / 输入槽 */
+  --etch:         rgba(255,255,255,0.08);   /* 蚀刻发丝线（≥10% 才在 RGB565 可见） */
+  --etch-strong:  rgba(255,255,255,0.16);   /* 结构性分隔 */
+  --etch-focus:   rgba(255,255,255,0.34);   /* 焦点/选中描边 */
+
+  /* ---- 丝印文字（四级）：小字一律 ≥4.5:1，t4 仅限 ≥20px 或非文字 ---- */
+  --silk-1:       #F2F5F8;   /* 读数主值 */
+  --silk-2:       #AEB8C4;   /* 标签 / 次级值 */
+  --silk-3:       #8A94A1;   /* 元信息 / 轴标 / 副行 */
+  --silk-4:       #5C6674;   /* 禁用 / 空态（只配 ≥20px 或图标） */
+
+  /* ---- LED 状态（严重度，语义排他，必须带文字冗余） ---- */
+  --led-ok:       #35C77A;
+  --led-warn:     #FFB020;
+  --led-crit:     #FF4558;
+  --led-idle:     #4A5260;
+
+  /* ---- 身份色（谁，跨页稳定；只上点/条/线，不上整卡） ---- */
+  --id-cpu:       #4D9BF0;   /* CPU 蓝 */
+  --id-mem:       #37C4D6;   /* 内存青 */
+  --id-temp:      #FF8A1F;   /* 温度橙 */
+  --id-down:      #37C4D6;   /* 下行青 */
+  --id-up:        #7C8CF5;   /* 上行蓝紫 */
+  --id-store:     #58C7B0;   /* 存储青绿 */
+
+  /* ---- 交互（只表可点/选中，绝不表状态） ---- */
+  --focus:        #4D9BF0;
+
+  /* ---- 字体（与设备字库同源：Inter + Noto Sans SC） ---- */
+  --font-num: "Inter", "Noto Sans SC", sans-serif;
+  --font-ui:  "Inter", "Noto Sans SC", sans-serif;
+
+  /* ---- 字号阶梯（比例 1.25；行高才是版面高度） ---- */
+  --t-hero:   44rem;  --lh-hero:  52rem;
+  --t-metric: 32rem;  --lh-metric: 39rem;
+  --t-sub:    20rem;  --lh-sub:   24rem;
+  --t-body:   16rem;  --lh-body:  22rem;
+  --t-label:  13rem;  --lh-label: 18rem;
+  --t-meta:   12rem;  --lh-meta:  16rem;
+
+  /* ---- 间距阶梯（4/8/12/16/24/32，其余禁用） ---- */
+  --s1: 4rem; --s2: 8rem; --s3: 12rem; --s4: 16rem; --s5: 24rem; --s6: 32rem;
+
+  /* ---- 形状 ---- */
+  --r-sm: 4rem;  --r-md: 8rem;  --r-pill: 999rem;
+  --hair: 1rem;
+
+  /* ---- 骨架（分辨率自适应的固定框架，全 rem） ---- */
+  --head-h: 56rem;
+  --foot-h: 40rem;
+  --rail-w: 100rem;
+
+  /* ---- 阈值合同（UX-15 统一，两端一致） ---- */
+  /* 占用类（CPU/内存/容量）：warm 80 / full 90；温度类：warm 60 / full 75 */
+  --thr-usage-warm: 80;
+  --thr-usage-full: 90;
+  --thr-temp-warm: 60;
+  --thr-temp-full: 75;
+
+  /* ---- 动效（界面稿静态，实现期合同） ---- */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --dur-press: 120ms;
+  --dur-page: 180ms;
+}
+
+@font-face {
+  font-family: "Inter";
+  src: url("../../fonts/Inter-Regular.ttf") format("truetype");
+  font-weight: 400; font-display: block;
+}
+@font-face {
+  font-family: "Inter";
+  src: url("../../fonts/Inter-Medium.ttf") format("truetype");
+  font-weight: 500; font-display: block;
+}
+@font-face {
+  font-family: "Inter";
+  src: url("../../fonts/Inter-SemiBold.ttf") format("truetype");
+  font-weight: 600; font-display: block;
+}
+@font-face {
+  font-family: "Noto Sans SC";
+  src: url("../../fonts/NotoSansSC-Regular.ttf") format("truetype");
+  font-weight: 400; font-display: block;
+}
+@font-face {
+  font-family: "Noto Sans SC";
+  src: url("../../fonts/NotoSansSC-Medium.ttf") format("truetype");
+  font-weight: 500; font-display: block;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  width: 100vw; height: 100vh; overflow: hidden;
+  background: var(--chassis);
+  font-family: var(--font-ui);
+  color: var(--silk-1);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.num {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  letter-spacing: -0.01em;
+}
+.silk { font-family: var(--font-ui); }
+.caps {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 500;
+}
