@@ -1,7 +1,7 @@
 {
     ".url": {
         "nasscreencompanion.Application": {
-            "title": "{display_name}",
+            "title": "飞牛监控",
             "icon": "images/icon_{0}.png",
             "type": "iframe",
             "gatewayPrefix": "/app/nasscreencompanion",

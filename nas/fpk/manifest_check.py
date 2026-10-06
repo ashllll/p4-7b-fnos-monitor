@@ -119,6 +119,21 @@ def wiring_problems():
     if not eid.startswith(appname):
         out.append(f"入口 ID {eid} 没有以 appname 开头（官方建议入口 ID 用 appname 前缀）")
 
+    # 入口标题必须是**字面量**。踩过：写了 "{display_name}" 以为飞牛会替换，结果桌面图标
+    # 上原样显示 {display_name}（用户截图报障）。官方只替换 icon 里的 {0}（图标尺寸）
+    # 与 url/port 里的 ${wizard_port}/${wizard_path}，没有 {display_name} 这种变量。
+    title = ent.get("title")
+    if not isinstance(title, str) or not title.strip():
+        out.append("入口 title 是空的——桌面图标会没有名字")
+    elif re.search(r"\{[^}]*\}|\$\{[^}]*\}", title):
+        out.append(f"入口 title={title!r} 里有未替换的占位符；"
+                   f"飞牛不会替换它（只替换 icon 的 {{0}}），桌面图标会原样显示这串字符")
+    icon = ent.get("icon") or ""
+    if "{0}" in icon and not all(
+            os.path.exists(os.path.join(pkg, "app", "ui", "images", f"icon_{n}.png"))
+            for n in (64, 256)):
+        out.append("icon 用了 {0} 模板，但 app/ui/images/icon_64.png 或 icon_256.png 缺失")
+
     ports = []
     mp = (m.get("service_port") or "").strip()
     if mp:
