@@ -34,6 +34,8 @@ add_executable(preview
   "${COMP}/fnos_ui.c"
   "${COMP}/kk_ui/kk_widgets.c"
   "${COMP}/kk_ui/kk_rect.c"
+  "${COMP}/kk_ui/kk_theme.c"
+  "${COMP}/kk_ui/kk_metrics.c"
   ${FONT_SRC}
 )
 
@@ -50,3 +52,21 @@ target_compile_options(preview PRIVATE
   -Wall -Wno-unused-parameter
 )
 target_link_libraries(preview PRIVATE lvgl m)
+
+# 风格试片：同一套 Kconfig + 渲染路径下的样式样张（见 style_proof.c 头部说明）
+add_executable(style_proof
+  style_proof.c
+  "${COMP}/kk_ui/kk_widgets.c"
+  "${COMP}/kk_ui/kk_rect.c"
+  "${COMP}/kk_ui/kk_theme.c"
+  "${COMP}/kk_ui/kk_metrics.c"
+  ${FONT_SRC}
+)
+target_include_directories(style_proof PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/stub"
+  "${CMAKE_CURRENT_SOURCE_DIR}"
+  "${COMP}"
+  "${COMP}/kk_ui"
+)
+target_compile_options(style_proof PRIVATE -Wall -Wno-unused-parameter)
+target_link_libraries(style_proof PRIVATE lvgl m)

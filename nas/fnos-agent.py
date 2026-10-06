@@ -53,6 +53,18 @@ def read_int(path, default=0):
         return default
 
 
+# 采集根：默认 /sys。测试用 FNAS_SYSFS 指到一棵假的 sysfs 树 —— 温度的设备名要靠
+# realpath 的父子关系推导，只有真树和假树同构才测得出来（这条链路上 macOS 没有 /sys，
+# 不搭假树就只剩"看着像对"）。
+SYSFS = os.environ.get("FNAS_SYSFS", "/sys")
+# /proc 单独一个根：CPU 型号名要从 /proc/cpuinfo 读，测试时两棵树各自可注入。
+PROC = os.environ.get("FNAS_PROC", "/proc")
+
+
+def sysfs(*parts):
+    return os.path.join(SYSFS, *parts)
+
+
 # ---------------------------------------------------------------- 采集器
 
 SKIP_FSTYPES = {
@@ -87,6 +99,9 @@ class Collector:
         self._prev_zfs = None
         self._docker_cache = (0.0, [])  # (last_poll, result) —— 注意别叫 _docker，会遮蔽同名方法
         self._docker_seen_up = set()    # 曾经运行过的容器名（用于"掉线"告警）
+        self._dev_cache = None          # 温度的设备名索引：(时间, [(realpath, 名字, 类别)])
+        self._pci_cache = {}            # (vid,did) → (厂商名, 型号名)，pci.ids 查一次记住
+        self._cpu_name = None           # /proc/cpuinfo 的型号名（只读一次）
         self.hostname = socket.gethostname()
 
     # ---- 启动/停止
@@ -121,8 +136,10 @@ class Collector:
     def _cpu(self):
         parts = read_text("/proc/stat").split("\n", 1)[0].split()
         if len(parts) < 8 or parts[0] != "cpu":
+            # runq 也要给：字段形状在两条路径上必须一致，少一个键会让读它的
+            # 客户端安静地显示 0（而不是报错），排查起来非常费劲。
             return {"pct": 0.0, "cores": os.cpu_count() or 1, "load1": 0.0, "load5": 0.0,
-                    "load15": 0.0, "temp_c": None, "procs": 0}
+                    "load15": 0.0, "temp_c": None, "runq": 0, "procs": 0}
         # parts[1:9] = user..steal；guest/guest_nice 已经被算进 user/nice，
         # 取到第 11 项会把它们重复计入 total，导致 CPU% 系统性偏低
         vals = [int(x) for x in parts[1:9]]
@@ -318,48 +335,267 @@ class Collector:
         rates.sort(key=lambda d: (d["rd_kbs"] + d["wr_kbs"]), reverse=True)
         return rates[:10]
 
-    # 标签保持 ASCII：板子端 LVGL 用的 Latin 字体，没有 CJK 字形
-    TEMP_LABEL = {"coretemp": "CPU", "enp1s0": "NIC", "i915": "iGPU", "nvme": "NVMe"}
+    # ── 温度：把 /sys/class/hwmon 下**每一个**可读通道都报出来（板端逐路显示）。
+    #
+    #    设备名不查对照表，全部按系统事实推导：哪块 block / 哪张网卡 / 哪个 DRM
+    #    控制器和这个 hwmon 指向同一个底层设备，就用它的名字（nvme0n1 / enp1s0 /
+    #    i915）；推导不出来时才退回 hwmon 自己的名字（coretemp、acpitz……）。
+    #    换机器、插新卡、加硬盘，标签自动跟着变，不需要改代码。
+    TEMP_MAX = 48          # 与板端 FNOS_MAX_TEMPS 同值；超出时丢最冷的几条
+    TEMP_STR = 20          # dev / ch 各自的最大长度（板端按字符格排版）
+    TEMP_NAME = 28         # dn（人读的设备名）的最大长度：板端一行放得下约 23~28 个西文字符
+    # 通道语义像 CPU 的标签：Intel coretemp 的 "Package id 0"/"Core 3"、
+    # AMD k10temp 的 "Tctl"/"Tdie" 都命中。用它而不是"驱动名对照表"来认 CPU。
+    CPU_LABEL_RE = re.compile(r"(?i)\b(package|tctl|tdie|tccd|cpu|core\s*\d+)\b")
 
-    CPU_HWMON = ("coretemp", "k10temp", "zenpower", "cpu_thermal", "acpitz", "cpu")
+    @staticmethod
+    def _ls(path):
+        try:
+            return sorted(os.listdir(path))
+        except OSError:
+            return []
+
+    @staticmethod
+    def _dev_link(path):
+        """path/device 的 realpath；该目录没有 device 链接就返回空串。"""
+        p = os.path.join(path, "device")
+        try:
+            if not os.path.exists(p):
+                return ""
+            return os.path.realpath(p)
+        except OSError:
+            return ""
+
+    def _dev_map(self):
+        """[(底层设备 realpath, 设备短名, 类别)]，30 秒缓存（设备拓扑不会每秒变）。
+
+        类别（block / net / drm）决定"人读的设备名"从哪儿取：磁盘取型号、网卡与显卡取
+        PCI 厂商+型号，取不到就退回"驱动名 + 链路速率"。"""
+        now = time.time()
+        if self._dev_cache and now - self._dev_cache[0] < 30.0:
+            return self._dev_cache[1]
+        cand = []
+        for nm in self._ls(sysfs("class", "block")):
+            # 分区（带 partition 文件）不是独立设备，用整盘名
+            if os.path.exists(sysfs("class", "block", nm, "partition")):
+                continue
+            rp = self._dev_link(sysfs("class", "block", nm))
+            if rp:
+                cand.append((rp, nm, "block"))
+        for nm in self._ls(sysfs("class", "net")):
+            rp = self._dev_link(sysfs("class", "net", nm))
+            if rp:
+                cand.append((rp, nm, "net"))
+        for nm in self._ls(sysfs("class", "drm")):
+            if not nm.startswith("card") or "-" in nm:   # card0 / card1（连接器名跳过）
+                continue
+            rp = self._dev_link(sysfs("class", "drm", nm))
+            if not rp:
+                continue
+            try:
+                drv = os.path.basename(os.path.realpath(os.path.join(rp, "driver")))
+            except OSError:
+                drv = ""
+            if drv:
+                cand.append((rp, drv, "drm"))
+        self._dev_cache = (now, cand)
+        return cand
+
+    @staticmethod
+    def _pick_device(rp, cand):
+        """hwmon 的底层设备路径 → (设备短名, 类别)，最贴近它的那个（含父子关系）。
+
+        NVMe 的 hwmon 挂在 PCI 控制器上，而 block 设备的 device 在它下面一层
+        （…/0000:03:00.0/nvme/nvme0），所以不能只比相等，要认前缀包含。"""
+        best, best_kind, best_len = "", "", -1
+        if not rp:
+            return best, best_kind
+        for crp, nm, kind in cand:
+            if rp == crp or rp.startswith(crp + os.sep) or crp.startswith(rp + os.sep):
+                if len(crp) > best_len:
+                    best, best_kind, best_len = nm, kind, len(crp)
+        return best, best_kind
+
+    # PCI 厂商号 → 厂商名。**只兜底到厂商这一级**：型号名优先从系统自带的 pci.ids 里查，
+    # 查不到就退回"驱动名 + 链路速率"。表里也没有就原样写 PCI 号 —— 宁可难看，也不要
+    # 编一个"看起来很像"的型号：认错设备比不认识更糟（用户会照着它去拆机箱/加风扇）。
+    PCI_VENDOR = {"8086": "Intel", "10ec": "Realtek", "14e4": "Broadcom",
+                  "1d6a": "Marvell", "1b4b": "Marvell", "15b3": "Mellanox",
+                  "1022": "AMD", "1002": "AMD", "10de": "NVIDIA", "1a03": "ASPEED",
+                  "144d": "Samsung", "1344": "Micron", "1987": "Phison",
+                  "1c5c": "SK hynix", "1e0f": "KIOXIA", "1cc1": "ADATA", "2646": "Kingston"}
+
+    def _pci_name(self, vid, did):
+        """(厂商名, 型号名)；vid/did 形如 "0x1d6a"。系统里没有 pci.ids 就返回空串。"""
+        if not vid.startswith("0x"):
+            return "", ""
+        v = vid[2:].lower()
+        d = did[2:].lower() if did.startswith("0x") else ""
+        hit = self._pci_cache.get((v, d))
+        if hit is not None:
+            return hit
+        vend, chip = "", ""
+        # 第一项是测试注入点：pci.ids 在 /usr/share 下，假 sysfs 树测不到它，
+        # 而"厂商 + 型号"这条路径恰恰是最需要被测的（型号认错比认不出更糟）。
+        # 另外把 Debian 常见的 .gz 也认了（有的机器只装压缩版）。
+        extra = [x for x in os.environ.get("FNAS_PCI_IDS", "").split(":") if x]
+        for p in extra + ["/usr/share/hwdata/pci.ids", "/usr/share/misc/pci.ids",
+                          "/usr/share/pci.ids", "/usr/share/hwdata/pci.ids.gz",
+                          "/usr/share/misc/pci.ids.gz"]:
+            try:
+                if p.endswith(".gz"):
+                    import gzip
+                    fh = gzip.open(p, "rt", encoding="utf-8", errors="replace")
+                else:
+                    fh = open(p, "r", encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            cur = ""
+            with fh:
+                for line in fh:
+                    if not line.strip() or line.startswith("#"):
+                        continue
+                    if line[0] not in ("\t", " "):          # 厂商行："1d6a  Aquantia Corp."
+                        cur = line[:4].lower()
+                        if cur == v:
+                            vend = line[4:].strip()
+                            if not d:
+                                break
+                    elif cur == v and line.startswith("\t") and not line.startswith("\t\t"):
+                        if line[1:5].lower() == d:          # 型号行："\t0001  AQC107 ..."
+                            chip = line[5:].strip()
+                            break
+            if vend:
+                break
+        self._pci_cache[(v, d)] = (vend, chip)
+        return vend, chip
+
+    def _cpu_model(self):
+        """CPU 型号名（"Intel N100" / "AMD Ryzen 5 5600"）；取不到返回空串。"""
+        if self._cpu_name is not None:
+            return self._cpu_name
+        name = ""
+        for line in read_text(os.path.join(PROC, "cpuinfo")).splitlines():
+            low = line.lower()
+            if (low.startswith("model name") or low.startswith("hardware")) and ":" in line:
+                name = line.split(":", 1)[1].strip()      # x86 用 model name，ARM 常用 Hardware
+                break
+        name = re.sub(r"\((?:R|TM|r|tm)\)", "", name)
+        name = re.sub(r"\s+(?:CPU|Processor)\b.*$", "", name)   # 去掉 "CPU @ 2.00GHz"
+        name = re.sub(r"\s{2,}", " ", name).strip()
+        self._cpu_name = name
+        return name
+
+    # 链路速率 → 人读写法（单位换算，不是设备身份）
+    LINK_RATE = {100000: "100GbE", 40000: "40GbE", 25000: "25GbE", 10000: "10GbE",
+                 5000: "5GbE", 2500: "2.5GbE", 1000: "1GbE", 100: "100MbE"}
+
+    # pci.ids 的厂商名常常很长（"Advanced Micro Devices, Inc. [AMD/ATI]"），而板端
+    # 一行只有 28 个字符：先砍掉 Corp./Inc./Ltd./Semiconductor… 这类尾巴；还是太长
+    # 就用 PCI_VENDOR 表里的短名。**砍的是厂商名，不是型号名** —— 型号才是认设备的。
+    VENDOR_TAIL = re.compile(r"(?i)\b(corp|corporation|inc|incorporated|ltd|limited|co|company|"
+                             r"technologies|technology|semiconductor|electronics|microsystems|"
+                             r"gmbh|llc|plc|ag|bv|oy|ab)\b.*$")
+
+    # 型号名的压缩规则见下
+    # pci.ids 的型号名常带方括号别名，且括号里往往是**用户认识的那个名字**：
+    # "CoffeeLake-S GT2 [UHD Graphics 630]" → 取括号内容；再砍掉 "… Controller" 尾巴。
+    # 板端一行只有 28 字符，不处理就会被截成 "Intel CoffeeLake-S GT2 [UHD "。
+    CHIP_TAIL = re.compile(r"(?i)\s+(controller|ethernet controller|series)$")
+
+    def _chip_short(self, chip):
+        """把型号名压到能塞进一行的长度（取方括号别名，砍通用尾巴）。"""
+        m = re.search(r"\[([^\]]{3,})\]", chip)
+        if m:
+            chip = m.group(1)
+        return self.CHIP_TAIL.sub("", chip).strip()
+
+    def _vendor_short(self, vid, vend):
+        """把厂商名压到能塞进一行的长度；压不动就退回短名表。"""
+        short = self.VENDOR_TAIL.sub("", vend).strip(" ,.;-") if vend else ""
+        if not short or len(short) > 14:
+            key = vid[2:].lower() if vid.startswith("0x") else ""
+            short = self.PCI_VENDOR.get(key, "")
+        if not short and vid.startswith("0x"):
+            short = "PCI %s" % vid[2:]
+        return short
+
+    def _dev_name(self, kind, dev, rp, hw, cpuish):
+        """人读的设备名 —— 用户要拿它决定"给谁降温"，所以不能是 NIC 这种缩写，
+        也不能只是 enp1s0 这种内核 id。一律从系统事实里读，读不到就退回更朴素的那个。"""
+        if kind == "block":
+            m = read_text(sysfs("class", "block", dev, "device", "model")).strip()
+            return m or dev
+        if kind in ("net", "drm"):
+            vid = read_text(os.path.join(rp, "vendor")).strip()
+            did = read_text(os.path.join(rp, "device")).strip()
+            vend, chip = self._pci_name(vid, did)
+            vend = self._vendor_short(vid, vend)
+            chip = self._chip_short(chip)
+            try:
+                drv = os.path.basename(os.path.realpath(os.path.join(rp, "driver")))
+            except OSError:
+                drv = ""
+            head = " ".join(x for x in (vend, chip or drv) if x)
+            if kind == "net":
+                rate = self.LINK_RATE.get(read_int(sysfs("class", "net", dev, "speed"), 0), "")
+                # 速率只在"加了还塞得下、且名字里本来没有速率"时才补：pci.ids 的型号名
+                # 有的自带 "10GbE Controller"，无脑再补一遍会变成 "… 10GbE 10Gb"。
+                if rate and "GbE" not in head and "MbE" not in head \
+                        and len(head) + 1 + len(rate) <= self.TEMP_NAME:
+                    head = "%s %s" % (head, rate)
+            return head or dev
+        if cpuish:
+            return self._cpu_model() or hw
+        return hw
 
     def _temps(self):
+        """每一个能读到温度的通道一路。
+
+        每路给：dev（内核短名，如 enp1s0）、ch（通道名，如 PHY）、dn（**人读的设备名**，
+        如 "Marvell AQC113 10GbE" / "Samsung SSD 990 PRO 2TB" / "Intel N100"）、c。
+        dev 保证是稳定的 id（界面上要能一行一行认住），dn 才是"这是什么设备"。"""
         out = []
         self._cpu_temp = None
-        base = "/sys/class/hwmon"
-        try:
-            entries = sorted(os.listdir(base))
-        except OSError:
-            return out
-        for e in entries:
-            hp = os.path.join(base, e)
+        fallback_cpu = None
+        cand = self._dev_map()
+        for e in self._ls(sysfs("class", "hwmon")):
+            hp = sysfs("class", "hwmon", e)
             name = read_text(os.path.join(hp, "name")).strip()
             if not name:
                 continue
-            # NVMe 用设备名（nvme0..3）区分，其余用 hwmon 名
-            label = self.TEMP_LABEL.get(name, name)
-            if name == "nvme":
-                try:
-                    dev = os.path.basename(os.path.realpath(os.path.join(hp, "device")))
-                    label = dev.upper() if dev.startswith("nvme") else "NVMe"
-                except OSError:
-                    label = "NVMe"
-            try:
-                idxs = sorted(int(re.match(r"temp(\d+)_input", f).group(1))
-                              for f in os.listdir(hp) if re.match(r"temp\d+_input$", f))
-            except (OSError, AttributeError):
+            rp = self._dev_link(hp)          # hp 本身是符号链接，设备路径要取它的 device
+            chans = []                       # [(通道序号, 通道名, 摄氏度)]
+            for f in self._ls(hp):
+                m = re.match(r"temp(\d+)_input$", f)
+                if not m:
+                    continue
+                c = read_int(os.path.join(hp, f), -1) / 1000.0
+                if c <= 0:                   # 读不到 / 该通道没接传感器
+                    continue
+                ch = read_text(os.path.join(hp, "temp%s_label" % m.group(1))).strip()
+                ch = re.sub(r"(?i)\s+temperature$", "", ch) or ("temp%s" % m.group(1))
+                chans.append((int(m.group(1)), ch, c))
+            if not chans:
                 continue
-            if not idxs:
-                continue
-            c = read_int(os.path.join(hp, "temp%d_input" % idxs[0]), -1) / 1000.0
-            if c <= 0:
-                continue
-            if name in self.CPU_HWMON and self._cpu_temp is None:
-                self._cpu_temp = round(c, 1)      # 供 cpu.temp_c 使用，不依赖显示标签
-                label = "CPU"
-            out.append({"n": label, "c": round(c, 1)})
+            chans.sort()
+            dev, kind = self._pick_device(rp, cand)
+            cpuish = any(self.CPU_LABEL_RE.search(ch) for _, ch, _ in chans)
+            if not dev:
+                dev = "CPU" if cpuish else name
+            dn = self._dev_name(kind, dev, rp, name, cpuish)
+            if fallback_cpu is None and rp.startswith(sysfs("devices", "platform")):
+                fallback_cpu = round(chans[0][2], 1)
+            for _, ch, c in chans:
+                if self._cpu_temp is None and self.CPU_LABEL_RE.search(ch):
+                    self._cpu_temp = round(c, 1)
+                out.append({"n": ("%s %s" % (dev, ch))[:32], "c": round(c, 1),
+                            "dev": dev[:self.TEMP_STR], "ch": ch[:self.TEMP_STR],
+                            "dn": dn[:self.TEMP_NAME]})
+        if self._cpu_temp is None:
+            self._cpu_temp = fallback_cpu
         out.sort(key=lambda t: t["c"], reverse=True)
-        return out
+        return out[:self.TEMP_MAX]
 
     def _docker(self):
         now = time.time()
@@ -632,11 +868,27 @@ def main():
     ap.add_argument("--hist", type=int, default=int(os.environ.get("FNAS_HIST", "300")))
     ap.add_argument("--selftest", action="store_true",
                     help="采集一次并打印 JSON（出错时逐段定位），不启动服务")
+    ap.add_argument("--temps", action="store_true",
+                    help="只跑温度枚举并按「设备名 / 通道 / 数值」打表：只读、不启服务、"
+                         "不写任何文件。用来在正式部署前先看清这一版会怎么命名")
     args = ap.parse_args()
 
     netif = os.environ.get("FNAS_NETIF") or None
     vols = [v.strip() for v in (os.environ.get("FNAS_VOLUMES") or "").split(",") if v.strip()]
     col = Collector(interval=args.interval, netif=netif, volumes=vols, hist_len=args.hist)
+
+    if args.temps:
+        rows = col._temps()
+        print("%-28s %-12s %7s  %s" % ("设备名(dn)", "通道(ch)", "°C", "内核名(dev)"))
+        print("-" * 68)
+        for t in rows:
+            print("%-28s %-12s %7.1f  %s" % (t.get("dn") or t["dev"], t.get("ch", ""),
+                                             t["c"], t["dev"]))
+        print("-" * 68)
+        print("共 %d 路（>=75°C 危险 %d 路、>=60°C 注意 %d 路）"
+              % (len(rows), sum(1 for t in rows if t["c"] >= 75),
+                 sum(1 for t in rows if 60 <= t["c"] < 75)))
+        return 0
 
     if args.selftest:
         import traceback

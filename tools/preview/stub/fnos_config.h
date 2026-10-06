@@ -3,7 +3,7 @@
 #define APP_WIFI_SSID "preview-ssid"
 #define APP_WIFI_PASS "preview-pass"
 
-#define FNOS_HOST "192.168.0.119"
+#define FNOS_HOST "192.0.2.10"
 #define FNOS_PORT 8799
 #define FNOS_TOKEN ""
 

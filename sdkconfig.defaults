@@ -97,3 +97,10 @@ CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y
 CONFIG_FNOS_CHART_WINDOW=180
 # 串口每 10 秒打印一次堆余量（排查"跑一段时间后界面冻结"时打开）
 CONFIG_FNOS_HEAP_DEBUG=n
+# 主任务栈 3584 → 16 KB（2026-10-05 修）：app_main 里的 fnos_ui_create() 要建
+# 四个页面 + 配对整页卡（含数字键盘），LVGL 建构件那条调用链（lv_obj_create →
+# lv_malloc → heap_caps_aligned_alloc）本身就要吃掉几 KB 栈；用 3584 字节的默认值
+# 会在 fnos_ui_create 里直接撞栈保护：Core 0 panic'ed (Stack protection fault)，
+# 设备每 4.6 秒重启一次。LVGL 自己的任务栈本来就配了 12 KB，主任务对齐它。
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384
+

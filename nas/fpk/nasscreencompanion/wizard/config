@@ -1,0 +1,64 @@
+[
+  {
+    "stepTitle": "修改服务设置",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "这里的值会整体覆盖当前设置并重启服务。注意：表单显示的是安装默认值，不是本机当前值——想知道当前生效的设置、以及本机到底能读到哪些指标，请打开应用内的管理页。"
+      },
+      {
+        "type": "text",
+        "field": "wizard_port",
+        "label": "开发板读取端口",
+        "initValue": "8798",
+        "rules": [
+          { "required": true, "message": "请填写端口号" },
+          { "pattern": "^[0-9]{2,5}$", "message": "请填写 2~5 位数字端口" }
+        ]
+      },
+      {
+        "type": "radio",
+        "field": "wizard_bind",
+        "label": "监听地址",
+        "initValue": "lan",
+        "options": [
+          { "label": "内网所有网卡", "value": "lan" },
+          { "label": "仅本机 127.0.0.1", "value": "local" }
+        ]
+      },
+      {
+        "type": "radio",
+        "field": "wizard_auth",
+        "label": "开发板读取鉴权",
+        "initValue": "pairing",
+        "options": [
+          { "label": "配对令牌（推荐）", "value": "pairing" },
+          { "label": "内网免令牌（仅排障用）", "value": "lan" }
+        ]
+      },
+      {
+        "type": "switch",
+        "field": "wizard_tls",
+        "label": "开发板读取使用 HTTPS",
+        "initValue": "true",
+        "helpText": "关掉后遥测面变成明文 HTTP，仅用于排障。改回开启时沿用已有的自签证书（指纹不变），已配对的开发板不需要重新确认。"
+      },
+      {
+        "type": "switch",
+        "field": "wizard_docker",
+        "label": "采集容器状态",
+        "initValue": "false",
+        "helpText": "读取 docker.sock，权限模型与其他指标不同。"
+      },
+      {
+        "type": "text",
+        "field": "wizard_interval",
+        "label": "采样间隔（秒）",
+        "initValue": "1.0",
+        "rules": [
+          { "pattern": "^[0-9]+(\\.[0-9]+)?$", "message": "请填写数字，例如 1.0" }
+        ]
+      }
+    ]
+  }
+]

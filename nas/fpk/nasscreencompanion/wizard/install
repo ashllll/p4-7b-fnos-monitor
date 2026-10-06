@@ -1,0 +1,74 @@
+[
+  {
+    "stepTitle": "遥测服务",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "本应用以只读方式采集状态，运行身份是专用包用户，不使用 root，也不需要你的 NAS 管理员密码。"
+      },
+      {
+        "type": "text",
+        "field": "wizard_port",
+        "label": "开发板读取端口",
+        "initValue": "8798",
+        "helpText": "开发板通过这个端口读取状态。注意：8799 通常已被开发版采集器占用，请勿填 8799。",
+        "rules": [
+          { "required": true, "message": "请填写端口号" },
+          { "pattern": "^[0-9]{2,5}$", "message": "请填写 2~5 位数字端口" }
+        ]
+      },
+      {
+        "type": "radio",
+        "field": "wizard_bind",
+        "label": "监听地址",
+        "initValue": "lan",
+        "options": [
+          { "label": "内网所有网卡（开发板需要远程读取，推荐）", "value": "lan" },
+          { "label": "仅本机 127.0.0.1（管理页仍可用，开发板读不到）", "value": "local" }
+        ]
+      }
+    ]
+  },
+  {
+    "stepTitle": "读取权限与采集范围",
+    "items": [
+      {
+        "type": "radio",
+        "field": "wizard_auth",
+        "label": "开发板读取鉴权",
+        "initValue": "pairing",
+        "options": [
+          { "label": "配对令牌（推荐）：先在管理页生成配对码，开发板换取令牌后才能读", "value": "pairing" },
+          { "label": "内网免令牌：任何内网设备都能读，仅用于先跑通链路", "value": "lan" }
+        ]
+      },
+      {
+        "type": "switch",
+        "field": "wizard_tls",
+        "label": "开发板读取使用 HTTPS",
+        "initValue": "true",
+        "helpText": "首次启动时自动生成一张自签证书，证书指纹会在管理页和启动日志里显示。开发板配对时由你确认这枚指纹，之后只认它——校验不会被关闭。仅在排障时才建议关掉。"
+      },
+      {
+        "type": "switch",
+        "field": "wizard_docker",
+        "label": "采集容器状态",
+        "initValue": "false",
+        "helpText": "读取 docker.sock 的权限模型与其他指标不同（通常需要加入 docker 组），因此默认关闭。可在管理页随时开启。"
+      },
+      {
+        "type": "text",
+        "field": "wizard_interval",
+        "label": "采样间隔（秒）",
+        "initValue": "1.0",
+        "rules": [
+          { "pattern": "^[0-9]+(\\.[0-9]+)?$", "message": "请填写数字，例如 1.0" }
+        ]
+      },
+      {
+        "type": "tips",
+        "helpText": "安装完成后，在飞牛桌面的应用入口里可以随时调整以上所有设置，并能看到一张「来源 / 权限矩阵」，用来确认哪些指标在本机真的读得到。"
+      }
+    ]
+  }
+]

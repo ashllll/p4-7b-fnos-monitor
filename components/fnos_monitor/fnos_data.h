@@ -12,12 +12,23 @@
 extern "C" {
 #endif
 
-#define FNOS_MAX_VOLS    8
-#define FNOS_MAX_RAID    6
-#define FNOS_MAX_DISKS   8
-#define FNOS_MAX_TEMPS   10
-#define FNOS_MAX_DOCKER  12
+/* 每段能装多少条。**这不是随便定的**：NAS 侧按 DEFAULT_LIMITS 截断之后才发过来，
+   板子装不下的部分会被静默丢掉（没有错误、没有提示，用户看到的就是"只有这么多"）。
+   所以这几个数必须 >= NAS 的截断上限，`nas/fpk/contract_check.py` 会核对。
+   改动前先看那边的 DEFAULT_LIMITS。 */
+#define FNOS_MAX_VOLS    12     /* NAS 的 vols 上限是 12 */
+#define FNOS_MAX_RAID    8      /* NAS 的 raid 上限是 8 */
+#define FNOS_MAX_DISKS   10     /* NAS 的 disks 上限是 10 */
+#define FNOS_MAX_TEMPS   48     /* NAS 的 temps 上限是 48。采集端现在报**每一个通道**
+                                   （CPU 每核心、网卡 PHY/MAC、每块盘每个 Sensor），
+                                   24 路是常态，多盘多核的机器很容易超过 24 */
+#define FNOS_MAX_DOCKER  16     /* NAS 的 docker 上限是 16；容器一多的机器这里最容易撞 */
 #define FNOS_MAX_ALERTS  8
+#define FNOS_MAX_MODS    10
+// 本机认识的采集端协议版本。比这更新的版本不拒绝，只是把新字段忽略掉并在
+// 诊断页标出来（见 fnos_ui.c 的协议那一行）——旧板子遇到新应用要能用，
+// 而不是整帧作废。
+#define FNOS_PROTO_KNOWN 2
 
 #ifndef CONFIG_FNOS_CHART_WINDOW
 #define CONFIG_FNOS_CHART_WINDOW 180
@@ -27,9 +38,17 @@ extern "C" {
 typedef struct { char mnt[20]; char fs[12]; float total_gb, used_gb, free_gb, pct; } fnos_vol_t;
 typedef struct { char dev[10]; char lvl[10]; char state[14]; bool ok; int have, want; float sync_pct; } fnos_raid_t;
 typedef struct { char dev[10]; float rd_kbs, wr_kbs; } fnos_disk_t;
-typedef struct { char n[12]; float c; } fnos_temp_t;
+/* 温度：一条 = 一个**传感器通道**（不是一个设备）。
+   dev/ch = 内核短名与通道名（enp1s0 / PHY、nvme2n1 / Composite…），保证"同一路永远
+   认得住"；dn = **人读的设备名**（"Marvell AQC113 10GbE" / "Samsung SSD 990 PRO 2TB" /
+   "Intel N100"）—— 用户要拿它决定"给谁降温"，所以界面上优先显示 dn，"NIC"这种缩写
+   等于没说。老采集端两个字段都没有，解析层把它的拼接名塞进 dev，界面照旧显示。 */
+typedef struct { char dev[20]; char ch[20]; char dn[28]; float c; } fnos_temp_t;
 typedef struct { char n[24]; bool up; char s[40]; } fnos_docker_t;
 typedef struct { char lv[8]; char m[60]; } fnos_alert_t;
+// 采集段状态（协议 v2 的 modules 字段）。status 原样收下不认识的词，
+// 显示时再决定怎么翻译——不能在解析层就把没见过的状态丢掉。
+typedef struct { char name[12]; char status[16]; } fnos_mod_t;
 
 typedef struct {
     bool     ever_ok;          // 至少成功拿到过一帧
@@ -55,6 +74,16 @@ typedef struct {
     int ndocker; fnos_docker_t docker[FNOS_MAX_DOCKER];
     bool has_zfs; float zfs_arc_gb, zfs_hit_pct;
     int nalerts; fnos_alert_t alerts[FNOS_MAX_ALERTS];
+
+    int proto;                              // 采集端协议版本（0 = 旧版应用，没上报）
+    int nmods;  fnos_mod_t mods[FNOS_MAX_MODS];
+
+    // 历史回填的时间语义：曲线横轴是"多少次采集"，用户要看的是"多长时间"。
+    // 用首尾样本的 ts 相减（差值不受板子/NAS 时钟不同步影响），
+    // hist_ts_ok=false 表示应用没给可用的 ts（旧版应用），界面退回按次数说。
+    bool hist_ts_ok;
+    int  hist_span_s;                       // 回填的历史覆盖的秒数
+    int  hist_avg_gap_x10;                  // 平均采样间隔 ×10 秒（判断中间有没有断流）
 } fnos_status_t;
 
 typedef struct { float cpu, mem, rx_kbs, tx_kbs; } fnos_sample_t;

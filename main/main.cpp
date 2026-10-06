@@ -5,7 +5,9 @@
 //   * touch_flags 全 0（官方示例的 mirror_x/mirror_y 在本板是多做一次 180° 翻转）
 //   * tear_avoid = TRIPLE_PARTIAL（MIPI-DSI 推荐值，DOUBLE_DIRECT 会警告并卡死）
 //   * LVGL 绘制缓冲/对象/任务栈搬家到 PSRAM（内部 RAM 留给 Wi-Fi/显示/DMA）
-//   * 本工程数据链路走纯 HTTP（无 TLS），从根上避开 mbedTLS 吃光内部 RAM 的坑
+//   * 数据链路可以走 HTTPS：已开 CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC 与
+//     CONFIG_MBEDTLS_DYNAMIC_BUFFER，mbedTLS 缓冲从 PSRAM 走，不再吃光内部 RAM
+//     （这一点与 unifi 那版结论相同；证书固定与配对在 fnos_pair 里）
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -20,6 +22,7 @@
 #include "fnos_net.h"
 #include "fnos_data.h"
 #include "fnos_ui.h"
+#include "kk_theme.h"
 #if __has_include("fnos_config.h")
 #include "fnos_config.h"
 #else
@@ -59,7 +62,7 @@ static void night_timer_cb(void *arg)
 }
 
 #if CONFIG_FNOS_AUTO_PAGE_SEC > 0
-// 视觉验收辅助：自动轮播 4 个页面（LVGL 定时器，跑在 LVGL 任务里，无需加锁）
+// 视觉验收辅助：自动轮播每一页（页数取 FNOS_UI_PAGE_COUNT，加页不用改这里）
 static void auto_page_cb(lv_timer_t *t)
 {
     (void)t;
@@ -114,6 +117,10 @@ extern "C" void app_main(void)
     bsp_display_backlight_on();               // 先点亮（这时是 100%）
     bsp_display_brightness_set(APP_BL_PCT);   // 再压到配置值
     log_heap("display");
+
+    /* 配色在**建任何构件之前**定下来：颜色令牌是运行时读调色板的，
+       建完之后再换，已经建好的对象还留着旧颜色（LVGL 样式是拷贝语义）。 */
+    fnos_ui_theme_use(CONFIG_FNOS_PALETTE);
 
     if (bsp_display_lock(0)) {
         fnos_ui_create();

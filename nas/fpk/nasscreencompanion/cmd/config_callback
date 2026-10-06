@@ -1,0 +1,25 @@
+#!/bin/bash
+. "$(dirname "$0")/_common.sh"
+# 应用设置提交后：写盘 + 重启，让改动真正生效。
+mkdir -p "$PKG_VAR" "$PKG_ETC" 2>/dev/null
+PY=$(resolve_python) || { fail "找不到 Python 运行时，无法写入配置"; exit 1; }
+norm_wizard
+
+if ! apply_config "$PY" "$W_PORT" "$W_BIND" "$W_AUTH" "$W_DOCKER" "$W_INTERVAL" "$W_TLS"; then
+  fail "配置写入失败，请检查 $PKG_VAR 的写权限"
+  exit 1
+fi
+say "配置已更新（已配对设备保留）"
+
+was_running=0
+is_running && was_running=1
+
+if [ "$was_running" = 1 ]; then
+  service_stop >/dev/null 2>&1 || warn "停止旧实例失败，仍尝试重新启动"
+fi
+if service_start; then
+  say "设置已生效"
+  exit 0
+fi
+fail "配置已保存，但服务重启失败；请看 $PKG_VAR/info.log"
+exit 1

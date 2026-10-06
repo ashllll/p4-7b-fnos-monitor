@@ -1,0 +1,13 @@
+#!/bin/bash
+. "$(dirname "$0")/_common.sh"
+# 卸载前：停服务、让出端口。只动本应用自己的东西。
+say "卸载前停止服务"
+if is_running; then
+  service_stop || warn "停止服务失败，继续卸载（系统会收回应用目录）"
+else
+  say "服务未在运行"
+fi
+cleanup_socket
+rm -f "$PKG_VAR/upgrade.was_running"
+say "本应用不管理 $DEV_AGENT_PORT 上的开发版采集器，卸载不会影响它。"
+exit 0

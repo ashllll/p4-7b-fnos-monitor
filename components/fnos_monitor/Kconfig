@@ -15,6 +15,17 @@ menu "fnOS monitor"
             只用于视觉验收：打开后每 N 秒自动切到下一页，方便用摄像头逐页拍照核对。
             平时保持 0，交给你自己点导航/滑动翻页。
 
+    config FNOS_PALETTE
+        string "配色方案（graphite / abyss / phosphor）"
+        default "graphite"
+        help
+            预置配色见 components/fnos_monitor/kk_ui/kk_theme.c：
+              graphite  中性石墨蓝灰（最素，默认）
+              abyss     深空蓝 + 青，像网络运维终端
+              phosphor  近黑 + 磷光绿，对比度最高
+            配色只管颜色：版面几何全在 kk_layout.h，与配色无关 —— 换配色不会挪动
+            任何一个元素。名字写错会退回 graphite（设备照样能开机）。
+
     config FNOS_CHART_WINDOW
         int "曲线窗口（秒，1 Hz 采样点数）"
         range 60 600

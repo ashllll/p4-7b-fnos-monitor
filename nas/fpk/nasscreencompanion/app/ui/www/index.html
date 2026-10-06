@@ -1,0 +1,427 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>飞牛监控</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#151b23; --panel2:#1b232d; --line:#26303c;
+    --fg:#e6edf3; --dim:#8b98a5; --dim2:#5d6b7a;
+    --accent:#3b82f6; --ok:#3fb950; --warn:#d29922; --err:#f85149; --info:#58a6ff;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:13px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+  a{color:var(--accent)}
+  header{display:flex;align-items:center;gap:14px;padding:14px 20px;border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,#151b23,#0d1117);position:sticky;top:0;z-index:20}
+  header h1{font-size:15px;margin:0;font-weight:600;letter-spacing:.3px}
+  .badge{font:11px/1 var(--mono);padding:4px 7px;border:1px solid var(--line);border-radius:5px;color:var(--dim)}
+  .dot{width:8px;height:8px;border-radius:50%;display:inline-block;background:var(--dim2);flex:none}
+  .dot.ok{background:var(--ok);box-shadow:0 0 8px rgba(63,185,80,.7)}
+  .dot.err{background:var(--err);box-shadow:0 0 8px rgba(248,81,73,.7)}
+  .dot.warn{background:var(--warn)}
+  nav{display:flex;gap:2px;padding:10px 20px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
+  nav button{background:none;border:0;border-bottom:2px solid transparent;color:var(--dim);
+    padding:8px 13px;cursor:pointer;font-size:13px;font-family:inherit}
+  nav button:hover{color:var(--fg)}
+  nav button.on{color:var(--fg);border-bottom-color:var(--accent)}
+  main{padding:20px;max-width:1180px;margin:0 auto}
+  section{display:none} section.on{display:block}
+  .grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(216px,1fr))}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:13px 15px}
+  .card h3{margin:0 0 10px;font-size:11px;font-weight:600;color:var(--dim);
+    text-transform:uppercase;letter-spacing:.9px}
+  .kv{display:flex;justify-content:space-between;gap:10px;padding:3px 0;font-size:12.5px}
+  .kv span:first-child{color:var(--dim)}
+  .kv span:last-child{font-family:var(--mono);text-align:right;word-break:break-all}
+  .big{font:600 26px/1.1 var(--mono);letter-spacing:-.5px}
+  .bar{height:5px;background:#0a0e13;border-radius:3px;overflow:hidden;margin-top:9px}
+  .bar i{display:block;height:100%;background:var(--accent);transition:width .35s}
+  .bar i.warn{background:var(--warn)} .bar i.err{background:var(--err)}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th,td{text-align:left;padding:7px 9px;border-bottom:1px solid var(--line)}
+  th{color:var(--dim);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.6px}
+  td.mono,th.mono{font-family:var(--mono);font-size:11.5px}
+  .pill{display:inline-block;font:600 10.5px/1 var(--mono);padding:4px 7px;border-radius:4px;
+    text-transform:uppercase;letter-spacing:.5px}
+  .pill.ok{background:rgba(63,185,80,.15);color:var(--ok)}
+  .pill.warn{background:rgba(210,153,34,.15);color:var(--warn)}
+  .pill.err{background:rgba(248,81,73,.15);color:var(--err)}
+  .pill.info{background:rgba(88,166,255,.15);color:var(--info)}
+  .pill.dim{background:rgba(139,152,165,.13);color:var(--dim)}
+  button.act{background:var(--panel2);border:1px solid var(--line);color:var(--fg);
+    border-radius:6px;padding:7px 12px;cursor:pointer;font-size:12.5px;font-family:inherit}
+  button.act:hover{border-color:var(--accent);color:#fff}
+  button.act.danger:hover{border-color:var(--err);color:var(--err)}
+  button.act.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .row{display:flex;gap:9px;align-items:center;flex-wrap:wrap}
+  label.f{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--dim);min-width:150px}
+  input,select{background:#0a0e13;border:1px solid var(--line);border-radius:6px;color:var(--fg);
+    padding:7px 9px;font:12.5px var(--mono);width:100%}
+  input:focus,select:focus{outline:none;border-color:var(--accent)}
+  .code{font:600 30px/1 var(--mono);letter-spacing:7px;color:#fff;
+    background:#0a0e13;border:1px dashed var(--accent);border-radius:9px;padding:14px 20px;display:inline-block}
+  pre{margin:0;background:#0a0e13;border:1px solid var(--line);border-radius:8px;padding:11px;
+    font:11.5px/1.6 var(--mono);color:#adbac7;max-height:400px;overflow:auto;white-space:pre-wrap}
+  .hint{color:var(--dim);font-size:12px;margin:8px 0 0}
+  .note{border-left:3px solid var(--warn);background:rgba(210,153,34,.07);padding:9px 12px;
+    border-radius:0 6px 6px 0;font-size:12.5px;color:#d7c9a8;margin:12px 0}
+  .note.err{border-color:var(--err);background:rgba(248,81,73,.07);color:#e8b9b6}
+  .note.info{border-color:var(--info);background:rgba(88,166,255,.07);color:#b6cde8}
+  .sp{flex:1}
+  code{font-family:var(--mono);font-size:11.5px;background:#0a0e13;padding:2px 5px;border-radius:4px}
+</style>
+</head>
+<body>
+<header>
+  <span class="dot" id="hdot"></span>
+  <h1>飞牛监控</h1>
+  <span class="badge" id="hver">—</span>
+  <span class="badge" id="hhint">连接中…</span>
+  <span class="sp"></span>
+  <span class="badge" id="hseq">—</span>
+</header>
+
+<nav>
+  <button class="on" data-t="overview">概览</button>
+  <button data-t="caps">能力矩阵</button>
+  <button data-t="pair">设备配对</button>
+  <button data-t="cfg">服务设置</button>
+  <button data-t="diag">诊断</button>
+</nav>
+
+<main>
+  <section class="on" id="s-overview">
+    <div class="grid" id="cards"></div>
+    <div class="card" style="margin-top:12px">
+      <h3>采集段状态</h3>
+      <table><thead><tr><th>段</th><th>状态</th><th class="mono">采样时间</th><th>说明</th></tr></thead>
+      <tbody id="modrows"></tbody></table>
+    </div>
+  </section>
+
+  <section id="s-caps">
+    <div class="note info">这一页就是 P0「来源 / 权限矩阵」的实测结果：在 <b>包用户</b> 身份下逐个来源试读，
+      用来确认应用中心版能拿到哪些指标、哪些被权限挡住。<code>denied</code> 表示需要额外授权或改用其他来源。</div>
+    <div class="card"><h3>模块汇总</h3><table><thead><tr><th>模块</th><th>状态</th></tr></thead>
+      <tbody id="capmods"></tbody></table></div>
+    <div class="card" style="margin-top:12px"><h3>来源明细</h3>
+      <table><thead><tr><th>模块</th><th class="mono">来源</th><th>状态</th><th>说明</th></tr></thead>
+      <tbody id="capsrc"></tbody></table></div>
+  </section>
+
+  <section id="s-pair">
+    <div class="note">开发板通过遥测端口 <code id="paddr">—</code> 读取状态，默认需要配对令牌。
+      配对码只在生成后 <b>5 分钟</b>内有效、且只能用一次。</div>
+    <div class="card">
+      <h3><span class="dot" id="tlsdot"></span>传输加密</h3>
+      <div class="hint" id="tlsline">—</div>
+      <div id="tlsfpwrap" style="display:none;margin-top:10px">
+        <p class="hint">开发板第一次配对时应当固定下面这枚指纹。请在开发板屏幕上显示的指纹与本页这段字符
+          <b>逐段比对</b>，确认一致后再接受——不要凭"看起来差不多"就放行。换过证书后指纹会变，
+          已配对的板子需要重新确认一次。</p>
+        <pre id="tlsfp"></pre>
+      </div>
+    </div>
+    <div class="card">
+      <h3>第一步 · 生成配对码</h3>
+      <div class="row">
+        <button class="act primary" id="gencode">生成配对码</button>
+        <button class="act" id="cancelcode">作废当前配对码</button>
+        <span class="hint" id="codehint"></span>
+      </div>
+      <div id="codewrap" style="margin-top:14px;display:none">
+        <div class="code" id="codeval">------</div>
+        <p class="hint">在开发板上发起配对请求：</p>
+        <pre id="paircurl"></pre>
+      </div>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <h3>第二步 · 已配对设备</h3>
+      <table><thead><tr><th>名称</th><th class="mono">令牌尾号</th><th class="mono">最近来源</th>
+        <th class="mono">最近访问</th><th></th></tr></thead><tbody id="devrows"></tbody></table>
+      <p class="hint">令牌原文只在配对响应里出现一次，服务端只保存 SHA-256 摘要，因此这里无法找回。</p>
+    </div>
+  </section>
+
+  <section id="s-cfg">
+    <div class="card">
+      <h3>遥测服务</h3>
+      <div class="row">
+        <label class="f">监听端口<input id="c-port" type="number" min="1" max="65535"></label>
+        <label class="f">监听地址<select id="c-bind">
+          <option value="0.0.0.0">0.0.0.0（内网全部网卡）</option>
+          <option value="127.0.0.1">127.0.0.1（仅本机）</option>
+        </select></label>
+        <label class="f">采样间隔（秒）<input id="c-interval" type="number" step="0.1" min="0.2" max="60"></label>
+        <label class="f">历史保留条数<input id="c-hist" type="number" min="30" max="3600"></label>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <label class="f">鉴权模式<select id="c-auth">
+          <option value="pairing">pairing · 需要配对令牌（推荐）</option>
+          <option value="lan">lan · 内网免令牌（仅排障）</option>
+        </select></label>
+        <label class="f">容器采集<select id="c-docker">
+          <option value="0">关闭（默认，不读 docker.sock）</option>
+          <option value="1">开启（读取 docker.sock）</option>
+        </select></label>
+        <label class="f">传输加密<select id="c-tls">
+          <option value="1">HTTPS（推荐，自签证书 + 板端固定指纹）</option>
+          <option value="0">明文 HTTP（仅排障）</option>
+        </select></label>
+      </div>
+      <div class="row" style="margin-top:14px">
+        <button class="act primary" id="savecfg">保存</button>
+        <span class="hint" id="cfghint"></span>
+      </div>
+      <div class="note">改动端口、监听地址或传输加密需要重启应用才会生效（应用中心里「停止 → 启动」）。
+        端口被占用时本应用只会报错退出，<b>不会结束占用端口的进程</b>。</div>
+    </div>
+    <div class="card" style="margin-top:12px"><h3>路径</h3><div id="paths"></div></div>
+  </section>
+
+  <section id="s-diag">
+    <div class="card"><h3>自检</h3><table><thead><tr><th>检查项</th><th>状态</th><th>详情</th></tr></thead>
+      <tbody id="diagrows"></tbody></table>
+      <div class="row" style="margin-top:12px"><button class="act" id="rundiag">重新检查</button></div>
+    </div>
+    <div class="card" style="margin-top:12px"><h3>服务日志（最近 200 行）</h3>
+      <pre id="logs">加载中…</pre>
+      <div class="row" style="margin-top:10px"><button class="act" id="reloadlogs">刷新日志</button></div>
+    </div>
+  </section>
+</main>
+
+<script>
+'use strict';
+// 网关可能把页面挂在 /app/nasscreencompanion（带或不带尾斜杠），
+// 直接按 location.pathname 推 base，避免相对路径拼错。
+const BASE = location.pathname.replace(/\/+$/,'').replace(/\/index\.html$/,'');
+const api = (p) => BASE + p;
+
+let S = null;                       // 最近一次 /api/state
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const num = (v,d=0) => (v==null||isNaN(v)) ? '—' : Number(v).toFixed(d);
+
+async function get(p){ const r = await fetch(api(p), {headers:{'Accept':'application/json'}});
+  const t = await r.text(); let j=null; try{ j=JSON.parse(t);}catch(e){ j={error:t.slice(0,300)}; }
+  if(!r.ok && j && !j.error) j.error = 'HTTP '+r.status; return j; }
+async function post(p, body){ const r = await fetch(api(p), {method:'POST',
+  headers:{'Content-Type':'application/json','Accept':'application/json'},
+  body: JSON.stringify(body||{})});
+  const t = await r.text(); let j=null; try{ j=JSON.parse(t);}catch(e){ j={error:t.slice(0,300)}; }
+  if(!r.ok && j && !j.error) j.error = 'HTTP '+r.status; return j; }
+
+const ST = {ok:['ok','ok'],stale:['warn','旧值'],missing:['dim','无来源'],
+  denied:['err','权限不足'],error:['err','读取失败'],disabled:['dim','已关闭'],partial:['warn','部分可读']};
+const stPill = (s) => { const m = ST[s] || ['dim', s||'?'];
+  return '<span class="pill '+m[0]+'">'+esc(m[1])+'</span>'; };
+
+function tone(pct){ return pct>=90?'err':pct>=75?'warn':''; }
+function bar(pct){ const t=tone(pct);
+  return '<div class="bar"><i class="'+t+'" style="width:'+Math.max(0,Math.min(100,pct))+'%"></i></div>'; }
+
+// ---------------------------------------------------------------- 渲染
+function renderCards(s){
+  const c = s.snapshot || {};
+  const cpu = c.cpu||{}, mem = c.mem||{}, net = c.net||{};
+  const vols = c.vols||[], raid = c.raid||[], temps = c.temps||[];
+  const worstVol = vols.reduce((a,v)=> (v.pct||0) > (a.pct||0) ? v : a, {pct:0});
+  const raidBad = raid.filter(r => !r.ok);
+  const cpuT = (cpu.temp_c!=null) ? num(cpu.temp_c,1)+' °C' : (temps.length? num(temps[0].c,1)+' °C' : '—');
+  const cards = [
+    ['CPU', num(cpu.pct,1)+'<span style="font-size:13px;color:var(--dim)"> %</span>', bar(cpu.pct||0),
+      [['核心数',cpu.cores],['负载 1/5/15', [num(cpu.load1,2),num(cpu.load5,2),num(cpu.load15,2)].join(' / ')],['温度',cpuT]]],
+    ['内存', num(mem.pct,1)+'<span style="font-size:13px;color:var(--dim)"> %</span>', bar(mem.pct||0),
+      [['总量',num(mem.total_mb,0)+' MB'],['已用',num(mem.used_mb,0)+' MB'],['可用',num(mem.avail_mb,0)+' MB'],
+       ['Swap', num(mem.swap_used_mb,0)+' / '+num(mem.swap_total_mb,0)+' MB']]],
+    ['网络', esc(net.if||'—'), '',
+      [['下行',num(net.rx_kbs,1)+' KB/s'],['上行',num(net.tx_kbs,1)+' KB/s'],
+       ['累计收',num(net.rx_total_gb,2)+' GB'],['累计发',num(net.tx_total_gb,2)+' GB']]],
+    ['存储'+ (vols.length? ' · '+vols.length+' 卷':''), vols.length? num(worstVol.pct,1)+'<span style="font-size:13px;color:var(--dim)"> % 最高</span>' : '—',
+      vols.length? bar(worstVol.pct||0) : '',
+      vols.slice(0,4).map(v=>[v.mnt, num(v.pct,1)+'%'])],
+    ['阵列', raid.length? (raidBad.length? raidBad.length+' 个异常' : '全部正常') : '—', '',
+      raid.slice(0,4).map(r=>[r.dev, (r.ok?'正常':(r.state||'异常'))+(r.sync_pct!=null&&r.sync_pct<100?' '+num(r.sync_pct,0)+'%':'')])],
+    ['运行时长', esc(fmtDur(c.uptime_s)), '',
+      [['主机名',esc(c.host||'—')],['采样序号',c.seq],['协议版本','proto '+(c.proto||'—')],
+       ['磁盘', (c.disks||[]).length+' 项'],['容器', (c.docker||[]).length+' 项']]],
+  ];
+  $('cards').innerHTML = cards.map(([t,big,b,kvs]) =>
+    '<div class="card"><h3>'+esc(t)+'</h3><div class="big">'+big+'</div>'+b+
+    '<div style="margin-top:10px">'+ kvs.map(([k,v])=>
+      '<div class="kv"><span>'+esc(k)+'</span><span>'+esc(v)+'</span></div>').join('') +
+    '</div></div>').join('');
+}
+
+function fmtDur(s){ s = Number(s)||0; const d=Math.floor(s/86400), h=Math.floor(s%86400/3600), m=Math.floor(s%3600/60);
+  return d? d+' 天 '+h+' 小时' : h? h+' 小时 '+m+' 分' : m+' 分'; }
+
+function renderModules(s){
+  const mods = s.snapshot && s.snapshot.modules || {};
+  const names = ['cpu','mem','net','vols','raid','disks','temps','docker','zfs'];
+  const seen = names.concat(Object.keys(mods).filter(k=>names.indexOf(k)<0));
+  $('modrows').innerHTML = seen.map(k => { const m = mods[k]; if(!m) return '';
+    return '<tr><td class="mono">'+esc(k)+'</td><td>'+stPill(m.status)+'</td><td class="mono">'+
+      (m.ts? new Date(m.ts*1000).toLocaleTimeString('zh-CN') : '—')+'</td><td class="mono">'+
+      esc(m.error||'')+'</td></tr>'; }).join('') || '<tr><td colspan="4" class="hint">暂无数据</td></tr>';
+}
+
+function tlsScheme(){ return (S && S.tls && S.tls.enabled) ? 'https:' : 'http:'; }
+
+function renderTls(s){
+  const t = s.tls || {};
+  const on = !!t.enabled;
+  $('tlsdot').className = 'dot ' + (on ? 'ok' : (t.configured === false ? '' : 'err'));
+  if(on){
+    $('tlsline').innerHTML = '已启用 · ' + esc(t.subject || '自签证书') +
+      ' · 到期 ' + esc(t.not_after || '未知') +
+      '<br><span class="muted">开发板在固定证书之前建不了 TLS，所以同一个端口上另收一种<b>明文</b>连接，' +
+      '但只放行 <code>/api/v1/identity</code>（返回证书本身），别的路径一律 403。' +
+      '板子把取回的证书自己算一遍 SHA-256 显示在屏幕上，你拿它跟下面这段逐段比对。</span>';
+    $('tlsfpwrap').style.display = '';
+    $('tlsfp').textContent = t.fingerprint || '—';
+  } else {
+    $('tlsline').innerHTML = t.configured === false
+      ? '已关闭（config.json 里 tls_enabled=false）——遥测面是<b>明文 HTTP</b>，仅限排障。'
+      : '未能启用：' + esc(t.error || '未知原因') + '——遥测面当前是<b>明文 HTTP</b>，配对令牌仍然必需。';
+    $('tlsfpwrap').style.display = 'none';
+  }
+}
+
+function renderState(s){
+  S = s;
+  const c = s.collector||{}, cfg = s.config||{};
+  const ready = c.ready && c.age_s != null && c.age_s < 30;
+  $('hdot').className = 'dot ' + (ready?'ok':'err');
+  $('hver').textContent = s.app + ' ' + s.ver + ' · proto ' + s.proto;
+  $('hhint').textContent = ready ? ('运行中 · uid '+s.uid+' · '+(s.user||'')) : '采集异常';
+  $('hseq').textContent = 'seq ' + (c.seq||0) + ' · ' + (c.age_s!=null? c.age_s+'s 前':'—');
+  $('s-overview').dataset.ready = ready;
+
+  if(!$('c-port').matches(':focus')) $('c-port').value = cfg.port;
+  if(!$('c-interval').matches(':focus')) $('c-interval').value = cfg.interval;
+  if(!$('c-hist').matches(':focus')) $('c-hist').value = cfg.hist_len;
+  $('c-bind').value = cfg.bind; $('c-auth').value = cfg.auth_mode;
+  $('c-docker').value = cfg.docker_enabled ? '1' : '0';
+  $('c-tls').value = (cfg.tls_enabled === false) ? '0' : '1';
+  $('paddr').textContent = (s.listen && s.listen.tcp) || '—';
+  renderTls(s);
+
+  const devs = s.devices||[];
+  $('devrows').innerHTML = devs.length ? devs.map(d =>
+    '<tr><td>'+esc(d.name)+'</td><td class="mono">••••'+esc(d.last4)+'</td><td class="mono">'+esc(d.last_ip||'—')+
+    '</td><td class="mono">'+(d.last_seen? new Date(d.last_seen*1000).toLocaleString('zh-CN'):'从未')+'</td>'+
+    '<td><button class="act danger" data-revoke="'+esc(d.last4)+'">撤销</button></td></tr>').join('')
+    : '<tr><td colspan="5" class="hint">还没有设备配对</td></tr>';
+  $('devrows').querySelectorAll('[data-revoke]').forEach(b =>
+    b.onclick = async () => { if(!confirm('撤销后该设备必须重新配对才能读取状态。继续？')) return;
+      const r = await post('/api/devices/revoke', {id: b.dataset.revoke});
+      hint('cfghint', r.removed? '已撤销 '+r.removed+' 个设备':'未找到该设备', !!r.error); refresh(); });
+
+  const p = s.paths||{};
+  $('paths').innerHTML = [['安装目录',p.appdest],['配置目录',p.pkgetc],['数据目录',p.pkgvar],
+    ['网关 Socket', (s.listen||{}).socket]].map(([k,v])=>
+    '<div class="kv"><span>'+esc(k)+'</span><span>'+esc(v||'—')+'</span></div>').join('');
+}
+
+function renderCaps(p){
+  if(p.error){ $('capmods').innerHTML='<tr><td colspan="2" class="hint">'+esc(p.error)+'</td></tr>';
+    $('capsrc').innerHTML=''; return; }
+  const order = ['ok','partial','denied','missing','error','disabled'];
+  $('capmods').innerHTML = Object.entries(p.modules||{})
+    .sort((a,b)=> order.indexOf(a[1])-order.indexOf(b[1]))
+    .map(([k,v])=>'<tr><td class="mono">'+esc(k)+'</td><td>'+stPill(v)+'</td></tr>').join('');
+  const src = (p.sources||[]).slice().sort((a,b)=>
+    (a.status===b.status? 0 : a.status==='ok'? 1 : -1));
+  $('capsrc').innerHTML = src.map(x=>'<tr><td class="mono">'+esc(x.module)+'</td><td class="mono">'+
+    esc(x.path)+'</td><td>'+stPill(x.status)+'</td><td class="mono">'+esc(x.detail||'')+'</td></tr>').join('');
+  const head = document.querySelector('#s-caps .note');
+  head.innerHTML = '这一页就是 P0「来源 / 权限矩阵」的实测结果：在 <b>包用户</b>（uid '+
+    esc(p.uid)+' · '+esc(p.user||'')+'）身份下逐个来源试读。运行 Python '+esc(p.python)+
+    '，探测于 '+new Date((p.ts||0)*1000).toLocaleString('zh-CN')+'。';
+}
+
+function renderDiag(d){
+  const map = {ok:['ok','正常'],warn:['warn','注意'],error:['err','失败'],info:['info','信息']};
+  $('diagrows').innerHTML = (d.checks||[]).map(c => { const m = map[c.status]||['dim',c.status];
+    return '<tr><td>'+esc(c.name)+'</td><td><span class="pill '+m[0]+'">'+m[1]+'</span></td><td class="mono">'+
+      esc(c.detail)+'</td></tr>'; }).join('');
+}
+
+function hint(id, msg, bad){ const e=$(id); e.textContent = msg||''; e.style.color = bad? 'var(--err)':'var(--dim)'; }
+
+// ---------------------------------------------------------------- 刷新
+let refreshing = false;
+async function refresh(){
+  if(refreshing) return; refreshing = true;
+  try{
+    const s = await get('/api/state');
+    if(s.error){ $('hdot').className='dot err'; $('hhint').textContent = s.error; return; }
+    renderState(s);
+    const [st, pr, dg] = await Promise.all([get('/api/status-now'), get('/api/probe'), get('/api/diagnostics')]);
+    if(!st.error){ s.snapshot = st; renderCards(s); renderModules(s); }
+    renderCaps(pr); renderDiag(dg);
+  } finally { refreshing = false; }
+}
+
+async function loadLogs(){ const r = await get('/api/logs');
+  $('logs').textContent = (r.lines||[]).join('\n') || (r.error||'（无日志）'); }
+
+// ---------------------------------------------------------------- 交互
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('nav button').forEach(x=>x.classList.toggle('on', x===b));
+  document.querySelectorAll('section').forEach(s=>s.classList.toggle('on', s.id==='s-'+b.dataset.t));
+  if(b.dataset.t==='diag') loadLogs();
+});
+
+$('gencode').onclick = async () => {
+  const r = await post('/api/pairing/new', {ttl:300});
+  if(r.error) return hint('codehint', r.error, true);
+  $('codewrap').style.display = '';
+  $('codeval').textContent = r.code;
+  const host = (location.hostname || '<NAS-IP>') + ':' + (S&&S.config? S.config.port : 8798);
+  $('paircurl').textContent =
+    (S&&S.tls&&S.tls.enabled
+      ? '# 1) 先明文取证书并自算指纹（只这一步走明文，且只放行 identity）\n' +
+        'curl -s http://' + host + '/api/v1/identity \\\n' +
+        '  | python3 -c \'import sys,json,base64,hashlib;' +
+        'p=json.load(sys.stdin)["cert_pem"];' +
+        'd=base64.b64decode("".join(l for l in p.splitlines() if l and not l.startswith("-----")));' +
+        'print(":".join("%02X"%b for b in hashlib.sha256(d).digest()))\'\n' +
+        '#    算出来的值必须和上面显示的指纹一字不差，否则不要继续\n\n' +
+        '# 2) 带着刚取到的证书走 HTTPS 配对\n'
+      : '') +
+    'curl -X POST ' + tlsScheme() + '//' + host +
+    '/api/v1/pair \\\n  -H "Content-Type: application/json" \\\n  -d \'{"code":"' + r.code + '","name":"p4-7b-lcd"}\'' +
+    (S&&S.tls&&S.tls.enabled ? ' \\\n  --cacert server.crt' : '');
+  hint('codehint', r.ttl + ' 秒内有效，只能使用一次');
+  refresh();
+};
+$('cancelcode').onclick = async () => { const r = await post('/api/pairing/cancel',{});
+  $('codewrap').style.display='none'; hint('codehint', r.cancelled? '已作废':'当前没有待用的配对码'); refresh(); };
+
+$('savecfg').onclick = async () => {
+  const body = { port: Number($('c-port').value), bind: $('c-bind').value,
+    interval: Number($('c-interval').value), hist_len: Number($('c-hist').value),
+    auth_mode: $('c-auth').value, tls_enabled: $('c-tls').value === '1' };
+  const r = await post('/api/config', body);
+  if(r.error) return hint('cfghint', r.error, true);
+  const d = await post('/api/collector/docker', {enabled: $('c-docker').value === '1'});
+  if(d.error) return hint('cfghint', d.error, true);
+  hint('cfghint', (r.changed&&r.changed.length? '已保存：'+r.changed.join(', ') : '没有需要改动的项')
+    + (r.restart_required&&r.restart_required.length? '（' + r.restart_required.join('、') + ' 需重启应用生效）':''), false);
+  refresh();
+};
+$('rundiag').onclick = async () => { renderDiag(await get('/api/diagnostics')); loadLogs(); };
+$('reloadlogs').onclick = loadLogs;
+
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>

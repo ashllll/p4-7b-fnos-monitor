@@ -1,0 +1,17 @@
+#!/bin/bash
+. "$(dirname "$0")/_common.sh"
+# 安装后：把向导里的选择落成 config.json。
+say "写入配置"
+mkdir -p "$PKG_VAR" "$PKG_ETC" 2>/dev/null
+
+PY=$(resolve_python) || { fail "找不到 Python 运行时，无法写入配置"; exit 1; }
+norm_wizard
+if apply_config "$PY" "$W_PORT" "$W_BIND" "$W_AUTH" "$W_DOCKER" "$W_INTERVAL" "$W_TLS"; then
+  say "配置已写入 $PKG_VAR/config.json"
+else
+  fail "配置写入失败，请检查 $PKG_VAR 的写权限"
+  exit 1
+fi
+
+say "安装完成。请在飞牛桌面的应用入口打开「飞牛监控」查看能力矩阵并配对开发板。"
+exit 0

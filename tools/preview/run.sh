@@ -50,6 +50,10 @@ cat >> lv_kconfig_host.h <<'EOF'
 EOF
 echo "lv_kconfig_host.h: $(wc -l < lv_kconfig_host.h) lines ($(grep -c '^#define CONFIG_LV_' lv_kconfig_host.h) kconfig + host overrides)"
 
+# 设备端每一条配对消息 → 一副 C 数组（见 pair_msgs.py 头部说明：桩件与设备必须一致）
+# 注意：本脚本开头 `cd "$(dirname "$0")"`，所以这里的路径都相对 tools/preview/
+python3 pair_msgs.py ../../components/fnos_monitor/fnos_pair.c pair_msgs.h || exit 1
+
 cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo \
       -DCMAKE_C_FLAGS_RELWITHDEBINFO="-O1 -g" > /dev/null
 cmake --build build -j8 2>&1 | tail -20
@@ -57,3 +61,7 @@ cmake --build build -j8 2>&1 | tail -20
 rm -rf "$OUT"
 ./build/preview "$OUT"
 python3 ppm2png.py "$OUT"
+
+# 风格试片：候选视觉手法的样张（见 style_proof.c 头部说明），落在同一输出目录
+./build/style_proof "$OUT" > /dev/null
+python3 ppm2png.py "$OUT" > /dev/null

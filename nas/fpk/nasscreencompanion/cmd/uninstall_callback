@@ -1,0 +1,9 @@
+#!/bin/bash
+. "$(dirname "$0")/_common.sh"
+# 卸载后：清掉本应用留下的运行痕迹。数据目录由系统处理，这里只做兜底。
+say "卸载收尾"
+rm -f "$PID_FILE" 2>/dev/null
+cleanup_socket
+rm -f "$PKG_VAR/upgrade.was_running" 2>/dev/null
+say "已释放端口与 Socket。开发版采集器（${DEV_AGENT_PORT}）与其他服务未受影响。"
+exit 0

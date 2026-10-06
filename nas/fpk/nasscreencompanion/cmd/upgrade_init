@@ -1,0 +1,21 @@
+#!/bin/bash
+. "$(dirname "$0")/_common.sh"
+# 升级前：停服务、备份配置。升级要能失败后回退，所以顺序是"先备份再停"。
+mkdir -p "$PKG_VAR" 2>/dev/null
+FLAG="$PKG_VAR/upgrade.was_running"
+rm -f "$FLAG"
+
+if is_running; then
+  touch "$FLAG"
+  say "升级前停止正在运行的服务"
+  service_stop || warn "停止服务未成功，升级过程可能会覆盖正在运行的代码"
+else
+  say "升级前服务未在运行"
+fi
+
+if [ -f "$PKG_VAR/config.json" ]; then
+  cp -f "$PKG_VAR/config.json" "$PKG_VAR/config.json.pre-${TRIM_OLD_APPVER:-old}" 2>/dev/null \
+    && say "已备份配置为 config.json.pre-${TRIM_OLD_APPVER:-old}" \
+    || warn "配置备份失败（不影响升级，但升级后无法回退配置）"
+fi
+exit 0

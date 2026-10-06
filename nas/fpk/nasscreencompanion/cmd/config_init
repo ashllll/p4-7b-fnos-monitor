@@ -1,0 +1,20 @@
+#!/bin/bash
+. "$(dirname "$0")/_common.sh"
+# 应用设置：先校验再应用。向导字段都是字符串，必须在这里再挡一次非法值。
+norm_wizard
+say "将应用设置：端口 ${W_PORT}，监听 ${W_BIND}，鉴权 ${W_AUTH}，容器采集 ${W_DOCKER}，间隔 ${W_INTERVAL}s"
+
+rc=0
+if port_busy "$W_PORT"; then
+  # 端口被自己占着是正常的（改的是别的项）；被别的东西占着才是问题
+  if is_running; then
+    say "端口 $W_PORT 当前由本应用占用，配置变更会重启服务，正常。"
+  else
+    fail "端口 $W_PORT 已被其他服务占用，请换一个端口。"
+    rc=1
+  fi
+fi
+if [ "$W_AUTH" = "lan" ]; then
+  warn "「内网免令牌」会让内网里任何设备都能读状态，仅建议排障时临时使用。"
+fi
+exit $rc

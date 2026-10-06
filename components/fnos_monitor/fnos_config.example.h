@@ -6,9 +6,11 @@
 #define APP_WIFI_SSID "your-ssid"
 #define APP_WIFI_PASS "your-password"
 
-// ── fnos-agent 采集端点（跑在 NAS 上，见仓库 nas/ 目录）───────────────
-// 纯 HTTP，不用 TLS：本板内部 RAM 紧张，而且采集端只读、只在内网。
-#define FNOS_HOST "192.168.0.119"
+// ── 采集端点（跑在 NAS 上，见仓库 nas/ 目录）─────────────────────────
+// 这个模板会被打进"不含个人配置的通用构建"，所以这里只能放中性占位值：
+// 真实地址要么填进 fnos_config.h，要么由板上的配对流程写进 NVS。
+// 传输默认走 HTTPS + 证书指纹固定（配对时确认），明文只是开发模式。
+#define FNOS_HOST "nas.local"
 #define FNOS_PORT 8799
 // 采集端设置了 FNAS_TOKEN 时填同样的值；没设就留空。
 #define FNOS_TOKEN ""

@@ -1,0 +1,15 @@
+{
+    ".url": {
+        "nasscreencompanion.Application": {
+            "title": "{display_name}",
+            "icon": "images/icon_{0}.png",
+            "type": "iframe",
+            "gatewayPrefix": "/app/nasscreencompanion",
+            "gatewaySocket": "app.sock",
+            "allUsers": false,
+            "control": {
+                "accessPerm": "readonly"
+            }
+        }
+    }
+}

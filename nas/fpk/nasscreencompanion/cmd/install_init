@@ -1,0 +1,32 @@
+#!/bin/bash
+. "$(dirname "$0")/_common.sh"
+# 安装前检查：只读取、只判断，不改动系统里的任何东西。
+rc=0
+say "安装前检查"
+
+PY=$(resolve_python) && say "Python 运行时：$PY" \
+  || { warn "未找到 python312 运行时（依赖应用可能还没装好）。"; rc=1; }
+
+norm_wizard
+say "计划监听：$W_BIND:${W_PORT}（鉴权 ${W_AUTH}，容器采集 ${W_DOCKER}，间隔 ${W_INTERVAL}s）"
+say "运行身份：${TRIM_RUN_USERNAME:-${TRIM_USERNAME:-包用户}}（不是 root）"
+
+if port_busy "$W_PORT"; then
+  fail "端口 $W_PORT 已被占用。请回到向导换一个端口再安装；本应用不会结束占用该端口的进程。"
+  rc=1
+fi
+
+if port_busy "$DEV_AGENT_PORT"; then
+  say "检测到 $DEV_AGENT_PORT 上有服务（应为开发版采集器）。两者可以并存：本应用用 ${W_PORT}，安装和运行都不会改动它。"
+fi
+
+if [ "$W_AUTH" = "lan" ]; then
+  warn "你选择了「内网免令牌」：内网里任何设备都能读取状态。安装后可在管理页改成配对令牌。"
+fi
+
+if [ "$W_DOCKER" = "true" ]; then
+  warn "你开启了容器采集：需要包用户能读 docker.sock，否则该段会显示「权限不足」（不影响其他指标）。"
+fi
+
+[ "$rc" = 0 ] && say "检查通过，可以安装" || say "检查未通过，请先处理上面的问题"
+exit $rc

@@ -14,7 +14,7 @@ bash tools/preview/run.sh [输出目录]     # 默认 out/；内部已 export DE
 open out/01-live-p0.png
 ```
 
-产物：4 页 × 3 状态 = 12 张 1024×600 PNG（`01-live-p0..p3` / `02-offline-*` / `03-warming-*`）。
+产物：24 张 1024×600 PNG，覆盖启动、等待、在线告警、离线、正常、满列表五组四页，以及列表底部与诊断面板。内置断言验证缺字/文本高度、满列表滚动、告警消退、诊断按钮和锁超时保留快照。
 拆开跑则 `./build/preview <目录>`（写 PPM）+ `python3 tools/preview/ppm2png.py <目录>`。
 
 ## 前置
@@ -41,6 +41,31 @@ open out/01-live-p0.png
 - **断言在主机上改成 stderr + `abort()`**：设备端 LVGL 默认 `LV_ASSERT_HANDLER` 是 `while(1);`，
   断言失败的表现是"无声 100% CPU 死循环"（曾经就是它让 `./build/preview` 看起来像卡死）。看到 `*** LVGL ASSERT ... ***` 就是真 bug。
 - **不能替代实机**：触摸/手势、刷新率、PSRAM/DMA 采样路径、真实 Wi-Fi 时序仍要烧录验证。
+
+## 看门狗：滚动条贴边
+
+列表卡片右缘原本同时住着"右对齐数值/状态"和 LVGL 纵向滚动条，两者只差 1px，
+看起来就是"文字压在竖条上"。修法是 `kk_theme.h` 的 `KK_SCROLL_W / KK_SCROLL_INSET /
+KK_SCROLL_GAP` + `mk_list()` 收窄内容右界。
+
+```bash
+node tools/preview/scroll_gap.js tools/preview/out   # 退出码非 0 = 有贴边
+```
+
+它解码预览 PNG，找出每张列表卡片的滚动条列（中性灰、纵向连续 ≥24px），量两个间隙：
+**内容右缘→条**（判据 ≥8px）与 **条→卡片内缘**（判据 ≥4px）。滚动条自身及其 1px
+抗锯齿边会先整列剔除，避免把条子边缘误判成内容。
+
+要看"为什么贴边"就开对象树探针（只读，不改布局）：
+
+```bash
+cd tools/preview && PREVIEW_PROBE=1 ./build/preview /tmp/out   # 1 = 页号
+```
+
+打印每页每个对象的 coords / 宽 / MAIN padding / SCROLLBAR pad 与粗细 / 滚动余量。
+关键机制：LVGL 只在**绘制期**用 `LV_PART_SCROLLBAR` 的 `pad_right` 决定条子位置
+（`lv_obj_scroll.c` 里的 `ver_area`），而 `kk_place()` 的布局基准取的是 `LV_PART_MAIN`
+的 padding ⇒ **给 SCROLLBAR part 设 pad 挪不动内容**，内容宽度必须由调用方自己收。
 
 ## 在验收流程里的位置
 

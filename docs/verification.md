@@ -565,3 +565,217 @@ P3 系统（温度十行分级条 + 采集端点七行 + 告警）。刷新 `ui_
   趋势 CPU 蓝线 + MEM 青线与图例 `23% · 峰 69%` / `51% · 峰 51%`。
 - 说明：本次工作树里 `components/fnos_monitor/kk_ui/*` 仍是**另一会话（UniFi v6 重构）未提交的改动**，
   本提交不含这些文件；固件是用工作树现状构建的。
+
+## 18. 温度全量自适应显示（2026-10-06：新增第 5 页「温度」）
+
+起因：用户报障"最高 75 度的数据是哪里来的，不应该出现这个数据才对"——溯源是**网卡 PHY 结温**
+（NAS 上 netdata 图名 `sensors.temperature_enp1s0-pci-0100_temp1_PHY_Temperature_input`），
+而界面上只有一块"最高温度"KPI，孤零零一个数字很容易被读成整机温度。用户要求：
+"每一个能读到温度的传感器都显示出来，并自适应标记是什么设备……还需要显示设备名称"，
+并明确"需要自适应，不要写死"。设计与踩坑见 `docs/ui-redesign-v9.md` 第十三节。
+
+### 18.1 采集端（NAS）
+
+- `nas/fnos-agent.py` 与 `nas/fpk/nasscreencompanion/app/server/fnos_collector.py` 的 `_temps()`
+  改为枚举 `/sys/class/hwmon/*/temp*_input` 的**每一个可读通道**；设备名按系统事实推导
+  （`/sys/class/{block,net,drm}` 反查 realpath + **前缀包含**匹配，NVMe 的 hwmon 挂在 PCI
+  控制器上而 block 设备在它下一层；跳过带 `partition` 文件的分区；DRM 用驱动名），
+  通道名取 `tempN_label`（去掉尾部 " Temperature"），CPU 靠标签语义（`Package`/`Core N`/
+  `Tctl`/`Tdie`）识别 —— **不再有 `TEMP_LABEL` 这类写死的名字表**。
+- 输出 `{"n","c","dev","ch"}`（`n` 保留 = 老固件兼容）；`TEMP_MAX=48` 与
+  `DEFAULT_LIMITS["temps"]=48` 与板端 `FNOS_MAX_TEMPS` 对齐。
+- 本机实测 24 路：coretemp `Package id 0` + `Core 0–5`、enp1s0 `PHY`+`MAC`、i915 `temp1`、
+  4×NVMe `Composite`/`Sensor 1..3`；`temps` 段 24 路约 1.4 KB（板端接收缓冲 24 KB）。
+- 本地验证：`python3 nas/fpk/temps_check.py` —— 在一棵**假 sysfs 树**上跑两个采集器的真代码
+  （62 项断言全绿：前缀匹配、跳分区、CPU 标签识别、`dev/ch` 组装、48 路截断丢最冷）。
+  两次证伪：把前缀包含改成相等比较 → 24 条断言变红；删掉分区跳过 → 4 条变红。
+
+### 18.2 板端
+
+- 第 5 个导航页「温度」（新图标 `KK_ICON_THERMO`）；导航几何**重解**而不是硬塞：
+  `KK_NAV_Y0 72 / KK_NAV_H 60 / KK_NAV_PITCH 68` ⇒ 末项下沿 404，离 432 的分隔线还有 28px。
+- 版面：摘要条 44（`KKM.h_note`）两行 + `温度传感器 · 全部通道` 卡，三列并排、每列一池 16 行，
+  行高 `KK_TROW_H`(44)、条高 4、右对齐数值列 76px；摊派 `per = ceil(ntemps/3)`，
+  每列只用前 `per` 行。颜色只表状态并有文字冗余（摘要行写"危险 N 路 / 注意 M 路"）。
+- 兼容：`fnos_data.c` 先读 `dev`/`ch`，取不到才回退到老的 `n`；系统页温度卡与总览页
+  「最高温度」KPI 的副标签也改成"设备名 · 通道名"。
+
+### 18.3 证据
+
+- **主机预览**：`cd tools/preview && bash run.sh out` ⇒ `preview: 5 page(s)/state`、46 张 PNG；
+  几何越界、字形覆盖、"从未露面构件"三项审计全过（基线 56 → **193**，构成逐项写在
+  `tools/preview/preview.c` 的注释里：96 系统页温度行池 + 96 温度页三列行池 + 1 空态标签）。
+- **固件解析器**：`bash tools/parsecheck/run.sh` ⇒ `✓ 满载帧（10491 字节）能被 parse_status() 解析`；
+  `temps[0]` 的 `dev`/`ch` 正确，且**最后一路故意只给 `n`** 用来验老采集端回退
+  （`temp_last dev=[old-collector-packa] ch=[]`）。
+- **契约**：`python3 nas/fpk/contract_check.py --emit` ⇒ `nas/fpk/board_fields.json` 51 字段，
+  含 `['temps','dev'] ['temps','ch'] ['temps','n'] ['temps','c']`。
+- **构建**：`./idf.sh build` EXIT=0，`build/fnos_monitor.bin` **0x1a9ef0 B**（1.74 MB），app 分区余 82%。
+- **串口**（`tools/serial_capture.py --seconds 15`，捕获后自动复位回运行模式）：
+  `[0.82] fnos_ui: ui created (pages=5)` → `[0.82] main: boot complete` →
+  `[3.68] fnos_net: got ip 192.168.0.214` → `[4.08] fnos_data: history backfilled: 300 samples`；
+  堆稳态 `internal=217KB largest=172KB dma=179KB psram=27240KB`；**无** watchdog / 断言 /
+  `Guru Meditation` / `VERIFY MODE`。
+- **实机照片**（手机相机预览截图，屏幕在画面里转 90°）：
+  - `android-preview-20261006-131005-539116.png`：存储页 + 左侧**五项导航**（总览/存储/网络/系统/温度，
+    温度计图标可见，与"配对"入口无重叠）；
+  - `android-preview-20261006-131023-847289.png`：网络页（上行 186 KB/s、下行 252 KB/s、双曲线在动、
+    `enp1s0-ovs`、采集成功率 100%）；
+  - `android-preview-20261006-131041-454442.png`：**温度页** —— 摘要 `7 路传感器 · 最热 NIC 76.0°C` /
+    `1 路 ≥75°C 危险 · 0 路 ≥60°C 注意 · 逐路写明设备与通道`，列表 `NIC 76.0°C`（红）、
+    `NVME2 43.9`、`NVME3 39.9`、`iGPU 36.0`、`CPU 36.0`、`NVME1 34.9`、`NVME0 33.9`。
+- **当次验收用的轮播开关**：为逐页拍照把 `CONFIG_FNOS_AUTO_PAGE_SEC` 临时设为 12 构建并烧录，
+  验收后**已改回 0** 并重新构建烧录（串口日志里没有 `VERIFY MODE` 即为交付态）。
+
+### 18.4 已知状态与后续
+
+- 面板上现在是**7 路、名字是 `NIC`/`NVME2`**：因为 NAS 上的采集端**尚未部署**（部署要 SSH/sudo
+  凭据，本会话拿不到）。这同时是"向后兼容回退路径"的实机证据 —— 老采集端只发 `n`，新固件把它
+  整条放进 `dev`，页面照常工作。
+- 把 `nas/install.sh` 部署到 NAS 之后（`SSHPASS=… NAS_SUDO_PASS=… ./install.sh`），同一页应显示
+  24 路「`enp1s0 · PHY`」「`nvme0n1 · Composite`」「`CPU · Core 3`」这类"设备名 · 通道名"。
+  这一步不需要重新烧录固件。
+- 并发说明：本次改动落地时该工作树同时被另一会话改写（v9/v10 版面重构），因此落地一律用
+  `patch -p0 --forward`（只加本改动的 hunk），没有整文件覆盖。
+
+### 18.5 温度行的固定次序（2026-10-06 补，用户反馈后）
+
+用户看到面板后给的要求是："每个通道应该单独显示并显示设备名称，**而不是直接切换显示**"。
+按温度降序排的榜正是"切换显示"的来源：温度一升一降，行就互换位置，设备名跟着一起挪，
+人认不住哪一行是哪台设备。
+
+- 改法：`components/fnos_monitor/fnos_data.c` 新增 `temp_cmp()`（设备名 → 通道名 的字节序），
+  `parse_status()` 解析完温度后 `qsort` 一次 —— **同一路传感器永远在同一行**；
+  "最热的是谁"改由摘要行点名（`fnos_ui.c` 的 P4 摘要自己扫 max，不再假设 `temps[0]` 是最热的）。
+- 连带同步：`tools/preview/preview.c` 的桩件用同规则排序（桩与设备行为必须一致，否则预览是假绿灯）；
+  `tools/parsecheck/extract.py` 的 `FUNCS` 加上 `temp_cmp`（它是从 `fnos_data.c` 里按白名单抠函数的），
+  `main.c` 的老采集端回退断言改成**按名字找**那一行（排序后它不再固定在最后）。
+- 实机证据：`android-preview-20261006-132143-604816.png`（系统页「硬件温度」卡）——
+  `CPU 35.0 / NIC 76.0 / NVME0 30.9 / NVME1 34.9 / NVME2 44.9 / NVME3 39.9 / iGPU 36.0`：
+  最热的 `NIC` 稳在第 2 行（不再跑到最上面），行序不再随温度变。
+- 交付态：`CONFIG_FNOS_AUTO_PAGE_SEC=0`（验收期间临时开过 12 用于逐页拍照，已复原并重新构建烧录；
+  串口无 `VERIFY MODE`）。
+
+### 18.6 设备名 `dn`（2026-10-06 再补，用户第二轮反馈后）
+
+用户第二条反馈："能显示温度的设备名吗？而不是缩写。像 NIC 单独显示一个缩写，我根本不知道
+它是什么设备，也无法对它进行降温。" —— 要求"名字要能支持一个动作"，所以内核 id（`enp1s0`）
+也不合格。
+
+- 采集端（`nas/fnos-agent.py` + fpk 里的同源文件）：每路多带一个 `dn`，从系统事实取：
+  磁盘 → `device/model`；网卡/显卡 → PCI `vendor`/`device` 经 `pci.ids`（没有 pci.ids 就
+  用厂商表 + 驱动名）+ `/sys/class/net/<if>/speed`；CPU → `/proc/cpuinfo` 的 `model name`；
+  认不出的退回 hwmon 名。**不猜型号**（查不到就写 `PCI 1d6a` 或退回驱动名 + 速率）。
+  新增模块级 `PROC = os.environ.get("FNAS_PROC", "/proc")` 便于假树测试。
+- 板端：`fnos_temp_t` 加 `char dn[28]`，解析 `dn`；温度行改成**两行**（第一行设备名，
+  第二行 通道名 + 数值，去掉进度条），系统页摘要卡改成 `通道名 · 设备名`（截断先丢设备名），
+  摘要行用完整 `dn`。设计说明见 `docs/ui-redesign-v9.md` 第十三节。
+- 证据：
+  - `python3 nas/fpk/temps_check.py` → **74 项通过 0 项失败**，其中设备名断言：
+    `nvme0n1 · Composite = Samsung SSD 990 PRO 2TB`、`nvme1n1 · Sensor 2 = WD Black SN850X 2TB`、
+    `enp1s0 · PHY = Marvell atlantic 10GbE`（假树无 pci.ids，走厂商表+驱动+速率）、
+    `CPU · Core 3 = Intel N100`（假 `/proc/cpuinfo`）、`i915 · temp1 = Intel i915`、
+    `acpitz · temp1 = acpitz`（认不出时的退路）。
+  - 主机预览 `05-limits-p4.png`：24 行两行式行，第一行全是人读设备名
+    （`Marvell AQC113 10GbE` / `Samsung SSD 990 PRO 2TB` / `Intel N100` / `Intel UHD Graphics` …），
+    第二行是通道名与数值；摘要 `24 路传感器 · 最热 Marvell AQC113 10GbE · PHY 74.2°C`。
+  - `tools/parsecheck`：满载帧涨到 **12183 字节**仍能被 `parse_status()` 解析，
+    新增断言 `dn` 落进结构体（`BADTEMP dn 没解析出来` → return 8），
+    且最后一路仍只给 `n`（老采集端回退路径）。
+  - `tools/preview` 的"从未露面构件"基线从 193 收到 **169**（行从 4 构件变 3 构件，
+    注释里逐项重算过）；同时新增 **`ST_LEGACY` 状态**（预览出图 `09-legacy-p*.png`）：
+    桩件模拟"老采集端只发 `n`"的 7 路数据，把**回退路径**变成可回归的图 ——
+    面板上现在跑的正是这一屏（`7 路传感器 · 最热 NIC 76.0°C`，每行第一行 `NIC`/`NVME2`…、
+    第二行只有数值），不再只靠设备照片当基线。
+  - 固件 `./idf.sh build` + 烧录成功（13:31:38），串口 `got ip 192.168.0.214`、
+    `history backfilled: 300 samples`、无崩溃、无 `VERIFY MODE`。
+- **面板上要真正看到这些名字，还差一步**：把采集端部署到 NAS
+  （`cd nas && SSHPASS=… NAS_SUDO_PASS=… ./install.sh`）。当前面板显示 `NIC`/`NVME2`
+  是**老采集端**的数据（它只发 `n`），新固件按设计回退到那个字段 —— 固件不用重烧。
+
+## 19. 温度页排版返工（2026-10-06 第三轮：用户报"温度界面排版完全错乱了"）
+
+**根因**（两条叠在一起，都在"行内层级"上）：
+
+1. 固定两行制（行 1 设备名 / 行 2 通道名 + 数值）在**老采集端数据**下退化成"名字一行、
+   数值孤零零飘在右下角"—— 老端没有 `ch`，第二行左边是空的，看着就像排版错位。
+   面板上当时跑的正是这份数据（NAS 采集端未升级）。
+2. 反过来把数值提到行 1 与名字同行，则设备名只剩 ~185px，被截成
+   `Samsung SSD 990 PRO …`、`KIOXIA EXCERIA PLUS …` —— 而这一页唯一要回答的就是
+   "是谁在热"，名字截断等于没写。
+
+**设计合同**（按 `cuktech-screen-ui` + `interface-design` 两套 skill 落）：
+
+| 项 | 取值 |
+| --- | --- |
+| 设备 | 7" 1024×600 MIPI-DSI、内容区 948×544、观看距离 ~40cm、1 s 刷新、触摸 |
+| 页面问题 | **哪一路传感器现在多少度、它属于哪台设备**（只回答这一个） |
+| 数据合同 | `dn` 人读设备名 / `dev` 内核名 / `ch` 通道名 / `c` °C（0.1 精度）；阈值 60 注意、75 危险；缺 `ch` = 老采集端；离线 = 保留旧数据 |
+| 对象顺序 | 稳定的"设备名 → 通道名"字典序（`CPU` → `enp1s0` → `i915` → `nvme0n1…` → 认不出的平台热区），恰好是物理拓扑；**不随温度变**（用户要求"不要切换显示"） |
+| 信息层级 | 设备名（cjk_16, T2）→ 数值（cjk_16, 阈值色）→ 通道名（cjk_12, T3） |
+| 状态编码 | 色 + 文案冗余：危险/注意=数值色，页头给"x 路 ≥75°C 危险 · y 路 ≥60°C 注意"；离线=数值与名字降 `KK_T3`，页头"保留旧数据 · 年龄"说明原因（`KK_T4` 按版面合同不得用于 <20px 文字） |
+
+**结构（自适应行形态）**：
+
+```
+① 有 ch（新采集端）：行 1 = 设备名（占满列宽 265px，约 26 西文字符）
+                     行 2 = 通道名（cjk_12, T3） + 数值（cjk_16, 阈值色，右对齐）
+② 无 ch（老采集端）：整行 = 设备名 + 数值（名字让出 72px 数值列），不留半行空白
+```
+
+行高仍是 44（`2 + 19 + 2 + 19 + 2`，度量表 `KKM.trow_h/trow_name_y/trow_sub_y`）；
+数值列宽 `KK_TROW_VAL_W` 72px；行内不做进度条（数值自带阈值色，条会把两行字挤碎）。
+
+**证据**：
+
+- 主机预览：`tools/preview/out/02-live-p4.png`（24 路两行制，全部设备名完整不截断）、
+  `09-legacy-p4.png`（7 路一行制，数值紧挨名字）、`03-offline-p4.png`（数值灰化 +
+  页头"保留旧数据"）。三项审计通过：几何越界 0、字形缺字 0、"从未露面构件"
+  169 = 基线（与改造前一致）。
+- 真机：`android-preview-20261006-163754-445064.png`（`/Users/llll/Documents/ChatGPT/board-camera/`）
+  —— 为拍这一页临时把开机页设成第 4 页（`fnos_ui_set_page(FNOS_TEMP_START_PAGE)`，
+  拍完已改回 `fnos_ui_set_page(0)` 并重建烧录）。照片里三列分别是
+  `CPU 36.0 / NIC 76.0(红) / NVME0 31.9`、`NVME1 34.9 / NVME2 43.9 / NVME3 39.9`、`iGPU 37.0`，
+  **每行都是"名字 + 数值"同一行**，与主机预览 `09-legacy-p4.png` 一致 —— 用户报的
+  "值飘在右下角"消失。页头 `7 路传感器 · 最热 NIC 76.0°C` + `1 路 ≥75°C 危险 · 0 路 ≥60°C 注意` 正常。
+- 交付态复核：`CONFIG_FNOS_AUTO_PAGE_SEC=0`、开机第 0 页（16:39:16 烧录，串口
+  `sta ip: 192.168.0.214`、`history backfilled: 300 samples`、无崩溃、无 `VERIFY MODE`）。
+
+
+## 20. 真机部署记录：NAS 采集端换成"温度全量自适应"版（2026-10-06 16:44）
+
+**这一步是用户明确授权后由代理直接做的**（此前几轮一直卡在"需要 SSH 凭据"）。
+
+- 连接：`ssh llll@192.168.0.119`（fnOS/Debian 12，内核 `6.18.18.c1107-trim`，主机名 `nas`）。
+  顺带把本机 `~/.ssh/id_ed25519.pub` 装进 `/home/llll/.ssh/authorized_keys`
+  （该用户家目录原先不存在 —— 登录时一直报 `Could not chdir to home directory /home/llll` ——
+  已创建并 chown 到 `llll:1001`）；**sudo 仍需密码**，不落盘、不进记忆。
+- 部署前先跑**只读**试算（`nas/preview-naming.sh` → 远端 `fnos-agent.py --temps`）：
+  真机 **24 路**，命名如下（摘）：
+
+  | 设备名(dn) | 通道(ch) | °C | 内核名(dev) |
+  | --- | --- | --- | --- |
+  | Aquantia atlantic 10GbE | PHY / MAC | 76.0 | enp1s0 |
+  | ZHITAI TiPlus7100 1TB | Composite / Sensor 1–3 | 43.9…31.9 | nvme2n1 / nvme3n1 |
+  | PCIe-8 SSD 512GB | Composite / Sensor 1–3 | 35.9…27.9 | nvme0n1 / nvme1n1 |
+  | Intel UHD Graphics 630 | temp1 | 36.0 | i915 |
+  | Intel Core i7-8700 | Package id 0 / Core 0–5 | 35.0…33.0 | CPU |
+
+  ⇒ 24 = CPU 7 + 网卡 2 + 核显 1 + 4×NVMe×4。**"75°C 是谁"这个原始问题就此闭环：是 Aquantia 10G 网卡的 PHY 结温。**
+- 顺带修掉一个真机才暴露的瑕疵：iGPU 型号名在 pci.ids 里是
+  `CoffeeLake-S GT2 [UHD Graphics 630]`，28 字符上限把它截成 `Intel CoffeeLake-S GT2 [UHD `。
+  新增 `_chip_short()`：**有方括号别名就取括号内容**（那通常是用户认识的名字），再砍
+  `… Controller` 尾巴 → `Intel UHD Graphics 630`。`nas/fpk/temps_check.py` 的假 pci.ids
+  已换成真机这条，断言同步 → **92 项通过 0 失败**。
+- 部署：`cd nas && SSHPASS=… NAS_SUDO_PASS=… ./install.sh` —— 装到
+  `/usr/local/bin/fnos-agent.py` + systemd 单元（部署前该文件是 Sep 20 的旧版），
+  本机复核输出 `temps: enp1s0 PHY 75.0, enp1s0 MAC 75.0, nvme2n1 Composite 43.9, …`（24 条）。
+- 线上契约复核：`/api/v1/status` 的 `temps[]` 字段 = `['c','ch','dev','dn','n']`，
+  例 `{"n":"enp1s0 PHY","c":76.0,"dev":"enp1s0","ch":"PHY","dn":"Aquantia atlantic 10GbE"}` ——
+  `n`/`c` 保留（老固件可用），新增三个字段。
+- **面板侧（固件未重烧）**：照片 `android-preview-20261006-164706-861674.png`
+  （`/Users/llll/Documents/ChatGPT/board-camera/`）显示「温度」页已是 24 路两行制：
+  第一行设备名（`Intel Core i7-8700`、`Aquantia atlantic 10GbE`、`ZHITAI TiPlus7100 1TB`、
+  `PCIe-8 SSD 512GB`、`Intel UHD Graphics 630`），第二行通道名 + 数值，76.0°C 走危险色；
+  页头 `24 路传感器 · 最热 Aquantia atlantic 10GbE · MAC 76.0°C` +
+  `2 路 ≥75°C 危险 · 0 路 ≥60°C 注意`。行序按设备名稳定（CPU → enp1s0 → i915 → nvme0…3）。

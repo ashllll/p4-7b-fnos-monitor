@@ -22,4 +22,11 @@ set -e
 
 export ESP_IDF_VERSION="${ESP_IDF_VERSION:-5.5}"
 
+# 构建必须用 CommandLineTools 而不是完整 Xcode：本机 Xcode 的许可协议没同意过
+# （同意需要 sudo，而本会话不允许交互审批），一旦 CMAKE 选到 Xcode 工具链就会以
+#   "You have not agreed to the Xcode license agreements … exit code 69"
+# 结束，而且报错在几百行 make 输出之后，看起来像编译失败。钉住它，
+# 让"能不能构建"不再取决于机器上装没装 Xcode。
+export DEVELOPER_DIR="${DEVELOPER_DIR:-/Library/Developer/CommandLineTools}"
+
 idf.py "$@"

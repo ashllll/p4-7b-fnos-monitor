@@ -1,0 +1,142 @@
+#!/bin/bash
+. "$(dirname "$0")/_common.sh"
+# ---------------------------------------------------------------- start
+start_process() {
+  mkdir -p "$PKG_VAR" "$PKG_ETC" 2>/dev/null
+  if is_running; then
+    say "已在运行（pid $(cat "$PID_FILE")）"
+    return 0
+  fi
+  rm -f "$PID_FILE"
+
+  local py
+  py=$(resolve_python) || { fail "找不到 Python 运行时：依赖应用 python312 是否已安装？"; return 1; }
+  [ -f "$SERVER" ] || { fail "服务文件缺失：$SERVER"; return 1; }
+
+  norm_wizard
+  local port
+  port=$(effective_port "$py")
+
+  # 端口冲突：只判断、只报错，绝不结束占用者（8799 上的开发版采集器尤其不能碰）
+  if port_busy "$port"; then
+    fail "端口 $port 已被占用。本应用不会结束占用它的进程——请在应用设置里换一个端口，或先自行确认占用者是谁。"
+    return 1
+  fi
+  if port_busy "$DEV_AGENT_PORT"; then
+    say "提示：$DEV_AGENT_PORT 上有服务在运行（开发版采集器）。本应用使用 ${port}，互不影响。"
+  fi
+
+  cleanup_socket
+  export TRIM_APPDEST="$TARGET" TRIM_PKGVAR="$PKG_VAR" TRIM_PKGETC="$PKG_ETC"
+  say "启动服务：$py $SERVER --serve（端口 ${port}，uid $(id -u)）"
+  cd "$APP_ROOT" || return 1
+  # stdin 必须断开：否则子进程会一直攥着生命周期脚本继承来的管道，
+  # 应用中心的调用方可能一直等不到 EOF。stdout/stderr 收进日志。
+  # PYTHONDONTWRITEBYTECODE：别在 target 目录里落 __pycache__。它会被下一次
+  # 打包带进 .fpk（真发生过），而且是构建产物混在源码里。
+  PYTHONDONTWRITEBYTECODE=1 nohup "$py" "$SERVER" --serve < /dev/null >> "$INFO_LOG" 2>&1 &
+  local pid=$!
+  echo "$pid" > "$PID_FILE"
+
+  local i
+  for i in $(seq 1 40); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      rm -f "$PID_FILE"
+      fail "服务进程启动后立即退出，请看 ${INFO_LOG}（常见原因：端口被占用、依赖缺失）"
+      return 1
+    fi
+    http_health "$py" "$port" && break
+    sleep 0.25
+  done
+  if ! http_health "$py" "$port"; then
+    fail "服务已启动但 $port 端口在 10 秒内没有响应，请看 $INFO_LOG"
+    return 1
+  fi
+
+  # 管理页走 target 目录下的 Unix Socket。绑定失败时服务会活着但管理页打不开，
+  # 这里必须说出来，否则用户只会在应用中心看到一个"启动成功"然后点不开。
+  if [ ! -S "$SOCK_FILE" ]; then
+    warn "服务已启动，但管理面 Socket 没有出现：$SOCK_FILE"
+    warn "应用中心里点开本应用会打不开，请看 ${INFO_LOG} 里的绑定失败原因。遥测接口不受影响。"
+  fi
+  say "启动成功（pid ${pid}）"
+  # TLS 是默认路径，指纹是用户要在板子上确认的东西——启动时直接打出来，
+  # 省得为了看一眼指纹去翻页面。失败也在这里说清楚，不让它静默降级成明文。
+  local tls_line=""
+  if tls_line=$("$py" "$SERVER" --tls-status 2>>"$INFO_LOG") && [ -n "$tls_line" ]; then
+    say "$tls_line"
+  else
+    warn "${tls_line:-TLS 未启用}"
+    warn "遥测面当前是明文 HTTP。原因写在 ${INFO_LOG}，管理页「诊断」里也能看到。"
+  fi
+  return 0
+}
+
+# ---------------------------------------------------------------- stop
+stop_process() {
+  if ! is_running; then
+    rm -f "$PID_FILE"
+    cleanup_socket
+    say "未在运行"
+    return 0
+  fi
+  local pid
+  pid=$(cat "$PID_FILE")
+  say "停止服务（pid ${pid}）"
+  kill -TERM "$pid" 2>/dev/null
+  local i
+  for i in $(seq 1 40); do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.25
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    warn "优雅停止超时，发送 SIGKILL"
+    kill -KILL "$pid" 2>/dev/null
+    sleep 0.5
+  fi
+  # **发完信号不等于停掉了**。用户验收时问的正是"有没有残留进程"，所以这里要看
+  # 一眼再说"已停止"——否则卸载说成功、进程还在跑，而它可能正占着端口。
+  # （SIGKILL 之后还活着通常只有两种可能：D 状态（卡在不可中断的系统调用）或权限。）
+  if kill -0 "$pid" 2>/dev/null; then
+    warn "进程 ${pid} 在 SIGKILL 之后仍然存在——它可能卡在不可中断状态（D state）。"
+    warn "端口 ${port} 可能仍被占用。用 ps -p ${pid} -o pid,stat,cmd 看它的状态。"
+    rm -f "$PID_FILE"
+    cleanup_socket
+    return 1
+  fi
+  rm -f "$PID_FILE"
+  cleanup_socket
+  say "已停止"
+  return 0
+}
+
+# ---------------------------------------------------------------- 入口
+case "${1:-}" in
+  start)
+    start_process || exit 1
+    exit 0
+    ;;
+  stop)
+    stop_process || exit 1
+    exit 0
+    ;;
+  status)
+    if is_running; then
+      py=$(resolve_python 2>/dev/null || true)
+      port=$(effective_port "${py:-python3}")
+      if http_health "$py" "$port"; then
+        say "运行中（pid $(cat "$PID_FILE")，端口 ${port}）"
+        exit 0
+      fi
+      warn "进程存在（pid $(cat "$PID_FILE")）但端口 $port 无响应"
+      exit 1
+    fi
+    cleanup_socket
+    say "未运行"
+    exit 3
+    ;;
+  *)
+    echo "用法: $0 {start|stop|status}" >&2
+    exit 1
+    ;;
+esac

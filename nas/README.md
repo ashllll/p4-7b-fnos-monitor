@@ -15,8 +15,21 @@ SSHPASS='...' NAS_SUDO_PASS='...' ./install.sh uninstall
 # NAS 上直接验证
 curl -s http://127.0.0.1:8799/api/v1/status | python3 -m json.tool | head -40
 python3 /usr/local/bin/fnos-agent.py --selftest     # 逐段自检，哪一段抛异常会指出来
+python3 /usr/local/bin/fnos-agent.py --temps        # 只打温度表：设备名 / 通道 / 数值（只读）
 journalctl -u fnos-agent -n 50 --no-pager           # 需要 root 或 adm 组
 ```
+
+**部署前先看命名**（只读：不启服务、不占 8799、不动正在跑的那个进程）：
+
+```bash
+bash nas/preview-naming.sh                  # 默认 llll@192.168.0.119
+SSHPASS='...' bash nas/preview-naming.sh    # 密码认证（本机装了 sshpass 时）
+```
+
+它把 `fnos-agent.py` 拷到 NAS 的 `/tmp` 跑一次 `--temps`（输出"设备名 / 通道 / 数值"表），
+退出时自动删掉。名字看着对，再 `./install.sh` 真正部署 —— 部署后**板子不用重烧**，
+面板上 `NIC`/`NVME2` 这类类型名会换成从硬件读出来的设备名
+（`Aquantia AQC113CS 10GbE`、`Samsung SSD 990 PRO 2TB`、`Intel N100`…）。
 
 ## 采集内容
 
@@ -53,8 +66,10 @@ journalctl -u fnos-agent -n 50 --no-pager           # 需要 root 或 adm 组
 * 先绑定端口再等第一帧采样：systemd 报 active 的时刻端口就能连上。
 * `server_bind` 跳过 Python 默认的反向 DNS（解析不可达时会阻塞几十秒才监听）。
 
-参数：`--bind`（默认 0.0.0.0）、`--port`（8799）、`--interval`（1.0 s）、`--hist`（300）、`--selftest`。
-环境变量：`FNAS_TOKEN`（非空则要求 token）、`FNAS_NETIF`、`FNAS_VOLUMES`。
+参数：`--bind`（默认 0.0.0.0）、`--port`（8799）、`--interval`（1.0 s）、`--hist`（300）、`--selftest`、
+`--temps`（只打温度表：设备名 / 通道 / 数值，只读不启服务）。
+环境变量：`FNAS_TOKEN`（非空则要求 token）、`FNAS_NETIF`、`FNAS_VOLUMES`；
+测试用 `FNAS_SYSFS` / `FNAS_PROC` 可把采集根指到假树（见 `nas/fpk/temps_check.py`）。
 
 ## 只读边界
 
