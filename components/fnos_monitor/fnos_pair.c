@@ -209,6 +209,12 @@ static EXT_RAM_BSS_ATTR char s_http_cert[FNOS_PAIR_PEM_MAX];
    do_pair 只由 pair_task 调用、不可能重入，所以文件级静态是安全的。 */
 static EXT_RAM_BSS_ATTR fnos_pair_cfg_t s_next;
 
+// 最近一次请求卡在哪一步（open / fetch_headers / read）。用户屏幕上原来只有一句
+// "证书或网络问题"，既分不清是哪一步，也没有可上报的错误码 —— 现场排查全靠猜。
+static char s_http_diag[96];
+
+const char *fnos_pair_last_http_diag(void) { return s_http_diag; }
+
 // 一次性请求（配对是低频操作，不复用连接）。cert_pem 非空才走证书校验。
 static bool http_oneshot(bool post, const char *url, const char *body, const char *cert_pem,
                          char *rx, size_t rx_cap, int *out_status, int *out_len)
@@ -241,8 +247,31 @@ static bool http_oneshot(bool post, const char *url, const char *body, const cha
     }
 
     bool ok = false;
-    if (esp_http_client_open(c, post && body ? (int)strlen(body) : 0) == ESP_OK &&
-        esp_http_client_fetch_headers(c) >= 0) {
+    s_http_diag[0] = 0;
+    esp_err_t oerr = esp_http_client_open(c, post && body ? (int)strlen(body) : 0);
+    if (oerr != ESP_OK) {
+        snprintf(s_http_diag, sizeof s_http_diag, "open 失败 %s（errno %d）",
+                 esp_err_to_name(oerr), esp_http_client_get_errno(c));
+        ESP_LOGE(TAG, "http open failed: %s errno=%d internal_heap=%u", esp_err_to_name(oerr),
+                 esp_http_client_get_errno(c),
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+        esp_http_client_cleanup(c);
+        *out_status = 0;
+        *out_len = 0;
+        return false;
+    }
+    if (esp_http_client_fetch_headers(c) < 0) {
+        snprintf(s_http_diag, sizeof s_http_diag, "读响应头失败（errno %d）",
+                 esp_http_client_get_errno(c));
+        ESP_LOGE(TAG, "http fetch_headers failed: errno=%d internal_heap=%u",
+                 esp_http_client_get_errno(c),
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+        esp_http_client_cleanup(c);
+        *out_status = 0;
+        *out_len = 0;
+        return false;
+    }
+    {
         *out_status = esp_http_client_get_status_code(c);
         int total = 0;
         while (total < (int)rx_cap - 1) {
@@ -255,10 +284,12 @@ static bool http_oneshot(bool post, const char *url, const char *body, const cha
         rx[total] = 0;
         *out_len = total;
         ok = esp_http_client_is_complete_data_received(c);
-    } else {
-        *out_status = 0;
-        *out_len = 0;
-        rx[0] = 0;
+        if (!ok) {
+            snprintf(s_http_diag, sizeof s_http_diag, "响应没收完（%d 字节，errno %d）",
+                     total, esp_http_client_get_errno(c));
+            ESP_LOGW(TAG, "response incomplete: %d bytes errno=%d", total,
+                     esp_http_client_get_errno(c));
+        }
     }
     esp_http_client_cleanup(c);
     return ok;
@@ -386,8 +417,9 @@ static void do_fetch(const char *code)
     if (!got) {
         char msg[112];
         /* 把"试过哪些端口、结果如何"写上屏 —— 只说"读证书失败"等于让用户猜 */
-        snprintf(msg, sizeof msg, "读证书失败（%s）：%s", s_cfg.host,
-                 tried[0] ? tried : "没有可用地址");
+        snprintf(msg, sizeof msg, "读证书失败（%s）：%s %s", s_cfg.host,
+                 tried[0] ? tried : "没有可用地址", s_http_diag);
+        ESP_LOGE(TAG, "pair 失败：%s", msg);
         set_view(FNOS_PAIR_FAILED, msg);
         free(rx);
         return;
@@ -485,7 +517,8 @@ static void do_pair(void)
         if (err) {
             snprintf(msg, sizeof(msg), "配对失败：%s", err);
         } else if (status == 0) {
-            snprintf(msg, sizeof(msg), "配对请求没连上（证书或网络问题）");
+            snprintf(msg, sizeof(msg), "配对请求没连上：%s",
+                     s_http_diag[0] ? s_http_diag : "原因未知");
         } else {
             snprintf(msg, sizeof(msg), "配对失败：HTTP %d", status);
         }
