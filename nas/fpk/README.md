@@ -182,3 +182,7 @@ python3 nas/fpk/board_sim.py --host <NAS-IP> --port 8798 --pair-code <六位码>
 它把开发板配对时的五步 HTTP/TLS 序列原样走一遍（含"固定一张别的证书必须握手失败"这类否定断言），**不用等硬件**就能确认 NAS 这一半在你的网络里是通的。
 
 配对成功后它还会顺手核对**板子要读的那 49 个字段，这台 NAS 是不是都给全了**——在开发机上这一步只能对着采集端源码猜（macOS 没有 `/proc`、`/sys`），在你的真 NAS 上会全部走真实响应。结尾会告诉你下一步该干什么。
+
+## 开源协议
+
+Apache License 2.0（继承自原始项目 `T-Display-S3-fnos-monitor`），全文见仓库根目录 [LICENSE](../LICENSE)。

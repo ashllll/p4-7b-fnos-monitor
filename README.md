@@ -144,3 +144,21 @@ SSHPASS='...' NAS_SUDO_PASS='...' ./install.sh uninstall           # 卸载
 ## 验证记录
 
 见 `docs/verification.md`（编译、烧录、串口、视觉验收、离线恢复与长跑数据）。
+
+
+## 开源协议
+
+**Apache License 2.0** —— 继承自同作者的原始项目 `T-Display-S3-fnos-monitor`
+（同一个"飞牛监控"产品的上一代硬件版本），全文见 [LICENSE](LICENSE)。
+
+仓库内第三方组件各自的协议：
+
+| 组件 | 协议 |
+| --- | --- |
+| `components/esp32_p4_wifi6_touch_lcd_7b/`（Espressif / Waveshare BSP） | Apache-2.0 |
+| LVGL（`managed_components/`，由组件管理器拉取，不入库） | MIT |
+| cJSON（ESP-IDF 内置） | MIT |
+| ESP-IDF | Apache-2.0 |
+| 界面字体（`tools/fonts/` 下的 Noto Sans SC、Inter） | 字体原文件不入库，只分发生成后的 C 字体文件 |
+
+`nas/fnos-agent.py`（NAS 只读采集端）与 `nas/fpk/`（飞牛应用包工程）同样适用 Apache-2.0。
