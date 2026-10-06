@@ -146,6 +146,86 @@ SSHPASS='...' NAS_SUDO_PASS='...' ./install.sh uninstall           # 卸载
 见 `docs/verification.md`（编译、烧录、串口、视觉验收、离线恢复与长跑数据）。
 
 
+## 开发板 ↔ 飞牛应用：通信与配对（一步步）
+
+> **先纠正一个最容易误解的点**：配对码是 **NAS 的应用管理页生成**的，开发板只负责**输入**这 6 位数字。
+> 板子这一侧没有任何东西需要"填回"应用包里 —— 板子不进固件、不进 fpk，参数是运行时存进它自己的 NVS。
+
+### 1. 两条链路（板子只做一件事：每秒 HTTP GET 一个 JSON）
+
+```
+未配对（装上就能用）      板子 ──HTTP 明文、无令牌──▶  http://<NAS>:8799/api/v1/status
+                          开发版采集器（systemd + /usr/local/bin/fnos-agent.py）
+
+已配对（更严的那条路）    板子 ──HTTPS + Bearer 令牌──▶  https://<NAS>:8798/api/v1/status
+                          飞牛应用「飞牛监控」（包用户身份运行，只读采集）
+```
+
+两条线**并存、互不干扰**：应用不监听 8799、不改动 systemd 单元；开发版也不认令牌。
+板子选哪条，就看它 NVS 里有没有配对记录。
+
+| | 未配对 | 已配对 |
+| --- | --- | --- |
+| 地址来源 | 编译期 `components/fnos_monitor/fnos_config.h`（`FNOS_HOST`/`FNOS_PORT`，本机是 `192.168.0.119:8799`） | NVS（`fnos_pair` 保存的 host/port/tls/token/证书） |
+| 传输 | 明文 HTTP | HTTPS（固定板子自己取回的那张证书） |
+| 认证 | 无 | `Authorization: Bearer <令牌>`（NAS 侧只存 `sha256("nsc:"+token)`） |
+| 左栏「配对」入口 | 橙色（未配对） | 正常色（已配对） |
+
+### 2. 烧录之后的初始状态
+
+1. 首次上电 `fnos_pair_init()` 读 NVS —— 空的，于是**退回编译期默认参数**（明文、无令牌），
+   行为跟以前完全一样，面板直接出数据；
+2. 想改默认地址（比如让新板子默认就打应用）：`cp components/fnos_monitor/fnos_config.example.h
+   components/fnos_monitor/fnos_config.h` 改 `FNOS_HOST`/`FNOS_PORT`，再 `./idf.sh build` + 烧录。
+   注意 `fnos_config.h` 在 `.gitignore` 里（它要放 Wi-Fi 口令），别提交。
+
+### 3. 配对六步（左边是你在哪儿操作）
+
+| # | 在哪 | 做什么 | 实际发生的事 |
+| --- | --- | --- | --- |
+| 1 | **NAS 桌面** | 打开「飞牛监控」→「**设备配对**」→ 生成配对码 | `POST /api/pairing/new` 生成 **6 位码，5 分钟有效**（`ttl=300`），同一时刻只允许一个码 |
+| 2 | **开发板** | 左栏点「**配对**」→ 数字键盘输入这 6 位 → 按「**确认**」 | `fnos_pair_begin(code)`：先在**明文**连接上 `GET http://<NAS>:8798/api/v1/identity`（NAS 只在这一个接口接受明文），取回证书 PEM |
+| 3 | 开发板 | （自动）算指纹 | 板子**自己**解 base64 + SHA-256（`pem_fingerprint()`），不信服务器 JSON 里给的指纹字段 |
+| 4 | 开发板 | 屏幕显示指纹 **4 行 × 8 字节**、证书 CN 与到期日 | 状态 `FNOS_PAIR_CONFIRM`，等你表决 |
+| 5 | **你** | 把板子屏幕上的指纹与 NAS 管理页「**传输加密**」里的指纹**逐段比对**；一致点「**确认**」，不一致点「**关闭**」 | 点关闭 = `fnos_pair_confirm(false)`，**不会发出任何带令牌的请求** |
+| 6 | 开发板 | （自动）换令牌并保存 | `POST https://<NAS>:8798/api/v1/pair {"code":"…","name":"p4-7b-lcd"}` → 拿到令牌 → 写 NVS → `fnos_pair_generation()+1`，数据层重建客户端，此后每秒走 HTTPS |
+
+配对码错/过期时，板子会显示 NAS 返回的原因（例如 `没有正在进行的配对，请先在 NAS 管理页生成配对码`），
+回第 1 步重新生成即可。
+
+### 4. 为什么指纹非要人工比对一次
+
+板子固定的是"**这一张**证书"，而"这一张是不是你那台 NAS"只能当面确认：中间人可以同时伪造证书和
+JSON 里的指纹字段，但伪造不了你眼睛看到的 NAS 管理页。所以指纹由板子自己算、由你比对，比对通过前
+不发任何带令牌的请求 —— 这是一次性的信任建立，之后板子只认这枚证书（不做公共 CA 链校验）。
+
+### 5. 解除配对 / 换 NAS / 回默认
+
+- **开发板**：「配对」页 → 「**解除配对**」**按两次**才生效（防误触）→ 清 NVS，立刻退回默认链路；
+- **NAS**：管理页把该设备从列表里删掉 → 它的令牌立即失效（两边都做才算干净）；
+- 换 NAS：先在旧 NAS 上删设备，再按上面六步重新配对即可。
+
+### 6. 排错
+
+| 现象 | 多半是 | 怎么办 |
+| --- | --- | --- |
+| 板子显示"没有正在进行的配对" | 码没生成 / 超过 5 分钟 / 已被用过一次 | 管理页重新生成，立刻在板子上输入 |
+| 板子上「确认」后停在取证书 | 板子连不到 `8798`，或 NAS 上应用没启动 | 先看应用中心里应用是否运行；`curl http://<NAS>:8798/api/v1/identity` 有 JSON 才算通 |
+| 指纹两处不一致 | 板子拿到的是别人的证书（或 NAS 重装过应用、证书重生成了） | 点「关闭」，核对 `curl -s http://<NAS>:8798/api/v1/identity` 里的 `tls_fingerprint` |
+| 配对成功但数据不变 | 板子还在读 8799（那也正常，两条线都在跑） | 「系统」页或「温度」页页头会显示数据源；想只走应用就在应用侧停掉开发版采集器 |
+| 想彻底回退 | —— | 板子「解除配对」+ NAS 管理页删设备；或重烧固件（NVS 会被清） |
+
+### 7. 相关代码
+
+| 位置 | 作用 |
+| --- | --- |
+| `components/fnos_monitor/fnos_pair.c` / `.h` | 状态机（未配对/取证书/等确认/换令牌/已配对/失败）、指纹计算、NVS 读写、`fnos_pair_forget()` |
+| `components/fnos_monitor/fnos_ui.c` | 「配对」卡片：数字键盘（`删除`/`确认`）、指纹四行显示、`关闭`/`解除配对`/`确认` 三个按钮 |
+| `components/fnos_monitor/fnos_data.c` | 按 `fnos_pair_active()` 拼 URL、按 `fnos_pair_generation()` 重建 HTTP 客户端 |
+| `nas/fpk/nasscreencompanion/app/server/nas_companion_server.py` | `new_pair_code(ttl=300)`、`try_pair()`、`/api/v1/identity`（明文引导）、`/api/v1/pair` |
+| `docs/fnos-companion-app-plan.md` | 这套配对协议当初的设计与信任模型推演 |
+
+
 ## 下载 / 安装
 
 **飞牛应用包**（装到 NAS 上的那个，给开发板/副屏提供只读状态与逐路温度）：
