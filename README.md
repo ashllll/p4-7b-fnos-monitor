@@ -146,6 +146,21 @@ SSHPASS='...' NAS_SUDO_PASS='...' ./install.sh uninstall           # 卸载
 见 `docs/verification.md`（编译、烧录、串口、视觉验收、离线恢复与长跑数据）。
 
 
+## 下载 / 安装
+
+**飞牛应用包**（装到 NAS 上的那个，给开发板/副屏提供只读状态与逐路温度）：
+
+- 稳定下载地址（GitHub Release，永远指向最新版）：
+  <https://github.com/ashllll/p4-7b-fnos-monitor/releases/latest/download/nasscreencompanion-1.1.0.fpk>
+- 仓库里也带一份：`nas/fpk/nasscreencompanion.fpk`
+- 安装：飞牛桌面 → **应用中心 → 手动安装 → 上传该 fpk**；或在 NAS 上
+  `sudo appcenter-cli install-fpk nasscreencompanion-1.1.0.fpk`（依赖 `python312`）
+- 装完在飞牛桌面打开「飞牛监控」→ 管理页；开发板配对流程见
+  [issues 与 docs](docs/fnos-market-submission.md#5-与开发版并存的关系评审会被问到的点)
+
+**开发板固件**：`./idf.sh build` 后 `idf.py -p <串口> flash`（本机为 ESP32-P4 rev v3.2）。
+
+
 ## 开源协议
 
 **Apache License 2.0** —— 继承自同作者的原始项目 `T-Display-S3-fnos-monitor`
