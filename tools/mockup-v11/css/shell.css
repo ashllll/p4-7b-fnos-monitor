@@ -1,0 +1,155 @@
+/* ==========================================================================
+   骨架层 —— 「机箱前面板」：顶栏灯条 + 左导轨 + 底部告警带
+   框架固定（head 56u / foot 40u / rail 100u），内容区弹性吸收分辨率差异。
+   ========================================================================== */
+
+.app {
+  display: grid;
+  grid-template-rows: var(--head-h) 1fr var(--foot-h);
+  grid-template-columns: var(--rail-w) 1fr;
+  grid-template-areas: "head head" "rail body" "foot foot";
+  width: 100vw; height: 100vh;
+}
+
+/* ---------------- 顶栏：前面板状态灯条 ---------------- */
+.head {
+  grid-area: head;
+  background: var(--plate-lift);
+  border-bottom: var(--hair) solid var(--etch);
+  display: flex; align-items: center;
+  padding: 0 var(--s4) 0 var(--s4);
+  gap: var(--s4);
+}
+.mark {
+  width: 34rem; height: 34rem; border-radius: var(--r-sm);
+  background: #0F3A66;                 /* 无障碍档蓝底压白字 ≥3:1 */
+  display: flex; align-items: center; justify-content: center;
+  font: 600 15rem/1 var(--font-num); color: #fff; letter-spacing: 0.02em;
+}
+.head-id { display: flex; flex-direction: column; gap: 2rem; min-width: 0; }
+.head-host { font: 500 var(--t-body)/1.2 var(--font-ui); color: var(--silk-1); white-space: nowrap; }
+.head-ep {
+  font: 400 var(--t-meta)/1.2 var(--font-num); color: var(--silk-3);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.head-spacer { flex: 1; }
+
+/* 状态灯条：健康灯 + 可信度胶囊 + Wi-Fi + 时钟（跨页完全一致） */
+.lightbar {
+  display: flex; align-items: center; gap: var(--s3);
+  background: var(--slot);
+  border: var(--hair) solid var(--etch);
+  border-radius: var(--r-pill);
+  padding: var(--s1) var(--s3);
+}
+.lamp { display: flex; align-items: center; gap: var(--s2); }
+.lamp .dot { width: 10rem; height: 10rem; border-radius: 50%; }
+.lamp .word { font: 500 var(--t-label)/1 var(--font-ui); color: var(--silk-2); white-space: nowrap; }
+.dot-ok   { background: var(--led-ok);   box-shadow: 0 0 6rem rgba(53,199,122,.55); }
+.dot-warn { background: var(--led-warn); box-shadow: 0 0 6rem rgba(255,176,32,.55); }
+.dot-crit { background: var(--led-crit); box-shadow: 0 0 6rem rgba(255,69,88,.55); }
+.dot-idle { background: var(--led-idle); }
+
+.capsule {
+  display: flex; align-items: center; gap: var(--s2);
+  border-radius: var(--r-pill);
+  padding: 3rem var(--s3);
+  font: 500 var(--t-meta)/1.2 var(--font-ui);
+  border: var(--hair) solid transparent;
+  white-space: nowrap;
+}
+.capsule.live   { color: var(--led-ok);   border-color: rgba(53,199,122,.35); }
+.capsule.stale  { color: var(--led-warn); border-color: rgba(255,176,32,.40); }
+.capsule.off    { color: var(--led-crit); border-color: rgba(255,69,88,.40); }
+.capsule.warm   { color: var(--silk-2);   border-color: var(--etch-strong); }
+
+.wifi { display: flex; align-items: flex-end; gap: 2rem; height: 14rem; }
+.wifi i { width: 3rem; border-radius: 1rem; background: var(--silk-3); display: block; }
+.wifi i:nth-child(1) { height: 5rem; }
+.wifi i:nth-child(2) { height: 8rem; }
+.wifi i:nth-child(3) { height: 11rem; }
+.wifi i:nth-child(4) { height: 14rem; }
+.wifi i.off { background: var(--silk-4); }
+
+.clock { display: flex; align-items: baseline; gap: var(--s2); }
+.clock .hhmm { font: 600 var(--t-sub)/1 var(--font-num); color: var(--silk-1); font-variant-numeric: tabular-nums; }
+.clock .date { font: 400 var(--t-meta)/1 var(--font-ui); color: var(--silk-3); }
+
+/* ---------------- 左导轨：盘位式导航（丝印标签 + LED） ---------------- */
+.rail {
+  grid-area: rail;
+  background: #101418;
+  border-right: var(--hair) solid var(--etch);
+  display: flex; flex-direction: column;
+  padding: var(--s3) 0 var(--s3) 0;
+  gap: var(--s2);
+}
+.nav-item {
+  height: 56rem;
+  display: flex; align-items: center; gap: var(--s2);
+  padding-left: var(--s3);
+  position: relative;
+  border-left: 3rem solid transparent;
+}
+.nav-item .nav-led { width: 6rem; height: 6rem; border-radius: 50%; background: var(--led-idle); flex: none; }
+.nav-item .nav-ico { width: 22rem; height: 22rem; flex: none; color: var(--silk-3); }
+.nav-item .nav-lbl { font: 500 var(--t-label)/1 var(--font-ui); color: var(--silk-3); letter-spacing: 0.04em; }
+.nav-item.sel {
+  background: var(--plate-lift);
+  border-left-color: var(--focus);
+}
+.nav-item.sel .nav-led { background: var(--focus); box-shadow: 0 0 6rem rgba(77,155,240,.6); }
+.nav-item.sel .nav-ico { color: var(--silk-1); }
+.nav-item.sel .nav-lbl { color: var(--silk-1); }
+.nav-item.alarm .nav-led { background: var(--led-warn); }
+
+.rail-foot { margin-top: auto; display: flex; flex-direction: column; gap: var(--s1); padding: 0 var(--s3); }
+.rail-foot .util {
+  display: flex; align-items: center; gap: var(--s2);
+  height: 34rem; border-radius: var(--r-sm);
+  padding-left: var(--s2);
+}
+.rail-foot .util .nav-ico { width: 18rem; height: 18rem; color: var(--silk-3); }
+.rail-foot .util .nav-lbl { font: 500 var(--t-meta)/1 var(--font-ui); color: var(--silk-3); }
+.rail-foot .util.pair-pending .nav-led { width: 6rem; height: 6rem; border-radius: 50%; background: var(--led-warn); box-shadow: 0 0 6rem rgba(255,176,32,.55); }
+
+/* ---------------- 内容区 ---------------- */
+.body {
+  grid-area: body;
+  padding: var(--s3);
+  display: grid;
+  gap: var(--s3);
+  min-height: 0; min-width: 0;
+}
+.page { display: grid; gap: var(--s3); min-height: 0; height: 100%; }
+.row  { display: grid; gap: var(--s3); min-height: 0; }
+
+/* ---------------- 底栏：轮询统计 + 告警带 ---------------- */
+.foot {
+  grid-area: foot;
+  background: var(--plate-lift);
+  border-top: var(--hair) solid var(--etch);
+  display: flex; align-items: center; gap: var(--s3);
+  padding: 0 var(--s4);
+}
+.foot .poll { font: 400 var(--t-meta)/1 var(--font-num); color: var(--silk-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.alert-band {
+  flex: 1; display: flex; align-items: center; gap: var(--s2);
+  height: 26rem; border-radius: var(--r-sm);
+  padding: 0 var(--s3);
+  background: var(--slot);
+  border: var(--hair) solid var(--etch);
+  min-width: 0;
+}
+.alert-band .dot { width: 8rem; height: 8rem; border-radius: 50%; flex: none; }
+.alert-band .txt {
+  font: 500 var(--t-label)/1 var(--font-ui); color: var(--silk-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.alert-band .txt b { font-weight: 500; color: var(--silk-1); }
+.alert-band .jump {
+  margin-left: auto; flex: none;
+  font: 500 var(--t-meta)/1 var(--font-ui); color: var(--focus);
+}
+.alert-band.crit { border-color: rgba(255,69,88,.35); }
+.alert-band.warn { border-color: rgba(255,176,32,.30); }

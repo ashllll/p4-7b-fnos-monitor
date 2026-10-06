@@ -72,6 +72,12 @@ static char s_pend_fp[FNOS_PAIR_FP_MAX];
 static char s_pend_cn[80];
 static char s_pend_until[16];
 static bool s_pend_tls;
+// 配对目标是**飞牛应用**，约定端口 8798；开发版采集器是 8799，而它根本没有
+// /api/v1/identity —— 拿当前配置的地址直接取证书只会拿到 404，屏幕上就是
+// "读证书失败"（用户实测踩到的就是这个）。所以未配对时按候选端口依次试，
+// 谁答对就用谁，并把**那个端口**写进配对结果（否则配完还在读 8799）。
+#define PAIR_APP_PORT 8798
+static int  s_pend_port;        // 真正答对 identity 的端口；0 = 还没定
 
 static EXT_RAM_BSS_ATTR fnos_pair_view_t s_view;
 
@@ -173,6 +179,12 @@ static void cert_info(const char *pem, char *cn, size_t cn_cap, char *until, siz
     free(crt);
 }
 
+// 取证书/等确认/换令牌这几个阶段里，界面该显示"实际要连的那个端口"
+static bool pair_state_busy(fnos_pair_state_t st)
+{
+    return st == FNOS_PAIR_FETCHING || st == FNOS_PAIR_CONFIRM || st == FNOS_PAIR_PAIRING;
+}
+
 static void set_view(fnos_pair_state_t state, const char *msg)
 {
     if (xSemaphoreTake(s_lock, portMAX_DELAY) != pdTRUE) {
@@ -184,7 +196,7 @@ static void set_view(fnos_pair_state_t state, const char *msg)
     snprintf(s_view.subject, sizeof(s_view.subject), "%s", s_pend_cn);
     snprintf(s_view.not_after, sizeof(s_view.not_after), "%s", s_pend_until);
     snprintf(s_view.host, sizeof(s_view.host), "%s", s_cfg.host);
-    s_view.port = s_cfg.port;
+    s_view.port = (s_pend_port && pair_state_busy(state)) ? s_pend_port : s_cfg.port;
     s_view.tls = s_cfg.tls;
     xSemaphoreGive(s_lock);
 }
@@ -338,9 +350,6 @@ static void do_pair(void);
 
 static void do_fetch(const char *code)
 {
-    char url[128];
-    snprintf(url, sizeof(url), "http://%s:%d%s", s_cfg.host, s_cfg.port, IDENT_PATH);
-
     char *rx = heap_caps_malloc(RX_MAX, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!rx) {
         rx = malloc(RX_MAX);
@@ -350,12 +359,36 @@ static void do_fetch(const char *code)
         return;
     }
 
+    /* 候选端口：先试应用约定端口 8798，再试当前配置里的端口（应用可能装在非默认
+       端口，板子也可能本来就指着开发版采集器）。去重，最多两个。 */
+    int ports[2] = { PAIR_APP_PORT, s_cfg.port };
+    int nports = (s_cfg.port == PAIR_APP_PORT) ? 1 : 2;
+    char tried[80] = "";
     int status = 0, len = 0;
-    bool ok = http_oneshot(false, url, NULL, NULL, rx, RX_MAX, &status, &len);
-    if (!ok || status != 200) {
-        ESP_LOGW(TAG, "identity failed: ok=%d status=%d", (int)ok, status);
-        set_view(FNOS_PAIR_FAILED, status ? "读证书失败：NAS 返回了错误" :
-                                           "连不上 NAS，检查 Wi-Fi 与地址");
+    bool got = false;
+    for (int i = 0; i < nports; i++) {
+        char url[128];
+        snprintf(url, sizeof(url), "http://%s:%d%s", s_cfg.host, ports[i], IDENT_PATH);
+        status = 0; len = 0;
+        bool ok = http_oneshot(false, url, NULL, NULL, rx, RX_MAX, &status, &len);
+        if (ok && status == 200) {
+            s_pend_port = ports[i];
+            ESP_LOGI(TAG, "identity 来自 %s:%d", s_cfg.host, ports[i]);
+            got = true;
+            break;
+        }
+        ESP_LOGW(TAG, "identity failed: %s ok=%d status=%d", url, (int)ok, status);
+        char one[28];
+        snprintf(one, sizeof one, "%s%d:%s", tried[0] ? " " : "", ports[i],
+                 ok ? "非 200" : "连不上");
+        strncat(tried, one, sizeof tried - strlen(tried) - 1);
+    }
+    if (!got) {
+        char msg[112];
+        /* 把"试过哪些端口、结果如何"写上屏 —— 只说"读证书失败"等于让用户猜 */
+        snprintf(msg, sizeof msg, "读证书失败（%s）：%s", s_cfg.host,
+                 tried[0] ? tried : "没有可用地址");
+        set_view(FNOS_PAIR_FAILED, msg);
         free(rx);
         return;
     }
@@ -416,7 +449,7 @@ static void do_pair(void)
 {
     char url[128];
     snprintf(url, sizeof(url), "%s://%s:%d%s", s_pend_tls ? "https" : "http", s_cfg.host,
-             s_cfg.port, PAIR_PATH);
+             s_pend_port ? s_pend_port : s_cfg.port, PAIR_PATH);
 
     char body[128];
     snprintf(body, sizeof(body), "{\"code\":\"%s\",\"name\":\"%s\"}", s_code,
@@ -468,7 +501,7 @@ static void do_pair(void)
     fnos_pair_cfg_t *next = &s_next;      // 见 s_next 的注释：不压在配对任务的栈上
     memset(next, 0, sizeof(*next));
     snprintf(next->host, sizeof(next->host), "%s", s_cfg.host);
-    next->port = s_cfg.port;
+    next->port = s_pend_port ? s_pend_port : s_cfg.port;
     next->tls = s_pend_tls;
     snprintf(next->token, sizeof(next->token), "%s", token);
     if (s_pend_tls) {
