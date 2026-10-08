@@ -6,13 +6,16 @@
 普通 fixture 通过快照 API 构造数据；硬件组合 fixture 使用设备端同一份 `fnos_snapshot.c` 解析匿名 JSON。
 格式化、阈值配色、可信度降级和自适应排布都走真实刷新逻辑。
 
-替代的是"构建 → 烧录 → 手机拍照"那十几分钟一轮：改完 `fnos_ui.c` 跑一次预览即可看图。
+改完 `fnos_ui.c` 可以先跑主机预览检查布局与状态。物理屏幕、触摸、DMA 与 Wi-Fi 时序仍需另外验证。
 
 ## 用法
 
+本文命令统一从**仓库根目录**执行。先完成一次 `./idf.sh build`，再使用 `run.sh` 构建主机预览。
+默认输出目录是 `tools/preview/out/`；传入的相对输出路径由脚本在 `tools/preview/` 下解析，使用绝对路径可避免歧义。
+
 ```bash
-bash tools/preview/run.sh [输出目录]     # 默认 out/；内部已 export DEVELOPER_DIR
-open out/02-live-p0.png
+bash tools/preview/run.sh [输出目录]     # 默认 tools/preview/out/；内部已 export DEVELOPER_DIR
+open tools/preview/out/02-live-p0.png
 ```
 
 产物：**75 张 1024×600 PNG**，覆盖启动/等待/在线告警/离线/正常/满列表/旧版采集端/夜间/配网/配对等状态 × 五页，
@@ -20,7 +23,7 @@ open out/02-live-p0.png
 告警消退、诊断按钮、锁超时保留快照、连接失败原因逐个标签可翻译。
 行内数值还检查数字与单位的总宽度；配对检查键盘可达及页脚固定，配网检查六阶段按钮宽度、
 41 个键的行内边界、滚动后的可见性和固定页脚。
-拆开跑则 `./build/preview <目录>`（写 PPM）+ `python3 tools/preview/ppm2png.py <目录>`。
+拆开跑则 `tools/preview/build/preview <目录>`（写 PPM）+ `python3 tools/preview/ppm2png.py <目录>`。
 
 每张稳态快照还检查可见正文的文字/底色对比度，目标为 **4.5:1**。
 底色逐层合成透明背景，文字也计入透明度；每张图打印最小值。
@@ -30,14 +33,14 @@ open out/02-live-p0.png
 ### 换分辨率渲染（"分辨率自适应"的取证手段）
 
 ```bash
-PREVIEW_SIZE=800x480  ./build/preview /tmp/out-800    # 同一份 UI，矮屏一档
-PREVIEW_SIZE=1280x800 ./build/preview /tmp/out-1280   # 大一档
+PREVIEW_SIZE=800x480  tools/preview/build/preview /tmp/out-800    # 同一份 UI，矮屏一档
+PREVIEW_SIZE=1280x800 tools/preview/build/preview /tmp/out-1280   # 大一档
 ```
 
 面板只有 1024×600 一档，所以**实机验不了别的分辨率**；而"自适应"这句话必须拿别的尺寸真出一张图
 才算证明。`PREVIEW_SIZE=WxH`（≤1280×800）把同一份 `fnos_ui.c` 渲到别的分辨率上，各项审计照跑。
 实测：1280×800 全绿；800×480 曾抓出两个真缺陷（rail 导航项固定 60px 会把 "NAS" 标签挤出 rail；
-顶栏状态牌越出 head）—— 都已按预算自适应修掉（见 `docs/verification.md` §24.4）。
+顶栏状态牌越出 head）—— 都已按预算自适应修掉（见[硬件自适应记录](../../docs/ui-hardware-adaptive-audit-2026-10-08.md)）。
 
 2026-10-08 的卡片复查通过 480×480、480×800、600×800、640×480、800×480、960×540、
 1024×600、1280×800 八档，每档完整生成 75 帧。短屏保留控件尺寸并滚动访问正文；
@@ -83,7 +86,7 @@ PREVIEW_ALLOC_FAIL_AT=0 PREVIEW_HARDWARE_FIXTURE=/tmp/fnos-hardware-fixtures/mix
 ### 首次进入配对页
 
 ```bash
-PREVIEW_SIZE=800x480 PREVIEW_PAIR_FIRST_ENTRY=1 ./build/preview /tmp/out-pair-first
+PREVIEW_SIZE=800x480 PREVIEW_PAIR_FIRST_ENTRY=1 tools/preview/build/preview /tmp/out-pair-first
 ```
 
 此模式先配置匿名 Wi-Fi 替身，在 UI 创建后直接进入 NAS 配对，不依赖前面的切页测试初始化网络。
@@ -93,9 +96,9 @@ PREVIEW_SIZE=800x480 PREVIEW_PAIR_FIRST_ENTRY=1 ./build/preview /tmp/out-pair-fi
 ### 三个只读探针（不改布局，只打印）
 
 ```bash
-PREVIEW_ENTER_MID=3 ./build/preview /tmp/out   # 换页入场动画**中途**的帧（3=页号），默认不跑
-UK_POOL_TRACE=1     ./build/preview /tmp/out   # 每张自适应池的解：[pool] n= W= H= cols= shown=
-PREVIEW_PROBE=1     ./build/preview /tmp/out   # 对象树：coords/宽/MAIN padding/SCROLLBAR/滚动余量
+PREVIEW_ENTER_MID=3 tools/preview/build/preview /tmp/out   # 换页入场动画**中途**的帧（3=页号），默认不跑
+UK_POOL_TRACE=1     tools/preview/build/preview /tmp/out   # 每张自适应池的解：[pool] n= W= H= cols= shown=
+PREVIEW_PROBE=1     tools/preview/build/preview /tmp/out   # 对象树：coords/宽/MAIN padding/SCROLLBAR/滚动余量
 ```
 
 `snapshot()` 默认会把在飞的页面动画和入场动画落到终值再截图，这样样张是**稳态帧**、
@@ -146,9 +149,14 @@ PREVIEW_MOTION=0,1,0 PREVIEW_MOTION_SCROLL=1 PREVIEW_MOTION_RESPONSIVENESS=1 \
 
 ## 实测开销
 
-增量一轮 **8 s wall**（渲染本身 0.45 s CPU / 12 页），构建产物 `tools/preview/build` 49 MB（`build/` 已被根 `.gitignore` 覆盖）。
+构建时间和产物大小取决于主机与依赖缓存；以当前执行输出为准。`tools/preview/build/` 和默认预览输出均在忽略范围内。
+
+公开 1.2.4 源码基线包含五个数据页面、75 张完整状态预览；最新开发仓的六页 / 84 张结果尚未同步公开源码，不能混用其命令或验收数字。版本差异见[项目 README](../../README.md#最近迭代与版本边界)。
 
 ## 边界与坑
+
+生成字体需在 `tools/fonts/` 放置 Inter Regular / Medium / SemiBold 与 Noto Sans SC Regular / Medium 源字体；
+`tools/gen_fonts.sh` 会获取 Chakra Petch。已生成的 C 文件可以直接构建，相关 SIL OFL 许可随子集保留。
 
 - **动态名称的字库覆盖可配置**：默认包含基本汉字、横排假名、拉丁扩展、希腊和西里尔字符。
   `bash tools/gen_fonts.sh` 还扫描固定界面文案；额外字符区间可由 `FNOS_FONT_CJK_RANGES` 指定。
@@ -158,11 +166,11 @@ PREVIEW_MOTION=0,1,0 PREVIEW_MOTION_SCROLL=1 PREVIEW_MOTION_RESPONSIVENESS=1 \
 - **主机三处 Kconfig 必须偏离设备**（见 `run.sh` 内注释）：`LV_USE_OS 0`（`LV_OS_NONE`）、libc malloc、
   `LV_DRAW_SW_DRAW_UNIT_CNT 1`。偏离点仅限这三处语义等价替身。
 - **断言在主机上改成 stderr + `abort()`**：设备端 LVGL 默认 `LV_ASSERT_HANDLER` 是 `while(1);`，
-  断言失败的表现是"无声 100% CPU 死循环"（曾经就是它让 `./build/preview` 看起来像卡死）。看到 `*** LVGL ASSERT ... ***` 就是真 bug。
+  断言失败的表现是"无声 100% CPU 死循环"（曾经就是它让 `tools/preview/build/preview` 看起来像卡死）。看到 `*** LVGL ASSERT ... ***` 就是真 bug。
 - **位移动画需要区分视口裁切与内部越界**：普通快照先落到稳态；专用动效模式从带页面标记的
   页根审计内部盒子，保留视口的预期裁切。不能把所有中间帧的边界审计都关闭。
 - **不能替代实机**：触摸/手势、刷新率、PSRAM/DMA 采样路径、真实 Wi-Fi 时序仍要烧录验证；
-  逐页实机取证用 `python3 tools/page_shot.py --page N`（串口切页 + 手机拍照）。
+  逐页实机取证用 `python3 tools/page_shot.py --port "$FNOS_SERIAL_PORT" --page N`（串口切页 + 手机拍照）。
 
 ## 看门狗：滚动条贴边
 
@@ -181,5 +189,5 @@ node tools/preview/scroll_gap.js tools/preview/out   # 退出码非 0 = 有贴�
 ## 在验收流程里的位置
 
 `bash tools/gen_fonts.sh`（改过文案时）→ **`bash tools/preview/run.sh` 看图** → `./idf.sh build` →
-烧录 + 实机取证（`python3 tools/page_shot.py --page N` + `read_image` 亲眼看图，见 `docs/verification.md`）。
+烧录 + 实机取证（`python3 tools/page_shot.py --port "$FNOS_SERIAL_PORT" --page N` + `read_image` 亲眼看图，见 `docs/verification.md`）。
 预览管"好不好看、对不对齐、有没有方块"，实机管"真的能跑、真实数据下版面自适应"。

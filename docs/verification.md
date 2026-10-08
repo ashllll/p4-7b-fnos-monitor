@@ -16,13 +16,22 @@
 
 ## 配套应用
 
-源码与安装包为 1.2.4。此前 1.2.3 有 NAS 安装/升级记录；本发布的 1.2.4 不据此宣称
-已经完成真实 NAS 安装或官方应用库审核。默认全量容器链路的启动和名称修复见
-[1.2.4 发布验证](release-1.2.4.md)。
+源码与安装包为 1.2.4。发布准备阶段完成模板构建、全量容器链路、名称、配置和生命周期检查；
+随后于 2026-10-08 在真实 NAS 手动升级，核对服务身份、容器采集、清单完整性及配置 / TLS 保留，
+并查看总览、网络、系统实机画面。范围与限制见 [1.2.4 发布及安装记录](release-1.2.4.md)。
+尚未提交飞牛官方应用库；NAS 安装通过不代表应用库审核或所有硬件兼容性通过。
 
-重跑入口：`nas/fpk/test_lifecycle.sh`、`docker_check.py`、`collector_check.py`、
-`startup_permission_check.py`、`config_persistence_check.py`、`contract_check.py`。
+从仓库根目录运行 `bash nas/fpk/test_lifecycle.sh`；其余 Python 入口为 `nas/fpk/` 下的
+`docker_check.py`、`collector_check.py`、`startup_permission_check.py`、
+`config_persistence_check.py`、`contract_check.py`。
 这些检查使用匿名临时数据或开发机 fallback，不冒充 Linux 包用户权限的实测结果。
+
+## 文档更新与开发进展（2026-10-09）
+
+本次仅更新说明与验证索引，公开固件源码仍对应五个数据页面。
+开发仓已有六页 UI、独立告警页及格式残留审计，尚未同步公开 main；
+其预览数量、串口命令和运行记录不能用于替代公开基线的验证。
+当前构建与安装入口见 [项目 README](../README.md)，主机矩阵见 [预览说明](../tools/preview/README.md)。
 
 历史技术记录：
 
