@@ -22,7 +22,7 @@
 #include "fnos_net.h"
 #include "fnos_data.h"
 #include "fnos_ui.h"
-#include "kk_theme.h"
+#include "ui_kit/uk_theme.h"   /* fnos_ui_theme_use/name：调色板切在 ui_kit 里 */
 #if __has_include("fnos_config.h")
 #include "fnos_config.h"
 #else

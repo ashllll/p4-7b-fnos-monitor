@@ -6,18 +6,19 @@ set(PROJ_SRCS
     "fnos_wifi_store.c"
     "fnos_wifi_cli.c"
     "fnos_data.c"
+    "fnos_snapshot.c"
     "fnos_pair.c"
     "fnos_ui.c"
-    "kk_ui/kk_rect.c"
-    "kk_ui/kk_theme.c"
-    "kk_ui/kk_metrics.c"
-    "kk_ui/kk_widgets.c"
+    "ui_kit/uk.c"
+    "ui_kit/uk_theme.c"
     "fonts/ui_font_cjk_12.c"
     "fonts/ui_font_cjk_16.c"
     "fonts/ui_font_cjk_20.c"
     "fonts/ui_font_num_20.c"
     "fonts/ui_font_num_32.c"
     "fonts/ui_font_num_44.c"
+    "fonts/ui_font_display_64.c"
+    "fonts/ui_font_display_96.c"
     "fonts/ui_font_txt_12.c"
     "fonts/ui_font_txt_15.c"
 )
@@ -26,7 +27,7 @@ idf_component_register(
     SRCS ${PROJ_SRCS}
     INCLUDE_DIRS
         ${CMAKE_CURRENT_LIST_DIR}
-        ${CMAKE_CURRENT_LIST_DIR}/kk_ui
+        ${CMAKE_CURRENT_LIST_DIR}/ui_kit
     REQUIRES
         esp_wifi
         esp_netif

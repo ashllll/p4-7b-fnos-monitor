@@ -16,15 +16,33 @@ menu "fnOS monitor"
             平时保持 0，交给你自己点导航/滑动翻页。
 
     config FNOS_PALETTE
-        string "配色方案（graphite / abyss / phosphor）"
-        default "graphite"
+        string "配色方案（device / graphite / abyss / phosphor）"
+        default "device"
         help
-            预置配色见 components/fnos_monitor/kk_ui/kk_theme.c：
-              graphite  中性石墨蓝灰（最素，默认）
+            预置配色见 components/fnos_monitor/ui_kit/uk_theme.c：
+              device    深紫画布 + 薄荷绿 / 桃橙（参考设备，默认）
+              graphite  中性石墨蓝灰
               abyss     深空蓝 + 青，像网络运维终端
               phosphor  近黑 + 磷光绿，对比度最高
-            配色只管颜色：版面几何全在 kk_layout.h，与配色无关 —— 换配色不会挪动
-            任何一个元素。名字写错会退回 graphite（设备照样能开机）。
+            配色只管颜色：版面几何全在 ui_kit/（LVGL 原生 flex，不推导坐标），与配色无关
+            —— 换配色不会挪动任何一个元素。名字写错会退回 device（设备照样能开机）。
+
+    config FNOS_STATUS_MAX_BYTES
+        int "Maximum telemetry response bytes"
+        range 16384 1048576
+        default 262144
+        help
+            Receive buffers grow in PSRAM according to the actual frame. This
+            is a transport resource budget, not a device-count or name limit.
+            Oversized frames preserve the previous snapshot and report a fault.
+
+    config FNOS_SNAPSHOT_MAX_BYTES
+        int "Maximum inventory storage bytes per snapshot"
+        range 65536 4194304
+        default 1048576
+        help
+            Full device names and inventory records allocate on demand in PSRAM.
+            Exhausting the budget rejects the frame rather than omitting devices.
 
     config FNOS_CHART_WINDOW
         int "曲线窗口（秒，1 Hz 采样点数）"
@@ -32,5 +50,54 @@ menu "fnOS monitor"
         default 180
         help
             网络/CPU 曲线在屏幕上保留的秒数。点数越多内存与重绘开销越大。
+
+    menu "UI reference ranges and layout"
+
+        config FNOS_UI_REDUCED_MOTION
+            bool "Use gentler page transitions"
+            default n
+            help
+                Keep finger tracking and navigation, but settle directly on
+                release. Content and selection feedback remain visible.
+
+        config FNOS_UI_MOTION_STATS
+            bool "Log page preparation and render timing"
+            default n
+            help
+                Print aggregate timing for page transitions, without telemetry
+                or endpoint details. Enable locally when profiling the display.
+
+        config FNOS_UI_USAGE_WARM
+            int "Usage attention reference (%)"
+            range 1 99
+            default 80
+
+        config FNOS_UI_USAGE_HIGH
+            int "Usage high reference (%)"
+            range FNOS_UI_USAGE_WARM 100
+            default 90
+
+        config FNOS_UI_TEMP_WARM
+            int "Temperature attention reference (C)"
+            range 1 199
+            default 75
+            help
+                Visual reference only. Sensor limits vary by hardware; actual
+                health alerts come from the collector, shown on the System page.
+
+        config FNOS_UI_TEMP_HIGH
+            int "Temperature high reference (C)"
+            range FNOS_UI_TEMP_WARM 200
+            default 80
+
+        config FNOS_UI_LIST_MIN_WIDTH
+            int "Preferred list content width (pixels)"
+            range 160 640
+            default 260
+            help
+                The outer system cards wrap according to the available width.
+                Temperature device columns use the same content-width target.
+
+    endmenu
 
 endmenu
