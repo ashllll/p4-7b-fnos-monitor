@@ -8,6 +8,6 @@ else
   say "服务未在运行"
 fi
 cleanup_socket
-rm -f "$PKG_VAR/upgrade.was_running"
+as_package rm -f "$PKG_VAR/upgrade.was_running"
 say "本应用不管理 $DEV_AGENT_PORT 上的开发版采集器，卸载不会影响它。"
 exit 0

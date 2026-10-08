@@ -3,7 +3,7 @@
 # 不占 8799 端口。用来在正式部署前先看清"这一版会把每一路温度叫成什么"。
 #
 # 用法：
-#   bash nas/preview-naming.sh                      # 默认 llll@192.168.0.119
+#   bash nas/preview-naming.sh user@nas.example.test
 #   bash nas/preview-naming.sh user@host            # 指定目标
 #   SSHPASS='...' bash nas/preview-naming.sh        # 密码认证（本机装了 sshpass 时）
 #
@@ -11,7 +11,7 @@
 # 觉得没问题再跑同目录的 ./install.sh 真正部署（部署后板子不用重烧就会显示这些名字）。
 set -euo pipefail
 
-TARGET="${1:-llll@192.168.0.119}"
+TARGET="${1:?Usage: preview-naming.sh user@nas-host}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REMOTE=/tmp/fnos-agent-preview-$$.py
 

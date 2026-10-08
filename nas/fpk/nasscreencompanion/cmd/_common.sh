@@ -46,6 +46,35 @@ fail() {
   return 1
 }
 
+# Lifecycle callbacks may start as root; package data and code always use its identity.
+as_package() {
+  if [ "$(id -u)" = 0 ]; then
+    local package="${TRIM_USERNAME:-}" group
+    [ -n "$package" ] && [ "$(id -u "$package" 2>/dev/null)" != 0 ] || {
+      fail "缺少有效的非 root 包用户"; return 1;
+    }
+    group=$(id -gn "$package") || return 1
+    runuser -u "$package" -g "$group" -- "$@"
+  else
+    "$@"
+  fi
+}
+
+prepare_package_data() {
+  [ "$(id -u)" = 0 ] || return 0
+  local package="${TRIM_USERNAME:-}" group diagnostic
+  [ -n "$package" ] || { fail "缺少包用户身份"; return 1; }
+  group=$(id -gn "$package") || return 1
+  # Foreground diagnostics reach the application center before any daemon redirection.
+  if diagnostic=$(/usr/bin/python3 -I "$CMD_DIR/docker_launch.py" \
+      --prepare --user "$package" --group "$group" 2>&1); then
+    say "$diagnostic"
+  else
+    fail "私有数据权限检查失败：$diagnostic"
+    return 1
+  fi
+}
+
 resolve_python() {
   for c in /var/apps/python312/target/bin/python3 /var/apps/python312/target/bin/python; do
     [ -x "$c" ] && { printf '%s' "$c"; return 0; }
@@ -62,10 +91,10 @@ port_busy() {
 is_running() {
   [ -f "$PID_FILE" ] || return 1
   local pid
-  pid=$(cat "$PID_FILE" 2>/dev/null)
+  pid=$(as_package cat "$PID_FILE" 2>/dev/null)
   case "$pid" in ''|*[!0-9]*) return 1 ;; esac
   # 用 kill -0 判断存活：POSIX 通用，不依赖 /proc（本地 macOS 上也能跑通测试）
-  kill -0 "$pid" 2>/dev/null || return 1
+  as_package kill -0 "$pid" 2>/dev/null || return 1
   # 防 PID 复用：Linux 上再确认这个 pid 确实是本应用的服务进程
   if [ -r "/proc/$pid/cmdline" ]; then
     tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -q "nas_companion_server.py" || return 1
@@ -74,24 +103,24 @@ is_running() {
 }
 
 cleanup_socket() {
-  [ -S "$SOCK_FILE" ] && rm -f "$SOCK_FILE"
+  [ -S "$SOCK_FILE" ] && as_package rm -f "$SOCK_FILE"
   return 0
 }
 
 # 把向导/配置值合并进 config.json：关键是保留已配对设备，不能整体覆盖
 apply_config() {
   local py="$1" port="$2" bind="$3" auth="$4" docker="$5" interval="$6" tls="${7:-true}"
-  "$py" - "$PKG_VAR/config.json" "$port" "$bind" "$auth" "$docker" "$interval" "$tls" <<'PYEOF'
+  as_package "$py" - "$PKG_VAR/config.json" "$port" "$bind" "$auth" "$docker" "$interval" "$tls" <<'PYEOF'
 import json, os, sys
 path, port, bind, auth, docker, interval, tls = sys.argv[1:8]
 cfg = {}
 try:
     with open(path, "r", encoding="utf-8") as f:
-        cfg = json.load(f) or {}
-except Exception:
-    cfg = {}
+        cfg = json.load(f)
+except FileNotFoundError:
+    pass
 if not isinstance(cfg, dict):
-    cfg = {}
+    raise ValueError("config.json 必须是 JSON 对象，原文件未修改")
 devices = cfg.get("devices") if isinstance(cfg.get("devices"), list) else []
 cfg.update({
     "port": int(port), "bind": bind, "auth_mode": auth,
@@ -154,7 +183,7 @@ service_stop()  { "$CMD_DIR/main" stop; }
 # ---------------------------------------------------------------- 工具
 effective_port() {
   local p
-  p=$("$1" -c 'import json,sys
+  p=$(as_package "$1" -c 'import json,sys
 try: print(int(json.load(open(sys.argv[1])).get("port") or 8798))
 except Exception: print(8798)' "$PKG_VAR/config.json" 2>/dev/null)
   case "$p" in ''|*[!0-9]*) p=8798 ;; esac
@@ -164,7 +193,7 @@ except Exception: print(8798)' "$PKG_VAR/config.json" 2>/dev/null)
 http_health() {
   local py="$1" port="$2"
   [ -n "$py" ] && [ -n "$port" ] || return 1
-  "$py" - "$port" <<'PYEOF'
+  as_package "$py" - "$port" <<'PYEOF'
 import socket, ssl, sys
 port = int(sys.argv[1])
 # 先按 TLS 探（默认就是 TLS），不行再退回明文——两种模式的就绪判断共用这段
@@ -208,4 +237,3 @@ for use_tls in (True, False):
 sys.exit(1)
 PYEOF
 }
-

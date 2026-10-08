@@ -9,7 +9,7 @@ PY=$(resolve_python) && say "Python 运行时：$PY" \
 
 norm_wizard
 say "计划监听：$W_BIND:${W_PORT}（鉴权 ${W_AUTH}，容器采集 ${W_DOCKER}，间隔 ${W_INTERVAL}s）"
-say "运行身份：${TRIM_RUN_USERNAME:-${TRIM_USERNAME:-包用户}}（不是 root）"
+say "管理服务使用非 root 包用户；生命周期使用 root 启动独立的固定 GET 容器读取器。"
 
 if port_busy "$W_PORT"; then
   fail "端口 $W_PORT 已被占用。请回到向导换一个端口再安装；本应用不会结束占用该端口的进程。"
@@ -25,7 +25,7 @@ if [ "$W_AUTH" = "lan" ]; then
 fi
 
 if [ "$W_DOCKER" = "true" ]; then
-  warn "你开启了容器采集：需要包用户能读 docker.sock，否则该段会显示「权限不足」（不影响其他指标）。"
+  warn "你开启了容器采集：由独立受限进程读取固定的容器 GET 接口，管理服务仍使用普通包用户。"
 fi
 
 [ "$rc" = 0 ] && say "检查通过，可以安装" || say "检查未通过，请先处理上面的问题"

@@ -1,7 +1,8 @@
 #!/bin/bash
 . "$(dirname "$0")/_common.sh"
 # 应用设置提交后：写盘 + 重启，让改动真正生效。
-mkdir -p "$PKG_VAR" "$PKG_ETC" 2>/dev/null
+prepare_package_data || exit 1
+as_package mkdir -p "$PKG_VAR" "$PKG_ETC" 2>/dev/null
 PY=$(resolve_python) || { fail "找不到 Python 运行时，无法写入配置"; exit 1; }
 norm_wizard
 

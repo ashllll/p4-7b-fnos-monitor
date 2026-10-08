@@ -138,6 +138,10 @@ const dom = {
   querySelectorAll: (sel) => {
     if (/nav\s+button/i.test(sel)) return navEls;
     if (/^section$/i.test(sel.trim())) return sectionEls;
+    if (sel === '#s-cfg input, #s-cfg select') {
+      const section = html.match(/<section\b[^>]*id="s-cfg"[^>]*>([\s\S]*?)<\/section>/);
+      return section ? [...section[1].matchAll(/<(?:input|select)\b[^>]*id="([^"]+)"/g)].map((m) => el(m[1])) : [];
+    }
     return [];
   },
   createElement: (t) => new El(t),
@@ -148,6 +152,8 @@ const dom = {
 
 // ── fetch：按 "METHOD path" 查预制响应 ────────────────────────────────
 const seen = [];
+let deferredConfigPost = null;
+const dockerPostBodies = [];
 function fetchStub(url, opts = {}) {
   const method = (opts.method || 'GET').toUpperCase();
   // 页面里的 url 是 BASE + path；BASE 由 location.pathname 推出来，这里直接取路径尾
@@ -157,6 +163,8 @@ function fetchStub(url, opts = {}) {
   }
   const key = method + ' ' + p;
   seen.push(key);
+  if (key === 'POST /api/collector/docker') dockerPostBodies.push(JSON.parse(opts.body));
+  if (key === 'POST /api/config' && deferredConfigPost) return deferredConfigPost;
   if (!(key in canned)) {
     return Promise.resolve({
       ok: false, status: 404,
@@ -489,6 +497,82 @@ try {
 
   const firstLog = (lg.lines || [])[0];
   expect('logs', firstLog ? firstLog.slice(0, 8) : '（无日志）', '日志尾巴');
+
+  // Two config regressions: draft survives polling; Docker POST uses the click-time value.
+  assertedIds.add('cfghint');
+  const configState = canned['GET /api/state'];
+  const configReply = canned['POST /api/config'];
+  const dockerReply = canned['POST /api/collector/docker'];
+  const staleConfig = { ...configState, config: { ...configState.config, docker_enabled: false } };
+  let releaseConfig, saving;
+  const changed = (id, value, event = 'change') => {
+    const node = byId.get(id);
+    node.value = String(value);
+    if (typeof node['on' + event] !== 'function') throw new Error('#' + id + ' missing on' + event);
+    node['on' + event]();
+  };
+  const checkConfig = (condition, label) => condition ? ok(label) : fail(label, new Error('配置回归失败'));
+  try {
+    canned['GET /api/state'] = staleConfig;
+    context.renderState(staleConfig);
+    changed('c-docker', '1');
+    changed('c-port', staleConfig.config.port, 'input');
+    context.renderState(staleConfig);
+    await context.refresh();
+    checkConfig(byId.get('c-docker').value === '1', 'dirty容器选择跨renderState和refresh保留');
+
+    deferredConfigPost = new Promise((resolve) => { releaseConfig = resolve; });
+    const start = dockerPostBodies.length;
+    saving = byId.get('savecfg').onclick();
+    await settle();
+    checkConfig(byId.get('c-docker').disabled && byId.get('c-port').disabled, '保存期间控件禁用');
+    // Force a shim DOM mutation to check snapshot independence, not a click on disabled controls.
+    byId.get('c-docker').value = '0';
+    await context.refresh();
+    canned['GET /api/state'] = { ...staleConfig, config: { ...staleConfig.config, docker_enabled: true } };
+    canned['POST /api/collector/docker'] = { ok: true, docker_enabled: true };
+    releaseConfig({ ok: true, status: 200,
+      json: async () => ({ ok: true, changed: [] }), text: async () => '{"ok":true,"changed":[]}' });
+    deferredConfigPost = null;
+    await saving;
+    for (let i = 0; i < 10; i++) await settle();
+    checkConfig(dockerPostBodies.length === start + 1 && dockerPostBodies[start].enabled === true,
+      '跨config回包和轮询的Docker POST仍使用点击时快照');
+    checkConfig(String(byId.get('cfghint').textContent).includes('保存') &&
+                String(byId.get('cfghint').textContent).includes('容器'), '成功明确提示容器已保存');
+    checkConfig(!byId.get('c-docker').disabled && !byId.get('c-port').disabled, '成功释放控件disabled');
+
+    for (const failing of ['POST /api/config', 'POST /api/collector/docker']) {
+      canned['GET /api/state'] = staleConfig;
+      context.renderState(staleConfig);
+      changed('c-docker', '1');
+      canned['POST /api/config'] = configReply;
+      canned['POST /api/collector/docker'] = dockerReply;
+      const message = '草稿保存失败-fixture-' + failing;
+      canned[failing] = { error: message };
+      await byId.get('savecfg').onclick();
+      await context.refresh();
+      checkConfig(byId.get('c-docker').value === '1' &&
+                  String(byId.get('cfghint').textContent).includes(message), failing + '失败后草稿和错误提示保留');
+      checkConfig(!byId.get('c-docker').disabled && !byId.get('c-port').disabled, failing + '失败释放控件disabled');
+    }
+  } catch (e) {
+    fail('配置草稿/点击快照回归', e);
+  } finally {
+    if (releaseConfig) releaseConfig({ ok: true, status: 200,
+      json: async () => ({ ok: true }), text: async () => '{"ok":true}' });
+    deferredConfigPost = null;
+    if (saving) await saving.catch(() => {});
+    canned['GET /api/state'] = configState;
+    canned['POST /api/config'] = configReply;
+    canned['POST /api/collector/docker'] = dockerReply;
+    try {
+      changed('c-docker', configState.config.docker_enabled ? '1' : '0');
+      await byId.get('savecfg').onclick(); // Successful retry clears draft through the public UI.
+      for (let i = 0; i < 10; i++) await settle();
+      await context.refresh();
+    } catch (e) { fail('配置回归收尾', e); }
+  }
 
   // ── 机械对账：**凡是页面会用 JS 填内容的元素，都必须有人核**
   // 这一批（顶栏状态、诊断表、四个设置控件、路径表、curl 示例）就是靠这条问出来的：

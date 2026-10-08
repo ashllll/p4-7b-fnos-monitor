@@ -94,28 +94,10 @@ SKIP_MNT_PREFIX = ("/run", "/sys", "/dev", "/proc", "/var/lib/docker", "/var/lib
 
 class Collector:
     def _trim(self, name, seq):
-        """按 DEFAULT_LIMITS 截断，并记下**截断前**的总数。
-
-        六个段全都走这里。以前是六处各写各的：三处硬编码（`rates[:10]`、`result[:16]`、
-        `out[:8]`）、三处压根没截断（vols/raid/temps，NAS 有多少发多少）。硬编码的那三处
-        一旦有人改了 DEFAULT_LIMITS 就会和声明对不上；没截断的那三处，多出来的部分
-        在板子上被静默丢掉。收成一个方法之后，"声明"和"实际"不可能再各说各话——
-        两边都读同一个 DEFAULT_LIMITS。
-        """
+        """Full inventories by default; explicit installation policy stays visible."""
         self._totals[name] = len(seq)
-        lim = DEFAULT_LIMITS.get(name)
-        return seq[:lim] if lim else seq
-
-    def set_hist_len(self, n):
-        """改历史长度，**并把已经攒下的历史一起收掉**。
-
-        只改 self.hist_len 是不够的：history 是个普通 list，下一次 append 时才按
-        新上限裁剪——而服务端的采样间隔默认 1 s，用户点完保存抬头看图，看到的是
-        "改了没反应"。收紧上限是个一次性动作，就该当场做完。
-        """
-        self.hist_len = max(1, int(n))
-        if len(self.history) > self.hist_len:
-            del self.history[:len(self.history) - self.hist_len]
+        limit = getattr(self, "limits", DEFAULT_LIMITS).get(name)
+        return seq[:max(0, int(limit))] if limit is not None else seq
 
     def __init__(self, interval=1.0, netif=None, volumes=None, hist_len=300):
         self.interval = float(interval)
@@ -138,6 +120,15 @@ class Collector:
         self.hostname = socket.gethostname()
         # 截断前总数：板子端数组有固定上限，必须能区分"只有 10 块盘"和"被截到 10 块"
         self._totals = {}
+
+    def set_hist_len(self, hist_len):
+        length = int(hist_len)
+        if length < 1:
+            raise ValueError("history length must be positive")
+        with self.lock:
+            self.hist_len = length
+            if len(self.history) > length:
+                del self.history[:-length]
 
     # ---- 启动/停止
     def start(self):
@@ -248,24 +239,34 @@ class Collector:
 
     def _net(self):
         iface = self._pick_netif()
-        cur = self._net_counters()
-        rx = tx = 0
-        if iface in cur:
-            rx, tx = cur[iface]
-        rx_kbs = tx_kbs = 0.0
-        prev = self._prev_net
-        if prev and prev[0] == iface:
-            # 单调钟：墙钟回拨会让 dt 变负、速率变成天文数字并写进曲线
-            dt = max(1e-6, time.monotonic() - prev[3])
-            rx_kbs = max(0.0, (rx - prev[1]) / dt / 1024.0)
-            tx_kbs = max(0.0, (tx - prev[2]) / dt / 1024.0)
-        self._prev_net = (iface, rx, tx, time.monotonic())
-        gb = 1024.0 ** 3
-        return {
-            "if": iface,
-            "rx_kbs": round(rx_kbs, 1), "tx_kbs": round(tx_kbs, 1),
-            "rx_total_gb": round(rx / gb, 2), "tx_total_gb": round(tx / gb, 2),
-        }
+        current = self._net_counters()
+        now = time.monotonic()
+        previous = getattr(self, "_prev_interfaces", {})
+        interfaces = []
+        for name in sorted(current):
+            if name == "lo":
+                continue
+            rx, tx = current[name]
+            old = previous.get(name)
+            rx_rate = tx_rate = 0.0
+            if old:
+                dt = max(1e-6, now - old[2])
+                rx_rate = max(0.0, (rx - old[0]) / dt / 1024.0)
+                tx_rate = max(0.0, (tx - old[1]) / dt / 1024.0)
+            interfaces.append({
+                "if": name, "rx_kbs": round(rx_rate, 1), "tx_kbs": round(tx_rate, 1),
+                "rx_total_gb": round(rx / (1024.0 ** 3), 2),
+                "tx_total_gb": round(tx / (1024.0 ** 3), 2),
+                "state": read_text(sysfs("class", "net", name, "operstate"), "unknown").strip(),
+                "speed_mbps": max(0, read_int(sysfs("class", "net", name, "speed"), 0)),
+                "physical": os.path.exists(sysfs("class", "net", name, "device")),
+            })
+        self._prev_interfaces = {name: (rx, tx, now) for name, (rx, tx) in current.items()}
+        selected = next((row for row in interfaces if row["if"] == iface), None)
+        summary = dict(selected) if selected else {"if": iface, "rx_kbs": 0.0, "tx_kbs": 0.0,
+                                                   "rx_total_gb": 0.0, "tx_total_gb": 0.0}
+        summary["interfaces"] = self._trim("interfaces", interfaces)
+        return summary
 
     def _volumes(self):
         vols = []
@@ -376,9 +377,6 @@ class Collector:
     #    控制器和这个 hwmon 指向同一个底层设备，就用它的名字（nvme0n1 / enp1s0 /
     #    i915）；推导不出来时才退回 hwmon 自己的名字（coretemp、acpitz……）。
     #    换机器、插新卡、加硬盘，标签自动跟着变，不需要改代码。
-    TEMP_MAX = 48          # 与板端 FNOS_MAX_TEMPS 同值；超出时丢最冷的几条
-    TEMP_STR = 20          # dev / ch 各自的最大长度（板端按字符格排版）
-    TEMP_NAME = 28         # dn（人读的设备名）的最大长度：板端一行放得下约 23~28 个西文字符
     # 通道语义像 CPU 的标签：Intel coretemp 的 "Package id 0"/"Core 3"、
     # AMD k10temp 的 "Tctl"/"Tdie" 都命中。用它而不是"驱动名对照表"来认 CPU。
     CPU_LABEL_RE = re.compile(r"(?i)\b(package|tctl|tdie|tccd|cpu|core\s*\d+)\b")
@@ -576,8 +574,7 @@ class Collector:
                 rate = self.LINK_RATE.get(read_int(sysfs("class", "net", dev, "speed"), 0), "")
                 # 速率只在"加了还塞得下、且名字里本来没有速率"时才补：pci.ids 的型号名
                 # 有的自带 "10GbE Controller"，无脑再补一遍会变成 "… 10GbE 10Gb"。
-                if rate and "GbE" not in head and "MbE" not in head \
-                        and len(head) + 1 + len(rate) <= self.TEMP_NAME:
+                if rate and "GbE" not in head and "MbE" not in head:
                     head = "%s %s" % (head, rate)
             return head or dev
         if cpuish:
@@ -617,50 +614,33 @@ class Collector:
             dev, kind = self._pick_device(rp, cand)
             cpuish = any(self.CPU_LABEL_RE.search(ch) for _, ch, _ in chans)
             if not dev:
-                dev = "CPU" if cpuish else name
+                dev = os.path.basename(rp.rstrip(os.sep)) or name
             dn = self._dev_name(kind, dev, rp, name, cpuish)
             if fallback_cpu is None and rp.startswith(sysfs("devices", "platform")):
                 fallback_cpu = round(chans[0][2], 1)
             for _, ch, c in chans:
                 if self._cpu_temp is None and self.CPU_LABEL_RE.search(ch):
                     self._cpu_temp = round(c, 1)
-                out.append({"n": ("%s %s" % (dev, ch))[:32], "c": round(c, 1),
-                            "dev": dev[:self.TEMP_STR], "ch": ch[:self.TEMP_STR],
-                            "dn": dn[:self.TEMP_NAME]})
+                out.append({"n": "%s %s" % (dev, ch), "c": round(c, 1),
+                            "dev": dev, "ch": ch,
+                            "dn": dn})
         if self._cpu_temp is None:
             self._cpu_temp = fallback_cpu
         out.sort(key=lambda t: t["c"], reverse=True)
-        return out[:self.TEMP_MAX]
-        # TEMP_MAX 与板端同值，_trim 再按 DEFAULT_LIMITS 收一次并记下截断前总数
-        return self._trim("temps", out[:self.TEMP_MAX])
+        return self._trim("temps", out)
 
     def _docker(self):
-        now = time.time()
-        if now - self._docker_cache[0] < 5.0:
+        import docker_api
+        now = time.monotonic()
+        if self._docker_cache[0] and now - self._docker_cache[0] < 5.0:
+            self._totals['docker'] = self._docker_total
             return self._docker_cache[1]
-        prev = self._docker_cache[1]
-        result = prev
-        try:
-            status, body = _http_unix("/var/run/docker.sock",
-                                      "/containers/json?all=1", timeout=4.0)
-            if status != 200:
-                raise RuntimeError("docker http %d" % status)
-            rows = json.loads(body.decode("utf-8", "replace"))
-            result = []
-            for c in rows:
-                names = c.get("Names") or [c.get("Id", "?")[:12]]
-                result.append({
-                    # 板子端 char n[24]/s[40]：超长会在那里被截断，这里先截好，
-                    # 顺便把整帧大小压住（payload 超过板子 8 KB 缓冲会整帧作废）
-                    "n": names[0].lstrip("/")[:23],
-                    "up": c.get("State") == "running",
-                    "s": (c.get("Status") or "")[:39],
-                })
-            result.sort(key=lambda x: (not x["up"], x["n"]))
-            result = self._trim("docker", result)
-            self._docker_seen_up.update(c["n"] for c in result if c["up"])
-        except Exception:
-            result = prev          # 任何失败都保留上一份，绝不用空表覆盖（否则容器与告警一起消失）
+        frame = docker_api.containers()
+        result = self._trim("docker", frame['rows'])
+        self._docker_total = frame['total']
+        self._docker_ts = frame['ts']
+        self._totals['docker'] = self._docker_total
+        self._docker_seen_up.update(c['n'] for c in result if c['up'])
         self._docker_cache = (now, result)
         return result
 
@@ -710,9 +690,10 @@ class Collector:
             out.append({"lv": "warn", "m": "MEM used %.0f%%" % snap["mem"]["pct"]})
         if cpu.get("cores") and cpu.get("load5", 0) > cpu["cores"]:
             out.append({"lv": "warn", "m": "LOAD high %.2f" % cpu["load5"]})
-        for c in snap.get("docker", []):
+        for c in (snap.get("docker") or []):
             # 只报"本来在跑、现在掉了"的容器；开机就停着的（如已弃用的 exporter）不刷告警
-            if not c["up"] and c["n"] in self._docker_seen_up:
+            if (snap.get("modules", {}).get("docker", {}).get("status", "ok") == "ok"
+                    and not c["up"] and c["n"] in self._docker_seen_up):
                 out.append({"lv": "warn", "m": "container %s down" % c["n"]})
         return self._trim("alerts", out)
 
@@ -742,15 +723,9 @@ MODULE_SOURCES = (
 
 MODULE_ORDER = ("cpu", "mem", "net", "vols", "raid", "disks", "temps", "docker", "zfs")
 
-# 板子端各数组上限（超出必须靠 trunc 说明，不能让消费者以为"就这么点"）
-DEFAULT_LIMITS = {"docker": 16, "disks": 10, "alerts": 8,
-                  # 这三段以前**完全不截断**：NAS 有多少发多少，而板子的定长数组
-                  # 是 8/6/10 —— 多出来的部分被静默丢掉（界面上就是"只有这么多"）。
-                  # 卷和阵列还好，温度最容易撞：现代主板 + NVMe + 硬盘很容易超过
-                  # 10 个传感器。现在两边都写死在这儿，contract_check.py 会核对。
-                  # temps 提到 48：采集端现在报**每一个通道**（CPU 每核心、网卡
-                  # PHY/MAC、每块 NVMe 的每个 Sensor），不再每设备只报一路。
-                  "vols": 12, "raid": 8, "temps": 48}
+# No hardware-count defaults. An installation may explicitly configure a limit;
+# trunc reports that policy and every omitted item to older consumers as well.
+DEFAULT_LIMITS = {}
 
 ST_OK = "ok"                # 该段本次采样成功
 ST_STALE = "stale"          # 本次失败，沿用上一份旧值（带旧时间戳）
@@ -796,12 +771,24 @@ def probe_capabilities(include_docker=True):
 
     def record(module, path, status, detail=None):
         sources.append({"module": module, "path": path, "status": status, "detail": detail})
-        cur = by_module.setdefault(module, {"ok": 0, "denied": 0, "missing": 0, "error": 0})
+        cur = by_module.setdefault(module, {"ok": 0, "denied": 0, "missing": 0, "error": 0, "disabled": 0})
         cur[status if status in cur else "error"] += 1
 
     for module, path in MODULE_SOURCES:
         if module == "docker" and not include_docker:
             record(module, path, ST_DISABLED, "容器采集默认关闭")
+            continue
+        if module == "docker":
+            import docker_api
+            try:
+                docker_api.containers()
+                record(module, path, ST_OK, "固定 GET 容器状态读取成功")
+            except PermissionError as exc:
+                record(module, path, ST_DENIED, str(exc))
+            except FileNotFoundError as exc:
+                record(module, path, ST_MISSING, str(exc))
+            except Exception as exc:
+                record(module, path, ST_ERROR, '%s: %s' % (type(exc).__name__, exc))
             continue
         if module == "temps":
             # hwmon 是目录：逐个 temp*_input 试读，才能反映"部分传感器可读"
@@ -832,6 +819,8 @@ def probe_capabilities(include_docker=True):
         c = by_module.get(module)
         if c is None:
             modules[module] = ST_MISSING
+        elif c['disabled']:
+            modules[module] = ST_DISABLED
         elif c["ok"] and not (c["denied"] or c["error"] or c["missing"]):
             modules[module] = ST_OK
         elif c["ok"]:
@@ -914,17 +903,23 @@ class CompanionCollector(Collector):
                     meta[key] = {"status": ST_MISSING, "ts": snap["ts"], "error": None}
                 else:
                     snap[key] = value
-                    meta[key] = {"status": ST_OK, "ts": snap["ts"], "error": None}
+                    ts = self._docker_ts if key == 'docker' else snap['ts']
+                    meta[key] = {"status": ST_OK, "ts": ts, "error": None}
             except Exception as exc:                   # noqa: BLE001 - 采集段不能互相拖死
                 errors.append(key)
                 detail = "%s: %s" % (type(exc).__name__, exc)
-                if key in prev:
-                    old = prev_meta.get(key) or {}
+                old = prev_meta.get(key) or {}
+                if key in prev and old.get('status') in (ST_OK, ST_STALE, 'partial'):
                     snap[key] = prev[key]              # 保留旧值，但把"旧"如实标出来
                     meta[key] = {"status": ST_STALE, "ts": old.get("ts", 0), "error": detail}
+                    self._totals[key] = prev.get('trunc', {}).get('totals', {}).get(key, 0)
+                    if key == "net":
+                        self._totals["interfaces"] = prev.get('trunc', {}).get('totals', {}).get(
+                            "interfaces", len((prev.get("net") or {}).get("interfaces") or []))
                 else:
                     snap[key] = None
-                    meta[key] = {"status": ST_ERROR, "ts": snap["ts"], "error": detail}
+                    state = ST_DENIED if isinstance(exc, PermissionError) else (ST_MISSING if isinstance(exc, FileNotFoundError) else ST_ERROR)
+                    meta[key] = {"status": state, "ts": 0, "error": detail}
 
         try:
             snap["uptime_s"] = int(float(read_text("/proc/uptime", "0").split()[0] or 0))
@@ -935,6 +930,7 @@ class CompanionCollector(Collector):
         if errors:
             snap["errors"] = errors
 
+        snap["modules"] = meta
         try:
             snap["alerts"] = self._alerts(snap)
         except Exception:                              # noqa: BLE001
@@ -948,13 +944,15 @@ class CompanionCollector(Collector):
         snap["modules"] = meta
         snap["caps"] = [k for k in MODULE_ORDER
                         if meta.get(k, {}).get("status") in (ST_OK, ST_STALE)]
-        # 六段都可能被截断。以前这里只列 docker/disks/alerts——**而 vols/raid/temps
-        # 连截断都没有**，NAS 有多少发多少，板子装不下就静默丢。
-        tracked = ("docker", "disks", "alerts", "vols", "raid", "temps")
+        # Explicit inventory policies retain original totals, including nested NIC rows.
+        inventories = {k: snap.get(k) or []
+                       for k in ("docker", "disks", "alerts", "vols", "raid", "temps")}
+        inventories["interfaces"] = (snap.get("net") or {}).get("interfaces") or []
+        tracked = tuple(inventories)
         snap["trunc"] = {
             "limits": {k: self.limits[k] for k in tracked if k in self.limits},
-            "totals": {k: self._totals.get(k, 0) for k in tracked},
-            "dropped": {k: max(0, self._totals.get(k, 0) - len(snap.get(k) or []))
+            "totals": {k: self._totals.get(k, len(inventories[k])) for k in tracked},
+            "dropped": {k: max(0, self._totals.get(k, len(inventories[k])) - len(inventories[k]))
                         for k in tracked},
         }
         with self.lock:

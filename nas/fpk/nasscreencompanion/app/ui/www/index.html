@@ -203,6 +203,7 @@ const BASE = location.pathname.replace(/\/+$/,'').replace(/\/index\.html$/,'');
 const api = (p) => BASE + p;
 
 let S = null;                       // 最近一次 /api/state
+let configDirty = false, configSaving = false;
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const num = (v,d=0) => (v==null||isNaN(v)) ? '—' : Number(v).toFixed(d);
@@ -303,12 +304,14 @@ function renderState(s){
   $('hseq').textContent = 'seq ' + (c.seq||0) + ' · ' + (c.age_s!=null? c.age_s+'s 前':'—');
   $('s-overview').dataset.ready = ready;
 
-  if(!$('c-port').matches(':focus')) $('c-port').value = cfg.port;
-  if(!$('c-interval').matches(':focus')) $('c-interval').value = cfg.interval;
-  if(!$('c-hist').matches(':focus')) $('c-hist').value = cfg.hist_len;
-  $('c-bind').value = cfg.bind; $('c-auth').value = cfg.auth_mode;
-  $('c-docker').value = cfg.docker_enabled ? '1' : '0';
-  $('c-tls').value = (cfg.tls_enabled === false) ? '0' : '1';
+  if(!configDirty && !configSaving){
+    if(!$('c-port').matches(':focus')) $('c-port').value = cfg.port;
+    if(!$('c-interval').matches(':focus')) $('c-interval').value = cfg.interval;
+    if(!$('c-hist').matches(':focus')) $('c-hist').value = cfg.hist_len;
+    $('c-bind').value = cfg.bind; $('c-auth').value = cfg.auth_mode;
+    $('c-docker').value = cfg.docker_enabled ? '1' : '0';
+    $('c-tls').value = (cfg.tls_enabled === false) ? '0' : '1';
+  }
   $('paddr').textContent = (s.listen && s.listen.tcp) || '—';
   renderTls(s);
 
@@ -405,16 +408,35 @@ $('gencode').onclick = async () => {
 $('cancelcode').onclick = async () => { const r = await post('/api/pairing/cancel',{});
   $('codewrap').style.display='none'; hint('codehint', r.cancelled? '已作废':'当前没有待用的配对码'); refresh(); };
 
+const configControls = document.querySelectorAll('#s-cfg input, #s-cfg select');
+configControls.forEach(e => e.oninput = e.onchange = () => {
+  configDirty = true;
+  hint('cfghint', '有未保存的改动', false);
+});
 $('savecfg').onclick = async () => {
+  if(configSaving) return;
   const body = { port: Number($('c-port').value), bind: $('c-bind').value,
     interval: Number($('c-interval').value), hist_len: Number($('c-hist').value),
     auth_mode: $('c-auth').value, tls_enabled: $('c-tls').value === '1' };
-  const r = await post('/api/config', body);
-  if(r.error) return hint('cfghint', r.error, true);
-  const d = await post('/api/collector/docker', {enabled: $('c-docker').value === '1'});
-  if(d.error) return hint('cfghint', d.error, true);
-  hint('cfghint', (r.changed&&r.changed.length? '已保存：'+r.changed.join(', ') : '没有需要改动的项')
-    + (r.restart_required&&r.restart_required.length? '（' + r.restart_required.join('、') + ' 需重启应用生效）':''), false);
+  const dockerEnabled = $('c-docker').value === '1';
+  configSaving = true;
+  $('savecfg').disabled = true;
+  configControls.forEach(e => e.disabled = true);
+  try {
+    const r = await post('/api/config', body);
+    if(r.error) return hint('cfghint', r.error, true);
+    const d = await post('/api/collector/docker', {enabled: dockerEnabled});
+    if(d.error) return hint('cfghint', d.error, true);
+    configDirty = false;
+    hint('cfghint', '已保存；容器采集已' + (dockerEnabled ? '开启' : '关闭')
+      + (r.restart_required&&r.restart_required.length? '（' + r.restart_required.join('、') + ' 需重启应用生效）':''), false);
+  } catch(e) {
+    hint('cfghint', '保存失败：' + e.message, true);
+  } finally {
+    configSaving = false;
+    $('savecfg').disabled = false;
+    configControls.forEach(e => e.disabled = false);
+  }
   refresh();
 };
 $('rundiag').onclick = async () => { renderDiag(await get('/api/diagnostics')); loadLogs(); };

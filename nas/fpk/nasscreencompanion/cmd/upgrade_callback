@@ -2,12 +2,13 @@
 . "$(dirname "$0")/_common.sh"
 # 升级后：补齐新版本新增的配置项（保留设备令牌），再按升级前的状态决定是否启动。
 say "升级后处理 ${TRIM_OLD_APPVER:-?} -> ${TRIM_APPVER:-?}"
-mkdir -p "$PKG_VAR" "$PKG_ETC" 2>/dev/null
+prepare_package_data || exit 1
+as_package mkdir -p "$PKG_VAR" "$PKG_ETC" 2>/dev/null
 FLAG="$PKG_VAR/upgrade.was_running"
 
 PY=$(resolve_python) || { fail "找不到 Python 运行时，无法整理配置"; exit 1; }
 
-"$PY" - "$PKG_VAR/config.json" <<'PYEOF'
+as_package "$PY" - "$PKG_VAR/config.json" <<'PYEOF'
 import json, os, sys
 path = sys.argv[1]
 defaults = {"bind": "0.0.0.0", "port": 8798, "interval": 1.0, "hist_len": 300,
@@ -15,11 +16,11 @@ defaults = {"bind": "0.0.0.0", "port": 8798, "interval": 1.0, "hist_len": 300,
 cfg = {}
 try:
     with open(path, "r", encoding="utf-8") as f:
-        cfg = json.load(f) or {}
-except Exception:
-    cfg = {}
+        cfg = json.load(f)
+except FileNotFoundError:
+    pass
 if not isinstance(cfg, dict):
-    cfg = {}
+    raise ValueError("config.json 必须是 JSON 对象，原文件未修改")
 added = [k for k in defaults if k not in cfg]
 for k, v in defaults.items():
     cfg.setdefault(k, v)
@@ -34,10 +35,13 @@ os.replace(tmp, path)
 print("配置补齐完成，新增字段：%s；保留已配对设备 %d 个"
       % (", ".join(added) or "无", len(cfg["devices"])))
 PYEOF
-[ $? -ne 0 ] && warn "配置补齐失败，服务将按默认值启动"
+if [ $? -ne 0 ]; then
+  fail "配置读取或补齐失败，已保留原文件；请检查 $PKG_VAR/config.json 后重试"
+  exit 1
+fi
 
 if [ -f "$FLAG" ]; then
-  rm -f "$FLAG"
+  as_package rm -f "$FLAG"
   say "升级前服务处于运行状态，重新启动"
   service_start || { fail "升级后启动失败，请看 $PKG_VAR/info.log"; exit 1; }
 else

@@ -150,7 +150,7 @@ def build_nas_tree(root):
 
 
 def build_cap_tree(root):
-    """只有一个 60 通道的芯片：用来验 TEMP_MAX 截断丢的是最冷的那几条。"""
+    """只有一个 60 通道的芯片：验证低温与高温通道都不会因设备数量被省略。"""
     mkdir(root, "devices/platform/ipmi.0")
     hwmon(root, "platform/ipmi.0", 0, "ipmi",
           [(n, "temp%d" % n, 1000 * n) for n in range(1, 61)])
@@ -213,7 +213,7 @@ def run_phase(label, module, root, expect, proc, env=None):
         vals = [t["c"] for t in out]
         check(vals == sorted(vals, reverse=True), "按温度降序")
     if expect.get("cap") is not None:
-        check(len(out) == expect["cap"], "正好截到 %d 路（实际 %d）" % (expect["cap"], len(out)))
+        check(len(out) == expect["cap"], "完整保留 %d 路（实际 %d）" % (expect["cap"], len(out)))
     if expect.get("at_most") is not None:
         check(len(out) <= expect["at_most"],
               "不超过 %d 路（实际 %d）" % (expect["at_most"], len(out)))
@@ -268,12 +268,12 @@ def main():
         # 17 路 = acpitz 1 + 网卡 2 + iGPU 1 + 两块 NVMe 各 3 + coretemp 7
         full = {
             "have": [("enp1s0", "PHY"), ("enp1s0", "MAC"),
-                     ("CPU", "Package id 0"), ("CPU", "Core 0"), ("CPU", "Core 5"),
+                     ("coretemp.0", "Package id 0"), ("coretemp.0", "Core 0"), ("coretemp.0", "Core 5"),
                      ("i915", "temp1"),
                      ("nvme0n1", "Composite"), ("nvme0n1", "Sensor 1"), ("nvme0n1", "Sensor 2"),
                      ("nvme1n1", "Composite"), ("nvme1n1", "Sensor 2"),
-                     ("acpitz", "temp1")],
-            "absent": [("acpitz", "temp2"), ("nvme0n1p1", "Composite"), ("NIC", "PHY")],
+                     ("acpitz.0", "temp1")],
+            "absent": [("acpitz.0", "temp2"), ("nvme0n1p1", "Composite"), ("NIC", "PHY")],
             # 人读设备名：磁盘取型号、网卡取"厂商 + 驱动 + 速率"（假树里没有 pci.ids，
             # 所以厂商表兜底到 Marvell，型号名用驱动名 atlantic）、CPU 取 /proc/cpuinfo、
             # 显卡取"厂商 + 驱动"、认不出的热区退回 hwmon 名。
@@ -281,9 +281,9 @@ def main():
                 ("nvme0n1", "Composite"): "Samsung SSD 990 PRO 2TB",
                 ("nvme1n1", "Sensor 2"): "WD Black SN850X 2TB",
                 ("enp1s0", "PHY"): "Marvell atlantic 10GbE",
-                ("CPU", "Core 3"): "Intel N100",
+                ("coretemp.0", "Core 3"): "Intel N100",
                 ("i915", "temp1"): "Intel i915",
-                ("acpitz", "temp1"): "acpitz",
+                ("acpitz.0", "temp1"): "acpitz",
             },
             "first": ("enp1s0", "PHY"),
             "ntotal": 17,
@@ -292,10 +292,10 @@ def main():
             "at_most": 48,
         }
         capped = {
-            "have": [("ipmi", "temp60")],
-            "absent": [("ipmi", "temp1")],
-            "first": ("ipmi", "temp60"),
-            "cap": 48, "sorted": True,
+            "have": [("ipmi.0", "temp60"), ("ipmi.0", "temp1")],
+            "absent": [],
+            "first": ("ipmi.0", "temp60"),
+            "cap": 60, "sorted": True,
         }
         # 有 pci.ids 时：型号名来自文件（AQC113CS / UHD Graphics），不再用驱动名兜底
         withpci = {
