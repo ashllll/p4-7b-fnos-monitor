@@ -1,13 +1,14 @@
-// 主机预览：不烧录，把真实的 fnos_ui（kk_ui 构件 + 字库）+ fnos_data 编译到 macOS 上渲染成 PPM。
+// 主机预览：不烧录，把真实的 fnos_ui（ui_kit 构件 + 字库） 编译到 macOS 上渲染成 PPM。
 //
 // 为什么值得存在：v4/v5 的视觉迭代全靠"改 JSON → 生成 → 构建 → 烧录 → 拍照"，一轮十几分钟且
-// 受手机翻拍质量影响。这里把同一份 LVGL 9.5.0 + 同一份字库 + 同一份 kk_widgets 搬到主机，
+// 受手机翻拍质量影响。这里把同一份 LVGL 9.5.0 + 同一份字库 + 同一份 ui_kit 搬到主机，
 // 换页/取图/写盘全在进程内完成，一轮几秒，且像素级可信（v6 起界面由 fnos_ui.c 手写，不再有生成物）。
 //
 // 边界：只替身"板级"接口（esp_timer / esp_heap_caps / esp_log / fnos_data 轮询 / fnos_net Wi-Fi），
 // 业务与 UI 代码一行不改。fixture 打在 fnos_status_t 上，因此格式化串、阈值配色、可信度降级
 // 全都走真实的 fnos_ui 刷屏逻辑。
 #include <stdio.h>
+#include <errno.h>
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,12 +21,17 @@
 #include "fnos_data.h"
 #include "fnos_ui.h"
 #include "fnos_net.h"
-#include "kk_theme.h"
+#include "ui_kit/uk_theme.h"
+#include "ui_kit/uk.h"
 
 /* ── 板级替身 ─────────────────────────────────────────────────────── */
 
+static bool s_motion_clock_frozen;
+static int64_t s_motion_clock_us;
+
 int64_t esp_timer_get_time(void)
 {
+    if (s_motion_clock_frozen) return s_motion_clock_us;
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (int64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
@@ -74,6 +80,14 @@ static void wifi_stub(bool cfg, bool online, const char *ssid, const char *reaso
     wifi_stub_reset();
 }
 bool        fnos_net_configured(void) { return s_wifi_cfg; }
+/* 凭据存储的替身：界面开机判断"要不要弹配网卡"问的是存储本身（不问网络层标志），
+   主机上就返回同一个 s_wifi_cfg，好让"未配置 → 自动弹卡"这条路径照样被渲染到。 */
+bool fnos_wifi_store_load(char *ssid, size_t ssid_cap, char *pass, size_t pass_cap)
+{
+    (void)pass; (void)pass_cap;
+    if (ssid && ssid_cap) snprintf(ssid, ssid_cap, "%s", s_wifi_cfg ? s_wifi_ssid_stub : "");
+    return s_wifi_cfg;
+}
 bool        fnos_net_online(void)     { return s_wifi_on; }
 const char *fnos_net_ssid(void)       { return s_wifi_ssid_stub; }
 fnos_net_state_t fnos_net_state(void)
@@ -121,6 +135,7 @@ typedef enum { ST_LIVE, ST_OFFLINE, ST_OFFLINE_TLS, ST_WARMING, ST_HEALTHY, ST_L
                ST_LEGACY } preview_state_t;
 static const char *s_force_err;      /* 见 verify_reasons()：强制某条失败原因 */
 static preview_state_t s_state = ST_LIVE;
+static const fnos_status_t *s_override_status;
 
 /* 温度行的固定次序（与设备端 fnos_data.c 的 temp_cmp 同规则）：设备名 → 通道名。
    桩件的目的不是"随便给点数据"，而是让预览和面板上的行序一模一样。 */
@@ -133,9 +148,14 @@ static int temp_stub_cmp(const void *a, const void *b)
     return c ? c : strcmp(x->ch, y->ch);
 }
 
+enum { PREVIEW_VOLS=12, PREVIEW_RAID=8, PREVIEW_DISKS=10,
+       PREVIEW_TEMPS=48, PREVIEW_DOCKER=16, PREVIEW_ALERTS=8 };
+
 static void fill_live(fnos_status_t *s)
 {
-    memset(s, 0, sizeof *s);
+    fnos_counts_t counts={ PREVIEW_VOLS, PREVIEW_RAID, PREVIEW_DISKS, PREVIEW_TEMPS,
+                          PREVIEW_DOCKER, PREVIEW_ALERTS, 10, 0 };
+    assert(fnos_status_create(s,&counts));
     s->ever_ok = true;
     s->online  = true;
     s->recv_ms = esp_timer_get_time() / 1000;
@@ -145,7 +165,7 @@ static void fill_live(fnos_status_t *s)
     s->ok_count = 18422;
     s->fail_count = 7;
     s->last_err[0] = 0;
-    snprintf(s->host, sizeof s->host, "%s", "fnos-nas");
+    fnos_status_text(s, &s->host, "%s", "fnos-nas");
     s->proto = FNOS_PROTO_KNOWN;
     s->hist_ts_ok = true;
     s->hist_span_s = 180;
@@ -158,8 +178,8 @@ static void fill_live(fnos_status_t *s)
     };
     s->nmods = (int)(sizeof mods / sizeof mods[0]);
     for (int i = 0; i < s->nmods; i++) {
-        snprintf(s->mods[i].name, sizeof s->mods[i].name, "%s", mods[i].n);
-        snprintf(s->mods[i].status, sizeof s->mods[i].status, "%s", mods[i].st);
+        fnos_status_text(s, &s->mods[i].name, "%s", mods[i].n);
+        fnos_status_text(s, &s->mods[i].status, "%s", mods[i].st);
     }
     s->uptime_s = 2 * 86400 + 7 * 3600 + 41 * 60;
 
@@ -169,7 +189,7 @@ static void fill_live(fnos_status_t *s)
     s->mem.total_mb = 16384.0f; s->mem.used_mb = 10362.0f; s->mem.avail_mb = 6022.0f;
     s->mem.pct = 63.2f; s->mem.swap_total_mb = 2048.0f; s->mem.swap_used_mb = 137.0f;
 
-    snprintf(s->net.ifname, sizeof s->net.ifname, "%s", "eth0");
+    fnos_status_text(s, &s->net.ifname, "%s", "eth0");
     s->net.rx_kbs = 12482.0f; s->net.tx_kbs = 3127.0f;
     s->net.rx_total_gb = 8421.5f; s->net.tx_total_gb = 2210.3f;
 
@@ -183,8 +203,8 @@ static void fill_live(fnos_status_t *s)
     };
     s->nvols = 6;
     for (int i = 0; i < s->nvols; i++) {
-        snprintf(s->vols[i].mnt, sizeof s->vols[i].mnt, "%s", v[i].mnt);
-        snprintf(s->vols[i].fs,  sizeof s->vols[i].fs,  "%s", v[i].fs);
+        fnos_status_text(s, &s->vols[i].mnt, "%s", v[i].mnt);
+        fnos_status_text(s, &s->vols[i].fs, "%s", v[i].fs);
         s->vols[i].total_gb = v[i].tot;
         s->vols[i].used_gb  = v[i].used;
         s->vols[i].free_gb  = v[i].tot - v[i].used;
@@ -199,9 +219,9 @@ static void fill_live(fnos_status_t *s)
     };
     s->nraid = 4;
     for (int i = 0; i < s->nraid; i++) {
-        snprintf(s->raid[i].dev,   sizeof s->raid[i].dev,   "%s", r[i].dev);
-        snprintf(s->raid[i].lvl,   sizeof s->raid[i].lvl,   "%s", r[i].lvl);
-        snprintf(s->raid[i].state, sizeof s->raid[i].state, "%s", r[i].st);
+        fnos_status_text(s, &s->raid[i].dev, "%s", r[i].dev);
+        fnos_status_text(s, &s->raid[i].lvl, "%s", r[i].lvl);
+        fnos_status_text(s, &s->raid[i].state, "%s", r[i].st);
         s->raid[i].ok = r[i].ok; s->raid[i].have = r[i].have; s->raid[i].want = r[i].want;
         s->raid[i].sync_pct = r[i].sync;
     }
@@ -214,7 +234,7 @@ static void fill_live(fnos_status_t *s)
     };
     s->ndisks = 4;
     for (int i = 0; i < s->ndisks; i++) {
-        snprintf(s->disks[i].dev, sizeof s->disks[i].dev, "%s", d[i].dev);
+        fnos_status_text(s, &s->disks[i].dev, "%s", d[i].dev);
         s->disks[i].rd_kbs = d[i].rd; s->disks[i].wr_kbs = d[i].wr;
     }
 
@@ -226,20 +246,20 @@ static void fill_live(fnos_status_t *s)
     temp_stub_t t[] = {
         { "enp1s0",  "PHY",          "Marvell AQC113 10GbE",    74.2f },
         { "enp1s0",  "MAC",          "Marvell AQC113 10GbE",    74.2f },
-        { "nvme0n1", "Composite",    "Samsung SSD 990 PRO 2TB", 43.9f },
-        { "nvme1n1", "Composite",    "WD Black SN850X 2TB",     42.9f },
-        { "nvme3n1", "Composite",    "Crucial P3 Plus 2TB",     41.9f },
-        { "nvme0n1", "Sensor 1",     "Samsung SSD 990 PRO 2TB", 41.9f },
-        { "nvme2n1", "Composite",    "KIOXIA EXCERIA PLUS 1TB", 41.0f },
-        { "nvme0n1", "Sensor 2",     "Samsung SSD 990 PRO 2TB", 40.9f },
-        { "nvme1n1", "Sensor 1",     "WD Black SN850X 2TB",     40.9f },
-        { "nvme1n1", "Sensor 2",     "WD Black SN850X 2TB",     39.9f },
-        { "nvme3n1", "Sensor 1",     "Crucial P3 Plus 2TB",     39.9f },
-        { "nvme2n1", "Sensor 1",     "KIOXIA EXCERIA PLUS 1TB", 38.9f },
-        { "nvme3n1", "Sensor 2",     "Crucial P3 Plus 2TB",     38.9f },
-        { "nvme3n1", "Sensor 3",     "Crucial P3 Plus 2TB",     37.9f },
-        { "nvme2n1", "Sensor 2",     "KIOXIA EXCERIA PLUS 1TB", 37.9f },
-        { "nvme2n1", "Sensor 3",     "KIOXIA EXCERIA PLUS 1TB", 36.9f },
+        { "nvme0n1", "Composite",    "PCIe-8-SSD 512GB", 43.9f },
+        { "nvme1n1", "Composite",    "ZHITAI TiPlus7100 1TB",     42.9f },
+        { "nvme3n1", "Composite",    "PCIe-8-SSD 512GB",     41.9f },
+        { "nvme0n1", "Sensor 1",     "PCIe-8-SSD 512GB", 41.9f },
+        { "nvme2n1", "Composite",    "ZHITAI TiPlus7100 1TB", 41.0f },
+        { "nvme0n1", "Sensor 2",     "PCIe-8-SSD 512GB", 40.9f },
+        { "nvme1n1", "Sensor 1",     "ZHITAI TiPlus7100 1TB",     40.9f },
+        { "nvme1n1", "Sensor 2",     "ZHITAI TiPlus7100 1TB",     39.9f },
+        { "nvme3n1", "Sensor 1",     "PCIe-8-SSD 512GB",     39.9f },
+        { "nvme2n1", "Sensor 1",     "ZHITAI TiPlus7100 1TB", 38.9f },
+        { "nvme3n1", "Sensor 2",     "PCIe-8-SSD 512GB",     38.9f },
+        { "nvme3n1", "Sensor 3",     "PCIe-8-SSD 512GB",     37.9f },
+        { "nvme2n1", "Sensor 2",     "ZHITAI TiPlus7100 1TB", 37.9f },
+        { "nvme2n1", "Sensor 3",     "ZHITAI TiPlus7100 1TB", 36.9f },
         { "i915",    "temp1",        "Intel UHD Graphics",      35.0f },
         { "CPU",     "Package id 0", "Intel N100",              34.0f },
         { "CPU",     "Core 5",       "Intel N100",              33.5f },
@@ -255,9 +275,9 @@ static void fill_live(fnos_status_t *s)
        （桩与设备行为不一致这条，本项目已经踩过一次）。 */
     qsort(t, (size_t)s->ntemps, sizeof t[0], temp_stub_cmp);
     for (int i = 0; i < s->ntemps; i++) {
-        snprintf(s->temps[i].dev, sizeof s->temps[i].dev, "%s", t[i].dev);
-        snprintf(s->temps[i].ch,  sizeof s->temps[i].ch,  "%s", t[i].ch);
-        snprintf(s->temps[i].dn,  sizeof s->temps[i].dn,  "%s", t[i].dn);
+        fnos_status_text(s, &s->temps[i].dev, "%s", t[i].dev);
+        fnos_status_text(s, &s->temps[i].ch, "%s", t[i].ch);
+        fnos_status_text(s, &s->temps[i].dn, "%s", t[i].dn);
         s->temps[i].c = t[i].c;
     }
 
@@ -273,22 +293,22 @@ static void fill_live(fnos_status_t *s)
     };
     s->ndocker = 8;
     for (int i = 0; i < s->ndocker; i++) {
-        snprintf(s->docker[i].n, sizeof s->docker[i].n, "%s", k[i].n);
-        snprintf(s->docker[i].s, sizeof s->docker[i].s, "%s", k[i].st);
+        fnos_status_text(s, &s->docker[i].n, "%s", k[i].n);
+        fnos_status_text(s, &s->docker[i].s, "%s", k[i].st);
         s->docker[i].up = k[i].up;
     }
 
     s->has_zfs = true; s->zfs_arc_gb = 12.4f; s->zfs_hit_pct = 96.3f;
 
     /* 告警文案按 nas/fnos-agent.py:_alerts() 的真实格式造（全 ASCII，级别 crit/warn/info） */
-    snprintf(s->alerts[0].lv, sizeof s->alerts[0].lv, "%s", "warn");
-    snprintf(s->alerts[0].m,  sizeof s->alerts[0].m,  "%s", "/vol4 used 95%");
-    snprintf(s->alerts[1].lv, sizeof s->alerts[1].lv, "%s", "crit");
-    snprintf(s->alerts[1].m,  sizeof s->alerts[1].m,  "%s", "/vol3 free 4.6% left");
-    snprintf(s->alerts[2].lv, sizeof s->alerts[2].lv, "%s", "warn");
-    snprintf(s->alerts[2].m,  sizeof s->alerts[2].m,  "%s", "container qbittorrentee down");
-    snprintf(s->alerts[3].lv, sizeof s->alerts[3].lv, "%s", "info");
-    snprintf(s->alerts[3].m,  sizeof s->alerts[3].m,  "%s", "md1 resync 47.3%");
+    fnos_status_text(s, &s->alerts[0].lv, "%s", "warn");
+    fnos_status_text(s, &s->alerts[0].m, "%s", "/vol4 used 95%");
+    fnos_status_text(s, &s->alerts[1].lv, "%s", "crit");
+    fnos_status_text(s, &s->alerts[1].m, "%s", "/vol3 free 4.6% left");
+    fnos_status_text(s, &s->alerts[2].lv, "%s", "warn");
+    fnos_status_text(s, &s->alerts[2].m, "%s", "container qbittorrentee down");
+    fnos_status_text(s, &s->alerts[3].lv, "%s", "info");
+    fnos_status_text(s, &s->alerts[3].m, "%s", "md1 resync 47.3%");
     s->nalerts = 4;
 }
 
@@ -367,13 +387,22 @@ void fnos_pair_forget(void)
 
 bool fnos_data_get(fnos_status_t *out)
 {
+    if (s_override_status) { fnos_status_copy(out,s_override_status); return true; }
     if (s_state == ST_LOCKBUSY) return true; /* 与数据层锁超时一致：out 保持原值 */
-    if (s_state == ST_WARMING) { memset(out, 0, sizeof *out); return false; }
+    if (s_state == ST_WARMING) { fnos_status_release(out); return false; }
     fill_live(out);
     if (s_state == ST_HEALTHY) {
         out->nalerts = 0;
+        fnos_status_text(out, &out->net.ifname, "%s", "bridge-monitor0");
         for (int i = 0; i < out->ndocker; i++) out->docker[i].up = true;
-        for (int i = 0; i < out->nraid; i++) { out->raid[i].ok = true; out->raid[i].sync_pct = 100; }
+        for (int i = 0; i < out->nmods; i++)
+            if (!strcmp(out->mods[i].name, "docker")) fnos_status_text(out, &out->mods[i].status, "ok");
+        for (int i = 0; i < out->nraid; i++) {
+            out->raid[i].ok = true;
+            out->raid[i].have = out->raid[i].want;
+            out->raid[i].sync_pct = 100;
+            fnos_status_text(out, &out->raid[i].state, "%s", "clean");
+        }
     }
     if (s_state == ST_LIMITS) {
         out->cpu.pct = 100; out->mem.pct = 100;
@@ -381,12 +410,12 @@ bool fnos_data_get(fnos_status_t *out)
            一次覆盖两条阈值线的颜色与摘要计数。 */
         out->temps[0].c = 85; out->temps[1].c = 66;
         out->net.rx_kbs = 1228800;
-        out->nvols = FNOS_MAX_VOLS; out->nraid = FNOS_MAX_RAID;
-        out->ndisks = FNOS_MAX_DISKS; out->ndocker = FNOS_MAX_DOCKER; out->nalerts = FNOS_MAX_ALERTS;
-        for (int i = 6; i < out->nvols; i++) { out->vols[i] = out->vols[0]; snprintf(out->vols[i].mnt, sizeof out->vols[i].mnt, "/vol%d", i + 1); }
-        for (int i = 4; i < out->nraid; i++) { out->raid[i] = out->raid[0]; snprintf(out->raid[i].dev, sizeof out->raid[i].dev, "md%d", i); }
-        for (int i = 4; i < out->ndisks; i++) { out->disks[i] = out->disks[0]; snprintf(out->disks[i].dev, sizeof out->disks[i].dev, "nvme%dn1", i); }
-        for (int i = 8; i < out->ndocker; i++) { out->docker[i] = out->docker[0]; snprintf(out->docker[i].n, sizeof out->docker[i].n, "container-%02d", i); }
+        out->nvols = PREVIEW_VOLS; out->nraid = PREVIEW_RAID;
+        out->ndisks = PREVIEW_DISKS; out->ndocker = PREVIEW_DOCKER; out->nalerts = PREVIEW_ALERTS;
+        for (int i = 6; i < out->nvols; i++) { out->vols[i] = out->vols[0]; fnos_status_text(out, &out->vols[i].mnt, "/vol%d", i + 1); }
+        for (int i = 4; i < out->nraid; i++) { out->raid[i] = out->raid[0]; fnos_status_text(out, &out->raid[i].dev, "md%d", i); }
+        for (int i = 4; i < out->ndisks; i++) { out->disks[i] = out->disks[0]; fnos_status_text(out, &out->disks[i].dev, "nvme%dn1", i); }
+        for (int i = 8; i < out->ndocker; i++) { out->docker[i] = out->docker[0]; fnos_status_text(out, &out->docker[i].n, "container-%02d", i); }
         for (int i = 4; i < out->nalerts; i++) out->alerts[i] = out->alerts[0];
         /* 容错路径：应用比板子新（协议超范围）+ 一个板子没见过的状态词，
            两种都得照常显示而不是空白。 */
@@ -396,9 +425,9 @@ bool fnos_data_get(fnos_status_t *out)
         out->hist_span_s = 3720;
         out->hist_avg_gap_x10 = 25;
         if (out->nmods > 1) {
-            snprintf(out->mods[0].name, sizeof out->mods[0].name, "%s", "smart");
-            snprintf(out->mods[0].status, sizeof out->mods[0].status, "%s", "degraded");
-            snprintf(out->mods[1].status, sizeof out->mods[1].status, "%s", "denied");
+            fnos_status_text(out, &out->mods[0].name, "%s", "smart");
+            fnos_status_text(out, &out->mods[0].status, "%s", "degraded");
+            fnos_status_text(out, &out->mods[1].status, "%s", "denied");
         }
     }
     if (s_state == ST_LEGACY) {
@@ -411,8 +440,8 @@ bool fnos_data_get(fnos_status_t *out)
         };
         out->ntemps = (int)(sizeof legacy / sizeof legacy[0]);
         for (int i = 0; i < out->ntemps; i++) {
-            memset(&out->temps[i], 0, sizeof out->temps[i]);
-            snprintf(out->temps[i].dev, sizeof out->temps[i].dev, "%s", legacy[i].n);
+            out->temps[i] = (fnos_temp_t){ .dev="", .dn="", .ch="" };
+            fnos_status_text(out, &out->temps[i].dev, "%s", legacy[i].n);
             out->temps[i].c = legacy[i].c;
         }
     }
@@ -439,11 +468,14 @@ bool fnos_data_get(fnos_status_t *out)
 
 /* 曲线样本：确定性的正弦 + 噪声，让趋势/峰值/量程都吃到真实分布 */
 static int64_t s_seq;
+static bool s_override_sample_enabled;
+static fnos_sample_t s_override_sample;
 int fnos_data_hist_read(int64_t since_seq, fnos_sample_t *out, int max, int64_t *next_seq)
 {
     int n = 0;
     if (s_state == ST_WARMING || s_state == ST_OFFLINE || s_state == ST_OFFLINE_TLS) return 0;
     while (n < max && since_seq + n < s_seq) {
+        if (s_override_sample_enabled) { out[n++] = s_override_sample; continue; }
         int64_t k = since_seq + n;
         double t = (double)k;
         out[n].cpu    = (float)(34.0 + 11.0 * sin(t * 0.31) + 5.0 * sin(t * 1.7) + 2.0 * sin(t * 5.3));
@@ -461,9 +493,13 @@ int64_t fnos_data_hist_seq(void) { return s_seq; }
 
 /* ── 取图 ─────────────────────────────────────────────────────────── */
 
-#define SCR_W 1024
-#define SCR_H 600
-static uint16_t s_frame[SCR_W * SCR_H];
+/* 屏幕尺寸是**运行时**的：`PREVIEW_SIZE=800x480` 就能把同一份 UI 渲到别的分辨率上
+   ——"分辨率自适应"这句话只有拿别的尺寸真出一张图才算证明（面板固定 1024×600，
+   实机只能验这一档）。缓冲区按最大档开，LVGL 按 s_scr_w/h 建显示。 */
+#define SCR_MAX_W 1280
+#define SCR_MAX_H 800
+static int s_scr_w = 1024, s_scr_h = 600;
+static uint16_t s_frame[SCR_MAX_W * SCR_MAX_H];
 static const char *s_outdir = "out";
 
 static void flush_cb(lv_display_t *d, const lv_area_t *area, uint8_t *px_map)
@@ -471,7 +507,7 @@ static void flush_cb(lv_display_t *d, const lv_area_t *area, uint8_t *px_map)
     const uint16_t *src = (const uint16_t *)px_map;
     for (int y = area->y1; y <= area->y2; y++)
         for (int x = area->x1; x <= area->x2; x++)
-            s_frame[y * SCR_W + x] = *src++;
+            s_frame[y * s_scr_w + x] = *src++;
     lv_display_flush_ready(d);
 }
 
@@ -571,6 +607,22 @@ static void audit_bounds(lv_obj_t *o)
     }
 }
 
+/* A translated page may legitimately cross the viewport edge. Start the bounds
+   walk at each visible native page, retaining every page-to-card and internal
+   parent/child check. audit_bounds checks children, never its argument's parent. */
+static unsigned audit_motion_page_bounds(lv_obj_t *root)
+{
+    if (lv_obj_has_flag(root, LV_OBJ_FLAG_HIDDEN)) return 0;
+    if (lv_obj_has_flag(root, LV_OBJ_FLAG_USER_1)) {
+        audit_bounds(root);
+        return 1;
+    }
+    unsigned found = 0;
+    for (uint32_t i = 0; i < lv_obj_get_child_count(root); i++)
+        found += audit_motion_page_bounds(lv_obj_get_child(root, i));
+    return found;
+}
+
 /* 可点击对象之间不许互相压住。这条是针对"控件被画到不该在的地方"最实在的检查：
    配对键盘第四行（删除 / 0 / 确认）原先掉出了键盘盒子，正好压在"关闭"按钮上——
    两个都能点、都看得见、各自都"存在"，字形审计和文字断言全都不会说话，而真机上
@@ -617,6 +669,24 @@ static const char *describe_obj(lv_obj_t *o)
     return buf;
 }
 
+/* A scrolled clickable block can be taller than its viewport. Hit testing respects
+ * ancestor clipping, so overlap checks must compare the reachable intersection. */
+static bool visible_click_area(lv_obj_t *obj, lv_area_t *area)
+{
+    lv_obj_get_coords(obj, area);
+    for (lv_obj_t *p = lv_obj_get_parent(obj); p; p = lv_obj_get_parent(p)) {
+        if (lv_obj_has_flag(p, LV_OBJ_FLAG_OVERFLOW_VISIBLE)) continue;
+        lv_area_t parent;
+        lv_obj_get_coords(p, &parent);
+        area->x1 = LV_MAX(area->x1, parent.x1);
+        area->x2 = LV_MIN(area->x2, parent.x2);
+        area->y1 = LV_MAX(area->y1, parent.y1);
+        area->y2 = LV_MIN(area->y2, parent.y2);
+        if (area->x1 > area->x2 || area->y1 > area->y2) return false;
+    }
+    return true;
+}
+
 static void audit_overlap(void)
 {
     s_tap_n = 0;
@@ -626,8 +696,7 @@ static void audit_overlap(void)
             lv_obj_t *a = s_tap[i], *b = s_tap[j];
             if (is_ancestor(a, b) || is_ancestor(b, a)) continue;
             lv_area_t x, y;
-            lv_obj_get_coords(a, &x);
-            lv_obj_get_coords(b, &y);
+            if (!visible_click_area(a, &x) || !visible_click_area(b, &y)) continue;
             int ox = (x.x2 < y.x2 ? x.x2 : y.x2) - (x.x1 > y.x1 ? x.x1 : y.x1);
             int oy = (x.y2 < y.y2 ? x.y2 : y.y2) - (x.y1 > y.y1 ? x.y1 : y.y1);
             if (ox > 2 && oy > 2) {                       /* 2px 容差：贴边不算压住 */
@@ -659,7 +728,7 @@ static void audit_overlap(void)
    加新面板时如果忘了在预览里把它打开，这个数就会涨 —— 那才是要拦的情况。
 
    2026-10-06 温度全通道改造把它从 56 抬到 169，构成逐项可对：
-     96 = 系统页温度卡行池 48 行（FNOS_MAX_TEMPS 24→48）里没用到的 24 行 × 4 构件
+     96 = 系统页温度卡行池 48 行（PREVIEW_TEMPS 24→48）里没用到的 24 行 × 4 构件
           （名称/数值/条轨/条填充）—— 旧基线 56 就是这一项的旧值（池 24、桩 10 ⇒ 14×4）；
      72 = 温度页三列行池 48 行里没用到的 24 行 × 3 构件
           （两行式行只有 设备名/通道名/数值，没有条，所以每行少一个构件）；
@@ -685,10 +754,64 @@ static void seen_add(const void *p)
     if (s_seen_n < SEEN_MAX && !seen_has(p)) s_seen[s_seen_n++] = p;
 }
 
+/* 屏幕文案里不该出现没被消费掉的格式说明符（"%d" / "%s" / "%u"…）：
+   真实事故是 set_txt(x, "%s", cond ? "A" : "容器 %d/%d 运行", n, m) —— 三元表达式选中的
+   字面量被当成 %s 的实参，"%d/%d" 就原样印在设备屏上（2026-10-08 实机照片抓到）。
+   放在快照路径上，是为了让**每一张**样张都替这条规则站岗：出事的那个状态当时恰好
+   没有样张覆盖（有告警的那一帧走的是另一个分支），才让它活到了真机上。 */
+static void audit_format_residue(lv_obj_t *o, const char *tag)
+{
+    if (lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return;
+    if (lv_obj_check_type(o, &lv_label_class)) {
+        const char *text = lv_label_get_text(o);
+        for (const char *p = text; *p; p++) {
+            if (*p != '%') continue;
+            char c = p[1];
+            if (c == '%') { p++; continue; }            /* 真正的百分号 */
+            if ((c != '\0' && strchr("dsufxXgc", c)) || (c >= '0' && c <= '9')) {
+                fprintf(stderr, "format residue in \"%s\" @ %s\n", text, tag);
+                abort();
+            }
+        }
+    }
+    for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) {
+        audit_format_residue(lv_obj_get_child(o, i), tag);
+    }
+}
+
 static void audit_labels(lv_obj_t *o)
 {
     if (lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return;
     seen_add(o);
+    /* A value label can fit its object while its unit is clipped by the row.
+       Check the full inline reading, including actual typography and gaps. */
+    if (lv_obj_get_style_layout(o, 0) == LV_LAYOUT_FLEX &&
+        lv_obj_get_style_flex_flow(o, 0) == LV_FLEX_FLOW_ROW) {
+        int32_t need = 0;
+        uint32_t labels = 0;
+        bool number = false, all_labels = true;
+        for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) {
+            lv_obj_t *child = lv_obj_get_child(o, i);
+            if (lv_obj_has_flag(child, LV_OBJ_FLAG_HIDDEN)) continue;
+            if (!lv_obj_check_type(child, &lv_label_class)) { all_labels = false; break; }
+            const lv_font_t *font = lv_obj_get_style_text_font(child, 0);
+            number |= font == UK_FONT_NUM_32;
+            lv_point_t size;
+            lv_text_get_size(&size, lv_label_get_text(child), font,
+                             lv_obj_get_style_text_letter_space(child, 0),
+                             lv_obj_get_style_text_line_space(child, 0), LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+            need += size.x + lv_obj_get_style_pad_left(child, 0) + lv_obj_get_style_pad_right(child, 0) +
+                    2 * lv_obj_get_style_border_width(child, 0);
+            labels++;
+        }
+        if (all_labels && number && labels > 1) {
+            need += (labels - 1) * lv_obj_get_style_pad_column(o, 0);
+            if (need > lv_obj_get_content_width(o)) {
+                fprintf(stderr, "inline metric overflow %d > %d\n", (int)need, (int)lv_obj_get_content_width(o));
+                abort();
+            }
+        }
+    }
     if (lv_obj_check_type(o, &lv_label_class)) {
         const char *text = lv_label_get_text(o);
         const lv_font_t *font = lv_obj_get_style_text_font(o, 0);
@@ -811,6 +934,8 @@ static void audit_text_overlap(lv_obj_t *parent)
 
 static int s_cardmap_at = -1;
 static int s_snap_n;
+static bool s_motion_frame; /* only raw in-flight frames permit intentional viewport clipping */
+static bool s_no_settle;   /* 想看动画中途的样子：跳过"把动画落到终值"（PREVIEW_ENTER_MID） */
 
 /* Sibling card overlap is distinct from text and touch bounds. Full overlays are
    intentional; partial overlap between independent cards hides their contents.
@@ -840,7 +965,7 @@ static bool s_keep_hidden;
 static void collect_cards(lv_obj_t *o, lv_obj_t *page)
 {
     if (!s_keep_hidden && lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return;   /* 隐藏子树整枝跳过 */
-    if (lv_obj_get_style_radius(o, 0) == KK_RADIUS &&
+    if (lv_obj_get_style_radius(o, 0) == UK_RADIUS &&
         lv_obj_get_style_bg_opa(o, 0) == LV_OPA_COVER &&
         s_cardn < (int)(sizeof s_cardlist / sizeof s_cardlist[0])) {
         s_cardlist[s_cardn] = o;
@@ -964,6 +1089,26 @@ static void dump_overlap_suspects(lv_obj_t *o, int depth)
     for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) dump_overlap_suspects(lv_obj_get_child(o, i), depth + 1);
 }
 
+static void report_contrast(const char *tag);
+static lv_obj_t *visible_text_containing(lv_obj_t *o, const char *needle);
+
+/* PREVIEW_BANDS_AT 用：递归打印几何量，最多 5 层。 */
+static void probe_geom(lv_obj_t *o, int depth, int maxdepth)
+{
+    if (depth > maxdepth || lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return;
+    lv_area_t a;
+    lv_obj_get_coords(o, &a);
+    printf("%*s%s y=[%d,%d] h=%d minh=%d grow=%d sb=%d ch=%u\n", depth * 2, "",
+           lv_obj_check_type(o, &lv_label_class) ? "LBL" : "obj",
+           (int)a.y1, (int)a.y2, (int)(a.y2 - a.y1 + 1),
+           (int)lv_obj_get_style_min_height(o, 0),
+           (int)lv_obj_get_style_flex_grow(o, 0),
+           lv_obj_has_flag(o, LV_OBJ_FLAG_SCROLLABLE) ? 1 : 0,
+           (unsigned)lv_obj_get_child_count(o));
+    for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++)
+        probe_geom(lv_obj_get_child(o, i), depth + 1, maxdepth);
+}
+
 static void snapshot(const char *name)
 {
     if (getenv("PREVIEW_PAGE_CARDS")) {
@@ -998,14 +1143,49 @@ static void snapshot(const char *name)
         if (sscanf(getenv("PREVIEW_WHO"), "%dx%d", &w, &h) == 2) dump_cards_named(lv_screen_active(), w, h);
     }
     if (++s_snap_n == s_cardmap_at) { fnos_ui_dump_card_map(); }
+
+    {   /* PREVIEW_BANDS_AT=<快照名子串>：打印活动页的纵向预算 —— 页高、
+           每个直接子对象的实际高 / min_height / flex_grow。
+           用来定位"页底把内容切掉"这类问题（内容超过页高时 LVGL 只裁不报）。 */
+        const char *want = getenv("PREVIEW_BANDS_AT");
+        if (want && strstr(name, want)) {
+            lv_obj_t *scr = lv_screen_active();
+            for (uint32_t k = 0; k < lv_obj_get_child_count(scr); k++) {
+                lv_obj_t *host = lv_obj_get_child(scr, k);
+                lv_obj_t *pg = host;
+                for (uint32_t d = 0; d < lv_obj_get_child_count(host); d++) {
+                    lv_obj_t *c = lv_obj_get_child(host, d);
+                    if (!lv_obj_has_flag(c, LV_OBJ_FLAG_HIDDEN) && lv_obj_get_child_count(c) > 1) pg = c;
+                }
+                if (pg == host) continue;
+                printf("== %s host=%u\n", name, (unsigned)k);
+                probe_geom(pg, 0, 5);
+            }
+        }
+    }
+    /* 截图要的是**稳态**：换页入场是 160ms 淡入 + 20ms 错峰，不落终值就会截到
+       "半透明的一页"——那种帧既不能当像素基线，也不代表设备上停留的样子。
+       这里直接把在飞的 opa 动画落到终值，而不是推进虚拟时钟：推时钟会连带把
+       应用定时器（ui_tick，500ms 一跳）也喂一跳，数据年龄/轮询计数跟着漂，
+       快照就不再可复现了。想看动画中途的样子用 PREVIEW_ENTER_MID=1。 */
+    if (!s_no_settle) {
+        fnos_ui_motion_settle();  /* public page-transition completion, static snapshots only */
+        uk_anim_settle(lv_screen_active());
+    }
     /* 审计前必须先把布局跑完：LVGL 的坐标是**布局结果**，建树那一刻卡片还是 0x0。
        少了这一句，audit_bounds 会把"还没算布局"的父对象（[0,0]-[-1,-1]）当成父，
        报出一堆假越界 —— 曾因此以为系统页摘要条有 280 高（实际 44）。 */
     lv_obj_update_layout(lv_screen_active());
     lv_refr_now(lv_display_get_default());
     audit_labels(lv_screen_active());
-    audit_bounds(lv_screen_active());
-    audit_overlap();
+    audit_format_residue(lv_screen_active(), name);
+    if (s_motion_frame) {
+        assert(audit_motion_page_bounds(lv_screen_active()) > 0 &&
+               "motion bounds audit requires native page identity metadata");
+    } else {
+        audit_bounds(lv_screen_active());
+        audit_overlap();
+    }
     /* 首个快照是"建树刚结束"的中间态：所有页还都可见、卡片的 coords 未必都算过，
        此时的坐标不构成任何不变量（真重叠会在后续快照里稳定复现）。跳过它，
        但仍把结果打到日志里 —— 需要时能看见，不会变成"测试睁一只眼"。 */
@@ -1015,14 +1195,17 @@ static void snapshot(const char *name)
        这件事本来就有更强的判据 —— `audit_text_overlap` 比的是**字形盒**，
        文字被压住一定报得出来，图形被压住则由 `audit_bounds` 兜住。
        一条会把好人误伤的检查，比没有这条检查更糟：它逼着人改坏版面去迁就它。 */
-    if (getenv("PREVIEW_CARD_OVERLAP")) audit_card_overlap(lv_screen_active());
-    audit_text_overlap(lv_screen_active());
+    if (!s_motion_frame) {
+        if (getenv("PREVIEW_CARD_OVERLAP")) audit_card_overlap(lv_screen_active());
+        audit_text_overlap(lv_screen_active());
+        report_contrast(name);
+    }
     char path[512];
     snprintf(path, sizeof path, "%s/%s.ppm", s_outdir, name);
     FILE *f = fopen(path, "wb");
     if (!f) { fprintf(stderr, "cannot write %s\n", path); exit(1); }
-    fprintf(f, "P6\n%d %d\n255\n", SCR_W, SCR_H);
-    for (int i = 0; i < SCR_W * SCR_H; i++) {
+    fprintf(f, "P6\n%d %d\n255\n", s_scr_w, s_scr_h);
+    for (int i = 0; i < s_scr_w * s_scr_h; i++) {
         uint16_t v = s_frame[i];
         fputc((((v >> 11) & 0x1F) * 255) / 31, f);
         fputc((((v >>  5) & 0x3F) * 255) / 63, f);
@@ -1068,6 +1251,18 @@ static void run_state(preview_state_t st, int index)
 
     for (int p = 0; p < FNOS_UI_PAGE_COUNT; p++) {
         fnos_ui_set_page(p);
+        /* 换页入场插在"推进到稳态"之前：只走 60ms（160ms 淡入的中段），
+           并且跳过 settle，才截得到动画本身。默认不跑，免得污染 57 张基线。 */
+        const char *mid = getenv("PREVIEW_ENTER_MID");
+        if (mid && p == atoi(mid)) {
+            vtick_advance(60);
+            lv_timer_handler();
+            s_no_settle = true;
+            char m[72];
+            snprintf(m, sizeof m, "%02d-%s-p%d-enter-mid", index, state_name(st), p);
+            snapshot(m);
+            s_no_settle = false;
+        }
         vtick_advance(300);
         lv_timer_handler();
         char name[64];
@@ -1089,6 +1284,35 @@ static lv_obj_t *visible_text(lv_obj_t *o, const char *text)
         if (found) return found;
     }
     return NULL;
+}
+
+/* Container identities must retain collector order through repeated reflows
+   and when a larger snapshot adds new rows to an already split pool. */
+static void verify_container_order(void)
+{
+    int previous_page = fnos_ui_page();
+    fnos_status_t st = {0};
+    fnos_data_get(&st);
+    for (int pass = 0; pass < 4; pass++) {
+        fnos_ui_set_page(3);
+        fnos_ui_motion_settle();
+        lv_obj_update_layout(lv_screen_active());
+        lv_area_t previous = {0};
+        for (int i = 0; i < st.ndocker; i++) {
+            lv_obj_t *name = visible_text(lv_screen_active(), st.docker[i].n);
+            assert(name && "reported container must remain reachable");
+            lv_area_t current;
+            lv_obj_get_coords(name, &current);
+            assert(i == 0 || current.y1 > previous.y1 ||
+                   (current.y1 == previous.y1 && current.x1 > previous.x1));
+            previous = current;
+        }
+        fnos_ui_set_page(0);
+        fnos_ui_motion_settle();
+    }
+    fnos_ui_set_page(previous_page);
+    fnos_ui_motion_settle();
+    printf("checks: %d containers preserve collector reading order across reflows PASS\n", st.ndocker);
 }
 
 static void verify_transitions(void)
@@ -1127,7 +1351,10 @@ static void verify_transitions(void)
        不穿隐藏子树，和看门狗的规则一致）。 */
     fnos_ui_set_page(0);
     vtick_advance(300); lv_timer_handler();
-    assert(visible_text(lv_screen_active(), "资源趋势 · 最近 7 分钟 · 有断流"));
+    assert(visible_text(lv_screen_active(), "NAS · 运行时长"));
+    fnos_ui_set_page(2);
+    vtick_advance(300); lv_timer_handler();
+    assert(visible_text(lv_screen_active(), "网络吞吐 · 最近 7 分钟 · 有断流"));
 
     fnos_ui_set_page(3);
     lv_obj_t *last_dock = visible_text(lv_screen_active(), "container-11");
@@ -1145,14 +1372,14 @@ static void verify_transitions(void)
     lv_obj_get_coords(last_dock, &row);
     assert(row.y1 >= bounds.y1 && row.y2 <= bounds.y2);
     snapshot("06-system-scroll");
-    lv_obj_t *label = visible_text(lv_screen_active(), "采集诊断");
+    lv_obj_t *label = visible_text(lv_screen_active(), "设置");
     assert(label);
     lv_obj_send_event(lv_obj_get_parent(label), LV_EVENT_CLICKED, NULL);
-    assert(visible_text(lv_screen_active(), "返回系统"));
+    assert(visible_text(lv_screen_active(), "返回"));
     /* 未知字段容错：应用比板子新（协议超范围）+ 状态词板子不认识，
        两种都必须照常显示 —— 显示成空白会让人以为界面漏了数据。 */
     assert(visible_text(lv_screen_active(), "v3（本机只认到 v2，新字段会忽略）"));
-    assert(visible_text(lv_screen_active(), "9 段 · smart degraded、mem 没权限 …"));
+    assert(visible_text(lv_screen_active(), "smart degraded · mem 没权限 · net 正常 · vols 正常 · raid 正常 · disks 正常 · temps 正常 · docker 已关闭 · zfs 读不到"));
     snapshot("06-diagnostics");
     lv_obj_send_event(lv_obj_get_parent(label), LV_EVENT_CLICKED, NULL);
     assert(visible_text(lv_screen_active(), "容器服务"));
@@ -1161,7 +1388,7 @@ static void verify_transitions(void)
     vtick_advance(500); lv_timer_handler();
     lv_obj_send_event(lv_obj_get_parent(label), LV_EVENT_CLICKED, NULL);
     assert(visible_text(lv_screen_active(), "v2"));
-    assert(visible_text(lv_screen_active(), "9 段 · docker 已关闭、zfs 读不到"));
+    assert(visible_text(lv_screen_active(), "cpu 正常 · mem 正常 · net 正常 · vols 正常 · raid 正常 · disks 正常 · temps 正常 · docker 已关闭 · zfs 读不到"));
     lv_obj_send_event(lv_obj_get_parent(label), LV_EVENT_CLICKED, NULL);
 
     s_state = ST_HEALTHY;
@@ -1169,8 +1396,26 @@ static void verify_transitions(void)
     assert(visible_text(lv_screen_active(), "暂无告警事件"));
     assert(!visible_text(lv_screen_active(), "container qbittorrentee down"));
     assert(!visible_text(lv_screen_active(), "/vol4 used 95%"));
+    /* 告警页的健康态不是"一屏留白"：它要顺带回答"看住了什么、现在什么状态"。
+       这一帧同时是那四行的审计面（字形覆盖 / 标签溢出 / 越界 / 对比度都靠它），
+       所以断言的是"值确实填进去了"，不是一个占位符。 */
+    fnos_ui_set_page(5);
+    fnos_ui_motion_settle();
+    vtick_advance(500); lv_timer_handler();
+    lv_obj_update_layout(lv_screen_active());
+    assert(visible_text(lv_screen_active(), "暂无告警事件"));
+    assert(visible_text(lv_screen_active(), "当前监控维度"));
+    assert(visible_text_containing(lv_screen_active(), " 个卷 · 最高 "));
+    assert(visible_text_containing(lv_screen_active(), " 路 · 最热 "));
+    assert(visible_text_containing(lv_screen_active(), " 次 · 失败 "));
+    snapshot("06-alerts-health");
     fnos_ui_set_page(0);
     assert(visible_text(lv_screen_active(), "无采集告警"));
+    /* 结论带那行文案曾经把 "%d/%d" 原样印到屏上（set_txt 的 "%s" 吃的实参里带着格式串，
+       实机 2026-10-08 抓到）。这里守两道：文案得有真正的运行数，且屏上不许残留
+       没被消费掉的格式说明符。 */
+    assert(visible_text_containing(lv_screen_active(), "运行 · 无待处理事件"));
+    assert(!visible_text_containing(lv_screen_active(), "%d"));
     s_state = ST_LOCKBUSY;
     vtick_advance(500); lv_timer_handler();
     assert(visible_text(lv_screen_active(), "无采集告警"));
@@ -1178,6 +1423,31 @@ static void verify_transitions(void)
     vtick_advance(500); lv_timer_handler();
     assert(visible_text(lv_screen_active(), "等待数据"));
     assert(!visible_text(lv_screen_active(), "100"));
+
+    /* 配网卡是**覆盖层**，不该自己冒出来（实机回归：卡建出来就是可见的，而"有凭据"
+       时开机规则不跑，于是系统页被它永远盖住；预览此前恰好都走"没凭据"那条路，
+       卡先被打开、再被 set_page 收掉，正好绕开了这个状态）。
+       判据取卡上的按钮文字：卡隐藏时它们不可见。 */
+    bool cfg0 = s_wifi_cfg, on0 = s_wifi_on;
+    char ssid0[64], reason0[160];
+    snprintf(ssid0, sizeof ssid0, "%s", s_wifi_ssid_stub);
+    snprintf(reason0, sizeof reason0, "%s", s_wifi_reason);
+    wifi_stub(true, true, "llll", NULL);          /* 有凭据、已连接 */
+    fnos_ui_set_page(0);
+    vtick_advance(500); lv_timer_handler();
+    fnos_ui_set_page(3);
+    assert(!visible_text(lv_screen_active(), "重新扫描"));
+    assert(!visible_text(lv_screen_active(), "手动输入"));
+    assert(visible_text(lv_screen_active(), "告警与事件"));   /* 正文还在，没被覆盖层顶掉 */
+    /* 顶栏入口点开 → 卡出现（同槽位，正文让位）；标签此时是 SSID（已连接） */
+    lv_obj_t *wbtn = visible_text(lv_screen_active(), "llll");
+    assert(wbtn);
+    lv_obj_send_event(lv_obj_get_parent(wbtn), LV_EVENT_CLICKED, NULL);
+    vtick_advance(500); lv_timer_handler();
+    assert(visible_text(lv_screen_active(), "重新扫描"));
+    /* 复位 fixture：这组断言改了全局配网状态，不复位会把后面的样张一起带偏 */
+    wifi_stub(cfg0, on0, ssid0, reason0);
+    puts("checks: wifi card stays hidden on p3 when credentials exist, opens from the top bar PASS");
     puts("checks: maximum-list scrolling, glyph coverage, diagnostics toggle, alert clearing, healthy/waiting/lock-timeout transitions PASS");
 }
 
@@ -1217,6 +1487,7 @@ static void click_text(const char *text)
     lv_obj_t *l = visible_text_clickable(lv_screen_active(), text);
     assert(l);
     lv_obj_t *b = lv_obj_get_parent(l);
+    lv_obj_scroll_to_view_recursive(b, LV_ANIM_OFF);
     lv_obj_update_layout(lv_screen_active());
     lv_area_t a;
     lv_obj_get_coords(b, &a);
@@ -1229,10 +1500,560 @@ static void click_text(const char *text)
     lv_obj_update_layout(lv_screen_active());
 }
 
+/* Regression checks exercise actual pointer hit testing and dynamic rendering. */
+static lv_obj_t *visible_text_containing(lv_obj_t *o, const char *needle)
+{
+    if (lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return NULL;
+    if (lv_obj_check_type(o, &lv_label_class) && strstr(lv_label_get_text(o), needle)) return o;
+    for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) {
+        lv_obj_t *found = visible_text_containing(lv_obj_get_child(o, i), needle);
+        if (found) return found;
+    }
+    return NULL;
+}
+
+static void regression_tick(void)
+{
+    vtick_advance(500);
+    lv_timer_handler();
+    uk_anim_settle(lv_screen_active());
+    lv_obj_update_layout(lv_screen_active());
+}
+
+static lv_obj_t *find_widget(lv_obj_t *root, const lv_obj_class_t *type)
+{
+    if (lv_obj_check_type(root, type)) return root;
+    for (uint32_t i = 0; i < lv_obj_get_child_count(root); i++) {
+        lv_obj_t *found = find_widget(lv_obj_get_child(root, i), type);
+        if (found) return found;
+    }
+    return NULL;
+}
+
+static lv_obj_t *overview_object(const char *title, const lv_obj_class_t *type)
+{
+    lv_obj_t *label = visible_text(lv_screen_active(), title);
+    assert(label);
+    lv_obj_t *card = lv_obj_get_parent(lv_obj_get_parent(label));
+    return find_widget(card, type);
+}
+
+static int chart_values_equal(lv_obj_t *chart, int series_index, int32_t value)
+{
+    const int32_t *data = lv_chart_get_series_y_array(chart, uk_trend_series(chart, series_index));
+    int count = 0;
+    for (uint32_t i = 0; i < lv_chart_get_point_count(chart); i++) if (data[i] == value) count++;
+    return count;
+}
+
+/* Real zero histories, monotonic cursor, local stale modules, and full-volume scroll. */
+static void verify_overview_charts(void)
+{
+    preview_state_t previous = s_state;
+    char previous_ssid[sizeof s_wifi_ssid_stub];
+    memcpy(previous_ssid, s_wifi_ssid_stub, sizeof previous_ssid);
+    snprintf(s_wifi_ssid_stub, sizeof s_wifi_ssid_stub, "PREVIEW-LAN");
+    fnos_status_t fixture = {0};
+    fill_live(&fixture);
+    fixture.nalerts = 0;
+    fixture.nmods = 7;
+    static const char *const names[] = { "cpu", "mem", "net", "vols", "raid", "temps", "docker" };
+    for (int i = 0; i < fixture.nmods; i++) {
+        fnos_status_text(&fixture, &fixture.mods[i].name, "%s", names[i]);
+        fnos_status_text(&fixture, &fixture.mods[i].status, "ok");
+    }
+    fixture.cpu.pct = fixture.mem.pct = fixture.net.rx_kbs = fixture.net.tx_kbs = 0;
+    fixture.mem.used_mb = 0;
+    s_override_status = &fixture;
+    s_override_sample_enabled = true;
+    memset(&s_override_sample, 0, sizeof s_override_sample);
+    s_state = ST_LIVE;
+    fnos_ui_set_page(0);
+    s_seq += CONFIG_FNOS_CHART_WINDOW;
+    for (int i = 0; i < (CONFIG_FNOS_CHART_WINDOW + 63) / 64 + 1; i++) regression_tick();
+    lv_obj_t *cpu = overview_object("NAS · 运行时长", &lv_chart_class);
+    lv_obj_t *mem = overview_object("内存使用率", &lv_chart_class);
+    lv_obj_t *net = overview_object("网络吞吐", &lv_chart_class);
+    assert(cpu && mem && net);
+    assert(lv_chart_get_point_count(cpu) == CONFIG_FNOS_CHART_WINDOW);
+    assert(chart_values_equal(cpu, 0, 0) == CONFIG_FNOS_CHART_WINDOW);
+    assert(chart_values_equal(mem, 0, 0) == CONFIG_FNOS_CHART_WINDOW);
+    assert(chart_values_equal(net, 0, 0) == CONFIG_FNOS_CHART_WINDOW);
+    assert(chart_values_equal(net, 1, 0) == CONFIG_FNOS_CHART_WINDOW);
+    /* The replica hero intentionally has no arc; real zero samples and both
+       visible numeric values remain required observables. */
+    assert(visible_text(overview_object("NAS · 运行时长", &lv_obj_class), "0"));
+    assert(visible_text(overview_object("内存使用率", &lv_obj_class), "0"));
+    snapshot("10-overview-zero");
+
+    s_override_sample = (fnos_sample_t){ .cpu = 17, .mem = 42, .rx_kbs = 128, .tx_kbs = 64 };
+    fixture.cpu.pct = 17; fixture.mem.pct = 42;
+    fixture.mem.used_mb = fixture.mem.total_mb * 0.42f;
+    fixture.net.rx_kbs = 128; fixture.net.tx_kbs = 64;
+    s_seq++;
+    regression_tick();
+    assert(chart_values_equal(cpu, 0, 17) == 1 && chart_values_equal(mem, 0, 42) == 1);
+    assert(chart_values_equal(net, 0, 128) == 1 && chart_values_equal(net, 1, 64) == 1);
+    for (int i = 0; i < 8; i++) regression_tick();
+    assert(chart_values_equal(cpu, 0, 17) == 1 && chart_values_equal(net, 0, 128) == 1);
+    fnos_ui_set_page(2); regression_tick();
+    lv_obj_t *title = visible_text_containing(lv_screen_active(), "网络吞吐");
+    assert(title);
+    lv_obj_t *detail = find_widget(lv_obj_get_parent(lv_obj_get_parent(title)), &lv_chart_class);
+    size_t bytes = CONFIG_FNOS_CHART_WINDOW * sizeof(int32_t);
+    /* Compare chronological values; a recovery gap can change physical ring offsets. */
+    for (int series = 0; series < 2; series++) {
+        lv_chart_series_t *a = uk_trend_series(net, series);
+        lv_chart_series_t *b = uk_trend_series(detail, 1 - series);
+        const int32_t *ad = lv_chart_get_series_y_array(net, a);
+        const int32_t *bd = lv_chart_get_series_y_array(detail, b);
+        uint32_t ax = lv_chart_get_x_start_point(net, a), bx = lv_chart_get_x_start_point(detail, b);
+        for (int i = 0; i < CONFIG_FNOS_CHART_WINDOW; i++)
+            assert(ad[(ax + i) % CONFIG_FNOS_CHART_WINDOW] == bd[(bx + i) % CONFIG_FNOS_CHART_WINDOW]);
+    }
+    fnos_ui_set_page(0); regression_tick();
+
+    fnos_status_text(&fixture, &fixture.mods[0].status, "stale");
+    fnos_status_text(&fixture, &fixture.mods[2].status, "denied");
+    fnos_status_text(&fixture, &fixture.mods[4].status, "stale");
+    fnos_status_text(&fixture, &fixture.mods[5].status, "denied");
+    fnos_status_text(&fixture, &fixture.mods[6].status, "denied");
+    s_seq += 2;
+    regression_tick();
+    assert(chart_values_equal(cpu, 0, 17) == 1); // stale resource is frozen
+    assert(chart_values_equal(mem, 0, 42) == 3); // healthy module still advances
+    assert(chart_values_equal(net, 0, 128) == 1 && lv_obj_has_flag(net, LV_OBJ_FLAG_HIDDEN));
+    assert(visible_text_containing(lv_screen_active(), "阵列旧值"));
+    assert(visible_text_containing(lv_screen_active(), "温度旧值"));
+    assert(lv_obj_get_style_opa(cpu, 0) == LV_OPA_40);
+    snapshot("10-overview-partial");
+
+    for (int i = 0; i < fixture.nmods; i++) fnos_status_text(&fixture, &fixture.mods[i].status, "ok");
+    s_seq++;
+    regression_tick();
+    assert(chart_values_equal(cpu, 0, LV_CHART_POINT_NONE) == 1);
+    assert(chart_values_equal(net, 0, LV_CHART_POINT_NONE) == 1);
+    fixture.online = false;
+    snprintf(fixture.last_err, sizeof fixture.last_err, "timeout");
+    int32_t old[CONFIG_FNOS_CHART_WINDOW];
+    memcpy(old, lv_chart_get_series_y_array(net, uk_trend_series(net, 0)), bytes);
+    s_seq++;
+    regression_tick();
+    assert(!memcmp(old, lv_chart_get_series_y_array(net, uk_trend_series(net, 0)), bytes));
+    assert(visible_text(lv_screen_active(), "旧历史 · 暂停更新"));
+    snapshot("10-overview-old-history");
+
+    fixture.online = true;
+    fixture.nvols = PREVIEW_VOLS;
+    for (int i = 0; i < fixture.nvols; i++) {
+        fnos_status_text(&fixture, &fixture.vols[i].mnt, "volume-%02d-long", i);
+        fixture.vols[i].total_gb = 100; fixture.vols[i].used_gb = i * 8;
+        fixture.vols[i].free_gb = 100 - i * 8; fixture.vols[i].pct = i * 8;
+    }
+    regression_tick();
+    char last[64];
+    snprintf(last, sizeof last, "volume-%02d-long", PREVIEW_VOLS - 1);
+    lv_obj_t *last_vol = visible_text(lv_screen_active(), last);
+    assert(last_vol);
+    lv_obj_t *last_row = lv_obj_get_parent(lv_obj_get_parent(last_vol));
+    lv_obj_t *volume_list = lv_obj_get_parent(lv_obj_get_parent(lv_obj_get_parent(last_vol)));
+    /* A short screen scrolls the page before its nested list can be dragged. */
+    lv_obj_scroll_to_view_recursive(volume_list, LV_ANIM_OFF);
+    lv_obj_scroll_to_y(volume_list, 0, LV_ANIM_OFF);
+    lv_obj_update_layout(lv_screen_active());
+    lv_area_t a, view;
+    lv_obj_get_coords(volume_list, &view);
+    /* Drag through the real indev hit-test chain, including bars/labels in the pool. */
+    for (int drag = 0; drag < PREVIEW_VOLS * 2; drag++) {
+        lv_obj_get_coords(last_row, &a);
+        if (a.y1 >= view.y1 && a.y2 <= view.y2) break;
+        s_touch_point.x = (view.x1 + view.x2) / 2;
+        int start = view.y2 - 2;
+        int distance = lv_area_get_height(&view) - 4;
+        s_touch_point.y = start;
+        s_touch_down = true;
+        vtick_advance(30); lv_timer_handler();
+        for (int step = 1; step <= 8; step++) {
+            s_touch_point.y = start - distance * step / 8;
+            vtick_advance(30); lv_timer_handler();
+        }
+        s_touch_down = false;
+        vtick_advance(30); lv_timer_handler();
+        regression_tick();
+    }
+    /* Let native momentum/elastic recovery settle after releasing the pointer. */
+    for (int settle = 0; settle < 3; settle++) regression_tick();
+    lv_obj_get_coords(last_row, &a);
+    if (!(a.y1 >= view.y1 && a.y2 <= view.y2)) {
+        fprintf(stderr, "overview last row=[%d,%d] viewport=[%d,%d] scroll=%d bottom=%d\n",
+                a.y1, a.y2, view.y1, view.y2, (int)lv_obj_get_scroll_y(volume_list),
+                (int)lv_obj_get_scroll_bottom(volume_list));
+        snapshot("10-overview-drag-failure");
+    }
+    assert(a.y1 >= view.y1 && a.y2 <= view.y2);
+    snapshot("10-overview-volumes-bottom");
+
+    fixture.nvols = 0; fixture.ntemps = 0; fixture.cpu.temp_c = 0;
+    regression_tick();
+    assert(visible_text(lv_screen_active(), "没有可用容量数据"));
+    snapshot("10-overview-empty-storage");
+    fixture.ever_ok = false; fixture.online = false;
+    regression_tick();
+    assert(chart_values_equal(cpu, 0, LV_CHART_POINT_NONE) == CONFIG_FNOS_CHART_WINDOW);
+    assert(chart_values_equal(mem, 0, LV_CHART_POINT_NONE) == CONFIG_FNOS_CHART_WINDOW);
+    assert(chart_values_equal(net, 0, LV_CHART_POINT_NONE) == CONFIG_FNOS_CHART_WINDOW);
+    snapshot("10-overview-reset");
+    s_override_sample_enabled = false;
+    s_override_status = NULL;
+    s_state = previous;
+    memcpy(s_wifi_ssid_stub, previous_ssid, sizeof previous_ssid);
+    regression_tick();
+}
+
+static void click_object_center(lv_obj_t *obj)
+{
+    assert(obj && !effectively_hidden(obj));
+    lv_obj_scroll_to_view_recursive(obj, LV_ANIM_OFF);
+    lv_obj_update_layout(lv_screen_active());
+    lv_area_t a;
+    lv_obj_get_coords(obj, &a);
+    s_touch_point.x = (a.x1 + a.x2) / 2;
+    s_touch_point.y = (a.y1 + a.y2) / 2;
+    s_touch_down = true;
+    vtick_advance(40); lv_timer_handler();
+    s_touch_down = false;
+    vtick_advance(40); lv_timer_handler();
+    regression_tick();
+}
+
+static lv_obj_t *temperature_device_block(lv_obj_t *name)
+{
+    /* Find the closest column container with a click handler: the semantic device block.
+       The label lives inside a transparent width slot and a horizontal heading row. */
+    for (lv_obj_t *p = name; p; p = lv_obj_get_parent(p)) {
+        if (lv_obj_get_style_flex_flow(p, LV_PART_MAIN) == LV_FLEX_FLOW_COLUMN &&
+            lv_obj_get_event_count(p) > 0 && lv_obj_has_flag(p, LV_OBJ_FLAG_CLICKABLE)) return p;
+    }
+    return NULL;
+}
+
+typedef struct { lv_obj_t *obj; lv_area_t area; } regression_position_t;
+static regression_position_t s_positions[128];
+static int s_position_n;
+
+static void capture_positions(lv_obj_t *o)
+{
+    if (lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return;
+    if (lv_obj_get_style_flex_flow(o, LV_PART_MAIN) == LV_FLEX_FLOW_COLUMN &&
+        lv_obj_get_event_count(o) > 0 && lv_obj_has_flag(o, LV_OBJ_FLAG_CLICKABLE)) {
+        assert(s_position_n < (int)(sizeof s_positions / sizeof s_positions[0]));
+        s_positions[s_position_n].obj = o;
+        lv_obj_get_coords(o, &s_positions[s_position_n++].area);
+    }
+    for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) capture_positions(lv_obj_get_child(o, i));
+}
+
+static void assert_positions_unchanged(void)
+{
+    for (int i = 0; i < s_position_n; i++) {
+        lv_area_t now;
+        assert(lv_obj_is_valid(s_positions[i].obj));
+        assert(!effectively_hidden(s_positions[i].obj));
+        lv_obj_get_coords(s_positions[i].obj, &now);
+        const lv_area_t *old = &s_positions[i].area;
+        if (now.x1 != old->x1 || now.x2 != old->x2 || now.y1 != old->y1 || now.y2 != old->y2) {
+            fprintf(stderr, "device moved without an input/topology/size change: [%d,%d]-[%d,%d] -> [%d,%d]-[%d,%d]\n",
+                    old->x1, old->y1, old->x2, old->y2, now.x1, now.y1, now.x2, now.y2);
+            abort();
+        }
+    }
+}
+
+static int audit_stale_running_labels(lv_obj_t *o)
+{
+    if (lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return 0;
+    int count = 0;
+    if (lv_obj_check_type(o, &lv_label_class)) {
+        const char *text = lv_label_get_text(o);
+        if (strstr(text, "运行中")) {
+            assert(strstr(text, "上次") || strstr(text, "旧") || strstr(text, "历史") || strstr(text, "部分可读"));
+            assert(lv_color_to_u32(lv_obj_get_style_text_color(o, LV_PART_MAIN)) != lv_color_to_u32(uk_c(UK_OK)));
+            count++;
+        }
+    }
+    for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) count += audit_stale_running_labels(lv_obj_get_child(o, i));
+    return count;
+}
+
+/* Segment failures must not become a healthy empty list or current running rows. */
+static void verify_docker_module_states(void)
+{
+    preview_state_t previous = s_state;
+    int previous_page = fnos_ui_page();
+    fnos_status_t fixture = {0};
+    fill_live(&fixture);
+    int docker_mod = -1;
+    for (int i = 0; i < fixture.nmods; i++)
+        if (!strcmp(fixture.mods[i].name, "docker")) docker_mod = i;
+    assert(docker_mod >= 0);
+    int populated = fixture.ndocker;
+    assert(populated > 0);
+    for (int i = 0; i < populated; i++) fixture.docker[i].up = true;
+    char first_name[strlen(fixture.docker[0].n)+1];
+    snprintf(first_name, sizeof first_name, "%s", fixture.docker[0].n);
+    fnos_status_text(&fixture, &fixture.mods[docker_mod].status, "ok");
+    s_override_status = &fixture;
+    fnos_ui_set_page(3);
+    regression_tick();
+    lv_obj_t *title = visible_text(lv_screen_active(), "容器服务");
+    assert(title);
+    lv_obj_t *card = lv_obj_get_parent(lv_obj_get_parent(title));
+    lv_obj_t *running = visible_text(card, "运行中");
+    assert(running);
+    assert(lv_color_to_u32(lv_obj_get_style_text_color(running, LV_PART_MAIN)) == lv_color_to_u32(uk_c(UK_OK)));
+
+    fixture.ndocker = 0;
+    regression_tick();
+    assert(visible_text(card, "暂无容器"));
+    assert(!visible_text(card, first_name));
+    assert(!visible_text_containing(lv_screen_active(), "容器 0/0"));
+    static const struct { const char *status, *reason; } failures[] = {
+        { "disabled", "未启用" }, { "denied", "权限" },
+        { "missing", "来源" }, { "error", "失败" }, { "future_v3", "future_v3" },
+    };
+    for (size_t i = 0; i < sizeof failures / sizeof failures[0]; i++) {
+        fnos_status_text(&fixture, &fixture.mods[docker_mod].status, "%s", failures[i].status);
+        regression_tick();
+        assert(visible_text_containing(card, failures[i].reason));
+        assert(!visible_text(card, "暂无容器"));
+        assert(!visible_text_containing(lv_screen_active(), "容器 0/0"));
+        assert(!visible_text(card, first_name));
+        if (!strcmp(failures[i].status, "disabled")) snapshot("11-docker-disabled");
+    }
+
+    fixture.ndocker = populated;
+    static const char *const retained[] = { "stale", "partial", "denied" };
+    for (size_t i = 0; i < sizeof retained / sizeof retained[0]; i++) {
+        fnos_status_text(&fixture, &fixture.mods[docker_mod].status, "%s", retained[i]);
+        regression_tick();
+        assert(visible_text(card, first_name));
+        assert(audit_stale_running_labels(card) == populated);
+    }
+    fnos_status_text(&fixture, &fixture.mods[docker_mod].status, "ok");
+    fixture.online = false;
+    regression_tick();
+    assert(audit_stale_running_labels(card) == populated);
+    snapshot("11-docker-retained-offline");
+
+    fixture.online = true;
+    fixture.ever_ok = false; /* Even a retained array must not imply first-sample success. */
+    regression_tick();
+    assert(visible_text_containing(card, "等待"));
+    assert(!visible_text(card, first_name));
+    fixture.ever_ok = true;
+    regression_tick();
+    running = visible_text(card, "运行中");
+    assert(running);
+    assert(lv_color_to_u32(lv_obj_get_style_text_color(running, LV_PART_MAIN)) == lv_color_to_u32(uk_c(UK_OK)));
+    fixture.nmods = 0; /* Collector v1 has no segment metadata. */
+    regression_tick();
+    assert(visible_text(card, first_name));
+    running = visible_text(card, "运行中");
+    assert(running);
+    assert(lv_color_to_u32(lv_obj_get_style_text_color(running, LV_PART_MAIN)) == lv_color_to_u32(uk_c(UK_OK)));
+
+    s_override_status = NULL;
+    s_state = previous;
+    fnos_ui_set_page(previous_page);
+    regression_tick();
+}
+
+static void verify_ui_regressions(void)
+{
+    preview_state_t old_state = s_state;
+    int old_page = fnos_ui_page();
+    fnos_status_t fixture = {0};
+    fill_live(&fixture);
+    fnos_status_text(&fixture, &fixture.host, "%s", "nas-with-a-long-host-name-ABCDEFGHIJKLMNOPQRSTUVWXYZ123456");
+    s_override_status = &fixture;
+    fnos_ui_set_page(0);
+    regression_tick();
+    snapshot("11-long-host");
+
+    /* WARN precedes CRIT in the real fixture. Highest severity must win globally. */
+    fnos_ui_set_page(0);
+    regression_tick();
+    assert(strcmp(fixture.alerts[0].lv, "warn") == 0);
+    assert(strcmp(fixture.alerts[1].lv, "crit") == 0);
+    lv_obj_t *critical = visible_text_containing(lv_screen_active(), fixture.alerts[1].m);
+    assert(critical);
+    assert(lv_color_to_u32(lv_obj_get_style_text_color(critical, LV_PART_MAIN)) == lv_color_to_u32(uk_c(UK_DANGER)));
+
+    /* Explicit stale state on each container row, not only the page summary. */
+    fixture.online = false;
+    fixture.recv_ms -= 96000;
+    snprintf(fixture.last_err, sizeof fixture.last_err, "%s", "connect/timeout");
+    fnos_ui_set_page(3);
+    regression_tick();
+    int expected_up = 0;
+    for (int i = 0; i < fixture.ndocker; i++) if (fixture.docker[i].up) expected_up++;
+    assert(audit_stale_running_labels(lv_screen_active()) == expected_up);
+
+    /* The diagnostic toggle path already exists. Current navigation selection is the missing path. */
+    click_text("设置");
+    assert(visible_text(lv_screen_active(), "返回"));
+    click_text("系统");
+    assert(!visible_text(lv_screen_active(), "返回"));
+    assert(visible_text(lv_screen_active(), "容器服务"));
+    click_text("系统"); click_text("系统");
+    assert(visible_text(lv_screen_active(), "容器服务"));
+
+    fixture.online = true;
+    fixture.nalerts = 0;
+    fixture.last_err[0] = 0;
+    fixture.recv_ms = esp_timer_get_time() / 1000;
+    fnos_ui_set_page(4);
+    regression_tick();
+    lv_obj_t *name = visible_text(lv_screen_active(), "Intel N100");
+    assert(name);
+    lv_obj_t *cpu = temperature_device_block(name);
+    assert(cpu);
+    /* Start in compact form even when an earlier preview step left manual details open. */
+    if (visible_text(lv_screen_active(), "Core 0")) click_object_center(name);
+    assert(!visible_text(lv_screen_active(), "Core 0"));
+    int32_t compact_height = lv_obj_get_height(cpu);
+    for (int cycle = 0; cycle < 2; cycle++) {
+        click_object_center(name);
+        assert(visible_text(lv_screen_active(), "Core 0"));
+        int32_t expanded_height = lv_obj_get_height(cpu);
+        assert(expanded_height > compact_height);
+        click_object_center(name);
+        assert(!visible_text(lv_screen_active(), "Core 0"));
+        assert(lv_obj_get_height(cpu) == compact_height);
+    }
+    snapshot("11-temperature-collapsed");
+
+    /* Same channel/device set and display size, changing temperatures only. */
+    s_position_n = 0;
+    capture_positions(lv_screen_active());
+    assert(s_position_n > 0);
+    float temperatures[PREVIEW_TEMPS];
+    for (int i = 0; i < fixture.ntemps; i++) temperatures[i] = fixture.temps[i].c;
+    for (int frame = 0; frame < 40; frame++) {
+        float jitter = (frame % 2) ? 0.1f : -0.1f; /* input scenario, not a UI risk threshold */
+        for (int i = 0; i < fixture.ntemps; i++) fixture.temps[i].c = temperatures[i] + jitter;
+        fixture.recv_ms = esp_timer_get_time() / 1000;
+        regression_tick();
+        assert(!visible_text(lv_screen_active(), "Core 0"));
+        assert_positions_unchanged();
+    }
+    snapshot("11-temperature-stable-refresh");
+    s_override_status = NULL;
+    s_state = old_state;
+    fnos_ui_set_page(old_page);
+    regression_tick();
+    puts("checks: current-system navigation exits diagnostics, highest severity footer, stale containers, temperature expand/collapse height recovery, stable refresh positions PASS");
+}
+
+
 /* 收集当前可见的所有标签文字，用于"加了这条原因之后，界面上多出了哪句话"这种差分断言 */
 #define MAX_TEXTS 400
 static const char *s_texts[MAX_TEXTS];
 static int s_texts_n;
+/* Protocol capacity and persisted user choice are verified through the displayed UI. */
+static void verify_temperature_protocol_limit(void)
+{
+    preview_state_t old_state = s_state;
+    int old_page = fnos_ui_page();
+    fnos_status_t fixture = {0};
+    fill_live(&fixture);
+    fixture.nalerts = 0;
+    fixture.ntemps = PREVIEW_TEMPS;
+    for (int i = 0; i < fixture.ntemps; i++) {
+        fnos_status_text(&fixture, &fixture.temps[i].dev, "%s", "CPU");
+        fnos_status_text(&fixture, &fixture.temps[i].dn, "%s", "Intel N100");
+        fnos_status_text(&fixture, &fixture.temps[i].ch, "Core %02d", i);
+        fixture.temps[i].c = 40.0f + i * 0.1f;
+    }
+    s_override_status = &fixture;
+    fnos_ui_set_page(4);
+    regression_tick();
+    lv_obj_t *name = visible_text(lv_screen_active(), "Intel N100");
+    assert(name);
+    lv_obj_t *cpu = temperature_device_block(name);
+    assert(cpu);
+    if (visible_text(lv_screen_active(), "Core 00")) click_object_center(name);
+    int32_t compact = lv_obj_get_height(cpu);
+    click_object_center(name);
+    assert(lv_obj_get_height(cpu) > compact);
+    for (int i = 0; i < fixture.ntemps; i++) {
+        char channel[strlen(fixture.temps[i].ch)+1];
+        snprintf(channel, sizeof channel, "Core %02d", i);
+        assert(visible_text(lv_screen_active(), channel));
+    }
+    char last_name[64];
+    snprintf(last_name, sizeof last_name, "Core %02d", fixture.ntemps - 1);
+    lv_obj_t *last = visible_text(lv_screen_active(), last_name);
+    lv_obj_scroll_to_view_recursive(last, LV_ANIM_OFF);
+    lv_obj_update_layout(lv_screen_active());
+    lv_obj_t *viewport = lv_obj_get_parent(last);
+    while (viewport && !lv_obj_has_flag(viewport, LV_OBJ_FLAG_SCROLLABLE)) viewport = lv_obj_get_parent(viewport);
+    assert(viewport);
+    lv_area_t content, row;
+    lv_obj_get_content_coords(viewport, &content);
+    lv_obj_get_coords(last, &row);
+    assert(row.y1 >= content.y1 - 2 && row.y2 <= content.y2 + 2);
+    snapshot("12-cpu-max-channels-expanded");
+
+    /* Refresh must preserve the explicitly opened details and their geometry. */
+    s_position_n = 0;
+    capture_positions(lv_screen_active());
+    for (int frame = 0; frame < 20; frame++) {
+        for (int i = 0; i < fixture.ntemps; i++) fixture.temps[i].c = 40.0f + i * 0.1f + (frame % 2 ? 0.1f : -0.1f);
+        fixture.recv_ms = esp_timer_get_time() / 1000;
+        regression_tick();
+        assert(visible_text(lv_screen_active(), last_name));
+        assert_positions_unchanged();
+    }
+    /* Insert a device earlier in the sort order, then remove it. CPU must keep its user choice. */
+    fnos_temp_t channels[PREVIEW_TEMPS];
+    memcpy(channels, fixture.temps, sizeof channels);
+    memmove(&fixture.temps[1], &fixture.temps[0], (PREVIEW_TEMPS - 1) * sizeof fixture.temps[0]);
+    fnos_status_text(&fixture, &fixture.temps[0].dev, "%s", "BOARD");
+    fnos_status_text(&fixture, &fixture.temps[0].dn, "%s", "Board");
+    fnos_status_text(&fixture, &fixture.temps[0].ch, "%s", "temp1");
+    regression_tick();
+    assert(visible_text(lv_screen_active(), "Core 00"));
+    snapshot("12-temperature-device-added");
+    memcpy(fixture.temps, channels, sizeof channels);
+    regression_tick();
+    name = visible_text(lv_screen_active(), "Intel N100");
+    cpu = temperature_device_block(name);
+    assert(visible_text(lv_screen_active(), last_name));
+    click_object_center(name);
+    assert(!visible_text(lv_screen_active(), last_name));
+    assert(lv_obj_get_height(cpu) == compact);
+    snapshot("12-cpu-max-channels-collapsed");
+
+    /* 串口 'temp n' 的落地点（fnos_ui_request_temp_expand）必须与手指点一下等效：
+       板上没有触摸自动化，实机的"展开态"照片只有走这条路才拍得到。 */
+    fnos_ui_request_temp_expand(0);
+    regression_tick();
+    assert(visible_text(lv_screen_active(), last_name));
+    assert(lv_obj_get_height(cpu) > compact);
+    fnos_ui_request_temp_expand(99);     /* 越界索引：吞掉，不许崩也不许乱展开 */
+    regression_tick();
+    assert(lv_obj_get_height(cpu) > compact);
+    click_object_center(name);           /* 折回去，别把展开态留给后面的用例 */
+    assert(lv_obj_get_height(cpu) == compact);
+
+    s_override_status = NULL;
+    s_state = old_state;
+    fnos_ui_set_page(old_page);
+    regression_tick();
+    puts("checks: all protocol temperature channels manually expand, last channel scrolls into view, explicit details persist, height recovers PASS");
+}
+
 static void collect_texts(lv_obj_t *o)
 {
     if (lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return;
@@ -1269,7 +2090,7 @@ static void verify_reasons(void)
         "cert parse", "no cert", "token rejected", "bad payload", "http status", "read error",
     };
     const int NT = (int)(sizeof TAGS / sizeof TAGS[0]);
-    fnos_status_t st;
+    fnos_status_t st = {0};
     memset(&st, 0, sizeof st);
     st.ever_ok = true;
     st.online = false;
@@ -1344,19 +2165,19 @@ static double contrast(uint32_t a, uint32_t b)
     if (la < lb) { double t = la; la = lb; lb = t; }
     return (la + 0.05) / (lb + 0.05);
 }
-/* 往上找第一个真正有底色的祖先（透明容器不算） */
+/* Composite transparent containers and text against the actual ancestor surface. */
 static uint32_t eff_bg(lv_obj_t *o)
 {
-    for (lv_obj_t *p = o; p; p = lv_obj_get_parent(p)) {
-        lv_opa_t opa = lv_obj_get_style_bg_opa(p, 0);
-        if (opa > LV_OPA_20) return lv_color_to_u32(lv_obj_get_style_bg_color(p, 0)) & 0xFFFFFFu;
-    }
-    return 0x000000u;
+    if (!o) return 0;
+    lv_opa_t opa = lv_obj_get_style_bg_opa(o, 0);
+    uint32_t color = lv_color_to_u32(lv_obj_get_style_bg_color(o, 0)) & 0xFFFFFFu;
+    if (opa == LV_OPA_COVER) return color;
+    uint32_t parent = eff_bg(lv_obj_get_parent(o));
+    return lv_color_to_u32(lv_color_mix(lv_color_hex(color), lv_color_hex(parent), opa)) & 0xFFFFFFu;
 }
-/* 判据用 WCAG 的大字底线 3.0:1。**不是"调到刚好绿"的数字**：实测最低是白天的
-   3.77:1（KK_T4 那级次文本压在卡片底色上），留了余量。真掉到 3 以下就是
-   "有人在某个配色下看不清"，那必须停下来看。 */
-#define CONTRAST_MIN 3.0
+/* Most labels are 12–16px; a blanket large-text threshold missed real failures.
+   Check every static state and page against the normal-text minimum. */
+#define CONTRAST_MIN 4.5
 
 static double s_worst_contrast;
 static const char *s_worst_text = "";
@@ -1371,6 +2192,7 @@ static void audit_contrast(lv_obj_t *o)
             if (opa > LV_OPA_20) {
                 uint32_t fg = lv_color_to_u32(lv_obj_get_style_text_color(o, 0)) & 0xFFFFFFu;
                 uint32_t bg = eff_bg(lv_obj_get_parent(o));
+                fg = lv_color_to_u32(lv_color_mix(lv_color_hex(fg), lv_color_hex(bg), opa)) & 0xFFFFFFu;
                 double c = contrast(fg, bg);
                 if (s_worst_contrast == 0 || c < s_worst_contrast) {
                     s_worst_contrast = c; s_worst_text = t; s_worst_fg = fg; s_worst_bg = bg;
@@ -1407,6 +2229,7 @@ static void verify_pair_messages(void)
         lv_timer_handler();
         lv_refr_now(lv_display_get_default());
         audit_labels(lv_screen_active()); /* 缺字/超高都会在这里 abort */
+        audit_format_residue(lv_screen_active(), "nightly-matrix");
         audit_bounds(lv_screen_active());
         shown++;
     }
@@ -1427,6 +2250,7 @@ static void verify_pair_messages(void)
     snprintf(s_pair_msg, sizeof s_pair_msg, "%s", "配对成功但写入 NVS 失败");
     vtick_advance(500);
     lv_timer_handler();
+    assert(visible_text_containing(lv_screen_active(), "本地保存失败"));
     snapshot("07-pair-failed");
 }
 
@@ -1438,6 +2262,71 @@ static void wifi_click(const char *txt)
     printf("  [wifi] 点 \"%s\"\n", txt);
     fflush(stdout);
     click_text(txt);
+}
+
+/* LVGL DOTS temporarily replaces the label buffer tail. Restore it to inspect
+   the complete source text, then restore DOTS before rendering and bounds checks. */
+static void assert_ellipsized_source(const char *prefix, const char *expected)
+{
+    lv_obj_t *label = visible_text_containing(lv_screen_active(), prefix);
+    assert(label);
+    lv_label_long_mode_t mode = lv_label_get_long_mode(label);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_CLIP);
+    lv_obj_update_layout(lv_screen_active());
+    assert(strcmp(lv_label_get_text(label), expected) == 0);
+    lv_label_set_long_mode(label, mode);
+}
+
+static void verify_wifi_footer(const char *anchor)
+{
+    lv_obj_t *label = visible_text_clickable(lv_screen_active(), anchor);
+    assert(label);
+    lv_obj_t *foot = lv_obj_get_parent(lv_obj_get_parent(label));
+    lv_area_t bounds;
+    lv_obj_get_coords(foot, &bounds);
+    for (uint32_t i = 0; i < lv_obj_get_child_count(foot); i++) {
+        lv_obj_t *button = lv_obj_get_child(foot, i);
+        if (lv_obj_has_flag(button, LV_OBJ_FLAG_HIDDEN)) continue;
+        lv_area_t a;
+        lv_obj_get_coords(button, &a);
+        assert(a.x1 >= bounds.x1 && a.x2 <= bounds.x2 && "Wi-Fi action must fit without horizontal scrolling");
+        lv_obj_scroll_to_view_recursive(button, LV_ANIM_OFF);
+        lv_obj_update_layout(lv_screen_active());
+        lv_obj_get_coords(button, &a);
+        assert(a.y1 >= 0 && a.y2 < s_scr_h && "Wi-Fi action must be reachable");
+    }
+}
+
+static void verify_wifi_keyboard(void)
+{
+    lv_obj_t *space = visible_text_clickable(lv_screen_active(), "空格");
+    assert(space);
+    lv_obj_t *keyboard = lv_obj_get_parent(lv_obj_get_parent(lv_obj_get_parent(space)));
+    lv_obj_t *body = lv_obj_get_parent(keyboard);
+    lv_obj_t *close = lv_obj_get_parent(visible_text_clickable(lv_screen_active(), "关闭"));
+    lv_area_t before, after;
+    lv_obj_get_coords(close, &before);
+    for (uint32_t r = 0; r < lv_obj_get_child_count(keyboard); r++) {
+        lv_obj_t *row = lv_obj_get_child(keyboard, r);
+        for (uint32_t i = 0; i < lv_obj_get_child_count(row); i++) {
+            lv_obj_t *key = lv_obj_get_child(row, i);
+            lv_area_t ra, ka;
+            lv_obj_get_coords(row, &ra);
+            lv_obj_get_coords(key, &ka);
+            assert(ka.y1 >= ra.y1 && ka.y2 <= ra.y2 && "keyboard key must fit its row");
+            lv_obj_scroll_to_view_recursive(key, LV_ANIM_OFF);
+            lv_obj_update_layout(lv_screen_active());
+            lv_obj_get_coords(key, &ka);
+            lv_area_t view;
+            lv_obj_get_content_coords(body, &view);
+            assert(ka.y1 >= view.y1 && ka.y2 <= view.y2 && "keyboard key must be reachable inside the scroll viewport");
+        }
+    }
+    lv_obj_get_coords(close, &after);
+    assert(before.x1 == after.x1 && before.x2 == after.x2 &&
+           before.y1 == after.y1 && before.y2 == after.y2 && "Wi-Fi footer must stay pinned while typing");
+    lv_obj_scroll_to_y(body, 0, LV_ANIM_OFF);
+    lv_obj_update_layout(lv_screen_active());
 }
 
 static void verify_wifi(void)
@@ -1452,12 +2341,15 @@ static void verify_wifi(void)
     assert(visible_text(lv_screen_active(), "重新扫描"));
     assert(visible_text(lv_screen_active(), "ChinaNet-8x2K"));   /* 扫描结果真的填进去了 */
     snapshot("10-wifi-scan");
+    verify_wifi_footer("重新扫描");
 
     /* 选一个加密网络 → 输口令页：整块键盘第一次露面（41 键 + 两行输入 + 显示/隐藏） */
     wifi_click("llll");
     vtick_advance(500); lv_timer_handler();
     assert(visible_text(lv_screen_active(), "空格"));
     snapshot("10-wifi-pass");
+    verify_wifi_footer("返回");
+    verify_wifi_keyboard();
 
     /* 口令不足 8 位：必须拒绝并说明原因 —— 真机上这条最容易白折腾 */
     wifi_click("a"); wifi_click("b"); wifi_click("c");
@@ -1480,6 +2372,7 @@ static void verify_wifi(void)
     vtick_advance(500); lv_timer_handler();
     assert(visible_text(lv_screen_active(), "正在连接…"));
     snapshot("10-wifi-linking");
+    verify_wifi_footer("关闭");
 
     s_wifi_on = true;                              /* 替身：连上了 */
     vtick_advance(500); lv_timer_handler();
@@ -1488,22 +2381,53 @@ static void verify_wifi(void)
            "已连接 llll（192.168.0.42） · 信号 -54 dBm\n"
            "板子已经记住这个网络，下次开机自动连。"));
     snapshot("10-wifi-linked");
+    verify_wifi_footer("关闭");
 
     /* 连不上：标题与原因都要说人话（不能一直写"正在连接…"） */
     wifi_stub(true, false, "llll", "密码不对（认证失败）");
     vtick_advance(500); lv_timer_handler();
     assert(visible_text(lv_screen_active(), "没连上"));
     assert(!visible_text(lv_screen_active(), "连接成功"));
+    assert(visible_text(lv_screen_active(), "修改密码"));
+    assert(!visible_text(lv_screen_active(), "完成"));
+    assert(visible_text(lv_screen_active(), "Wi-Fi 未连接"));
     snapshot("10-wifi-failed");
+    verify_wifi_footer("关闭");
+    wifi_click("修改密码");
+    assert(visible_text(lv_screen_active(), "空格"));
+    assert(visible_text(lv_screen_active(), "llll"));
+    snapshot("10-wifi-retry");
+    verify_wifi_footer("返回");
+    wifi_click("连接");
+    wifi_stub(true, true, "llll", "");
+    vtick_advance(500); lv_timer_handler();
+    assert(visible_text(lv_screen_active(), "完成"));
+    wifi_click("完成");
+    assert(!visible_text(lv_screen_active(), "接入 Wi-Fi"));
 
     /* 关掉卡：顶栏要一直看得见状态；配好了就该是 SSID，不是"未配置" */
-    wifi_click("关闭");
     vtick_advance(500); lv_timer_handler();
     assert(!visible_text(lv_screen_active(), "接入 Wi-Fi"));
     wifi_stub(true, true, "llll", "");
     vtick_advance(500); lv_timer_handler();
     assert(visible_text(lv_screen_active(), "llll"));
     assert(!visible_text(lv_screen_active(), "Wi-Fi 未配置"));
+    const char *long_ssid = "ABCDEFGHIJKLMNOPQRSTUVWXYZ123456";
+    assert(strlen(long_ssid) == 32);
+    wifi_stub(true, true, long_ssid, "");
+    vtick_advance(500); lv_timer_handler();
+    assert_ellipsized_source("ABC", long_ssid);
+    snapshot("10-wifi-long-ssid");
+    wifi_stub(true, false, long_ssid, "");
+    vtick_advance(500); lv_timer_handler();
+    assert_ellipsized_source("连接中", "连接中 · ABCDEFGHIJKLMNOPQRSTUVWXYZ123456");
+    snapshot("10-wifi-long-ssid-linking");
+    wifi_stub(true, false, "ABCDEFGHIJKLMNOPQRSTUVWXYZ12345", "");
+    vtick_advance(500); lv_timer_handler();
+    assert_ellipsized_source("连接中", "连接中 · ABCDEFGHIJKLMNOPQRSTUVWXYZ12345");
+    snapshot("10-wifi-long-ssid-linking-31");
+    wifi_stub(true, true, "llll", "");
+    vtick_advance(500); lv_timer_handler();
 }
 
 static void verify_pairing(void)
@@ -1523,12 +2447,12 @@ static void verify_pairing(void)
     vtick_advance(500); lv_timer_handler();
     /* visible_text 是**整串相等**比较（不是子串），断言必须写整串。
        路数跟着桩走：桩现在是真机的 24 路通道（原来只有 10 个设备级读数）。 */
-    assert(visible_text(lv_screen_active(), "容器 8/8 运行 · 24 路温度 · 0 个事件"));
+    assert(visible_text(lv_screen_active(), "容器 8/8 运行 · 24 路温度 · 严重 0 · 警告 0"));
     assert(!visible_text(lv_screen_active(), "与 NAS 配对"));
     click_text("配对");
     assert(visible_text(lv_screen_active(), "与 NAS 配对"));
-    click_text("采集诊断");
-    assert(visible_text(lv_screen_active(), "返回系统"));
+    click_text("设置");
+    assert(visible_text(lv_screen_active(), "返回"));
     assert(!visible_text(lv_screen_active(), "与 NAS 配对"));
     click_text("配对");
     assert(visible_text(lv_screen_active(), "与 NAS 配对"));
@@ -1537,11 +2461,40 @@ static void verify_pairing(void)
     assert(visible_text(lv_screen_active(), "配对码"));
     assert(visible_text(lv_screen_active(), "三步完成配对"));
     assert(visible_text(lv_screen_active(), "在 NAS 管理页「设备配对」生成 6 位配对码"));
-    assert(visible_text(lv_screen_active(), "在 NAS 管理页「设备配对」生成，把 6 位数字输进右边的键盘"));
+    assert(visible_text(lv_screen_active(), "在 NAS 管理页「设备配对」生成，把 6 位数字输进下方的键盘"));
     /* 左栏（x16 w336）只有一块地方：状态说明与三步指引不能同时出现 —— 真机上
        两者叠在一起过一次（"未配对：用编译期默认地址"盖在"三步完成配对"上）。 */
     assert(!visible_text(lv_screen_active(), "未配对：用编译期默认地址"));
     snapshot("07-pair-code");
+    /* Actions stay on screen while every keypad target remains reachable by scrolling. */
+    lv_obj_t *close = lv_obj_get_parent(visible_text_clickable(lv_screen_active(), "关闭"));
+    lv_obj_t *code_title = visible_text(lv_screen_active(), "配对码");
+    lv_obj_t *grid = lv_obj_get_parent(lv_obj_get_parent(lv_obj_get_parent(code_title)));
+    lv_area_t close_before, close_after, viewport, target;
+    lv_obj_get_coords(close, &close_before);
+    if (close_before.y1 < 0 || close_before.y2 >= lv_display_get_vertical_resolution(NULL))
+        fprintf(stderr, "pair actions outside viewport: [%d,%d]-[%d,%d]\n",
+                (int)close_before.x1, (int)close_before.y1, (int)close_before.x2, (int)close_before.y2);
+    assert(close_before.y1 >= 0 && close_before.y2 < lv_display_get_vertical_resolution(NULL));
+    lv_obj_scroll_by(grid, 0, -lv_obj_get_scroll_bottom(grid), LV_ANIM_OFF);
+    lv_obj_update_layout(lv_screen_active());
+    lv_obj_get_coords(close, &close_after);
+    assert(memcmp(&close_before, &close_after, sizeof close_before) == 0);
+    static const char *const keys[] = { "1", "2", "3", "4", "5", "6", "7", "8", "9", "删除", "0", "确认" };
+    for (unsigned i = 0; i < sizeof keys / sizeof keys[0]; i++) {
+        lv_obj_t *button = lv_obj_get_parent(visible_text_clickable(grid, keys[i]));
+        lv_obj_scroll_to_view_recursive(button, LV_ANIM_OFF);
+        lv_obj_update_layout(lv_screen_active());
+        lv_obj_get_content_coords(grid, &viewport);
+        lv_obj_get_coords(button, &target);
+        if (target.x1 < viewport.x1 || target.x2 > viewport.x2 || target.y1 < viewport.y1 || target.y2 > viewport.y2)
+            fprintf(stderr, "pair key %s target=[%d,%d]-[%d,%d] viewport=[%d,%d]-[%d,%d]\n", keys[i],
+                    (int)target.x1, (int)target.y1, (int)target.x2, (int)target.y2,
+                    (int)viewport.x1, (int)viewport.y1, (int)viewport.x2, (int)viewport.y2);
+        assert(target.x1 >= viewport.x1 && target.x2 <= viewport.x2);
+        assert(target.y1 >= viewport.y1 && target.y2 <= viewport.y2);
+    }
+    lv_obj_scroll_to_y(grid, 0, LV_ANIM_OFF);
     lv_obj_t *key = lv_obj_get_parent(visible_text_clickable(lv_screen_active(), "1"));
     uint32_t callbacks = lv_obj_get_event_count(key);
     for (int i = 0; i < 60; i++) { vtick_advance(500); lv_timer_handler(); }
@@ -1583,10 +2536,9 @@ static void verify_pairing(void)
     lv_area_t card, fp;
     lv_obj_t *fp_lbl = visible_text(lv_screen_active(), "3F:1A:9C:04:E7:52:BB:6D");
     lv_obj_get_coords(fp_lbl, &fp);
-    lv_obj_get_coords(lv_obj_get_parent(lv_obj_get_parent(fp_lbl)), &card);
-    assert(fp.x1 > card.x1 + 300);
-    assert(fp.x2 < card.x2 - 16);
-    assert(fp.y1 > card.y1 && fp.y2 < card.y2 - 60);
+    lv_obj_get_content_coords(lv_obj_get_parent(fp_lbl), &card);
+    assert(fp.x1 >= card.x1 && fp.x2 <= card.x2);
+    assert(fp.y1 >= card.y1 && fp.y2 <= card.y2);
     snapshot("07-pair-confirm");
 
     click_text("接受并配对");
@@ -1635,6 +2587,758 @@ static void audit_never_visible(lv_obj_t *o)
     for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) audit_never_visible(lv_obj_get_child(o, i));
 }
 
+/* Optional deterministic motion probe; the default full audit suite is untouched.
+   PREVIEW_MOTION=0,1,0 selects page targets (indexes < FNOS_UI_PAGE_COUNT).
+   PREVIEW_MOTION_INPUT=swipe (default) uses the native pointer driver; api is
+   available for isolating animation from gesture recognition.
+   Timing inputs in ms: STEP=40, HOLD=800, DRAG=120, RAPID=40, WARMUP=3000.
+   A recording deliberately permits intermediate viewport clipping. Stable
+   terminal frames still run every existing snapshot geometry/touch audit. */
+static fnos_status_t s_motion_fixture;
+
+static unsigned motion_ms(const char *name, unsigned fallback, bool allow_zero)
+{
+    const char *text = getenv(name);
+    if (!text) return fallback;
+    char *end = NULL;
+    errno = 0;
+    unsigned long value = strtoul(text, &end, 10);
+    if (errno || end == text || *end || value > 10000 || (!allow_zero && !value)) {
+        fprintf(stderr, "%s: expected %s0..10000 milliseconds\n", name, allow_zero ? "" : ">");
+        exit(1);
+    }
+    return (unsigned)value;
+}
+
+static void motion_prepare(void)
+{
+    if (!getenv("PREVIEW_MOTION")) return;
+    /* Freeze both clock-dependent telemetry text and the history cursor; advancing
+       native LVGL time must not manufacture new NAS samples or change freshness. */
+    s_motion_clock_us = 1000000000LL;
+    s_motion_clock_frozen = true;
+    s_state = ST_HEALTHY;
+    assert(fnos_data_get(&s_motion_fixture));
+    s_override_status = &s_motion_fixture;
+    s_override_sample_enabled = true;
+    s_override_sample = (fnos_sample_t){
+        .cpu = s_motion_fixture.cpu.pct, .mem = s_motion_fixture.mem.pct,
+        .rx_kbs = s_motion_fixture.net.rx_kbs, .tx_kbs = s_motion_fixture.net.tx_kbs,
+    };
+    s_seq = CONFIG_FNOS_CHART_WINDOW;
+    wifi_stub(true, true, "PREVIEW-LAN", "");
+}
+
+typedef struct {
+    FILE *timeline;
+    lv_indev_t *pointer;
+    unsigned frame, step, hold, drag, rapid, warmup;
+    uint32_t start;
+    bool swipe;
+} motion_record_t;
+
+static void motion_frame(motion_record_t *record, const char *phase, bool terminal)
+{
+    /* Host artifact budget, independent of UI topology or device dimensions. */
+    if (record->frame >= 512) {
+        fprintf(stderr, "motion: frame budget exceeded; increase STEP or shorten timing inputs\n");
+        exit(1);
+    }
+    char name[96];
+    snprintf(name, sizeof name, "motion-%04u-%s", record->frame++, phase);
+    s_motion_frame = !terminal;
+    snapshot(name);  /* s_no_settle remains true for the complete recording. */
+    s_motion_frame = false;
+    fprintf(record->timeline, "%s.ppm,%u,%d,%s\n", name,
+            (unsigned)(vtick_get() - record->start), fnos_ui_page(), phase);
+}
+
+static void motion_wait(motion_record_t *record, unsigned ms, const char *phase, bool capture)
+{
+    unsigned elapsed = 0;
+    while (elapsed < ms) {
+        unsigned dt = LV_MIN(record->step, ms - elapsed);
+        vtick_advance(dt);
+        lv_timer_handler();
+        elapsed += dt;
+        if (capture) motion_frame(record, phase, false);
+    }
+}
+
+/* Read the real pointer driver immediately so a short input is not lost between
+   polling ticks. Native timers still run at each requested sampling step. */
+static void motion_pointer(motion_record_t *record, int x, int y, bool down)
+{
+    s_touch_point = (lv_point_t){ .x = x, .y = y };
+    s_touch_down = down;
+    lv_indev_read(record->pointer);
+}
+
+static void motion_drag(motion_record_t *record, int x1, int y1, int x2, int y2, const char *phase)
+{
+    motion_pointer(record, x1, y1, true);
+    motion_frame(record, phase, false);
+    unsigned elapsed = 0;
+    while (elapsed < record->drag) {
+        unsigned dt = LV_MIN(record->step, record->drag - elapsed);
+        vtick_advance(dt);
+        elapsed += dt;
+        int x = x1 + (x2 - x1) * (int)elapsed / (int)record->drag;
+        int y = y1 + (y2 - y1) * (int)elapsed / (int)record->drag;
+        motion_pointer(record, x, y, true);
+        lv_timer_handler();
+        motion_frame(record, phase, false);
+    }
+    motion_pointer(record, x2, y2, false);
+    lv_timer_handler();
+    motion_frame(record, phase, false);
+}
+
+static lv_obj_t *motion_vertical_viewport(lv_obj_t *root)
+{
+    if (effectively_hidden(root)) return NULL;
+    lv_area_t area;
+    if (lv_obj_has_flag(root, LV_OBJ_FLAG_SCROLLABLE) &&
+        lv_obj_get_scroll_bottom(root) > 0 && visible_click_area(root, &area) &&
+        lv_area_get_height(&area) > 4) return root;
+    for (uint32_t i = 0; i < lv_obj_get_child_count(root); i++) {
+        lv_obj_t *found = motion_vertical_viewport(lv_obj_get_child(root, i));
+        if (found) return found;
+    }
+    return NULL;
+}
+
+static void motion_target(motion_record_t *record, int target, const char *phase)
+{
+    int previous = fnos_ui_page();
+    if (!record->swipe || target == previous) {
+        fnos_ui_set_page(target);       /* public route, never a private callback */
+        motion_frame(record, phase, false);
+    } else {
+        int direction;
+        if (target == (previous + 1) % FNOS_UI_PAGE_COUNT) direction = -1;
+        else if (target == (previous + FNOS_UI_PAGE_COUNT - 1) % FNOS_UI_PAGE_COUNT) direction = 1;
+        else {
+            fprintf(stderr, "motion: swipe targets must be adjacent; %d -> %d\n", previous, target);
+            exit(1);
+        }
+        int width = lv_display_get_horizontal_resolution(lv_display_get_default());
+        int height = lv_display_get_vertical_resolution(lv_display_get_default());
+        int start_x = direction < 0 ? width * 3 / 4 : width / 4;
+        int end_x = direction < 0 ? width / 4 : width * 3 / 4;
+        int y = height / 2;
+        motion_drag(record, start_x, y, end_x, y, phase);
+    }
+    if (fnos_ui_page() != target) {
+        fprintf(stderr, "motion: native %s input selected page %d, expected %d\n",
+                record->swipe ? "pointer" : "API", fnos_ui_page(), target);
+        exit(1);
+    }
+}
+
+/* Native page objects are built in public navigation order. Discover them by
+   runtime metadata, without depending on a card title, coordinates or count. */
+static lv_obj_t *motion_page_by_index(lv_obj_t *root, int wanted, int *seen)
+{
+    if (lv_obj_has_flag(root, LV_OBJ_FLAG_USER_1))
+        return (*seen)++ == wanted ? root : NULL;
+    for (uint32_t i = 0; i < lv_obj_get_child_count(root); i++) {
+        lv_obj_t *page = motion_page_by_index(lv_obj_get_child(root, i), wanted, seen);
+        if (page) return page;
+    }
+    return NULL;
+}
+
+typedef struct { int32_t width, height; uint32_t children; } motion_size_t;
+
+static size_t motion_visible_nodes(lv_obj_t *root)
+{
+    if (lv_obj_has_flag(root, LV_OBJ_FLAG_HIDDEN)) return 0;
+    size_t count = 1;
+    for (uint32_t i = 0; i < lv_obj_get_child_count(root); i++)
+        count += motion_visible_nodes(lv_obj_get_child(root, i));
+    return count;
+}
+
+static void motion_save_sizes(lv_obj_t *root, motion_size_t *sizes, size_t *at)
+{
+    if (lv_obj_has_flag(root, LV_OBJ_FLAG_HIDDEN)) return;
+    sizes[(*at)++] = (motion_size_t){
+        lv_obj_get_width(root), lv_obj_get_height(root), lv_obj_get_child_count(root),
+    };
+    for (uint32_t i = 0; i < lv_obj_get_child_count(root); i++)
+        motion_save_sizes(lv_obj_get_child(root, i), sizes, at);
+}
+
+/* This probe queues raw pointer samples. Unlike motion_pointer(), it does not
+   force lv_indev_read: both native input sampling and motion scheduling run. */
+static int motion_min_content_opa(lv_obj_t *root)
+{
+    if (lv_obj_has_flag(root, LV_OBJ_FLAG_HIDDEN)) return LV_OPA_COVER;
+    int minimum = lv_obj_get_style_opa(root, 0);
+    for (uint32_t i = 0; i < lv_obj_get_child_count(root); i++)
+        minimum = LV_MIN(minimum, motion_min_content_opa(lv_obj_get_child(root, i)));
+    return minimum;
+}
+
+static lv_obj_t *motion_native_page(int index)
+{
+    int seen = 0;
+    lv_obj_t *page = motion_page_by_index(lv_screen_active(), index, &seen);
+    assert(page);
+    return page;
+}
+
+static void motion_probe_log(FILE *csv, motion_record_t *record, const char *name,
+                             unsigned elapsed, lv_obj_t *outgoing, lv_obj_t *incoming)
+{
+    lv_point_t observed;
+    lv_indev_get_point(record->pointer, &observed);
+    fprintf(csv, "%s,%u,%d,%d,%d,%d,%d,%d\n", name, elapsed,
+            (int)s_touch_point.x, (int)observed.x,
+            lv_indev_get_state(record->pointer) == LV_INDEV_STATE_PRESSED,
+            (int)lv_obj_get_style_translate_x(outgoing, 0),
+            motion_min_content_opa(incoming), fnos_ui_page());
+}
+
+static bool motion_page_at_rest(lv_obj_t *page, lv_obj_t *other)
+{
+    return !lv_obj_has_flag(page, LV_OBJ_FLAG_HIDDEN) &&
+           lv_obj_has_flag(other, LV_OBJ_FLAG_HIDDEN) &&
+           lv_obj_get_style_translate_x(page, 0) == 0;
+}
+
+static void motion_response_probe(motion_record_t *record, int base, int target,
+                                  const uint16_t *base_pixels, const uint16_t *target_pixels,
+                                  size_t bytes)
+{
+    assert(target == (base + 1) % FNOS_UI_PAGE_COUNT &&
+           "response probe requires the next public navigation page");
+    unsigned response_budget = motion_ms("PREVIEW_MOTION_RESPONSE_MS", 32, true);
+    unsigned complete_budget = motion_ms("PREVIEW_MOTION_COMPLETE_MS", 180, true);
+    bool enforce = response_budget || complete_budget;
+    char path[512];
+    snprintf(path, sizeof path, "%s/response.csv", s_outdir);
+    FILE *csv = fopen(path, "w");
+    assert(csv);
+    fputs("case,time_ms,requested_x,observed_x,pressed,outgoing_x,min_content_opa,page\n", csv);
+    lv_obj_t *outgoing = motion_native_page(base), *incoming = motion_native_page(target);
+    lv_obj_t *viewport = lv_obj_get_parent(outgoing);
+    lv_area_t area;
+    assert(visible_click_area(viewport, &area));
+    int width = lv_obj_get_content_width(viewport);
+    int x = area.x1 + lv_area_get_width(&area) * 3 / 4;
+    int y = area.y1 + lv_area_get_height(&area) / 2;
+    int64_t history_before = s_seq;
+    fnos_sample_t sample_before = s_override_sample;
+
+    fnos_ui_set_page(base);
+    motion_wait(record, record->hold, "response-ready", false);
+    fnos_ui_set_page(target);
+    int first_move = -1, page_complete = -1, content_complete = -1;
+    motion_frame(record, "response-api-start", false);
+    if (enforce) assert(motion_min_content_opa(incoming) == LV_OPA_COVER &&
+                        "navigation must not start by hiding incoming content");
+    for (unsigned t = 1; t <= record->hold; t++) {
+        vtick_advance(1); lv_timer_handler();
+        motion_probe_log(csv, record, "api", t, outgoing, incoming);
+        if (first_move < 0 && lv_obj_get_style_translate_x(outgoing, 0) != 0) {
+            first_move = (int)t;
+            motion_frame(record, "response-api-first", false);
+        }
+        if (page_complete < 0 && motion_page_at_rest(incoming, outgoing)) page_complete = (int)t;
+        if (content_complete < 0 && motion_min_content_opa(incoming) == LV_OPA_COVER)
+            content_complete = (int)t;
+    }
+    int api_complete = LV_MAX(page_complete, content_complete);
+    printf("response: api first=%dms page=%dms content=%dms complete=%dms\n",
+           first_move, page_complete, content_complete, api_complete);
+    if (response_budget) assert(first_move >= 0 && (unsigned)first_move <= response_budget);
+    if (complete_budget)
+        assert(page_complete >= 0 && content_complete >= 0 && (unsigned)api_complete <= complete_budget);
+    motion_frame(record, "response-api-stable", true);
+    assert(!memcmp(target_pixels, s_frame, bytes));
+
+    /* These are observable interaction examples, independent of production lock,
+       distance and velocity formulas: one-pixel jitter, a small horizontal step,
+       a slow short drag, and a fast short drag. Dimensions use the real viewport. */
+    struct { const char *name; int dx, dy; unsigned duration; bool step, follow, commit; } cases[] = {
+        { "jitter", -1, 0, 48, true, false, false },
+        { "small-horizontal", -LV_MAX(1, width / 50), LV_MAX(1, width / 500), 48, true, true, false },
+        { "short-slow", -LV_MAX(1, width / 12), 0, 180, false, true, false },
+        { "short-fast", -LV_MAX(1, width / 10), 0, 32, false, true, true },
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+        fnos_ui_set_page(base);
+        motion_wait(record, record->hold, "response-reset", false);
+        s_touch_point = (lv_point_t){ .x = x, .y = y };
+        s_touch_down = true;
+        unsigned press_wait = 0;
+        while (lv_indev_get_state(record->pointer) != LV_INDEV_STATE_PRESSED && press_wait < record->hold) {
+            vtick_advance(1); lv_timer_handler(); press_wait++;
+        }
+        assert(lv_indev_get_state(record->pointer) == LV_INDEV_STATE_PRESSED);
+        lv_point_t observed;
+        lv_indev_get_point(record->pointer, &observed);
+        assert(observed.x == x && observed.y == y);
+        int first_sample = -1, first_follow = -1, released = -1, complete = -1;
+        bool moved = false;
+        int wanted = cases[i].commit ? target : base;
+        lv_obj_t *wanted_page = cases[i].commit ? incoming : outgoing;
+        lv_obj_t *other_page = cases[i].commit ? outgoing : incoming;
+        for (unsigned t = 0; t < cases[i].duration + record->hold; t++) {
+            if (t < cases[i].duration) {
+                unsigned fraction = cases[i].step ? cases[i].duration : t + 1;
+                s_touch_point = (lv_point_t){
+                    .x = x + cases[i].dx * (int)fraction / (int)cases[i].duration,
+                    .y = y + cases[i].dy * (int)fraction / (int)cases[i].duration,
+                };
+            } else s_touch_down = false;
+            vtick_advance(1); lv_timer_handler();
+            motion_probe_log(csv, record, cases[i].name, t + 1, outgoing, incoming);
+            lv_indev_get_point(record->pointer, &observed);
+            if (first_sample < 0 && observed.x != x) first_sample = (int)t + 1;
+            if (lv_obj_get_style_translate_x(outgoing, 0) != 0) {
+                moved = true;
+                if (first_follow < 0) {
+                    first_follow = (int)t + 1;
+                    motion_frame(record, cases[i].name, false);
+                }
+            }
+            if (t >= cases[i].duration &&
+                lv_indev_get_state(record->pointer) == LV_INDEV_STATE_RELEASED) {
+                if (released < 0) released = (int)(t + 1 - cases[i].duration);
+                if (complete < 0 && fnos_ui_page() == wanted &&
+                    motion_page_at_rest(wanted_page, other_page) &&
+                    motion_min_content_opa(wanted_page) == LV_OPA_COVER)
+                    complete = (int)(t + 1 - cases[i].duration);
+            }
+        }
+        printf("response: %s press=%ums sample=%dms first=%dms release=%dms complete=%dms page=%d expected=%d\n",
+               cases[i].name, press_wait, first_sample, first_follow, released, complete, fnos_ui_page(), wanted);
+        if (enforce) {
+            assert(moved == cases[i].follow);
+            assert(fnos_ui_page() == wanted);
+            if (response_budget && cases[i].follow) {
+                assert(first_sample >= 0 && first_follow >= 0);
+                unsigned response = (unsigned)(first_follow - (cases[i].step || cases[i].commit ? 0 : first_sample));
+                assert(response <= response_budget);
+            }
+            if (complete_budget) assert(complete >= 0 && (unsigned)complete <= complete_budget);
+        }
+        motion_frame(record, cases[i].name, true);
+        if (enforce) assert(!memcmp(cases[i].commit ? target_pixels : base_pixels, s_frame, bytes));
+        assert(!s_touch_down && lv_indev_get_state(record->pointer) == LV_INDEV_STATE_RELEASED);
+        assert(s_seq == history_before && !memcmp(&sample_before, &s_override_sample, sizeof sample_before));
+    }
+    fclose(csv);
+    fnos_ui_set_page(base);
+    motion_wait(record, record->hold, "response-return", false);
+    motion_frame(record, "response-return", true);
+    assert(!memcmp(base_pixels, s_frame, bytes));
+    puts(enforce ? "checks: native timed pointer response and completion budgets PASS" :
+                   "checks: native timed pointer response measured (no acceptance budgets supplied)");
+}
+
+static void motion_repeat_target(motion_record_t *record, int base, int target,
+                                 const uint16_t *expected, size_t bytes)
+{
+    /* First pause a real in-flight API transition with a real pointer drag.
+       Re-selecting its reported target must not strand either page halfway. */
+    fnos_ui_set_page(base);
+    motion_wait(record, record->hold, "repeat-ready", false);
+    fnos_ui_set_page(target);
+    motion_wait(record, LV_MAX(1, UK_MOTION_MS / 4), "repeat-active", true);
+    assert(fnos_ui_page() == target);
+    int x = s_scr_w * 3 / 4, y = s_scr_h / 2;
+    motion_pointer(record, x, y, true);
+    motion_pointer(record, s_scr_w / 2, y, true);
+    motion_wait(record, record->step, "repeat-paused", true);
+    assert(s_touch_down);
+    assert(memcmp(expected, s_frame, bytes) &&
+           "repeat-target probe must actually pause an intermediate frame");
+    fnos_ui_set_page(fnos_ui_page());    /* repeat the current public target */
+    motion_frame(record, "repeat-selected", false);
+    motion_pointer(record, s_scr_w / 2, y, false);
+    lv_timer_handler();
+    motion_frame(record, "repeat-release", false);
+    motion_wait(record, record->hold, "repeat-recovery", true);
+    motion_frame(record, "repeat-stable", true);
+    assert(fnos_ui_page() == target && !s_touch_down);
+    assert(!memcmp(expected, s_frame, bytes) &&
+           "repeat-target release must reach the ordinary target pixels");
+    puts("checks: paused transition, repeated current target, pointer release PASS");
+}
+
+static void record_motion(lv_indev_t *pointer)
+{
+    const char *sequence = getenv("PREVIEW_MOTION");
+    assert(sequence);
+    size_t count = 1;
+    for (const char *p = sequence; *p; p++) if (*p == ',') count++;
+    if (count < 2 || count > 32) {
+        fputs("PREVIEW_MOTION: expected 2..32 comma-separated page indexes\n", stderr);
+        exit(1);
+    }
+    int *pages = calloc(count, sizeof *pages);
+    assert(pages);
+    const char *p = sequence;
+    for (size_t i = 0; i < count; i++) {
+        char *end = NULL;
+        long value = strtol(p, &end, 10);
+        if (end == p || value < 0 || value >= FNOS_UI_PAGE_COUNT ||
+            (i + 1 < count ? *end != ',' : *end != '\0')) {
+            fprintf(stderr, "PREVIEW_MOTION: invalid page sequence: %s\n", sequence);
+            exit(1);
+        }
+        pages[i] = (int)value;
+        p = end + (i + 1 < count ? 1 : 0);
+    }
+    size_t alternate = 1;
+    while (alternate < count && pages[alternate] == pages[0]) alternate++;
+    if (alternate == count) {
+        fputs("PREVIEW_MOTION: include at least two distinct pages\n", stderr);
+        exit(1);
+    }
+
+    const char *input = getenv("PREVIEW_MOTION_INPUT");
+    if (input && strcmp(input, "swipe") && strcmp(input, "api")) {
+        fputs("PREVIEW_MOTION_INPUT: expected swipe or api\n", stderr);
+        exit(1);
+    }
+    motion_record_t record = {
+        .pointer = pointer,
+        .step = motion_ms("PREVIEW_MOTION_STEP_MS", 40, false),
+        .hold = motion_ms("PREVIEW_MOTION_HOLD_MS", 800, false),
+        .drag = motion_ms("PREVIEW_MOTION_DRAG_MS", 120, false),
+        .rapid = motion_ms("PREVIEW_MOTION_RAPID_MS", 40, true),
+        .warmup = motion_ms("PREVIEW_MOTION_WARMUP_MS", 3000, false),
+        .swipe = !input || !strcmp(input, "swipe"),
+    };
+    bool first_entry = getenv("PREVIEW_MOTION_FIRST_ENTRY") &&
+                       !strcmp(getenv("PREVIEW_MOTION_FIRST_ENTRY"), "1");
+    if (first_entry && (record.swipe || count != 3 || pages[0] != pages[2])) {
+        fputs("PREVIEW_MOTION_FIRST_ENTRY: use API input with base,target,base sequence\n", stderr);
+        exit(1);
+    }
+    bool repeat_target = getenv("PREVIEW_MOTION_REPEAT_TARGET") &&
+                         !strcmp(getenv("PREVIEW_MOTION_REPEAT_TARGET"), "1");
+    bool response_probe = getenv("PREVIEW_MOTION_RESPONSIVENESS") &&
+                          !strcmp(getenv("PREVIEW_MOTION_RESPONSIVENESS"), "1");
+    char path[512];
+    snprintf(path, sizeof path, "%s/motion.csv", s_outdir);
+    record.timeline = fopen(path, "w");
+    assert(record.timeline);
+    fputs("file,time_ms,page,phase\n", record.timeline);
+    bool previous_no_settle = s_no_settle;
+    s_no_settle = true;
+    fnos_ui_set_page(pages[0]);
+    /* Pre-roll uses real timers; neither initial animation nor chart loading is
+       completed by forcing object styles to their destination. */
+    motion_wait(&record, record.warmup, "warmup", false);
+    record.start = vtick_get();
+    motion_frame(&record, "ready", true);
+
+    size_t bytes = (size_t)s_scr_w * s_scr_h * sizeof *s_frame;
+    uint16_t *baseline = malloc(bytes), *terminal = malloc(bytes);
+    uint16_t *alternate_pixels = (repeat_target || response_probe) ? malloc(bytes) : NULL;
+    assert(baseline && terminal && (!(repeat_target || response_probe) || alternate_pixels));
+    memcpy(baseline, s_frame, bytes);
+    int64_t sequence_before = s_seq;
+
+    if (record.swipe) {
+        int x = s_scr_w / 2, y = s_scr_h / 2;
+        /* A single-pixel finger jitter is a cancellation input, not a guessed
+           production swipe threshold. The page must return to its original pixels. */
+        motion_drag(&record, x, y, x - 1, y, "short-cancel");
+        motion_wait(&record, record.hold, "short-cancel", true);
+        motion_frame(&record, "cancel-stable", true);
+        assert(fnos_ui_page() == pages[0]);
+        assert(!memcmp(baseline, s_frame, bytes));
+    }
+
+    const char *scroll_probe = getenv("PREVIEW_MOTION_SCROLL");
+    if (scroll_probe && !strcmp(scroll_probe, "1")) {
+        lv_obj_t *viewport = motion_vertical_viewport(lv_screen_active());
+        assert(viewport && "motion vertical probe needs a visible overflowing list");
+        lv_area_t area;
+        assert(visible_click_area(viewport, &area));
+        int previous_y = lv_obj_get_scroll_y(viewport);
+        int x = (area.x1 + area.x2) / 2;
+        int height = lv_area_get_height(&area);
+        motion_drag(&record, x, area.y1 + height * 3 / 4,
+                    x, area.y1 + height / 4, "vertical-scroll");
+        motion_wait(&record, record.hold, "vertical-scroll", true);
+        assert(fnos_ui_page() == pages[0]);       /* vertical drag cannot navigate */
+        assert(lv_obj_get_scroll_y(viewport) > previous_y);  /* real content moved */
+        motion_frame(&record, "vertical-stable", true);
+        lv_obj_scroll_to_y(viewport, previous_y, LV_ANIM_OFF);
+        motion_wait(&record, record.hold, "vertical-restore", false);
+        motion_frame(&record, "vertical-restored", true);
+        assert(!memcmp(baseline, s_frame, bytes));
+    }
+
+    for (size_t i = 1; i < count; i++) {
+        char phase[48];
+        snprintf(phase, sizeof phase, "hop-%02u", (unsigned)i);
+        motion_target(&record, pages[i], phase);
+        lv_obj_t *entry_page = NULL;
+        size_t entry_count = 0;
+        motion_size_t *entry_sizes = NULL;
+        if (first_entry && i == 1) {
+            int seen = 0;
+            entry_page = motion_page_by_index(lv_screen_active(), pages[i], &seen);
+            assert(entry_page && !effectively_hidden(entry_page));
+            /* The first motion frame has already run native layout, but no UI
+               timer tick has yet been advanced after the API navigation. */
+            entry_count = motion_visible_nodes(entry_page);
+            entry_sizes = calloc(entry_count, sizeof *entry_sizes);
+            assert(entry_count && entry_sizes);
+            size_t at = 0;
+            motion_save_sizes(entry_page, entry_sizes, &at);
+            assert(at == entry_count);
+        }
+        motion_wait(&record, record.hold, phase, true);
+        motion_frame(&record, "stable", true);
+        memcpy(terminal, s_frame, bytes);
+        motion_wait(&record, record.step, phase, false);
+        motion_frame(&record, "stable-check", true);
+        assert(!memcmp(terminal, s_frame, bytes));
+        if (entry_sizes) {
+            size_t stable_count = motion_visible_nodes(entry_page);
+            if (stable_count != entry_count)
+                fprintf(stderr, "first entry: visible nodes %zu -> %zu\n", entry_count, stable_count);
+            assert(stable_count == entry_count &&
+                   "first API entry must already contain its settled visible content");
+            motion_size_t *stable_sizes = calloc(entry_count, sizeof *stable_sizes);
+            assert(stable_sizes);
+            size_t at = 0;
+            motion_save_sizes(entry_page, stable_sizes, &at);
+            assert(at == entry_count);
+            for (size_t j = 0; j < entry_count; j++) {
+                if (memcmp(&entry_sizes[j], &stable_sizes[j], sizeof *entry_sizes))
+                    fprintf(stderr, "first entry: node %zu size %dx%d -> %dx%d, children %u -> %u\n",
+                            j, (int)entry_sizes[j].width, (int)entry_sizes[j].height,
+                            (int)stable_sizes[j].width, (int)stable_sizes[j].height,
+                            entry_sizes[j].children, stable_sizes[j].children);
+            }
+            assert(!memcmp(entry_sizes, stable_sizes, entry_count * sizeof *entry_sizes) &&
+                   "first API entry must have its settled layout before a UI timer refresh");
+            free(stable_sizes);
+            free(entry_sizes);
+            puts("checks: first API entry sizes already match settled page PASS");
+        }
+        if ((repeat_target || response_probe) && i == alternate) memcpy(alternate_pixels, s_frame, bytes);
+        if (first_entry && i + 1 == count) {
+            assert(fnos_ui_page() == pages[0]);
+            assert(!memcmp(baseline, s_frame, bytes));
+            puts("checks: first API entry, internal page bounds, return pixels PASS");
+        }
+    }
+    if (response_probe)
+        motion_response_probe(&record, pages[0], pages[alternate], baseline, alternate_pixels, bytes);
+    if (repeat_target)
+        motion_repeat_target(&record, pages[0], pages[alternate], alternate_pixels, bytes);
+
+    /* Finish an ordinary return, then interrupt an outgoing transition before
+       it settles. Both directions use the same public/native input path. */
+    fnos_ui_set_page(pages[0]);
+    motion_wait(&record, record.hold, "rapid-ready", false);
+    motion_target(&record, pages[alternate], "rapid-out");
+    motion_wait(&record, record.rapid, "rapid-out", true);
+    motion_target(&record, pages[0], "rapid-back");
+    if (response_probe) {
+        int complete = -1;
+        lv_obj_t *returned = motion_native_page(pages[0]);
+        lv_obj_t *departed = motion_native_page(pages[alternate]);
+        for (unsigned t = 1; t <= record.hold; t++) {
+            vtick_advance(1); lv_timer_handler();
+            if (t % record.step == 0) motion_frame(&record, "rapid-back", false);
+            if (complete < 0 && fnos_ui_page() == pages[0] &&
+                motion_page_at_rest(returned, departed) &&
+                motion_min_content_opa(returned) == LV_OPA_COVER) complete = (int)t;
+        }
+        unsigned budget = motion_ms("PREVIEW_MOTION_COMPLETE_MS", 180, true);
+        printf("response: rapid final redirect complete=%dms\n", complete);
+        if (budget) assert(complete >= 0 && (unsigned)complete <= budget);
+    } else motion_wait(&record, record.hold, "rapid-back", true);
+    motion_frame(&record, "roundtrip-stable", true);
+    assert(fnos_ui_page() == pages[0]);
+    assert(!memcmp(baseline, s_frame, bytes));  /* no residual translation/opacity */
+    assert(sequence_before == s_seq);          /* no invented history */
+    assert(!s_touch_down);
+    puts("checks: motion native input, stable terminal pixels, rapid round-trip, frozen history PASS");
+    printf("motion: %u frames, step=%ums input=%s -> %s\n",
+           record.frame, record.step, record.swipe ? "swipe" : "api", path);
+    fclose(record.timeline);
+    free(alternate_pixels);
+    free(terminal);
+    free(baseline);
+    free(pages);
+    s_no_settle = previous_no_settle;
+}
+
+static lv_obj_t *hardware_contains(lv_obj_t *object, const char *text)
+{
+    if (lv_obj_has_flag(object,LV_OBJ_FLAG_HIDDEN)) return NULL;
+    if (lv_obj_check_type(object,&lv_label_class) && strstr(lv_label_get_text(object),text)) return object;
+    for (uint32_t i=0;i<lv_obj_get_child_count(object);i++) {
+        lv_obj_t *found=hardware_contains(lv_obj_get_child(object,i),text);
+        if (found) return found;
+    }
+    return NULL;
+}
+
+static void hardware_reachable(lv_obj_t *label)
+{
+    assert(label);
+    lv_obj_scroll_to_view_recursive(label,LV_ANIM_OFF);
+    lv_obj_update_layout(lv_screen_active());
+    lv_obj_t *viewport=lv_obj_get_parent(label);
+    while (viewport && !lv_obj_has_flag(viewport,LV_OBJ_FLAG_SCROLLABLE)) viewport=lv_obj_get_parent(viewport);
+    assert(viewport);
+    lv_area_t a,v; lv_obj_get_coords(label,&a); lv_obj_get_coords(viewport,&v);
+    assert(a.x1>=v.x1 && a.x2<=v.x2);
+    if (lv_area_get_height(&a)<=lv_area_get_height(&v))
+        assert(a.y1>=v.y1 && a.y2<=v.y2);
+}
+
+static lv_obj_t *hardware_temperature_title(const fnos_status_t *fixture, int first, int end)
+{
+    const fnos_temp_t *t=&fixture->temps[first];
+    const char *name=t->dn[0] ? t->dn : t->dev;
+    int matches=0;
+    for (int k=0;k<fixture->ntemps;k++) {
+        const fnos_temp_t *other=&fixture->temps[k];
+        const char *other_name=other->dn[0] ? other->dn : other->dev;
+        if (!strcmp(other_name,name) &&
+            (k==0 || strcmp(fixture->temps[k].dev,fixture->temps[k-1].dev))) matches++;
+    }
+    const char *suffix=matches>1 ? t->dev : (end-first==1 ? t->ch : "");
+    size_t length=strlen(name)+strlen(suffix)+sizeof " · ";
+    char *header=malloc(length); assert(header);
+    snprintf(header,length,"%s%s%s",name,suffix[0] ? " · " : "",suffix);
+    lv_obj_t *title=visible_text(lv_screen_active(),header);
+    free(header);
+    return title;
+}
+
+static void hardware_inventory(const char *path)
+{
+    FILE *file=fopen(path,"rb"); assert(file);
+    fseek(file,0,SEEK_END); long size=ftell(file); rewind(file); assert(size>0);
+    char *json=malloc((size_t)size+1); assert(json);
+    assert(fread(json,1,(size_t)size,file)==(size_t)size); fclose(file); json[size]=0;
+    static fnos_status_t fixture;
+    const char *reason=NULL;
+    assert(fnos_status_parse(json,&fixture,&reason)); free(json);
+    fixture.ever_ok=fixture.online=true; fixture.last_status=200;
+    fixture.recv_ms=esp_timer_get_time()/1000; fixture.ok_count=1;
+    s_override_status=&fixture;
+    wifi_stub(true,true,"PREVIEW-LAN",NULL);
+    const char *failure=getenv("PREVIEW_ALLOC_FAIL_AT");
+    if (failure) {
+        if (getenv("PREVIEW_ALLOC_SEED_ONE")) {
+            fnos_status_t seed={0};
+            assert(fnos_status_parse("{\"ready\":true,\"host\":\"seed\",\"vols\":[{\"mnt\":\"seed-volume\"}],\"raid\":[{\"dev\":\"seed-array\"}],\"disks\":[{\"dev\":\"seed-disk\"}],\"docker\":[{\"n\":\"seed-service\"}],\"alerts\":[{\"m\":\"seed-event\"}],\"temps\":[{\"dev\":\"seed-sensor\",\"dn\":\"seed-model\",\"ch\":\"seed-channel\",\"c\":40}],\"net\":{\"if\":\"seed-port\"}}",&seed,&reason));
+            seed.ever_ok=seed.online=true;
+            s_override_status=&seed;
+            regression_tick();
+            s_override_status=&fixture;
+            fnos_status_release(&seed);
+        }
+        uk_test_alloc_fail_after(atoi(failure));
+        regression_tick();
+        bool fired=uk_test_alloc_was_triggered();
+        if (fired) {
+            assert(uk_alloc_failed());
+            assert(visible_text(lv_screen_active(),"界面内存不足 · 部分设备尚未显示"));
+        }
+        uk_test_alloc_fail_after(-1);
+        regression_tick();
+        assert(!uk_alloc_failed());
+        fnos_ui_set_page(1); fnos_ui_motion_settle(); regression_tick();
+        for (int i=0;i<fixture.nvols;i++) assert(visible_text(lv_screen_active(),fixture.vols[i].mnt));
+        for (int i=0;i<fixture.nraid;i++) assert(visible_text(lv_screen_active(),fixture.raid[i].dev));
+        for (int i=0;i<fixture.ndisks;i++) assert(visible_text(lv_screen_active(),fixture.disks[i].dev));
+        fnos_ui_set_page(2); fnos_ui_motion_settle(); regression_tick();
+        for (int i=0;i<fixture.nnets;i++) assert(hardware_contains(lv_screen_active(),fixture.nets[i].ifname));
+        /* 系统页的告警卡只列前三条（UI_ALERT_PANEL_ROWS）；九条都在告警页上。 */
+        fnos_ui_set_page(5); fnos_ui_motion_settle(); regression_tick();
+        for (int i=0;i<fixture.nalerts;i++) assert(visible_text(lv_screen_active(),fixture.alerts[i].m));
+        for (int i=0;i<fixture.nalerts;i++) assert(visible_text(lv_screen_active(),fixture.alerts[i].m));
+        fnos_ui_set_page(4); fnos_ui_motion_settle(); regression_tick();
+        for (int first=0;first<fixture.ntemps;) {
+            int end=first+1;
+            while (end<fixture.ntemps && !strcmp(fixture.temps[first].dev,fixture.temps[end].dev)) end++;
+            lv_obj_t *title=hardware_temperature_title(&fixture,first,end);
+            assert(title);
+            if (end-first>1) {
+                hardware_reachable(title);
+                uk_test_alloc_fail_after(atoi(failure));
+                click_object_center(title); /* Includes expansion/channel realloc failures. */
+                uk_test_alloc_fail_after(-1);
+                regression_tick();
+                for (int k=first;k<end;k++) assert(visible_text(lv_screen_active(),fixture.temps[k].ch));
+            }
+            first=end;
+        }
+        printf("checks: allocation failure %d fired=%d, retry and every inventory PASS\n",atoi(failure),fired);
+        return;
+    }
+    regression_tick();
+    for (int page=0;page<FNOS_UI_PAGE_COUNT;page++) {
+        fnos_ui_set_page(page); fnos_ui_motion_settle(); regression_tick();
+        char name[64]; snprintf(name,sizeof name,"hardware-page-%d",page); snapshot(name);
+        if (page==1) {
+            for (int i=0;i<fixture.nvols;i++) hardware_reachable(visible_text(lv_screen_active(),fixture.vols[i].mnt));
+            for (int i=0;i<fixture.nraid;i++) hardware_reachable(visible_text(lv_screen_active(),fixture.raid[i].dev));
+            for (int i=0;i<fixture.ndisks;i++) hardware_reachable(visible_text(lv_screen_active(),fixture.disks[i].dev));
+        } else if (page==2) {
+            for (int i=0;i<fixture.nnets;i++) hardware_reachable(hardware_contains(lv_screen_active(),fixture.nets[i].ifname));
+        } else if (page==3) {
+            for (int i=0;i<fixture.ndocker;i++) hardware_reachable(visible_text(lv_screen_active(),fixture.docker[i].n));
+        } else if (page==4 && fixture.ntemps) {
+            int first=0;
+            while (first<fixture.ntemps) {
+                int end=first+1;
+                while (end<fixture.ntemps && !strcmp(fixture.temps[end].dev,fixture.temps[first].dev)) end++;
+                lv_obj_t *title=hardware_temperature_title(&fixture,first,end);
+                assert(title); hardware_reachable(title);
+                if (end-first>1) click_object_center(title);
+                for (int k=first;k<end && end-first>1;k++)
+                    hardware_reachable(visible_text(lv_screen_active(),fixture.temps[k].ch));
+                if (end-first>1) { hardware_reachable(title); click_object_center(title); }
+                first=end;
+            }
+        }
+        snprintf(name,sizeof name,"hardware-last-page-%d",page); snapshot(name);
+    }
+    if (fixture.nnets) {
+        int net_module=-1;
+        for (int i=0;i<fixture.nmods;i++) if (!strcmp(fixture.mods[i].name,"net")) net_module=i;
+        assert(net_module>=0);
+        fnos_status_text(&fixture,&fixture.mods[net_module].status,"stale");
+        fnos_ui_set_page(2); fnos_ui_motion_settle(); regression_tick();
+        lv_obj_t *old_rate=hardware_contains(lv_screen_active(),"上次 · 下行");
+        assert(old_rate && lv_color_eq(lv_obj_get_style_text_color(old_rate,0),uk_c(UK_T3)));
+        snapshot("hardware-network-stale");
+        fnos_status_text(&fixture,&fixture.mods[net_module].status,"denied");
+        regression_tick();
+        assert(!hardware_contains(lv_screen_active(),"网口与接口"));
+    }
+    /* Shrink back to an empty frame: no removed device may return as an old tile. */
+    char *old=fixture.nvols ? strdup(fixture.vols[fixture.nvols-1].mnt) : NULL;
+    assert(fnos_status_parse("{\"ready\":true,\"host\":\"empty\"}",&fixture,&reason));
+    fixture.ever_ok=fixture.online=true;
+    for (int page=0;page<FNOS_UI_PAGE_COUNT;page++) {
+        fnos_ui_set_page(page); fnos_ui_motion_settle(); regression_tick();
+        if (old) assert(!hardware_contains(lv_screen_active(),old));
+    }
+    free(old); fnos_status_release(&fixture); s_override_status=NULL;
+    puts("PASS: all hardware identities and final entries reachable, channel expansion and inventory shrink");
+}
+
 int main(int argc, char **argv)
 {
     if (argc > 1) s_outdir = argv[1];
@@ -1645,8 +3349,16 @@ int main(int argc, char **argv)
     lv_init();
     lv_tick_set_cb(vtick_get);
     lv_delay_set_cb(vdelay);
-    lv_display_t *d = lv_display_create(SCR_W, SCR_H);
-    static uint16_t buf[SCR_W * SCR_H];
+    /* PREVIEW_SIZE=WxH：分辨率自适应取证（默认跟板子一致 1024×600） */
+    const char *sz = getenv("PREVIEW_SIZE");
+    if (sz) {
+        int w = 0, h = 0;
+        if (sscanf(sz, "%dx%d", &w, &h) == 2 && w > 0 && h > 0 &&
+            w <= SCR_MAX_W && h <= SCR_MAX_H) { s_scr_w = w; s_scr_h = h; }
+        else fprintf(stderr, "PREVIEW_SIZE 要写成 WxH（<=1280x800），忽略：%s\n", sz);
+    }
+    lv_display_t *d = lv_display_create(s_scr_w, s_scr_h);
+    static uint16_t buf[SCR_MAX_W * SCR_MAX_H];
     lv_display_set_color_format(d, LV_COLOR_FORMAT_RGB565);
     lv_display_set_buffers(d, buf, NULL, sizeof buf, LV_DISPLAY_RENDER_MODE_FULL);
     lv_display_set_flush_cb(d, flush_cb);
@@ -1661,6 +3373,11 @@ int main(int argc, char **argv)
     fnos_ui_theme_use(getenv("KK_PALETTE"));
     fprintf(stderr, "palette: %s\n", fnos_ui_theme_name());
 
+    motion_prepare();
+    /* First NAS pairing on an already configured network, without relying on
+       verify_transitions() to set up the Wi-Fi fixture first. */
+    if (getenv("PREVIEW_PAIR_FIRST_ENTRY") || getenv("PREVIEW_HARDWARE_FIXTURE"))
+        wifi_stub(true, true, "PREVIEW-LAN", NULL);
     fnos_ui_create();
 
     /* 卡片几何的"唯一来源"：把已建好的卡片按真实 coords 吐出来，
@@ -1674,18 +3391,40 @@ int main(int argc, char **argv)
        看门狗拿到的 y 因此是错的。 */
     s_cardmap_at = getenv("PREVIEW_CARDMAP_AT") ? atoi(getenv("PREVIEW_CARDMAP_AT")) : -1;
 
+    if (getenv("PREVIEW_MOTION")) {
+        record_motion(touch);
+        return 0;
+    }
+    if (getenv("PREVIEW_PAIR_FIRST_ENTRY")) {
+        verify_pairing();
+        verify_pair_messages();
+        puts("checks: first pairing entry and all pairing stages PASS");
+        return 0;
+    }
+
+    if (getenv("PREVIEW_HARDWARE_FIXTURE")) {
+        hardware_inventory(getenv("PREVIEW_HARDWARE_FIXTURE"));
+        return 0;
+    }
+
     snapshot("00-startup");
     run_state(ST_WARMING, 1);
     run_state(ST_LIVE, 2);
     run_state(ST_OFFLINE, 3);
     run_state(ST_HEALTHY, 4);
+    verify_container_order();
     run_state(ST_LIMITS, 5);
+    verify_container_order();
 
     verify_transitions();
     verify_reasons();
     verify_pairing();
     verify_pair_messages();
     verify_wifi();
+    verify_ui_regressions();
+    verify_docker_module_states();
+    verify_temperature_protocol_limit();
+    verify_overview_charts();
 
     /* ── 夜间模式：一整套独立配色，预览从来没渲染过 ──
        run_state 会把四页都拍一遍，所以这里先量白天的对比度、再开夜间量一次。 */
@@ -1694,6 +3433,7 @@ int main(int argc, char **argv)
     vtick_advance(600);
     lv_timer_handler();
     audit_labels(lv_screen_active());
+    audit_format_residue(lv_screen_active(), "night");
     audit_bounds(lv_screen_active());
     report_contrast("夜间");
     /* 夜间那张样张：四页各一张，配色问题至少要有一张图能看 */

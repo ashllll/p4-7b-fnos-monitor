@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# 生成仪表盘用的 LVGL 字体（Inter 拉丁 + Noto Sans SC 中文子集）。
+# 生成 LVGL 字体（Inter 拉丁 + Noto Sans SC 动态设备名称）。
 #
 # 为什么要有这个脚本：界面标签是中文 + 拉丁数字混排，字体必须覆盖代码里真正用到的字形，
-# 而且要在换字号/换字体时能一键复现。中文字符集直接从源码里扫出来，不手写清单。
+# 而且要在换字号/换字体时能一键复现。运行时设备名使用可配置字符区间，
+# 源码扫描另外保证固定界面文案与符号没有缺字。
 #
 # 依赖：node/npm（用 npx 拉 lv_font_conv@1.5.2）、tools/fonts/ 下的 TTF。
 # 用法：bash tools/gen_fonts.sh
@@ -23,17 +24,19 @@ LV="npx --yes lv_font_conv@1.5.2"
 
 mkdir -p "$OUT"
 cd "$SRC"
+# Keep generated command metadata independent of the checkout path.
+OUT="../../components/fnos_monitor/fonts"
 
 # 本次要产出的字库（与下面每条生成命令一一对应）。生成完会删掉 OUT 里其余的 ui_font_*.c：
 # 上一代字库留在目录里没有任何东西引用，却会被下面的 glob 声明进 fnos_fonts.h，白占仓库体积、
 # 也让"到底哪些字体在用"变得难查（v1 的 9 个 sans/mono/cjk 字库就是这么残留了 ≈1.0 MB）。
-# ui_font_txt_13 是**兼容窗口**里的老字号：已提交的 kk_ui（v5 版 kk_widgets.c）引用它，
-# 正在写的 v6 版 kk_widgets.c 改引用 ui_font_txt_12。两者都产出，等 v6 落地后删掉这一项。
+# 上一代 kk_ui 的主题文件（kk_theme.c）已随整套 kk_ui 出局，它引用过的 ui_font_txt_13
+# 也一并删掉了；现在在用的字号只有下面 EXPECT 这 8 个。
 # v9 字号阶梯（4px 栅格友好：行高全部落在 4 的倍数附近）。
 # 为什么不用"整档"字号：这块屏的版面合同按 4px 栅格写，字号必须让**行高**落进栅格
 # （LVGL 里行高 = 版面的真实高度，字号只是名义值）。旧阶梯的 15px/18px 行高是 19/21，
 # 两者差 2px，导致"同一行的两块文字差 1~2px"这种永远对不齐的错位。
-EXPECT="ui_font_num_44 ui_font_num_32 ui_font_num_20 \
+EXPECT="ui_font_display_96 ui_font_display_64 ui_font_num_44 ui_font_num_32 ui_font_num_20 \
         ui_font_txt_12 ui_font_txt_15 \
         ui_font_cjk_20 ui_font_cjk_16 ui_font_cjk_12"
 
@@ -41,7 +44,7 @@ EXPECT="ui_font_num_44 ui_font_num_32 ui_font_num_20 \
 #    注释里也有大量中文，全扫进来会让字体白胖好几倍（562 vs 约 90 个字）。
 #    清单必须覆盖"所有能把文字送上屏的文件"：fnos_ui.c/h（版面文案与格式化串）
 #    + fnos_pair.c/h（配对状态机的 msg 会原样显示在配对卡上）
-#    + kk_widgets.c（构件内建文案）+ main.cpp。v6 起 JSON 清单与代码生成物已删除。
+#    + ui_kit（构件内建文案）+ main.cpp。v6 起 JSON 清单与代码生成物已删除。
 #    style_proof.c 是主机试片（不进固件），但它也把中文送上屏 —— 一并扫，省得样张里
 #    全是豆腐块（样张的价值就在"用眼睛定夺"，缺字会让人误判成渲染故障）。
 #    漏一个文件就可能出现"库里有这个字、字库里没有"的豆腐块（v4.2 的"前"就是这么来的）。
@@ -51,9 +54,9 @@ import io, os, re, sys
 root = sys.argv[1]
 UI = ['components/fnos_monitor/fnos_ui.c', 'components/fnos_monitor/fnos_ui.h',
       'components/fnos_monitor/fnos_pair.c', 'components/fnos_monitor/fnos_pair.h',
-      'components/fnos_monitor/kk_ui/kk_widgets.c',
+      'components/fnos_monitor/ui_kit/uk.c',
+      'components/fnos_monitor/ui_kit/uk_theme.c',
       'tools/preview/preview.c',
-      'tools/preview/style_proof.c',
       'main/main.cpp']
 pat = re.compile(r'[\u2010-\u205e\u3000-\u303f\u4e00-\u9fff\uff00-\uffef]')
 
@@ -113,6 +116,18 @@ echo "中文字形数: $(printf '%s' "$CJK" | python3 -c 'import sys;print(len(s
 
 # v6（UniFi）字号阶梯：KPI 数字一律 600（SemiBold），次级数字与标签 500（Medium），
 # 元信息 400（Regular）。整套比 v5 小一档 —— 这是"克制"的一半，别随手调大。
+# Angular display digits for the reference device theme (SIL OFL 1.1).
+# Fetch the upstream font; keep the licence alongside the embedded subsets.
+if [ ! -s ChakraPetch-Bold.ttf ]; then
+  curl --fail --location --silent --show-error \
+    https://raw.githubusercontent.com/google/fonts/main/ofl/chakrapetch/ChakraPetch-Bold.ttf \
+    -o ChakraPetch-Bold.ttf
+fi
+for size in 64 96; do
+  $LV --font ChakraPetch-Bold.ttf --size "$size" --bpp 4 --format lvgl --no-compress \
+    -r 0x20-0x3A --lv-include lvgl.h -o "$OUT/ui_font_display_$size.c"
+done
+
 echo "== 数值（Inter SemiBold） =="
 $LV --font Inter-SemiBold.ttf --size 44 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
     -r 0x20-0x7E -r 0xB0 -r 0xB7 -r 0x2014 -r 0x2026 -r 0x2190-0x2193 -r 0x2264-0x2265 --lv-include lvgl.h -o "$OUT/ui_font_num_44.c"
@@ -127,12 +142,27 @@ $LV --font Inter-Medium.ttf --size 15 --bpp 4 --format lvgl --no-compress --forc
 $LV --font Inter-Regular.ttf --size 12 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
     -r 0x20-0x7E -r 0xB0 -r 0xB7 -r 0x2014 -r 0x2026 -r 0x2190-0x2193 -r 0x2264-0x2265 --lv-include lvgl.h -o "$OUT/ui_font_txt_12.c"
 
-echo "== 中文标签（Noto Sans SC 子集，含 ASCII 便于混排） =="
+echo "== 中文标签与动态设备名称（Noto Sans SC，完整字形） =="
+# Hardware names and mount paths are runtime data, not source-code literals.
+# Basic CJK ideographs, horizontal punctuation and kana; vertical typesetting
+# glyphs can be added through FNOS_FONT_CJK_RANGES without inflating every line.
+# This is font coverage policy, never a NAS/model-specific device list.
+CJK_RANGES="${FNOS_FONT_CJK_RANGES:-0xA0-0x24F,0x370-0x52F,0x3000-0x301F,0x3040-0x30FF,0x4E00-0x9FFF}"
+CJK_BPP="${FNOS_FONT_CJK_BPP:-2}"
 for spec in "20:Medium:ui_font_cjk_20" "16:Medium:ui_font_cjk_16" "12:Regular:ui_font_cjk_12"; do
   size="${spec%%:*}"; rest="${spec#*:}"; weight="${rest%%:*}"; name="${rest#*:}"
-  $LV --font "NotoSansSC-${weight}.ttf" --size "$size" --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
-      -r 0x20-0x7E -r 0xB0 -r 0xB7 -r 0x2014 -r 0x2026 -r 0x2190-0x2193 -r 0x2264-0x2265 --symbols "$CJK" --lv-include lvgl.h -o "$OUT/$name.c"
+  $LV --font "NotoSansSC-${weight}.ttf" --size "$size" --bpp "$CJK_BPP" --format lvgl --no-compress --force-fast-kern-format \
+      -r 0x20-0x7E -r 0xB0 -r 0xB7 -r 0x2014 -r 0x2026 -r 0x2190-0x2193 -r 0x2264-0x2265 \
+      -r "$CJK_RANGES" --symbols "$CJK" --lv-include lvgl.h -o "$OUT/$name.c"
 done
+
+# Normalize generated whitespace without changing any font tables.
+python3 - "$OUT" <<'PYFONT'
+from pathlib import Path
+import sys
+for path in Path(sys.argv[1]).glob('ui_font_*.c'):
+    path.write_bytes(path.read_bytes().rstrip() + b'\n')
+PYFONT
 
 # 2) 清理上一代产物（只保留本次生成的；EXPECT 之外的 ui_font_*.c 一律删）
 for f in "$OUT"/ui_font_*.c; do

@@ -61,7 +61,3 @@ cmake --build build -j8 2>&1 | tail -20
 rm -rf "$OUT"
 ./build/preview "$OUT"
 python3 ppm2png.py "$OUT"
-
-# 风格试片：候选视觉手法的样张（见 style_proof.c 头部说明），落在同一输出目录
-./build/style_proof "$OUT" > /dev/null
-python3 ppm2png.py "$OUT" > /dev/null

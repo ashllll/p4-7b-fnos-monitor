@@ -9,12 +9,14 @@ import serial
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--port", default="/dev/tty.usbmodem5CF71088571")
+    ap.add_argument("--port", default=os.environ.get("FNOS_SERIAL_PORT"))
     ap.add_argument("--baud", type=int, default=115200)
     ap.add_argument("--seconds", type=float, default=60)
     ap.add_argument("--out", default="logs/serial.log")
     ap.add_argument("--reset", action="store_true", help="先做 DTR/RTS 复位再抓")
     args = ap.parse_args()
+    if not args.port:
+        ap.error("set --port or FNOS_SERIAL_PORT to the identified board serial port")
 
     # 打开端口时就把两条控制线钉在"正常启动"电平：pyserial 默认 dtr=True/rts=True，
     # 对 ESP 的 USB-Serial-JTAG 就是 IO0=低 + EN=低；关端口时 EN 先放、IO0 后放，
