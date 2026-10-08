@@ -50,11 +50,11 @@ ARTIFACTS = [
     },
     {
         "name": "主机预览",
-        # 只列**真的会被编进去**的东西：预览编的是 fnos_ui.c + kk_ui/* + fonts/* + tools/preview/*，
+        # 只列**真的会被编进去**的东西：预览编的是 fnos_ui.c + ui_kit/* + fonts/* + tools/preview/*，
         # 不编 fnos_data.c / fnos_net.c（那两个有 stub）。整目录列会把"碰了 fnos_data.c"
         # 也报成预览过期——检查一旦开始乱叫，人就不看它了，这比漏报更糟。
         "artifact": "tools/preview/build/preview",
-        "roots": ["components/fnos_monitor/kk_ui",
+        "roots": ["components/fnos_monitor/ui_kit",
                   "components/fnos_monitor/fonts",
                   "tools/preview"],
         "extra": ["components/fnos_monitor/fnos_ui.c"],

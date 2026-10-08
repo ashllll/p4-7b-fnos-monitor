@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>v11 mockup render</title>
+<link rel="stylesheet" href="css/tokens.css">
+<link rel="stylesheet" href="css/shell.css">
+<link rel="stylesheet" href="css/widgets.css">
+</head>
+<body>
+<div id="root" class="app"></div>
+<script src="js/fixtures.js"></script>
+<script src="js/pages.js"></script>
+<script>
+  /* 自适应池：列数由「可用高 ÷ 自然行高」决定（全部条目同屏、底部不留白），
+     并受「可用宽 ÷ 最小列宽」封顶；行高按剩余高度取整拉伸 —— 富余空间变成更高的行，
+     而不是底部留白或滚动条。数据条数或分辨率变化时重算。 */
+  /* 网格/弹性容器里的纯空白文本节点在 Chrome 中会成为匿名网格项或匿名弹性项，挤占轨道：
+     .ev（7 子节点）从 3 列被撑成 5 列 2 行、.bay 的名字列被压成 0 宽、.ev .body 被空白项
+     撑到 61rem（真实内容 38rem）。渲染后先把这些空白节点清掉，再做池的自适应测量。
+     只清理 grid/flex 容器的直接空白子节点：这两类容器本来就不靠文本空格排版。 */
+  function cleanAnonText() {
+    document.querySelectorAll("#root *").forEach((el) => {
+      const d = getComputedStyle(el).display;
+      if (d !== "grid" && d !== "flex" && d !== "inline-flex") return;
+      [...el.childNodes].forEach((n) => {
+        if (n.nodeType === 3 && !n.textContent.trim()) el.removeChild(n);
+      });
+    });
+  }
+
+  function adaptPools() {
+    const U = parseFloat(getComputedStyle(document.documentElement).fontSize) || 1;
+    /* data-fit 收起过的条目先复原：排版可能重跑（resize / 字体就绪 / load），
+       不还原就会把"已被收起"当成"数据本来只有这么多"，计数变成 2/2 这种假值 */
+    document.querySelectorAll("[data-pool] [data-fithid]").forEach((el) => {
+      el.style.display = "";
+      delete el.dataset.fithid;
+    });
+    document.querySelectorAll("[data-pool]").forEach((pool) => {
+      const flat = [];
+      [...pool.children].forEach((el) => {
+        if (el.classList.contains("pool-col")) flat.push(...el.children);
+        else if (el.classList.contains("bay") || el.classList.contains("kv")) flat.push(el);
+      });
+      if (!flat.length) return;
+      const poolW = pool.clientWidth, poolH = pool.clientHeight;
+      if (!poolW || !poolH) return;
+      const minCol = (Number(pool.dataset.mincol) || 200) * U;
+      const maxCols = Math.max(1, Math.floor(poolW / minCol));       // 宽度允许的列数
+
+      /* 按给定列数/每列行数重建（测量期由 .pool-measure 关掉行增长，行保持自然高度） */
+      const build = (cols, perCol) => {
+        const buckets = Array.from({ length: cols }, () => []);
+        flat.forEach((it, k) => buckets[Math.min(cols - 1, Math.floor(k / perCol))].push(it));
+        pool.innerHTML = "";
+        buckets.forEach((bucket) => {
+          if (!bucket.length) return;
+          const col = document.createElement("div");
+          col.className = "pool-col";
+          bucket.forEach((it) => col.appendChild(it));
+          pool.appendChild(col);
+        });
+      };
+
+      build(1, flat.length);                                        // ① 单列量自然行高（池宽，无拉伸）
+      /* 取全池最大自然高度，而不是只看第一条：两行条目（带副行）比一行条目高 */
+      const natMax = () => {
+        let m = 0;
+        pool.querySelectorAll(":scope > .pool-col > *").forEach((el) => {
+          const h = el.getBoundingClientRect().height;
+          if (h > m) m = h;
+        });
+        return m;
+      };
+      /* 每列自然高度总和：池不再统一拉伸行高（一行条目与两行条目混排时各自保持自然高，
+         余量由 justify-content:space-between 变成行间距），所以判据用「列总和」而不是「行数×最大行高」 */
+      const colSums = () => {
+        let m = 0;
+        pool.querySelectorAll(":scope > .pool-col").forEach((c) => {
+          let s = 0;
+          [...c.children].forEach((el) => { s += el.getBoundingClientRect().height; });
+          if (s > m) m = s;
+        });
+        return m;
+      };
+      const h0 = natMax();
+      if (!h0) return;
+      /* 列数：先按“池高能放几行”估一个列数（受最小列宽封顶），再收敛——
+         列变窄可能让条目换行、列自然高变高，就减少列数重试，直到放得进池高。
+         收敛保证两件事：不为了塞列数把行压扁到 min-height 以下；也不留横向空白。 */
+      let cols = Math.max(1, Math.min(Math.ceil(flat.length / Math.max(1, Math.floor(poolH / h0))), maxCols));
+      for (let guard = 0; guard < 6; guard++) {
+        build(cols, Math.ceil(flat.length / cols));
+        if (colSums() <= poolH + 1 || cols === 1) break;              // 放得下（含亚像素容差）或已到单列
+        cols -= 1;                                                    // 列自然高总和超出 → 列加宽、行变矮，重试
+      }
+      pool.classList.add("pool-measure");        // 测量期关掉 flex 增长：行回自然高度，列数与收纳判定才准
+      const perCol = Math.ceil(flat.length / cols);
+      const hN = natMax() || h0;
+      /* 可选（data-fit）：摘要卡不滚动——装不下的条目直接收起，把「显示 N / M」写进同卡 [data-fitnote]。
+         排序在渲染期已保证重要条目在前（如存储风险按使用率降序），所以收起的永远是最不紧要的。 */
+      let fitDbg = "";
+      if (pool.dataset.fit !== undefined) {
+        let shown = 0;
+        pool.querySelectorAll(":scope > .pool-col").forEach((c) => {
+          const avail = c.clientHeight;
+          let used = 0;
+          [...c.children].forEach((el) => {
+            const h = el.getBoundingClientRect().height;
+            if (used + h > avail + 1) { el.style.display = "none"; el.dataset.fithid = "1"; }
+            else { used += h; shown++; }
+          });
+        });
+        const note = pool.parentElement.querySelector("[data-fitnote]");
+        if (note) note.textContent = String(shown);
+        fitDbg = ` fit=${shown}`;
+      }
+      pool.dataset.dbg = `${Math.round(poolW)}x${Math.round(poolH)} n=${flat.length} h0=${Math.round(h0)} hN=${Math.round(hN)} need=${Math.round(colSums())} maxCols=${maxCols} cols=${cols} perCol=${perCol}${fitDbg}`;
+      pool.classList.remove("pool-measure");     // 放行：可见行按剩余空间均分增长（余量变行高，不变滚动条）
+    });
+  }
+
+  const q = new URLSearchParams(location.search);
+  renderApp(q.get("page") || "overview", q.get("fixture") || "live");
+  cleanAnonText();
+  adaptPools();
+  /* 排版要重跑：字体就绪会改变行高（设备名换行与否），窗口尺寸变化同理 */
+  window.addEventListener("resize", adaptPools);
+  window.addEventListener("load", adaptPools);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(adaptPools);
+  const emitMeasure = () => {
+    // 客观自检（口径 v2）：三类标注
+    //   S = overflow-y:auto 滚动列表超出 —— 设计允许（数据自适应的滚动通道）
+    //   E = 省略号截断（text-overflow:ellipsis）—— 设计允许，但 .l1 设备名不允许缩写
+    //   ! = 真缺陷：纵向裁切（降部被切/行被压扁）、无省略号的横向裁切、.l1 名字被截
+    const out = [];
+    document.querySelectorAll("#root *").forEach((el) => {
+      const cs = getComputedStyle(el);
+      const hidX = cs.overflowX !== "visible", hidY = cs.overflowY !== "visible";
+      const clipX = hidX && el.scrollWidth > el.clientWidth + 1;
+      const clipY = hidY && el.scrollHeight > el.clientHeight + 1;
+      if (!clipX && !clipY) return;
+      const cls = (typeof el.className === "string" ? el.className : "").trim() || el.tagName;
+      const isL1 = /(^|\s)l1(\s|$)/.test(cls);
+      const ellipsis = cs.textOverflow === "ellipsis";
+      const clamp = cs.webkitLineClamp && cs.webkitLineClamp !== "none"; // 设计折行（.kpi .sub 两行折叠）
+      const scrollY = /auto|scroll/.test(cs.overflowY);
+      let tag;
+      if (clamp && !clipX) tag = "C";
+      else if (clipY && scrollY && !clipX) tag = "S";
+      else if (clipX && ellipsis && !clipY && !isL1) tag = "E";
+      else tag = "!";
+      const dir = (clipX ? "X" : "") + (clipY ? "Y" : "");
+      out.push(`${tag}${dir} ${cls} [${el.scrollWidth}x${el.scrollHeight}>${el.clientWidth}x${el.clientHeight}] "${(el.textContent || "").trim().slice(0, 40)}"`);
+    });
+    const defects = out.filter((l) => l[0] === "!");
+    const notes = out.filter((l) => l[0] !== "!");
+    /* 自适应池几何自检：列数 / 行高 / 是否溢出 */
+    const pools = [];
+    document.querySelectorAll("[data-pool]").forEach((pool, i) => {
+      const title = (pool.closest(".card") || document).querySelector(".card-title");
+      const cols = pool.querySelectorAll(":scope > .pool-col").length;
+      const row = pool.querySelector(".pool-col > *");
+      pools.push(`POOL#${i} "${(title ? title.textContent : "?").trim()}" ${Math.round(pool.clientWidth)}x${Math.round(pool.clientHeight)} cols=${cols} row=${row ? Math.round(row.getBoundingClientRect().height) : "-"} over=${pool.scrollHeight}>${pool.clientHeight} | ${pool.dataset.dbg || ""}`);
+    });
+    const geo = [];
+    document.querySelectorAll("[data-pool]").forEach((pool, i) => {
+      const ps = getComputedStyle(pool);
+      const par = pool.parentElement;
+      const parH = Math.round(par.getBoundingClientRect().height);
+      const nm = (x) => (typeof x.className === "string" ? x.className : "").trim() || x.tagName;
+      geo.push(`GEO pool#${i} h=${Math.round(pool.getBoundingClientRect().height)} display=${ps.display} dir=${ps.flexDirection} align=${ps.alignItems} flex=${ps.flex} parentH=${parH}`);
+      geo.push(`  par ${nm(par)} display=${getComputedStyle(par).display}/${getComputedStyle(par).flexDirection} h=${parH} kids=${[...par.children].map((x) => `${nm(x)}:${Math.round(x.getBoundingClientRect().height)}:${getComputedStyle(x).flex}:mt=${getComputedStyle(x).marginTop}`).join(" | ")}`);
+      pool.querySelectorAll(":scope > .pool-col").forEach((c, j) => {
+        const cs = getComputedStyle(c);
+        geo.push(`  col#${j} h=${c.getBoundingClientRect().height.toFixed(2)} client=${c.clientHeight} scroll=${c.scrollHeight} padtb=${cs.paddingTop}/${cs.paddingBottom} rowg=${cs.rowGap} flex=${cs.flex} items=${[...c.children].map((x) => x.getBoundingClientRect().height.toFixed(2)).join("/")} sum=${[...c.children].reduce((s, x) => s + x.getBoundingClientRect().height, 0).toFixed(2)} need=${[...c.children].map((x) => x.scrollHeight).join("/")}`);
+      });
+    });
+    document.querySelectorAll(".ev").forEach((e, i) => {
+      const b = e.querySelector(".body");
+      const r = (x) => { const q = x.getBoundingClientRect(); return `${Math.round(q.height)}h@${Math.round(q.left)}`; };
+      const cs = getComputedStyle(e);
+      const bc = getComputedStyle(b);
+      geo.push(`GEO ev#${i} h=${Math.round(e.getBoundingClientRect().height)} nodes=${e.childNodes.length} lv=${r(e.querySelector(".lv"))} body=${r(b)} age=${r(e.querySelector(".age"))} kids=${b.children.length}[${[...b.children].map(r).join(" ")}] bnodes=${b.childNodes.length} bcs=${bc.display}/${bc.flexDirection}/lh=${bc.lineHeight}/minh=${bc.minHeight}/pad=${bc.paddingTop},${bc.paddingBottom}/rowgap=${bc.rowGap} scroll=${b.scrollHeight} evminh=${cs.minHeight}/pad=${cs.paddingTop},${cs.paddingBottom}/align=${cs.alignItems}`);
+    });
+    /* 几何审计 v3（补 v2 的盲区）：用户肉眼发现的"错位"类缺陷——元素矩形逃出所属卡片，
+       或同级元素互相压叠。v2 只看元素自身的 scroll 尺寸，看不见它与父/邻的几何关系，
+       所以配对页那种"键盘压住按钮、码槽压到左卡上"的溢出当时报 defects=0。 */
+    const fitOut = [];
+    const inScroller = (el) => {
+      for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+        const c = getComputedStyle(p);
+        if (/auto|scroll/.test(c.overflowX) || /auto|scroll/.test(c.overflowY)) return true;   // 滚动容器内的越界是设计通道
+      }
+      return false;
+    };
+    const nmOf = (x) => (typeof x.className === "string" ? x.className : "").trim() || x.tagName;
+    document.querySelectorAll("#root *").forEach((el) => {
+      if (el.closest("svg")) return;                                 // 图标内部图形天然互相叠压，不算错位
+      const r = el.getBoundingClientRect();
+      if (r.width < 1 || r.height < 1) return;
+      const card = el.closest(".card");
+      if (!card || card === el || inScroller(el)) return;
+      const cr = card.getBoundingClientRect();
+      const over = [];
+      if (r.right - cr.right > 1) over.push(`右+${Math.round(r.right - cr.right)}`);
+      if (cr.left - r.left > 1) over.push(`左-${Math.round(cr.left - r.left)}`);
+      if (r.bottom - cr.bottom > 1) over.push(`底+${Math.round(r.bottom - cr.bottom)}`);
+      if (cr.top - r.top > 1) over.push(`顶-${Math.round(cr.top - r.top)}`);
+      if (over.length) fitOut.push(`!FIT ${nmOf(el)} 越出卡片 ${over.join(" ")} @${Math.round(r.left)},${Math.round(r.top)}`);
+    });
+    document.querySelectorAll("#root *").forEach((par) => {
+      if (par.closest("svg")) return;
+      const kids = [...par.children].filter((k) => {
+        if (k.closest("svg")) return false;
+        const c = getComputedStyle(k), r = k.getBoundingClientRect();
+        return c.position === "static" && r.width > 1 && r.height > 1;
+      });
+      for (let i = 0; i < kids.length; i++) {
+        for (let j = i + 1; j < kids.length; j++) {
+          const a = kids[i].getBoundingClientRect(), b = kids[j].getBoundingClientRect();
+          const ox = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+          const oy = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+          if (ox > 1 && oy > 1) fitOut.push(`!OVERLAP ${nmOf(kids[i])} ∩ ${nmOf(kids[j])} = ${Math.round(ox * oy)}px² in ${nmOf(par)}`);
+        }
+      }
+    });
+    /* 整页级越界：应用是 100vw×100vh，内容一旦超出就是被切掉（用户看到的就是"错位/被截"） */
+    const root = document.getElementById("root");
+    if (root.scrollWidth > root.clientWidth + 1) fitOut.push(`!PAGE 横向溢出 ${root.scrollWidth}>${root.clientWidth}`);
+    if (root.scrollHeight > root.clientHeight + 1) fitOut.push(`!PAGE 纵向溢出 ${root.scrollHeight}>${root.clientHeight}`);
+    const pre = document.createElement("pre");
+    pre.id = "measure";
+    pre.textContent = [
+      `viewport ${window.innerWidth}x${window.innerHeight}`,
+      `defects=${defects.length + fitOut.length} notes=${notes.length} geo=${fitOut.length}`,
+      ...defects,
+      ...fitOut,
+      ...(defects.length + fitOut.length > 0 && notes.length ? ["---"] : []),
+      ...notes,
+      ...(pools.length ? ["=== pools ==="] : []),
+      ...pools,
+      ...(geo.length ? ["=== geo ==="] : []),
+      ...geo,
+    ].join("\n");
+    document.body.appendChild(pre);
+  };
+  if (q.get("measure")) {
+    /* 检测器自检（?selftest=1）：故意塞一个越出卡片左边缘的方块，
+       用来证明几何审计真的会报，而不是"跑了个啥都没检测到的东西" */
+    if (q.get("selftest")) {
+      const host = document.querySelector(".card-body") || document.querySelector(".card");
+      const probe = document.createElement("div");
+      probe.style.cssText = "width:60rem;height:40rem;margin-left:-200rem;background:#f00";
+      host.appendChild(probe);
+    }
+    /* 报告必须对应"最终排版"：字体就绪会改变行高（设备名换行与否），
+       所以等字体就绪 → 重排一次 → 再出报告（dump-dom 的 virtual-time-budget 会等它） */
+    const ready = document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve();
+    ready.then(() => { cleanAnonText(); adaptPools(); emitMeasure(); });
+  }
+</script>
+</body>
+</html>

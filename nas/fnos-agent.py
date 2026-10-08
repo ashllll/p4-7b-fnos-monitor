@@ -213,24 +213,34 @@ class Collector:
 
     def _net(self):
         iface = self._pick_netif()
-        cur = self._net_counters()
-        rx = tx = 0
-        if iface in cur:
-            rx, tx = cur[iface]
-        rx_kbs = tx_kbs = 0.0
-        prev = self._prev_net
-        if prev and prev[0] == iface:
-            # 单调钟：墙钟回拨会让 dt 变负、速率变成天文数字并写进曲线
-            dt = max(1e-6, time.monotonic() - prev[3])
-            rx_kbs = max(0.0, (rx - prev[1]) / dt / 1024.0)
-            tx_kbs = max(0.0, (tx - prev[2]) / dt / 1024.0)
-        self._prev_net = (iface, rx, tx, time.monotonic())
-        gb = 1024.0 ** 3
-        return {
-            "if": iface,
-            "rx_kbs": round(rx_kbs, 1), "tx_kbs": round(tx_kbs, 1),
-            "rx_total_gb": round(rx / gb, 2), "tx_total_gb": round(tx / gb, 2),
-        }
+        current = self._net_counters()
+        now = time.monotonic()
+        previous = getattr(self, "_prev_interfaces", {})
+        interfaces = []
+        for name in sorted(current):
+            if name == "lo":
+                continue
+            rx, tx = current[name]
+            old = previous.get(name)
+            rx_rate = tx_rate = 0.0
+            if old:
+                dt = max(1e-6, now - old[2])
+                rx_rate = max(0.0, (rx - old[0]) / dt / 1024.0)
+                tx_rate = max(0.0, (tx - old[1]) / dt / 1024.0)
+            interfaces.append({
+                "if": name, "rx_kbs": round(rx_rate, 1), "tx_kbs": round(tx_rate, 1),
+                "rx_total_gb": round(rx / (1024.0 ** 3), 2),
+                "tx_total_gb": round(tx / (1024.0 ** 3), 2),
+                "state": read_text(sysfs("class", "net", name, "operstate"), "unknown").strip(),
+                "speed_mbps": max(0, read_int(sysfs("class", "net", name, "speed"), 0)),
+                "physical": os.path.exists(sysfs("class", "net", name, "device")),
+            })
+        self._prev_interfaces = {name: (rx, tx, now) for name, (rx, tx) in current.items()}
+        selected = next((row for row in interfaces if row["if"] == iface), None)
+        summary = dict(selected) if selected else {"if": iface, "rx_kbs": 0.0, "tx_kbs": 0.0,
+                                                   "rx_total_gb": 0.0, "tx_total_gb": 0.0}
+        summary["interfaces"] = interfaces
+        return summary
 
     def _volumes(self):
         vols = []
@@ -333,7 +343,7 @@ class Collector:
                 rates.append({"dev": name, "rd_kbs": round(rd, 1), "wr_kbs": round(wr, 1)})
         self._prev_disk = (cur, now)
         rates.sort(key=lambda d: (d["rd_kbs"] + d["wr_kbs"]), reverse=True)
-        return rates[:10]
+        return rates
 
     # ── 温度：把 /sys/class/hwmon 下**每一个**可读通道都报出来（板端逐路显示）。
     #
@@ -341,9 +351,6 @@ class Collector:
     #    控制器和这个 hwmon 指向同一个底层设备，就用它的名字（nvme0n1 / enp1s0 /
     #    i915）；推导不出来时才退回 hwmon 自己的名字（coretemp、acpitz……）。
     #    换机器、插新卡、加硬盘，标签自动跟着变，不需要改代码。
-    TEMP_MAX = 48          # 与板端 FNOS_MAX_TEMPS 同值；超出时丢最冷的几条
-    TEMP_STR = 20          # dev / ch 各自的最大长度（板端按字符格排版）
-    TEMP_NAME = 28         # dn（人读的设备名）的最大长度：板端一行放得下约 23~28 个西文字符
     # 通道语义像 CPU 的标签：Intel coretemp 的 "Package id 0"/"Core 3"、
     # AMD k10temp 的 "Tctl"/"Tdie" 都命中。用它而不是"驱动名对照表"来认 CPU。
     CPU_LABEL_RE = re.compile(r"(?i)\b(package|tctl|tdie|tccd|cpu|core\s*\d+)\b")
@@ -541,8 +548,7 @@ class Collector:
                 rate = self.LINK_RATE.get(read_int(sysfs("class", "net", dev, "speed"), 0), "")
                 # 速率只在"加了还塞得下、且名字里本来没有速率"时才补：pci.ids 的型号名
                 # 有的自带 "10GbE Controller"，无脑再补一遍会变成 "… 10GbE 10Gb"。
-                if rate and "GbE" not in head and "MbE" not in head \
-                        and len(head) + 1 + len(rate) <= self.TEMP_NAME:
+                if rate and "GbE" not in head and "MbE" not in head:
                     head = "%s %s" % (head, rate)
             return head or dev
         if cpuish:
@@ -582,20 +588,20 @@ class Collector:
             dev, kind = self._pick_device(rp, cand)
             cpuish = any(self.CPU_LABEL_RE.search(ch) for _, ch, _ in chans)
             if not dev:
-                dev = "CPU" if cpuish else name
+                dev = os.path.basename(rp.rstrip(os.sep)) or name
             dn = self._dev_name(kind, dev, rp, name, cpuish)
             if fallback_cpu is None and rp.startswith(sysfs("devices", "platform")):
                 fallback_cpu = round(chans[0][2], 1)
             for _, ch, c in chans:
                 if self._cpu_temp is None and self.CPU_LABEL_RE.search(ch):
                     self._cpu_temp = round(c, 1)
-                out.append({"n": ("%s %s" % (dev, ch))[:32], "c": round(c, 1),
-                            "dev": dev[:self.TEMP_STR], "ch": ch[:self.TEMP_STR],
-                            "dn": dn[:self.TEMP_NAME]})
+                out.append({"n": "%s %s" % (dev, ch), "c": round(c, 1),
+                            "dev": dev, "ch": ch,
+                            "dn": dn})
         if self._cpu_temp is None:
             self._cpu_temp = fallback_cpu
         out.sort(key=lambda t: t["c"], reverse=True)
-        return out[:self.TEMP_MAX]
+        return out
 
     def _docker(self):
         now = time.time()
@@ -611,16 +617,13 @@ class Collector:
             rows = json.loads(body.decode("utf-8", "replace"))
             result = []
             for c in rows:
-                names = c.get("Names") or [c.get("Id", "?")[:12]]
+                names = c.get("Names") or [c.get("Id", "?")]
                 result.append({
-                    # 板子端 char n[24]/s[40]：超长会在那里被截断，这里先截好，
-                    # 顺便把整帧大小压住（payload 超过板子 8 KB 缓冲会整帧作废）
-                    "n": names[0].lstrip("/")[:23],
+                    "n": names[0].lstrip("/"),
                     "up": c.get("State") == "running",
-                    "s": (c.get("Status") or "")[:39],
+                    "s": c.get("Status") or "",
                 })
             result.sort(key=lambda x: (not x["up"], x["n"]))
-            result = result[:16]
             self._docker_seen_up.update(c["n"] for c in result if c["up"])
         except Exception:
             result = prev          # 任何失败都保留上一份，绝不用空表覆盖（否则容器与告警一起消失）
@@ -677,7 +680,7 @@ class Collector:
             # 只报"本来在跑、现在掉了"的容器；开机就停着的（如已弃用的 exporter）不刷告警
             if not c["up"] and c["n"] in self._docker_seen_up:
                 out.append({"lv": "warn", "m": "container %s down" % c["n"]})
-        return out[:8]
+        return out
 
     def sample(self):
         # 逐段隔离：某一段抛异常时保留上一份的值并记录到 errors，

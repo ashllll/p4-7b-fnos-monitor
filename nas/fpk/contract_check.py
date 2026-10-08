@@ -38,16 +38,18 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
-DEFAULT_FIRMWARE = os.path.join(REPO, "components", "fnos_monitor", "fnos_data.c")
+DEFAULT_FIRMWARE = os.path.join(REPO, "components", "fnos_monitor", "fnos_snapshot.c")
 FIELDS_JSON = os.path.join(HERE, "board_fields.json")
 COLLECTOR = os.environ.get(
     "NSC_COLLECTOR",
     os.path.join(HERE, "nasscreencompanion", "app", "server", "fnos_collector.py"))
 
 # 列表段 → 采集端里构造它的方法名（机器核对用；改名时两边一起改）
+DOCKER_TRANSPORT = os.path.join(os.path.dirname(COLLECTOR), "docker_api.py")
+
 LIST_METHOD = {
     "vols": "_volumes", "raid": "_raid", "disks": "_disk_io", "temps": "_temps",
-    "docker": "_docker", "alerts": "_alerts",
+    "docker": "_docker", "alerts": "_alerts", "netifs": "_net",
 }
 # 对象段 → 采集端里构造它的方法名（本机有数据时走真实响应，没有时退回源码核对）
 OBJ_METHOD = {"cpu": "_cpu", "mem": "_mem", "net": "_net", "zfs": "_zfs"}
@@ -62,6 +64,28 @@ def firmware_reads(path):
       - 数组里的 `it` 要归属到最近一次 `cJSON_ArrayForEach(it, <变量>)`。
     """
     src = open(path, encoding="utf-8").read()
+    if "bool fnos_status_parse" in src:
+        scope = {"root": "root", "net": "net", "interfaces": "netifs"}
+        reads = []
+        for line in src[src.index("bool fnos_status_parse"):].splitlines():
+            for var, parent, key in re.findall(r'(\w+)\s*=\s*item\((\w+),"(\w+)"\)', line):
+                scope[var] = key
+            loop = re.search(r'cJSON_ArrayForEach\(v,array\(root,"(\w+)"\)\)', line)
+            if loop:
+                scope["v"] = loop.group(1)
+            elif 'cJSON_ArrayForEach(v,interfaces)' in line:
+                scope["v"] = "netifs"
+            elif 'cJSON_ArrayForEach(v,modules)' in line:
+                scope["v"] = "modules"
+            for var, key in re.findall(r'(?:number|string|item)\((\w+),"(\w+)"\)', line):
+                if var in scope and var not in ("root",) and key != "interfaces":
+                    reads.append((scope[var], key))
+            for var, key in re.findall(r'TEXT\([^,]+,(\w+),"(\w+)"\)', line):
+                if var in scope:
+                    reads.append((scope[var], key))
+            for key in re.findall(r'number\(root,"(\w+)"\)', line):
+                reads.append(("root", key))
+        return list(dict.fromkeys(reads))
     # 变量名 → JSON 键
     varmap = {}
     for m in re.finditer(r"const cJSON \*(\w+)\s*=\s*cJSON_GetObjectItemCaseSensitive\(\s*\w+\s*,\s*\"([A-Za-z_0-9]+)\"", src):
@@ -152,12 +176,11 @@ def all_source_keys():
 
 
 def preview_size_problems():
-    """主机预览的画布尺寸必须等于真机面板尺寸。
+    """主机预览的默认画布尺寸必须等于真机面板尺寸。
 
-    这是**两份互不相干的常量**：`tools/preview/preview.c` 里写死 `SCR_W/SCR_H`，
-    真机面板在 BSP 的 `BSP_LCD_H_RES/BSP_LCD_V_RES`。两边一旦不一致，预览出的样张
-    就不是真机上会看到的样子——而且**看上去仍然"正常"**（只是比例或裁切不对），
-    版面审计也照样过，因为它们量的是同一个画布内部的关系。P4 要交的截图正是从这儿出的。
+    从实际 lv_display_create() 参数核对默认值，兼容常量和运行时变量。
+    PREVIEW_SIZE 可覆盖默认值做适配矩阵；那些样张是其他分辨率的取证，
+    默认画布才与 BSP 的 BSP_LCD_H_RES/BSP_LCD_V_RES 对照。
     """
     out = []
     bsp = os.path.join(REPO, "components/esp32_p4_wifi6_touch_lcd_7b/include/bsp/display.h")
@@ -170,19 +193,27 @@ def preview_size_problems():
     p = io.open(prev, encoding="utf-8").read()
 
     def num(text, name):
-        m = re.search(r"#define\s+%s\s+\(?\s*(\d+)" % name, text)
+        # The adaptive preview stores defaults in variables, not SCR_W/H macros.
+        escaped = re.escape(name)
+        m = re.search(r"#define\s+%s\b\s+\(?\s*(\d+)" % escaped, text)
+        if not m:
+            m = re.search(r"\b%s\s*=\s*\(?\s*(\d+)" % escaped, text)
         return int(m.group(1)) if m else None
 
-    pairs = [("BSP_LCD_H_RES", num(b, "BSP_LCD_H_RES"), "SCR_W", num(p, "SCR_W")),
-             ("BSP_LCD_V_RES", num(b, "BSP_LCD_V_RES"), "SCR_H", num(p, "SCR_H"))]
+    display = re.search(r"\blv_display_create\s*\(\s*(\w+)\s*,\s*(\w+)\s*\)", p)
+    if not display:
+        return ["取不到 lv_display_create() 的尺寸来源，没法核预览默认画布尺寸"]
+    width, height = display.groups()
+    pairs = [("BSP_LCD_H_RES", num(b, "BSP_LCD_H_RES"), width, num(p, width)),
+             ("BSP_LCD_V_RES", num(b, "BSP_LCD_V_RES"), height, num(p, height))]
     for bn, bv, pn, pv in pairs:
         if bv is None or pv is None:
-            out.append(f"取不到 {bn} 或 {pn} 的值，没法核预览画布尺寸")
+            out.append(f"取不到 {bn} 或 {pn} 的值，没法核预览默认画布尺寸")
         elif bv != pv:
-            out.append(f"面板是 {bn}={bv}，而预览画布 {pn}={pv}"
-                       f"—— 样张不是真机上会看到的样子（P4 的截图就从这儿出）")
+            out.append(f"面板是 {bn}={bv}，而预览默认画布 {pn}={pv}"
+                       f"—— 默认样张不是真机上会看到的样子（P4 的截图就从这儿出）")
     if not out:
-        print(f"预览画布 {pairs[0][3]}×{pairs[1][3]} 与真机面板 "
+        print(f"预览默认画布 {pairs[0][3]}×{pairs[1][3]} 与真机面板 "
               f"{pairs[0][1]}×{pairs[1][1]} 一致")
     return out
 
@@ -193,7 +224,7 @@ def main():
         with open(FIELDS_JSON, "w", encoding="utf-8") as f:
             json.dump({
                 "note": "由 nas/fpk/contract_check.py --emit 从固件源码生成，别手改；"
-                        "改的是 components/fnos_monitor/fnos_data.c。",
+                        "改的是 components/fnos_monitor/fnos_snapshot.c。",
                 "source": os.path.relpath(DEFAULT_FIRMWARE, REPO),
                 "fields": reads,
             }, f, ensure_ascii=False, indent=1)
@@ -211,25 +242,30 @@ def main():
     if status_path:
         origin += f"；响应来自 {status_path}"
     src_keys = all_source_keys()
+    if os.path.exists(DOCKER_TRANSPORT):
+        src_keys.update(re.findall(r'["\'](\w+)["\']\s*:', open(DOCKER_TRANSPORT, encoding="utf-8").read()))
     problems, checked_live, checked_src = [], 0, 0
 
     for scope, key in reads:
         # 「本机拿不到这段数据」的各种形态都要认：列表为空、对象为空、值是 null。
         # 它们不代表协议不对，只代表这台机器（macOS 没有 /proc、/sys）采不到，
         # 这时退回采集端源码核键名。
-        seg = st.get(scope) if scope != "root" else st
+        seg = (st.get("net") or {}).get("interfaces") if scope == "netifs" else (st.get(scope) if scope != "root" else st)
         if scope == "root":
             ok = key in st
             where = "真实响应 status"
+        elif scope == "modules" and isinstance(seg, dict) and seg:
+            ok = any(isinstance(value, dict) and key in value for value in seg.values())
+            where = "真实响应 status.modules.*"
         elif isinstance(seg, dict) and seg:
             ok = key in seg
             where = f"真实响应 status.{scope}"
         elif isinstance(seg, list) and seg:
             ok = key in seg[0]
             where = f"真实响应 status.{scope}[0]"
-        elif scope in st:
+        elif scope in st or (scope == "netifs" and "net" in st):
             meth = LIST_METHOD.get(scope) or OBJ_METHOD.get(scope)
-            body = method_body(COLLECTOR, meth) if meth else None
+            body = method_body(DOCKER_TRANSPORT, "containers") if scope == "docker" else (method_body(COLLECTOR, meth) if meth else None)
             if body is None:
                 problems.append(f"{scope}.{key}：找不到构造该段的方法（{meth}）")
                 continue
@@ -289,14 +325,14 @@ def limits_problems():
         return []
     fw = io.open(limits_h, encoding="utf-8").read()
     # HIST_BUF_SIZE 定义在 .c 里（FNOS_MAX_* 在 .h 里），两个都要读
-    fw2 = fw + io.open(DEFAULT_FIRMWARE, encoding="utf-8").read()
+    fw2 = fw + io.open(os.path.join(os.path.dirname(DEFAULT_FIRMWARE), "fnos_data.c"), encoding="utf-8").read()
     cap = {m.group(1): int(m.group(2))
            for m in re.finditer(r"#define\s+FNOS_MAX_(\w+)\s+(\d+)", fw)}
     nas_path = os.path.join(os.path.dirname(DEFAULT_FIRMWARE), "..", "..",
                             "nas", "fpk", "nasscreencompanion", "app", "server",
                             "fnos_collector.py")
     nas_path = os.path.normpath(nas_path)
-    if not (cap and os.path.exists(nas_path)):
+    if not os.path.exists(nas_path):
         print(f"（跳过容量上限核对：固件上限 {len(cap)} 个，采集端 {os.path.exists(nas_path)}）")
         return []
     coll = io.open(nas_path, encoding="utf-8").read()
@@ -306,6 +342,8 @@ def limits_problems():
         for k, v in re.findall(r'"(\w+)"\s*:\s*(\d+)', m.group(1)):
             limits[k] = int(v)
     out = []
+    if not cap:
+        print("设备清单：动态快照与按需接收，数量不由 FNOS_MAX 常量截断")
     for seg, lim in sorted(limits.items()):
         c = cap.get(seg.upper())
         if c is None:

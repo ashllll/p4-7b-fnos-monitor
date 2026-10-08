@@ -2,7 +2,7 @@
 # 三套配色 × 四页 的对比图：同一份几何、同一份数据，只换调色板。
 # 用法：bash tools/preview/palettes.sh          （输出 tools/preview/palette-out/<名字>/）
 #
-# 为什么用同一份 preview 二进制：配色是运行时读的表（kk_theme.c），
+# 为什么用同一份 preview 二进制：配色是运行时读的表（ui_kit/uk_theme.c），
 # 如果每套配色各编一份、各写一份页面代码，"换个颜色顺手改坏对齐"就防不住了。
 set -euo pipefail
 cd "$(dirname "$0")"

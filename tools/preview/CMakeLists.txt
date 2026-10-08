@@ -9,6 +9,13 @@ endif()
 
 get_filename_component(REPO "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
 set(COMP "${REPO}/components/fnos_monitor")
+# Only export public UI configuration to the preview, never network credentials.
+set(UI_DEVICE_CONFIG "${REPO}/build/config/sdkconfig.h")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${UI_DEVICE_CONFIG}")
+file(STRINGS "${UI_DEVICE_CONFIG}" UI_CONFIG REGEX "^#define CONFIG_FNOS_(UI_|CHART_WINDOW )")
+string(REPLACE ";" "\n" UI_CONFIG "${UI_CONFIG}")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/ui_config_host.h" "${UI_CONFIG}\n")
+
 
 # LVGL 桌面版 CMake 用的名字是 CONFIG_LV_BUILD_*（不是 LV_BUILD_*）
 set(CONFIG_LV_BUILD_DEMOS    OFF CACHE BOOL "" FORCE)
@@ -31,42 +38,42 @@ file(GLOB FONT_SRC "${COMP}/fonts/*.c")
 
 add_executable(preview
   preview.c
+  "${COMP}/fnos_snapshot.c"
+  "${REPO}/managed_components/espressif__cjson/cJSON/cJSON.c"
   "${COMP}/fnos_ui.c"
-  "${COMP}/kk_ui/kk_widgets.c"
-  "${COMP}/kk_ui/kk_rect.c"
-  "${COMP}/kk_ui/kk_theme.c"
-  "${COMP}/kk_ui/kk_metrics.c"
+  "${COMP}/ui_kit/uk.c"
+  "${COMP}/ui_kit/uk_theme.c"
   ${FONT_SRC}
 )
 
 # stub/ 必须排在前面：它顶掉 fnos_config.h（真实凭据）并补 sdkconfig.h / esp_*.h
 target_include_directories(preview PRIVATE
+  "${CMAKE_CURRENT_BINARY_DIR}"
   "${CMAKE_CURRENT_SOURCE_DIR}/stub"
   "${CMAKE_CURRENT_SOURCE_DIR}"
   "${COMP}"
-  "${COMP}/kk_ui"
+  "${COMP}/ui_kit"
+  "${REPO}/managed_components/espressif__cjson/cJSON"
 )
 
 # 设备端真实 Kconfig（CONFIG_LV_*）已由上面的 add_compile_options 全局注入
 target_compile_options(preview PRIVATE
   -Wall -Wno-unused-parameter
 )
+target_compile_definitions(preview PRIVATE FNOS_UI_TESTING=1)
 target_link_libraries(preview PRIVATE lvgl m)
+option(FNOS_PREVIEW_SANITIZE "Check UI ownership and injected allocation failures" OFF)
+if(FNOS_PREVIEW_SANITIZE)
+  target_compile_options(preview PRIVATE -UNDEBUG -fsanitize=address,undefined -fno-omit-frame-pointer)
+  target_link_options(preview PRIVATE -fsanitize=address,undefined)
+endif()
 
-# 风格试片：同一套 Kconfig + 渲染路径下的样式样张（见 style_proof.c 头部说明）
-add_executable(style_proof
-  style_proof.c
-  "${COMP}/kk_ui/kk_widgets.c"
-  "${COMP}/kk_ui/kk_rect.c"
-  "${COMP}/kk_ui/kk_theme.c"
-  "${COMP}/kk_ui/kk_metrics.c"
-  ${FONT_SRC}
-)
-target_include_directories(style_proof PRIVATE
-  "${CMAKE_CURRENT_SOURCE_DIR}/stub"
-  "${CMAKE_CURRENT_SOURCE_DIR}"
-  "${COMP}"
-  "${COMP}/kk_ui"
-)
-target_compile_options(style_proof PRIVATE -Wall -Wno-unused-parameter)
-target_link_libraries(style_proof PRIVATE lvgl m)
+# Sanitize the ownership layer independently of board/network stubs.
+add_executable(snapshot_check snapshot_check.c
+  "${COMP}/fnos_snapshot.c"
+  "${REPO}/managed_components/espressif__cjson/cJSON/cJSON.c")
+target_include_directories(snapshot_check PRIVATE
+  "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/stub"
+  "${COMP}" "${REPO}/managed_components/espressif__cjson/cJSON")
+target_compile_options(snapshot_check PRIVATE -UNDEBUG -fsanitize=address,undefined -fno-omit-frame-pointer)
+target_link_options(snapshot_check PRIVATE -fsanitize=address,undefined)

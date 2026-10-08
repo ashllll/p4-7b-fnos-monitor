@@ -1,8 +1,0 @@
-[   6.51] I (74822) main: heap periodic       internal=230KB largest=188KB dma=192KB psram=27608KB
-[  16.24] I (84822) main: heap periodic       internal=228KB largest=184KB dma=190KB psram=27608KB
-[  16.51] I (84988) fnos_data: poll ok=60 fail=1 424ms cpu=1.2% mem=33.1% rx=2.9 tx=21.9 KB/s alerts=0 internal=230KB dma=192KB psram=27609KB
-[  26.47] I (94822) main: heap periodic       internal=230KB largest=188KB dma=192KB psram=27609KB
-[  36.49] I (104822) main: heap periodic       internal=228KB largest=184KB dma=190KB psram=27608KB
-[  46.51] I (114822) main: heap periodic       internal=230KB largest=188KB dma=192KB psram=27609KB
-[  56.24] I (124822) main: heap periodic       internal=230KB largest=188KB dma=192KB psram=27609KB
-[  56.79] I (125187) fnos_data: poll ok=90 fail=1 136ms cpu=1.5% mem=33.1% rx=7.1 tx=105.8 KB/s alerts=0 internal=230KB dma=192KB psram=27609KB

@@ -9,6 +9,7 @@
 #include "fnos_net.h"
 #include "fnos_pair.h"
 #include "fnos_wifi_store.h"
+#include "fnos_ui.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -25,6 +26,7 @@ static void usage(void)
            "  wifi show                     看当前状态（不回显口令）\n"
            "  wifi set <SSID> <口令>        写入并立刻重连（口令里有空格也没关系）\n"
            "  wifi clear                    清掉保存的凭据（退回出厂默认）\n"
+           "  page <0-4>                    切页：总览/存储/网络/系统/温度（实机验收用）\n"
            "  tls                           HTTPS 自检：明文取证书 + 用证书探一次 /health\n"
            "  help                          显示这段说明\n\n");
 }
@@ -62,6 +64,15 @@ static void handle(char *line)
     if (!n) return;
 
     if (!strcmp(line, "help") || !strcmp(line, "?")) { usage(); return; }
+    if (!strncmp(line, "page", 4)) {
+        const char *arg = line + 4;
+        while (*arg == ' ') arg++;
+        int n = (*arg >= '0' && *arg <= '9') ? *arg - '0' : -1;
+        if (n < 0 || n >= FNOS_UI_PAGE_COUNT) { printf("用法：page <0-%d>\n", FNOS_UI_PAGE_COUNT - 1); return; }
+        fnos_ui_request_page(n);
+        printf("切到第 %d 页（下一跳生效，动画照常）\n", n);
+        return;
+    }
     if (!strcmp(line, "tls")) {
         /* 只读自检：开详细日志 → 跑一次真 HTTPS → 关回去。
            mbedTLS/esp-tls 的失败原因只有 DEBUG 级别才打得出来，而这条命令
@@ -90,7 +101,7 @@ static void cli_task(void *arg)
     static char line[CLI_LINE_MAX];
     // 起站之后再等一下，免得和开机日志抢串口
     vTaskDelay(pdMS_TO_TICKS(3000));
-    printf("\n[串口] 命令可用：wifi set <SSID> <口令> / wifi show / tls（HTTPS 自检）/ help\n");
+    printf("\n[串口] 命令可用：wifi set <SSID> <口令> / wifi show / page <0-4> / tls（HTTPS 自检）/ help\n");
     for (;;) {
         if (!fgets(line, sizeof line, stdin)) { vTaskDelay(pdMS_TO_TICKS(200)); continue; }
         handle(line);

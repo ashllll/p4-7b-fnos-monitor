@@ -105,6 +105,8 @@ def wiring_problems():
     if ent.get("gatewayPrefix") != want_prefix:
         out.append(f"gatewayPrefix 写的是 {ent.get('gatewayPrefix')}，应当是 {want_prefix}"
                    f"（网关按它转发，写错管理页打不开）")
+    if ent.get("url") != ent.get("gatewayPrefix"):
+        out.append("桌面入口 url 必须与 gatewayPrefix 一致；缺失时会在应用窗口内打开飞牛桌面")
     if 'GATEWAY_PREFIX = "/app/" + APPNAME' not in srv:
         out.append("服务端不再用 APPNAME 拼 GATEWAY_PREFIX 了——"
                    "那 manifest 改名时它会悄悄跟不上")

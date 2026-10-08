@@ -3,7 +3,7 @@
 #include "fnos_data.h"     /* fnos_status_t：fnos_ui_link_reason() 要按值看它的 last_err */
 
 // UIManager（KK_UI 生命周期层）：
-//   * 开机 Preload：用 kk_ui 构件手写五页（JSON 清单 / 代码生成 / MVVM-C 已全部删除）
+//   * 开机 Preload：用 ui_kit（LVGL 原生 flex）手写五页（JSON 清单 / 代码生成 / MVVM-C 已全部删除）
 //   * Open = 原子换页（先隐藏全部旧页并归零偏移，再显示目标页，最后整屏失效）
 //   * 500 ms LVGL tick 拉 fnos_data 快照并刷文案（本文件是唯一的 LVGL 写入者）
 //   * set_night 只置标志（esp_timer 任务调用），落地在 LVGL 任务里（线程红线）
@@ -27,8 +27,13 @@ void fnos_ui_set_page(int idx);   // 0..FNOS_UI_PAGE_COUNT-1，越界循环
    tools/preview/scroll_gap.js 用它当几何唯一来源（别再手抄卡片表）。
    只给主机预览工具用，固件里没人调。 */
 void fnos_ui_dump_card_map(void);
+/* Complete the current transition for deterministic previews / diagnostics. */
+void fnos_ui_motion_settle(void);
 int  fnos_ui_page(void);
 void fnos_ui_set_night(bool on);  // 夜间配色请求（异步落地）
+/* 串口 'page n' 用：只置标志，下一跳 ui_tick 里换页（LVGL 只许在 LVGL 任务调）。
+   实机验收时人不在板子跟前、又没有触摸自动化，靠它把五页逐页拍下来。 */
+void fnos_ui_request_page(int idx);
 
 /* 把采集端写在 last_err 里的失败标签翻成用户能照着处理的一句话；不认识的标签返回 NULL。
    它是 refresh() 里那行"为什么连不上"的唯一来源，**公开出来是为了能被断言**：

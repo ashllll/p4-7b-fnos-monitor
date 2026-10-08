@@ -119,7 +119,9 @@ grep -q 'manifest 取值合法' "$WORK/manifest.log" || bad "manifest 校验没�
 grep -q '对得上' "$WORK/manifest.log" || bad "没核对 desktop_applaunchname 与 ui/config"
 
 step "1. 语法与公共前言"
-for f in "$CMD"/*; do bash -n "$f" || bad "语法错误：$f"; done
+for f in "$CMD"/*; do
+    case "$f" in *.py) continue ;; esac
+    bash -n "$f" || bad "语法错误：$f"; done
 ok "cmd/ 下所有脚本语法通过"
 [ -f "$CMD/_common.sh" ] && ok "公共前言 _common.sh 已随包发出" || bad "缺少 cmd/_common.sh"
 
@@ -599,19 +601,22 @@ print(" ".join(str(r[0]) for r in rows))
   *) bad "?n=1 给的是 ${N1}，不在全量结果最后两行里 —— 那它可能给的是最早的那一段" ;;
 esac
 
-# 六段都必须在 trunc.limits 里声明。**vols/raid/temps 以前连截断都没有**：
-# NAS 有多少发多少，而板子的定长数组是 12/8/48（temps 由 24 抬到 48：采集端从
-# 「每设备一路」改成「每个通道一路」时同步抬的）—— 多出来的静默丢掉，
-# 界面上看不出少了东西。声明出来，contract_check.py 才核得动。
+# 默认完整发送清单；只有显式数量策略才声明 limits。不可恢复旧硬件数量上限。
 check "$(curlv -s -m 5 -H "Authorization: Bearer $TOK" "https://127.0.0.1:$PORT/api/v1/status" \
   | python3 -c '
 import json, sys
 d = json.load(sys.stdin)
 lim = (d.get("trunc") or {}).get("limits") or {}
-want = {"docker": 16, "disks": 10, "alerts": 8, "vols": 12, "raid": 8, "temps": 48}
-bad = [k for k, v in want.items() if lim.get(k) != v]
+trunc = d.get("trunc") or {}
+bad = ["limits"] if lim else []
+for k in ("docker", "disks", "alerts", "vols", "raid", "temps", "interfaces"):
+    rows = (d.get("net") or {}).get("interfaces") if k == "interfaces" else d.get(k)
+    if isinstance(rows, list) and trunc.get("totals", {}).get(k) != len(rows):
+        bad.append(k)
+    if trunc.get("dropped", {}).get(k, 0):
+        bad.append(k + "-dropped")
 print("OK" if not bad else "缺或不对：" + ",".join(bad))
-' 2>/dev/null)" "OK" "trunc.limits 把六段的上限都报出来了"
+' 2>/dev/null)" "OK" "默认清单全量且总数与遗漏统计一致"
 
 step "7e. 两个排障 CLI，以及"重签证书会作废已配对设备"这条性质"
 # 这两个 CLI 之前一次都没跑过：
@@ -806,7 +811,8 @@ pgrep -f "$TARGET/server/nas_companion_server.py --serve" >/dev/null 2>&1 \
 
 step "12. 管理面 Socket 建不起来时，遥测面不受影响"
 # 真机上的对应故障：target 目录对包用户不可写。这里用一个同名目录让 bind 失败。
-"$CMD/install_callback" >/dev/null 2>&1
+# 卸载已删除配置；重新安装必须明确用本段随后检查的端口。
+wizard_port="$PORT2" "$CMD/install_callback" >/dev/null 2>&1
 mkdir -p "$TARGET/app.sock/blocker"
 START_OUT=$("$CMD/main" start 2>&1)
 check "$?" 0 "Socket 失败时启动仍然成功（遥测面是开发板要的）"
@@ -839,22 +845,24 @@ AFTER=$(wc -c < "$TRIM_PKGVAR/service.log" | tr -d ' ')
 "$CMD/main" stop >/dev/null 2>&1
 
 # ② config.json 损坏。用户手工编辑、升级中途掉电、磁盘满，都可能留下半个文件。
-#    两条要求：服务**必须起得来**（回退默认值），而且**必须在日志里说清楚**。
-#    另外 `cmd/_common.sh` 的 effective_port() 和 服务端的 DEFAULT_CONFIG 都回退到
-#    8798 —— 两边**各自**回退，要是数字不一样，脚本会去健康检查一个没人监听的端口。
+#    必须明确失败且保留原文件；启动默认服务会在后续 flush 时覆盖配对和设置。
 cp "$TRIM_PKGVAR/config.json" "$WORK/config.good" 2>/dev/null
 printf '{ 这不是合法 JSON' > "$TRIM_PKGVAR/config.json"
+cp "$TRIM_PKGVAR/config.json" "$WORK/config.corrupt"
 if curlv -s -o /dev/null -m 2 "https://127.0.0.1:8798/api/v1/health" 2>/dev/null; then
   bad "8798 上已经有东西在跑，这一条测不了（先清掉再跑）"
 else
   wizard_port="$PORT" "$CMD/main" start >/dev/null 2>&1
-  check "$?" 0 "config.json 损坏时服务仍然起得来"
-  check "$(curlv -s -o /dev/null -m 3 -w '%{http_code}' "https://127.0.0.1:8798/api/v1/health")" 200 \
-        "损坏后两边都回退到 8798，遥测面照常可用"
-  grep -q '配置读取失败，回退默认值' "$TRIM_PKGVAR/service.log" \
-    && ok "日志里写明了回退原因（用户查得到）" \
-    || bad "回退没有留下任何痕迹，用户只会看到「设置全没了」"
-  "$CMD/main" stop >/dev/null 2>&1
+  check "$?" 1 "config.json 损坏时拒绝启动"
+  if curlv -s -o /dev/null -m 2 "https://127.0.0.1:8798/api/v1/health" 2>/dev/null; then
+    bad "损坏配置不应启动默认服务"
+  else
+    ok "没有启动默认服务"
+  fi
+  cmp -s "$WORK/config.corrupt" "$TRIM_PKGVAR/config.json" \
+    && ok "损坏配置原始字节保留" || bad "损坏配置被默认值覆盖"
+  grep -q '配置读取失败，保留原文件并停止启动' "$TRIM_PKGVAR/service.log" \
+    && ok "日志写明启动失败及保留文件" || bad "日志未说明配置失败"
 fi
 [ -f "$WORK/config.good" ] && cp "$WORK/config.good" "$TRIM_PKGVAR/config.json"
 rm -f "$TRIM_PKGVAR/service.log.1"
@@ -892,8 +900,9 @@ wait "$STUB" 2>/dev/null || true    # 收掉 shell 那句 "Killed: 9" 的作业�
 # 「131 个 ✓」配「131 项通过」，**看上去完全正常**，是人工数 ✓ 才发现的。
 # 光比"汇总数 vs ✓ 个数"挡不住这种（两边一起少），所以这里钉一个独立的下限：
 # **加断言时把 EXPECTED_MIN 一起加**，它只在"有用例没跑"时才会不对。
-if [ "$PASS" -lt "$EXPECTED_MIN" ]; then
-  bad "只跑了 $PASS 条断言，少于预期的 $EXPECTED_MIN —— 有用例没执行（整段被挪走、被注释掉、或提前 return 都会这样）"
+ASSERTIONS=$((PASS + FAIL))
+if [ "$ASSERTIONS" -lt "$EXPECTED_MIN" ]; then
+  bad "只跑了 $ASSERTIONS 条断言，少于预期的 $EXPECTED_MIN —— 有用例没执行（整段被挪走、被注释掉、或提前 return 都会这样）"
 fi
 
 printf '\n\033[1m结果：%d 项通过，%d 项失败\033[0m\n' "$PASS" "$FAIL"

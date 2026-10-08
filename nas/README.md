@@ -8,9 +8,9 @@
 ```bash
 cd nas
 # 安装（会 scp 到 /tmp，再用 sudo 安装到 /usr/local/bin + /etc/systemd/system 并启动）
-SSHPASS='<ssh 口令>' NAS_SUDO_PASS='<sudo 口令>' ./install.sh
+NAS_HOST=nas.example.test NAS_USER=<ssh-user> ./install.sh
 # 卸载
-SSHPASS='...' NAS_SUDO_PASS='...' ./install.sh uninstall
+NAS_HOST=nas.example.test NAS_USER=<ssh-user> ./install.sh uninstall
 
 # NAS 上直接验证
 curl -s http://127.0.0.1:8799/api/v1/status | python3 -m json.tool | head -40
@@ -22,8 +22,8 @@ journalctl -u fnos-agent -n 50 --no-pager           # 需要 root 或 adm 组
 **部署前先看命名**（只读：不启服务、不占 8799、不动正在跑的那个进程）：
 
 ```bash
-bash nas/preview-naming.sh                  # 默认 llll@192.168.0.119
-SSHPASS='...' bash nas/preview-naming.sh    # 密码认证（本机装了 sshpass 时）
+bash nas/preview-naming.sh user@nas.example.test
+SSHPASS='...' bash nas/preview-naming.sh user@nas.example.test    # 密码认证（本机装了 sshpass 时）
 ```
 
 它把 `fnos-agent.py` 拷到 NAS 的 `/tmp` 跑一次 `--temps`（输出"设备名 / 通道 / 数值"表），
@@ -37,11 +37,11 @@ SSHPASS='...' bash nas/preview-naming.sh    # 密码认证（本机装了 sshpas
 | --- | --- |
 | `cpu`（pct/load1-15/cores/temp） | `/proc/stat` 差值、`/proc/loadavg`、hwmon `coretemp` |
 | `mem`（total/used/avail/pct/swap） | `/proc/meminfo` |
-| `net`（if/rx_kbs/tx_kbs/累计） | `/proc/net/dev` 差值；网卡自动取默认路由那个（本机是 `enp1s0-ovs`） |
+| `net`（if/rx_kbs/tx_kbs/累计） | `/proc/net/dev` 差值；网卡自动取默认路由那个；另外完整列出各网络接口 |
 | `vols`（各存储池） | `/proc/mounts` 过滤 + `statvfs`；按设备去重（`/tmp`、`/var/tmp` 是 `/` 的 bind mount） |
 | `raid`（md 阵列、成员数、同步进度） | `/proc/mdstat` |
-| `disks`（读写 KB/s，按繁忙度取前 10） | `/proc/diskstats` 差值 |
-| `temps` | `/sys/class/hwmon/*/temp*_input`（NVMe×4、CPU、网卡、核显） |
+| `disks`（各磁盘读写 KB/s） | `/proc/diskstats` 差值 |
+| `temps` | `/sys/class/hwmon/*/temp*_input`（逐设备、逐通道） |
 | `docker`（名称/是否运行/状态） | 直接对 `/var/run/docker.sock` 发 HTTP/1.0 请求（不依赖 docker 包） |
 | `zfs`（ARC 大小、命中率） | `/proc/spl/kstat/zfs/arcstats` 差值 |
 | `alerts` | 由上面几项派生：阵列异常/同步、空间 ≥80%/≥90%、CPU ≥80°C、内存 ≥90%、负载 > 核数、曾运行的容器掉线 |
@@ -50,7 +50,7 @@ SSHPASS='...' bash nas/preview-naming.sh    # 密码认证（本机装了 sshpas
 
 | 路径 | 说明 |
 | --- | --- |
-| `GET /api/v1/status` | 完整状态（约 2.35 KB，实测 16 ms）；某一段采集失败时该段保留上一份值并列出 `errors` |
+| `GET /api/v1/status` | 完整状态（大小随硬件和清单变化）；某一段采集失败时该段保留上一份值并列出 `errors` |
 | `GET /api/v1/history` | `{"cols":["ts","cpu","mem","rx_kbs","tx_kbs"],"rows":[[...]]}`，最近 300 个采样 |
 | `GET /api/v1/health` | `{"ok":true,"ts":…,"age_s":1,"host":"nas"}` —— 带快照新鲜度，便于外部探测"采集是否还活着" |
 | `GET /` | 浏览器里看的简易实时页面（排查用） |
@@ -62,7 +62,7 @@ SSHPASS='...' bash nas/preview-naming.sh    # 密码认证（本机装了 sshpas
   而端点还会一直返回 `ready:true` 的旧数据。
 * 速率差值一律用 `time.monotonic()`：墙钟被 NTP 回拨时不会把速率算成天文数字。
 * 逐段 try/except：某一段（比如 docker）失败只让那一段沿用上一份值，不会整帧作废。
-* docker 列表上限 16 条、名称/状态截断：payload 不会涨过板子 8 KB 的接收缓冲。
+* 清单和名称默认完整发送，固件以可配置字节预算拒绝超大整帧并提示，不静默裁剪。
 * 先绑定端口再等第一帧采样：systemd 报 active 的时刻端口就能连上。
 * `server_bind` 跳过 Python 默认的反向 DNS（解析不可达时会阻塞几十秒才监听）。
 

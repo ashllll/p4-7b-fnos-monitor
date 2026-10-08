@@ -50,7 +50,7 @@ bash    nas/fpk/test_lifecycle.sh            # 安装→启动→改设置→升
 bash    nas/fpk/build.sh                     # 重新打包 + 产物自检
 ```
 
-### 3.2 真机（`192.168.0.119`，fnOS **1.2.0701**，x86）
+### 3.2 真机（`192.0.2.10`，fnOS **1.2.0701**，x86）
 
 | 步骤 | 观察点 | 记录 |
 | --- | --- | --- |
@@ -84,7 +84,7 @@ bash    nas/fpk/build.sh                     # 重新打包 + 产物自检
 - 本应用**不监听 8799**、不改动 systemd 单元与 `/usr/local/bin` 下的开发版采集器；
   安装、升级、卸载都不碰它。
 - 开发板未配对时读开发版采集器（`components/fnos_monitor/fnos_config.h` 的
-  `192.168.0.119:8799`）；配对后由 `fnos_pair` 切到本应用的 `8798`
+  `192.0.2.10:8799`）；配对后由 `fnos_pair` 切到本应用的 `8798`
   （可开 HTTPS + 配对令牌），连接参数存 NVS。
 - 两条线的协议端点一致：`/api/v1/identity`、`/api/v1/pair`、`/api/v1/status`、
   `/api/v1/history`、`/api/v1/health`。
@@ -104,8 +104,8 @@ bash nas/fpk/build.sh
 3) 装完复核（本机就能跑）：
 
 ```bash
-curl -s http://192.168.0.119:8798/api/v1/identity    # 应显示 "ver":"1.1.0"
-curl -s http://192.168.0.119:8798/api/v1/status | python3 -c \
+curl -s http://192.0.2.10:8798/api/v1/identity    # 应显示 "ver":"1.1.0"
+curl -s http://192.0.2.10:8798/api/v1/status | python3 -c \
   "import sys,json; t=json.load(sys.stdin)['temps']; print(len(t),'路'); print(t[0])"
 # 期望：24 路，且每条带 dev / ch / dn（人读设备名）
 ```

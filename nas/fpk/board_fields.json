@@ -1,11 +1,7 @@
 {
- "note": "由 nas/fpk/contract_check.py --emit 从固件源码生成，别手改；改的是 components/fnos_monitor/fnos_data.c。",
- "source": "components/fnos_monitor/fnos_data.c",
+ "note": "由 nas/fpk/contract_check.py --emit 从固件源码生成，别手改；改的是 components/fnos_monitor/fnos_snapshot.c。",
+ "source": "components/fnos_monitor/fnos_snapshot.c",
  "fields": [
-  [
-   "root",
-   "ready"
-  ],
   [
    "root",
    "host"
@@ -17,6 +13,10 @@
   [
    "root",
    "ts"
+  ],
+  [
+   "root",
+   "proto"
   ],
   [
    "cpu",
@@ -148,15 +148,15 @@
   ],
   [
    "disks",
-   "dev"
-  ],
-  [
-   "disks",
    "rd_kbs"
   ],
   [
    "disks",
    "wr_kbs"
+  ],
+  [
+   "disks",
+   "dev"
   ],
   [
    "temps",
@@ -168,6 +168,10 @@
   ],
   [
    "temps",
+   "dn"
+  ],
+  [
+   "temps",
    "n"
   ],
   [
@@ -176,23 +180,15 @@
   ],
   [
    "docker",
-   "n"
-  ],
-  [
-   "docker",
    "up"
   ],
   [
    "docker",
+   "n"
+  ],
+  [
+   "docker",
    "s"
-  ],
-  [
-   "zfs",
-   "arc_gb"
-  ],
-  [
-   "zfs",
-   "hit_pct"
   ],
   [
    "alerts",
@@ -203,8 +199,48 @@
    "m"
   ],
   [
-   "root",
-   "proto"
+   "modules",
+   "status"
+  ],
+  [
+   "netifs",
+   "if"
+  ],
+  [
+   "netifs",
+   "state"
+  ],
+  [
+   "netifs",
+   "rx_kbs"
+  ],
+  [
+   "netifs",
+   "tx_kbs"
+  ],
+  [
+   "netifs",
+   "rx_total_gb"
+  ],
+  [
+   "netifs",
+   "tx_total_gb"
+  ],
+  [
+   "netifs",
+   "speed_mbps"
+  ],
+  [
+   "netifs",
+   "physical"
+  ],
+  [
+   "zfs",
+   "arc_gb"
+  ],
+  [
+   "zfs",
+   "hit_pct"
   ]
  ]
 }

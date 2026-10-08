@@ -49,11 +49,10 @@ static const char *TAG = "fnos_data";
 #define POLL_INTERVAL_MS 1000
 #define POLL_TIMEOUT_MS  3000
 #define POLL_BACKOFF_MAX 5000
-/* 状态帧的接收缓冲。**这不是随便给的**：NAS 满载时（各段都到上限）的 payload
-   实测约 8.3 KB —— 8 KB 会截断，cJSON 解不出来，板子会一直显示「NAS 返回的数据
-   解析不了」，而 NAS 那边一切正常。24 KB 留约 3 倍余量，且这块在 PSRAM 里。
-   contract_check.py 会按两边声明的上限把这个最坏情况重算一遍。 */
-#define RX_BUF_SIZE      (24 * 1024)
+/* Byte budgets are configuration, not hardware inventory limits. */
+#ifndef CONFIG_FNOS_STATUS_MAX_BYTES
+#define CONFIG_FNOS_STATUS_MAX_BYTES (256 * 1024)
+#endif
 #define HIST_BUF_SIZE    (32 * 1024)
 
 // 大块数据都放 PSRAM（内部 RAM 留给 Wi-Fi/显示/DMA）
@@ -87,47 +86,6 @@ static int64_t s_nas_ts;
 
 // ────────────────────────────── 小工具
 
-static float jnum(const cJSON *o, const char *k)
-{
-    const cJSON *i = cJSON_GetObjectItemCaseSensitive(o, k);
-    return cJSON_IsNumber(i) ? (float)i->valuedouble : 0.0f;
-}
-
-static int jint(const cJSON *o, const char *k)
-{
-    const cJSON *i = cJSON_GetObjectItemCaseSensitive(o, k);
-    return cJSON_IsNumber(i) ? (int)i->valuedouble : 0;
-}
-
-static bool jbool(const cJSON *o, const char *k)
-{
-    const cJSON *i = cJSON_GetObjectItemCaseSensitive(o, k);
-    return cJSON_IsTrue(i);
-}
-
-static void jstr(const cJSON *o, const char *k, char *dst, size_t cap)
-{
-    const cJSON *i = cJSON_GetObjectItemCaseSensitive(o, k);
-    dst[0] = 0;
-    if (!cJSON_IsString(i) || !i->valuestring || cap < 2) {
-        return;
-    }
-    const char *src = i->valuestring;
-    size_t n = strlen(src);
-    if (n > cap - 1) {
-        n = cap - 1;
-        /* 别把多字节字符切成两半：半截 UTF-8 在屏幕上就是豆腐块或乱码，而且
-           看不出是"被截断"还是"数据本身坏了"。切点落在续接字节（10xxxxxx）上
-           就说明切在字符中间，往前退到边界。当前这些都是 ASCII（挂载点、容器名、
-           状态串），但 NAS 那边只要有人往里塞一个中文，这里就会静静烂掉。 */
-        while (n > 0 && ((unsigned char)src[n] & 0xC0) == 0x80) {
-            n--;
-        }
-    }
-    memcpy(dst, src, n);
-    dst[n] = 0;
-}
-
 // cJSON 的节点分配默认落内部 RAM；这个 payload 有几百个节点，必须改道 PSRAM。
 static void *cjson_psram_malloc(size_t sz)
 {
@@ -142,184 +100,17 @@ static void cjson_psram_free(void *p)
 
 // ────────────────────────────── JSON 解析
 
-/* 温度行的固定次序：先按设备名、再按通道名（都是字节序比较，与语言环境无关）。
-   目的只有一个 —— **同一路传感器永远在同一行**。按温度排会让整张榜随温度升降
-   互换位置，设备名跟着挪，屏幕上看起来就是"显示在切换"（用户报的就是这个）。 */
-static int temp_cmp(const void *a, const void *b)
-{
-    const fnos_temp_t *x = (const fnos_temp_t *)a;
-    const fnos_temp_t *y = (const fnos_temp_t *)b;
-    int c = strcmp(x->dev, y->dev);
-    return c ? c : strcmp(x->ch, y->ch);
-}
-
 static bool parse_status(const char *js, fnos_status_t *st)
 {
-    cJSON *root = cJSON_Parse(js);
-    if (!root) {
+    const char *reason = NULL;
+    if (!fnos_status_parse(js, st, &reason)) {
+        if (reason) snprintf(s_conn_err, sizeof s_conn_err, "%s", reason);
         return false;
     }
-    if (!jbool(root, "ready")) {            // 采集端自检未就绪：当作无效帧
-        cJSON_Delete(root);
-        return false;
-    }
-
-    jstr(root, "host", st->host, sizeof(st->host));
-    st->uptime_s = (uint32_t)jint(root, "uptime_s");
-    s_nas_ts = (int64_t)jnum(root, "ts");
-
-    const cJSON *cpu = cJSON_GetObjectItemCaseSensitive(root, "cpu");
-    if (cJSON_IsObject(cpu)) {
-        st->cpu.pct     = jnum(cpu, "pct");
-        st->cpu.load1   = jnum(cpu, "load1");
-        st->cpu.load5   = jnum(cpu, "load5");
-        st->cpu.load15  = jnum(cpu, "load15");
-        st->cpu.temp_c  = jnum(cpu, "temp_c");
-        st->cpu.cores   = jint(cpu, "cores");
-        st->cpu.runq    = jint(cpu, "runq");
-        st->cpu.procs = (int)jnum(cpu, "procs");
-    }
-    const cJSON *mem = cJSON_GetObjectItemCaseSensitive(root, "mem");
-    if (cJSON_IsObject(mem)) {
-        st->mem.total_mb = jnum(mem, "total_mb");
-        st->mem.used_mb  = jnum(mem, "used_mb");
-        st->mem.avail_mb = jnum(mem, "avail_mb");
-        st->mem.pct      = jnum(mem, "pct");
-        st->mem.swap_total_mb = jnum(mem, "swap_total_mb");
-        st->mem.swap_used_mb = jnum(mem, "swap_used_mb");
-    }
-    const cJSON *net = cJSON_GetObjectItemCaseSensitive(root, "net");
-    if (cJSON_IsObject(net)) {
-        jstr(net, "if", st->net.ifname, sizeof(st->net.ifname));
-        st->net.rx_kbs      = jnum(net, "rx_kbs");
-        st->net.tx_kbs      = jnum(net, "tx_kbs");
-        st->net.rx_total_gb = jnum(net, "rx_total_gb");
-        st->net.tx_total_gb = jnum(net, "tx_total_gb");
-    }
-
-    st->nvols = 0;
-    const cJSON *vols = cJSON_GetObjectItemCaseSensitive(root, "vols");
-    const cJSON *it = NULL;
-    cJSON_ArrayForEach(it, vols) {
-        if (st->nvols >= FNOS_MAX_VOLS) break;
-        fnos_vol_t *v = &st->vols[st->nvols];
-        jstr(it, "mnt", v->mnt, sizeof(v->mnt));
-        jstr(it, "fs", v->fs, sizeof(v->fs));
-        v->total_gb = jnum(it, "total_gb");
-        v->used_gb  = jnum(it, "used_gb");
-        v->free_gb  = jnum(it, "free_gb");
-        v->pct      = jnum(it, "pct");
-        st->nvols++;
-    }
-
-    st->nraid = 0;
-    const cJSON *raids = cJSON_GetObjectItemCaseSensitive(root, "raid");
-    cJSON_ArrayForEach(it, raids) {
-        if (st->nraid >= FNOS_MAX_RAID) break;
-        fnos_raid_t *r = &st->raid[st->nraid];
-        jstr(it, "dev", r->dev, sizeof(r->dev));
-        jstr(it, "lvl", r->lvl, sizeof(r->lvl));
-        jstr(it, "state", r->state, sizeof(r->state));
-        r->ok       = jbool(it, "ok");
-        r->have     = jint(it, "have");
-        r->want     = jint(it, "want");
-        r->sync_pct = jnum(it, "sync_pct");
-        st->nraid++;
-    }
-
-    st->ndisks = 0;
-    const cJSON *disks = cJSON_GetObjectItemCaseSensitive(root, "disks");
-    cJSON_ArrayForEach(it, disks) {
-        if (st->ndisks >= FNOS_MAX_DISKS) break;
-        fnos_disk_t *d = &st->disks[st->ndisks];
-        jstr(it, "dev", d->dev, sizeof(d->dev));
-        d->rd_kbs = jnum(it, "rd_kbs");
-        d->wr_kbs = jnum(it, "wr_kbs");
-        st->ndisks++;
-    }
-
-    st->ntemps = 0;
-    const cJSON *temps = cJSON_GetObjectItemCaseSensitive(root, "temps");
-    cJSON_ArrayForEach(it, temps) {
-        if (st->ntemps >= FNOS_MAX_TEMPS) break;
-        fnos_temp_t *t = &st->temps[st->ntemps];
-        /* 协议 v2 采集端起每路给 dev/ch（内核短名 + 通道名）与 dn（**人读设备名**）；
-           老采集端只有拼好的 n，那就整条放进 dev（界面拼名字时 ch 为空就只显示 dev）。
-           先取 dev 再回退 n —— 顺序反了会让新采集端的 dev 永远被 n 覆盖。 */
-        jstr(it, "dev", t->dev, sizeof(t->dev));
-        jstr(it, "ch",  t->ch,  sizeof(t->ch));
-        jstr(it, "dn",  t->dn,  sizeof(t->dn));
-        if (!t->dev[0]) jstr(it, "n", t->dev, sizeof(t->dev));
-        t->c = jnum(it, "c");
-        st->ntemps++;
-    }
-    /* 温度列表**不按温度排序**：行会随着温度升降互换位置，看上去像"显示自己在切换"，
-       而每一路的设备名跟着一起挪，人根本认不住哪一行是哪台设备（用户原话：
-       "每个通道应该单独显示并显示设备名称，而不是直接切换显示"）。
-       改成按 设备名+通道名 固定排序 —— 同一路永远在同一行；"最热的是谁"由摘要行
-       点名（它自己扫一遍 max），不靠行序表达。 */
-    if (st->ntemps > 1) {
-        qsort(st->temps, (size_t)st->ntemps, sizeof st->temps[0], temp_cmp);
-    }
-
-    st->ndocker = 0;
-    const cJSON *dockers = cJSON_GetObjectItemCaseSensitive(root, "docker");
-    cJSON_ArrayForEach(it, dockers) {
-        if (st->ndocker >= FNOS_MAX_DOCKER) break;
-        fnos_docker_t *d = &st->docker[st->ndocker];
-        jstr(it, "n", d->n, sizeof(d->n));
-        d->up = jbool(it, "up");
-        jstr(it, "s", d->s, sizeof(d->s));
-        st->ndocker++;
-    }
-
-    const cJSON *zfs = cJSON_GetObjectItemCaseSensitive(root, "zfs");
-    st->has_zfs = cJSON_IsObject(zfs);
-    if (st->has_zfs) {
-        st->zfs_arc_gb  = jnum(zfs, "arc_gb");
-        st->zfs_hit_pct = jnum(zfs, "hit_pct");
-    }
-
-    st->nalerts = 0;
-    const cJSON *alerts = cJSON_GetObjectItemCaseSensitive(root, "alerts");
-    cJSON_ArrayForEach(it, alerts) {
-        if (st->nalerts >= FNOS_MAX_ALERTS) break;
-        fnos_alert_t *a = &st->alerts[st->nalerts];
-        jstr(it, "lv", a->lv, sizeof(a->lv));
-        jstr(it, "m", a->m, sizeof(a->m));
-        st->nalerts++;
-    }
-
-    /* 协议 v2 的采集段状态。这里是"未知字段容错"的要害：应用以后加了新段、
-       或给某个段起了个板子没见过的状态词，都必须原样收下并照常显示，
-       不能因为多了个陌生字符串就整帧作废、也不能悄悄吞掉。
-       字段本身缺失 / 类型不对（比如 modules 给成了数组）同样只是少显示一段。 */
-    st->proto = jint(root, "proto");
-    st->nmods = 0;
-    const cJSON *mods = cJSON_GetObjectItemCaseSensitive(root, "modules");
-    if (cJSON_IsObject(mods)) {
-        cJSON_ArrayForEach(it, mods) {
-            if (st->nmods >= FNOS_MAX_MODS) break;
-            if (!it->string) continue;              // 没有键名的成员没法显示
-            fnos_mod_t *m = &st->mods[st->nmods];
-            snprintf(m->name, sizeof m->name, "%s", it->string);
-            const cJSON *sv = cJSON_GetObjectItemCaseSensitive(it, "status");
-            if (cJSON_IsString(sv) && sv->valuestring) {
-                snprintf(m->status, sizeof m->status, "%s", sv->valuestring);
-            } else if (cJSON_IsNumber(sv)) {
-                snprintf(m->status, sizeof m->status, "#%d", (int)sv->valuedouble);
-            } else {
-                snprintf(m->status, sizeof m->status, "%s", "unknown");
-            }
-            st->nmods++;
-        }
-    }
-
-    cJSON_Delete(root);
+    s_nas_ts = st->source_ts;
     return true;
 }
 
-// 历史行格式：{"cols":["ts","cpu","mem","rx_kbs","tx_kbs"],"rows":[[...],...]}
 static bool parse_history(const char *js)
 {
     cJSON *root = cJSON_Parse(js);
@@ -438,7 +229,7 @@ static const char *classify_conn_err(esp_err_t err)
     }
 }
 
-static bool http_get(const char *url, char *buf, size_t cap, int *out_status, int *out_len, int *out_ms)
+static bool http_get(const char *url, char **buffer, size_t *capacity, size_t budget, int *out_status, int *out_len, int *out_ms)
 {
     s_conn_err[0] = 0;
     if (!s_conn_usable) {
@@ -496,18 +287,26 @@ static bool http_get(const char *url, char *buf, size_t cap, int *out_status, in
     *out_status = esp_http_client_get_status_code(s_client);
 
     int total = 0;
-    while (total < (int)cap - 1) {
-        int r = esp_http_client_read(s_client, buf + total, (int)cap - 1 - total);
-        if (r < 0) {
-            err = ESP_FAIL;
-            break;
+    while (!esp_http_client_is_complete_data_received(s_client)) {
+        if ((size_t)total + 1 >= *capacity) {
+            size_t next = *capacity ? *capacity * 2 : 4096;
+            if (next > budget + 1) next = budget + 1;
+            char *grown = next > *capacity ? heap_caps_realloc(*buffer, next,
+                            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) : NULL;
+            if (!grown) {
+                snprintf(s_conn_err, sizeof s_conn_err, "%s", "data capacity");
+                err = ESP_ERR_NO_MEM;
+                break;
+            }
+            *buffer = grown;
+            *capacity = next;
         }
-        if (r == 0) {
-            break;
-        }
+        int r = esp_http_client_read(s_client, *buffer + total, (int)*capacity - 1 - total);
+        if (r < 0) { err = ESP_FAIL; break; }
+        if (r == 0) break;
         total += r;
     }
-    buf[total] = 0;
+    if (*buffer) (*buffer)[total] = 0;
     *out_len = total;
     *out_ms = (int)((esp_timer_get_time() - t0) / 1000);
     // 半截响应（缓冲写满 / 连接中断）同样会污染 keep-alive 连接，必须丢弃句柄
@@ -556,7 +355,7 @@ static void commit_status(const fnos_status_t *st, int http_ms, int status_code)
     }
     fnos_status_t *dst = &s_status;
     uint32_t ok = dst->ok_count, fail = dst->fail_count;
-    *dst = *st;                             // 整帧替换，避免残留上一帧的数组元素
+    fnos_status_copy(dst, st);              // 保留不可变动态清单，旧引用独立释放
     dst->ever_ok = true;
     s_valid = true;
     dst->online = true;
@@ -596,16 +395,8 @@ static void note_failure(const char *why, int status_code, int http_ms)
 static void poll_task(void *arg)
 {
     (void)arg;
-    char *buf = heap_caps_malloc(RX_BUF_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!buf) {
-        buf = malloc(RX_BUF_SIZE);
-    }
-    if (!buf) {
-        ESP_LOGE(TAG, "rx buffer alloc failed");
-        s_task = NULL;                      // 不清句柄的话 fnos_data_start() 永远重启不了
-        vTaskDelete(NULL);
-        return;
-    }
+    char *buf = NULL;
+    size_t buf_capacity = 0;
     static EXT_RAM_BSS_ATTR fnos_status_t tmp;   // 解析暂存（PSRAM）
     bool hist_done = false;
     int backoff = 0;
@@ -633,23 +424,18 @@ static void poll_task(void *arg)
         fnos_net_poll_rssi();               // 刷新 RSSI 缓存，UI 那边只读内存
 
         int status_code = 0, len = 0, ms = 0;
-        memset(&tmp, 0, sizeof(tmp));
-        bool ok = http_get(s_url_status, buf, RX_BUF_SIZE, &status_code, &len, &ms);
+        bool ok = http_get(s_url_status, &buf, &buf_capacity, CONFIG_FNOS_STATUS_MAX_BYTES, &status_code, &len, &ms);
         if (ok && status_code == 200 && parse_status(buf, &tmp)) {
             commit_status(&tmp, ms, status_code);
             adopt_nas_time();
             backoff = 0;
             if (!hist_done) {               // 首次成功：回填开机前的曲线
-                char *hbuf = heap_caps_malloc(HIST_BUF_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-                if (!hbuf) {
-                    hist_done = true;       // 分配不到就别每轮重试
-                } else {
-                    int hs = 0, hl = 0, hm = 0;
-                    if (http_get(s_url_hist, hbuf, HIST_BUF_SIZE, &hs, &hl, &hm) && hs == 200) {
-                        hist_done = parse_history(hbuf);   // 失败下一轮再试，别静默放弃
-                    }
-                    free(hbuf);
-                }
+                char *hbuf = NULL;
+                size_t hcap = 0;
+                int hs = 0, hl = 0, hm = 0;
+                if (http_get(s_url_hist, &hbuf, &hcap, HIST_BUF_SIZE, &hs, &hl, &hm) && hs == 200)
+                    hist_done = parse_history(hbuf);
+                free(hbuf);
             }
             if (++log_div >= 30) {          // 每 30 秒一条，够串口核对
                 log_div = 0;
@@ -666,7 +452,7 @@ static void poll_task(void *arg)
             const char *why = !ok ? (s_conn_err[0] ? s_conn_err
                                                    : (status_code == 0 ? "connect/timeout" : "read error"))
                                   : (status_code == 401 || status_code == 403) ? "token rejected"
-                                  : (status_code != 200 ? "http status" : "bad payload");
+                                  : (status_code != 200 ? "http status" : (s_conn_err[0] ? s_conn_err : "bad payload"));
             note_failure(why, status_code, ms);
             ESP_LOGW(TAG, "poll failed: %s status=%d %dms", why, status_code, ms);
             backoff += 1000;
@@ -728,7 +514,7 @@ bool fnos_data_get(fnos_status_t *out)
         // 就把整屏数值刷成 "--"、状态丸刷成 NO DATA
         return s_valid;
     }
-    *out = s_status;
+    fnos_status_copy(out, &s_status);
     bool ok = s_status.ever_ok;
     xSemaphoreGive(s_lock);
     return ok;

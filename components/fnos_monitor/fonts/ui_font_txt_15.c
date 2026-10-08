@@ -1,7 +1,7 @@
 /*******************************************************************************
  * Size: 15 px
  * Bpp: 4
- * Opts: --font Inter-Medium.ttf --size 15 --bpp 4 --format lvgl --no-compress --force-fast-kern-format -r 0x20-0x7E -r 0xB0 -r 0xB7 -r 0x2014 -r 0x2026 -r 0x2190-0x2193 -r 0x2264-0x2265 --lv-include lvgl.h -o /Users/llll/code/esp/p4-7b-fnos-monitor/components/fnos_monitor/fonts/ui_font_txt_15.c
+ * Opts: --font Inter-Medium.ttf --size 15 --bpp 4 --format lvgl --no-compress --force-fast-kern-format -r 0x20-0x7E -r 0xB0 -r 0xB7 -r 0x2014 -r 0x2026 -r 0x2190-0x2193 -r 0x2264-0x2265 --lv-include lvgl.h -o ../../components/fnos_monitor/fonts/ui_font_txt_15.c
  ******************************************************************************/
 
 #ifdef LV_LVGL_H_INCLUDE_SIMPLE

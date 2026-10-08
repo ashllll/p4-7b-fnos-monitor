@@ -1,4 +1,0 @@
-I (34110) main: heap periodic       internal=222KB largest=176KB dma=184KB psram=27317KB
-I (37561) fnos_data: poll ok=30 fail=0 5ms cpu=1.9% mem=35.7% rx=13.5 tx=120.9 KB/s alerts=0 internal=222KB dma=184KB psram=27317KB
-I (44110) main: heap periodic       internal=222KB largest=176KB dma=183KB psram=27317KB
-I (54110) main: heap periodic       internal=222KB largest=176KB dma=183KB psram=27317KB

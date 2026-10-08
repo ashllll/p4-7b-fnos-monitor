@@ -2,7 +2,7 @@
 # 从本机（macOS）把 fnos-agent 部署到飞牛 NAS。
 #
 # 需要：
-#   NAS_HOST / NAS_USER （默认 192.168.0.119 / llll）
+#   NAS_HOST / NAS_USER （部署时显式指定）
 #   SSHPASS              ssh 密码（本机装了 sshpass 时用；不设则走公钥或已有的多路复用连接）
 #   NAS_SUDO_PASS        sudo 密码（NAS 上 sudo 需要密码时）
 #
@@ -12,8 +12,8 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-NAS_HOST="${NAS_HOST:-192.168.0.119}"
-NAS_USER="${NAS_USER:-llll}"
+NAS_HOST="${NAS_HOST:?Set NAS_HOST to your NAS address}"
+NAS_USER="${NAS_USER:?Set NAS_USER to your SSH user}"
 SSH_OPTS=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR
           -o ConnectTimeout=8 -o ControlMaster=auto
           -o ControlPath=/tmp/nas-ctl-%r@%h:%p -o ControlPersist=600)

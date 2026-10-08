@@ -50,13 +50,15 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import docker_api  # Reap the inherited reader even while collection is disabled.
+
 from fnos_collector import (                       # noqa: E402
     CompanionCollector, MODULE_ORDER, PROTO_VERSION, ST_OK, ST_STALE,
     _current_user, probe_capabilities,
 )
 
 APPNAME = "nasscreencompanion"
-APPVER = os.environ.get("TRIM_APPVER") or "1.1.1"   # manifest 里的 version 由应用中心经 TRIM_APPVER 注入；这个默认值给开发模式兜底
+APPVER = os.environ.get("TRIM_APPVER") or "1.2.3"   # manifest 里的 version 由应用中心经 TRIM_APPVER 注入；这个默认值给开发模式兜底
 GATEWAY_PREFIX = "/app/" + APPNAME
 SOCKET_NAME = "app.sock"                 # 必须位于 target 目录（网关要求）
 LOG_TAIL = 400                           # 内存里保留的日志行数（供管理页看）
@@ -369,16 +371,18 @@ def load_config():
     try:
         with open(cfg_path(), "r", encoding="utf-8") as f:
             stored = json.load(f)
-        if isinstance(stored, dict):
-            for k, v in stored.items():
-                if k in DEFAULT_CONFIG and k != "devices":
-                    cfg[k] = v
-            if isinstance(stored.get("devices"), list):
-                cfg["devices"] = stored["devices"]
+        if not isinstance(stored, dict):
+            raise ValueError("config.json 必须是 JSON 对象")
+        for k, v in stored.items():
+            if k in DEFAULT_CONFIG and k != "devices":
+                cfg[k] = v
+        if isinstance(stored.get("devices"), list):
+            cfg["devices"] = stored["devices"]
     except FileNotFoundError:
         pass
     except Exception as exc:                       # noqa: BLE001
-        log("配置读取失败，回退默认值：%s: %s", type(exc).__name__, exc)
+        log("配置读取失败，保留原文件并停止启动：%s: %s", type(exc).__name__, exc)
+        raise
     # 环境变量（生命周期脚本传入）优先级最高，但只覆盖"可被安装向导指定"的项
     if os.environ.get("TRIM_SERVICE_PORT"):
         try:

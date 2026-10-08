@@ -6,6 +6,7 @@
             "type": "iframe",
             "gatewayPrefix": "/app/nasscreencompanion",
             "gatewaySocket": "app.sock",
+            "url": "/app/nasscreencompanion",
             "allUsers": false,
             "control": {
                 "accessPerm": "readonly"

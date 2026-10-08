@@ -3,6 +3,7 @@ components/fnos_monitor/fnos_config.h
 **/local_config.h
 nas/*.local.sh
 nas/deploy.local.sh
+.em_skill.json
 
 # 构建产物
 build/
@@ -12,7 +13,6 @@ tools/preview/lv_kconfig_host.h
 sdkconfig
 sdkconfig.old
 managed_components/
-dependencies.lock
 *.bin
 *.elf
 *.map
@@ -30,3 +30,14 @@ tools/preview/palette-out/
 tools/preview/pair_msgs.h
 *.orig
 *.rej
+
+# Local verification and physical acceptance data
+logs/
+*.log
+tools/preview/build-*/
+docs/evidence/*-device.png
+docs/evidence/*-p4-device.png
+docs/evidence/2026-10-07-temp-page-lvgl-native.png
+docs/evidence/2026-10-07-ui-lvgl-p*.png
+docs/evidence/2026-10-07-ui-temp-grouped-p*.png
+*.release-check
