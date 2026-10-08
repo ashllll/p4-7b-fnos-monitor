@@ -78,10 +78,10 @@
 .top-event .lv {
   font: 500 var(--t-meta)/1 var(--font-ui); letter-spacing: 0.08em;
 }
-.top-event .obj { font: 500 var(--t-body)/1.2 var(--font-ui); color: var(--silk-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.top-event .obj { font: 500 var(--t-body)/1.3 var(--font-ui); color: var(--silk-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;  }
 .top-event .why { font: 400 var(--t-label)/1.3 var(--font-ui); color: var(--silk-2); }
 .top-event .foot-row { margin-top: auto; display: flex; align-items: center; gap: var(--s2); }
-.top-event .age { font: 400 var(--t-meta)/1 var(--font-num); color: var(--silk-3); }
+.top-event .age { font: 400 var(--t-meta)/1 var(--font-num); color: var(--silk-3);  }
 
 /* ---------------- 盘位导轨（签名构件：对象行） ---------------- */
 .rail-list {
@@ -99,14 +99,11 @@
   width: 1rem; background: var(--etch-strong);
 }
 .bay {
-  display: grid;
-  grid-template-columns: 10rem 1fr auto;
-  align-items: center;
-  column-gap: var(--s2);
-  padding: var(--s2) 0;
+  display: flex; align-items: center; gap: var(--s1);
+  padding: var(--s1) 0;
   border-bottom: var(--hair) solid rgba(255,255,255,.05);
   position: relative;
-  min-height: 56rem;
+  min-height: 44rem;
 }
 .bay:last-child { border-bottom: 0; }
 .bay .led {
@@ -118,32 +115,43 @@
 .bay .led.warn { background: var(--led-warn); box-shadow: 0 0 5rem rgba(255,176,32,.5); }
 .bay .led.crit { background: var(--led-crit); box-shadow: 0 0 5rem rgba(255,69,88,.5); }
 .bay .led.ident { background: currentColor; }
-.bay .name { display: flex; flex-direction: column; gap: 3rem; min-width: 0; }
+.bay .name { flex: 1 1 auto; display: flex; flex-direction: column; gap: 2rem; min-width: 0; }
+/* 单行变体：副行并到名字行基线（磁盘/阵列等次级列表）。
+   名字永不截断（设备名不缩写），空间不足时副行才省略。 */
+.bay.one { min-height: 40rem; }
+.bay.one .name { flex-direction: row; align-items: baseline; gap: var(--s2); }
+.bay.one .name .l1 { flex: 0 1 auto; min-width: 0; }
+.bay.one .name .l2 { flex: 1 1 auto; min-width: 0; }
+/* l1=设备名：永不缩写——放不下就换行（形态由数据决定），不用省略号 */
 .bay .name .l1 {
-  font: 500 var(--t-body)/1.2 var(--font-ui); color: var(--silk-1);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font: 500 var(--t-body)/1.15 var(--font-ui); color: var(--silk-1);
+  white-space: normal; overflow-wrap: anywhere;
+  flex: none;
 }
 .bay .name .l2 {
   font: 400 var(--t-meta)/1.2 var(--font-ui); color: var(--silk-3);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  flex: none;
 }
 .bay .val {
-  display: flex; flex-direction: column; align-items: flex-end; gap: 3rem;
-  padding-right: var(--s1);
+  flex: none; margin-left: auto;
+  display: flex; flex-direction: row; align-items: baseline; gap: 2rem;
+  padding-right: 2rem; white-space: nowrap;
 }
 .bay .val .v {
   font: 600 var(--t-sub)/1 var(--font-num); color: var(--silk-1);
   font-variant-numeric: tabular-nums; white-space: nowrap;
+  flex: none;
 }
 .bay .val .v.warn { color: var(--led-warn); }
 .bay .val .v.crit { color: var(--led-crit); }
-.bay .val .u { font: 400 var(--t-meta)/1 var(--font-ui); color: var(--silk-3); }
+.bay .val .u { font: 400 var(--t-meta)/1 var(--font-ui); color: var(--silk-3); flex: none; }
 .bay.stale .name .l1, .bay.stale .val .v { color: var(--silk-3); }
 
 /* 阈值条（80/90 刻度；色带=状态第二通道） */
 .track {
   height: 4rem; border-radius: 2rem; background: var(--slot);
-  position: relative; overflow: hidden; margin-top: 4rem;
+  position: relative; overflow: hidden; margin-top: 2rem; flex: none;
   border: var(--hair) solid rgba(255,255,255,.05);
 }
 .track .fill { height: 100%; border-radius: 2rem; background: var(--led-ok); }
@@ -173,10 +181,14 @@
   font-variant-numeric: tabular-nums;
 }
 .kpi .figure .u { font: 500 var(--t-sub)/1 var(--font-ui); color: var(--silk-3); }
+/* KPI 副读数是「设计成两行」，不是靠 clamp 撞出来的：
+   每一行都是完整语义单元（口径/阈值 + 峰值），行内单行省略，绝不出现“峰”与“82%”被拆到两行 */
 .kpi .sub {
   font: 400 var(--t-meta)/1.3 var(--font-ui); color: var(--silk-3);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  overflow: hidden;
+  display: flex; flex-direction: column; gap: 2rem; min-width: 0;
 }
+.kpi .sub .sub-l { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .kpi .track { margin-top: auto; }
 .kpi.stale .figure .v, .kpi.stale .sub { color: var(--silk-3); }
 
@@ -218,13 +230,12 @@
 .hero-val .sub { font: 400 var(--t-meta)/1.2 var(--font-ui); color: var(--silk-3); }
 
 /* ---------------- 事件/告警行（结构化：级别·对象·原因·年龄） ---------------- */
-.events { display: flex; flex-direction: column; gap: var(--s2); overflow-y: auto; min-height: 0; }
+/* max-height 用视口比例而非固定 rem：条目多时才滚动，条目少时卡片按内容收缩，不留底部空白 */
+.events { display: flex; flex-direction: column; gap: var(--s2); overflow-y: auto; min-height: 0; max-height: 40vh; }
 .events::-webkit-scrollbar { width: 4rem; }
 .events::-webkit-scrollbar-thumb { background: rgba(255,255,255,.18); border-radius: 2rem; }
 .ev {
-  display: grid;
-  grid-template-columns: 62rem 1fr auto;
-  align-items: center; gap: var(--s3);
+  display: flex; align-items: center; gap: var(--s3);
   padding: var(--s2) var(--s3);
   border-radius: var(--r-sm);
   background: var(--slot);
@@ -235,23 +246,26 @@
 .ev.crit { border-left-color: var(--led-crit); }
 .ev.warn { border-left-color: var(--led-warn); }
 .ev.info { border-left-color: var(--led-idle); }
-.ev .lv { font: 500 var(--t-meta)/1 var(--font-ui); letter-spacing: 0.06em; }
+.ev .lv { flex: none; width: 52rem; font: 500 var(--t-meta)/1 var(--font-ui); letter-spacing: 0.06em; }
 .ev.crit .lv { color: var(--led-crit); }
 .ev.warn .lv { color: var(--led-warn); }
 .ev.info .lv { color: var(--silk-3); }
-.ev .body { display: flex; flex-direction: column; gap: 2rem; min-width: 0; }
-.ev .obj { font: 500 var(--t-label)/1.1 var(--font-ui); color: var(--silk-2); }
-.ev .why { font: 400 var(--t-label)/1.1 var(--font-ui); color: var(--silk-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ev .age { font: 400 var(--t-meta)/1 var(--font-num); color: var(--silk-3); white-space: nowrap; }
+.ev .body { flex: 1 1 auto; display: flex; flex-direction: column; gap: 2rem; min-width: 0; }
+.ev .obj { font: 500 var(--t-label)/1.35 var(--font-ui); color: var(--silk-2); flex: none; }
+.ev .why { font: 400 var(--t-label)/1.35 var(--font-ui); color: var(--silk-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: none; }
+.ev .age { flex: none; margin-left: auto; text-align: right; font: 400 var(--t-meta)/1 var(--font-num); color: var(--silk-3); white-space: nowrap; }
 .ev.stale .why, .ev.stale .obj { color: var(--silk-3); }
 
 /* ---------------- 状态行/摘要行 ---------------- */
 .summary-line {
-  display: flex; align-items: center; gap: var(--s3);
+  display: flex; align-items: center; flex-wrap: wrap; row-gap: 2rem; gap: var(--s3);
   font: 400 var(--t-label)/1.4 var(--font-ui); color: var(--silk-2);
 }
-.summary-line b { font: 600 var(--t-label)/1.4 var(--font-ui); color: var(--silk-1); font-variant-numeric: tabular-nums; }
-.summary-line .sep { color: var(--silk-4); }
+.summary-line b { font: 600 var(--t-label)/1.4 var(--font-ui); color: var(--silk-1); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.summary-line > span:has(b) { white-space: nowrap; }
+/* 分隔符随下一项走：换行时"·"永远引领下一行，不在行尾悬挂 */
+.summary-line > .sep { display: none; }
+.summary-line > .sep + span::before { content: "·"; color: var(--silk-4); margin-right: 4rem; }
 
 /* 可信度微徽标（局部旧值标识：遮顶栏仍可辨） */
 .micro {
@@ -275,19 +289,43 @@
   padding: var(--s4) 0;
 }
 
-/* ---------------- 诊断表（两列：标签/右对齐值） ---------------- */
-.kv-list { display: flex; flex-direction: column; overflow-y: auto; min-height: 0; }
-.kv-list::-webkit-scrollbar { width: 4rem; }
-.kv-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,.18); border-radius: 2rem; }
+/* ---------------- 自适应池（数据量 × 视口 双向填充） ----------------
+   池 = 若干等宽列。列数由「可用高 ÷ 自然行高」决定（保证全部条目同屏、底部不留白），
+   并受「可用宽 ÷ 最小列宽」封顶；行高按剩余高度取整拉伸 —— 富余空间变成更高的行，
+   而不是留白或滚动条。列数/行高随数据条数与分辨率实时重算（adaptPools）。 */
+.pool {
+  display: flex; flex-direction: row; flex: 1 1 auto; gap: var(--s3);
+  min-height: 0; min-width: 0;
+}
+.pool > .pool-col {
+  display: flex; flex-direction: column; flex: 1 1 0;
+  justify-content: flex-start;
+  min-width: 0; min-height: 0;
+  overflow-y: auto; overflow-x: hidden; scrollbar-width: thin;
+}
+.pool > .pool-col::-webkit-scrollbar { width: 4rem; }
+.pool > .pool-col::-webkit-scrollbar-thumb { background: rgba(255,255,255,.18); border-radius: 2rem; }
+.pool > .pool-col::-webkit-scrollbar-track { background: transparent; }
+/* 行 = 可增长的条目：flex:1 0 auto 让每行只按「剩余空间均分」往上长，绝不缩到自然高以下。
+   这样一行/两行条目混排时各自保持自己的高度，余量变成行高而不是行距，也不会把列撑出滚动条。
+   （曾用统一 height:var(--rowh)：把一行的容器行拉高到两行条目那么高 → 4 行 192 > 列高 159 → 假滚动） */
+.pool > .pool-col > * { flex: 1 0 auto; min-height: 0; }
+/* 测量期：关掉增长，让每一行回到自然高度，列数/收纳判定才准 */
+.pool.pool-measure > .pool-col > * { flex: none; }
+.pool.poolrail > .pool-col { padding-left: var(--s5); position: relative; }
+.pool.poolrail > .pool-col::before {
+  content: ""; position: absolute; left: 5rem; top: 4rem; bottom: 4rem;
+  width: 1rem; background: var(--etch-strong);
+}
 .kv {
   display: flex; align-items: center; gap: var(--s3);
   min-height: 40rem; border-bottom: var(--hair) solid rgba(255,255,255,.05);
 }
-.kv:last-child { border-bottom: 0; }
-.kv .k { font: 400 var(--t-label)/1.2 var(--font-ui); color: var(--silk-3); }
+.kv .k { font: 400 var(--t-label)/1.2 var(--font-ui); color: var(--silk-3); flex: none; }
 .kv .v {
   margin-left: auto; font: 500 var(--t-label)/1.2 var(--font-num); color: var(--silk-1);
   font-variant-numeric: tabular-nums;
+  flex: none;
 }
 .kv .v.warn { color: var(--led-warn); }
 .kv .v.crit { color: var(--led-crit); }
@@ -317,9 +355,15 @@
 .code-slot.empty { border-color: var(--focus); }
 .code-slot.filled { border-color: var(--etch-strong); }
 
-.numpad { display: grid; grid-template-columns: repeat(3, 72rem); gap: var(--s2); }
+/* 键盘占满卡片剩余高度：配对页只有一个任务（触屏输入 6 位码），
+   余量给按键而不是留白——键高 ≥44rem 仍满足触控最小目标 */
+.numpad {
+  display: grid; grid-template-columns: repeat(3, 72rem);
+  grid-template-rows: repeat(4, minmax(44rem, 1fr));
+  gap: var(--s2); height: 100%;
+}
 .key {
-  height: 48rem; border-radius: var(--r-sm);
+  min-height: 44rem; border-radius: var(--r-sm);
   background: var(--plate-lift); border: var(--hair) solid var(--etch);
   display: flex; align-items: center; justify-content: center;
   font: 500 var(--t-sub)/1 var(--font-num); color: var(--silk-1);

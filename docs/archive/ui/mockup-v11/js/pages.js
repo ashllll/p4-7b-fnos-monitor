@@ -23,6 +23,12 @@ function track(pct, kind, ticks = [80, 90]) {
   </div>`;
 }
 
+/* KPI 副读数：固定两行，每行一个完整语义单元（行内单行省略），
+   避免“… · 峰”与“82%”被自动折行拆到两行（口径与数值必须同行） */
+function subLines(lines) {
+  return lines.filter(Boolean).map((l) => `<span class="sub-l">${l}</span>`).join("");
+}
+
 function kpi({ label, swatch, value, unit, sub, pct, kind = "", stale = false }) {
   return `<div class="kpi ${stale ? "stale" : ""}">
     <div class="lbl">${swatch ? `<span class="swatch" style="background:${swatch}"></span>` : ""}${esc(label)}</div>
@@ -32,8 +38,8 @@ function kpi({ label, swatch, value, unit, sub, pct, kind = "", stale = false })
   </div>`;
 }
 
-function bay({ led = "", l1, l2 = "", value, unit = "", vclass = "", pct = null, kind = "", stale = false, ledIdent = "" }) {
-  return `<div class="bay ${stale ? "stale" : ""}">
+function bay({ led = "", l1, l2 = "", value, unit = "", vclass = "", pct = null, kind = "", stale = false, ledIdent = "", one = false }) {
+  return `<div class="bay ${one ? "one" : ""} ${stale ? "stale" : ""}">
     <span class="led ${led} ${ledIdent}"></span>
     <div class="name">
       <div class="l1">${l1}</div>
@@ -52,6 +58,17 @@ function ev({ lv, obj, why, age, stale = false }) {
     <span class="age">${esc(age)}</span>
   </div>`;
 }
+
+/* 量程自适应：窗口峰值 ×1.25 向上取整到「好看」的刻度（1/1.5/2/3/5/7.5/10 × 10^n）。
+   固定量程会让低流量曲线贴底（100 MB/s 量程下 12 MB/s 只占 12% 高度 = 图表九成留白）。 */
+function niceCeil(v) {
+  if (!(v > 0)) return 1;
+  const p = Math.pow(10, Math.floor(Math.log10(v)));
+  const n = v / p;
+  const s = n <= 1 ? 1 : n <= 1.5 ? 1.5 : n <= 2 ? 2 : n <= 3 ? 3 : n <= 5 ? 5 : n <= 7.5 ? 7.5 : 10;
+  return s * p;
+}
+function fmtRange(v) { return v >= 10 ? String(Math.round(v)) : String(Math.round(v * 10) / 10); }
 
 /* 趋势：亮线 + 面积 + 稀疏参考线 + 虚线基线（状态纹理，不复刻桌面图表） */
 function trendSvg(seriesList, ymax) {
@@ -137,7 +154,7 @@ function renderRail(page, f) {
       <span class="nav-lbl">${label}</span>
     </div>`;
   }).join("");
-  return `<nav class="rail">
+  return `<nav class="app-rail">
     ${nav}
     <div class="rail-foot">
       <div class="util ${page === "diag" ? "sel" : ""}">
@@ -194,22 +211,25 @@ function renderOverview(f) {
   const kpis = `<div class="kpi-row">
     ${kpi({
       label: "CPU 使用率", swatch: "var(--id-cpu)", value: stale ? "47" : String(f.cpu.pct), unit: "%",
-      sub: `${f.cpu.cores} 核 · 负载 ${f.cpu.load1.toFixed(2)} · 队列 ${f.cpu.runq} · 峰 ${f.cpu.peak}%`,
+      sub: subLines([`${f.cpu.cores} 核 · 负载 ${f.cpu.load1.toFixed(2)} · 队列 ${f.cpu.runq}`, `峰 ${f.cpu.peak}%`]),
       pct: f.cpu.pct, kind: thrUsage(f.cpu.pct), stale,
     })}
     ${kpi({
       label: "内存", swatch: "var(--id-mem)", value: String(f.mem.pct), unit: "%",
-      sub: `${f.mem.used_gb} / ${f.mem.total_gb} GB · 换 ${f.mem.swap_used_gb}/${f.mem.swap_total_gb}G · 峰 ${f.mem.peak}%`,
+      sub: subLines([`${f.mem.used_gb} / ${f.mem.total_gb} GB · 换 ${f.mem.swap_used_gb} / ${f.mem.swap_total_gb} G`, `峰 ${f.mem.peak}%`]),
       pct: f.mem.pct, kind: thrUsage(f.mem.pct), stale,
     })}
     ${kpi({
       label: "最高温度", swatch: "var(--id-temp)", value: f.temp.max.toFixed(1), unit: "°C",
-      sub: `${esc(f.temp.max_dev)} · ${esc(f.temp.max_ch)}${f.temp.crit_n ? ` · 危险 ${f.temp.crit_n} 路` : ""}${f.temp.warn_n ? ` · 注意 ${f.temp.warn_n} 路` : ""}`,
+      sub: subLines([
+        `${f.temp.crit_n ? `<b style="color:var(--led-crit)">危险 ${f.temp.crit_n} 路</b> · ` : ""}${f.temp.warn_n ? `<b style="color:var(--led-warn)">注意 ${f.temp.warn_n} 路</b> · ` : ""}${esc(f.temp.max_ch)}`,
+        esc(f.temp.max_dev),
+      ]),
       pct: Math.min(100, Math.round(f.temp.max)), kind: thrTemp(f.temp.max), stale,
     })}
     ${kpi({
       label: "网络下行", swatch: "var(--id-down)", value: f.net.down.toFixed(1), unit: "MB/s",
-      sub: `上行 ${f.net.up.toFixed(1)} MB/s · 累计收 ${f.net.rx_total_tb} TB · 发 ${f.net.tx_total_gb} GB`,
+      sub: subLines([`上行 ${f.net.up.toFixed(1)} MB/s · 累计收 ${f.net.rx_total_tb} TB`, `发送 ${f.net.tx_total_gb} GB`]),
       pct: Math.min(100, Math.round((f.net.down / f.net.peak_down) * 100)), kind: "", stale,
     })}
   </div>`;
@@ -243,18 +263,18 @@ function renderOverview(f) {
         })}
       </div>
       <div class="card">
-        <div class="card-head"><span class="card-title">存储风险</span><span class="card-note">${f.vols.length} 个卷</span></div>
-        <div class="card-body">
-          ${f.vols.filter((v) => v.pct >= 80).map((v) => bay({
-            led: v.pct >= 90 ? "crit" : "warn",
+        <div class="card-head"><span class="card-title">存储风险</span>
+          <span class="card-note">显示 <span data-fitnote>${Math.min(4, f.vols.length)}</span> / ${f.vols.length} · 见「存储」页</span></div>
+        <div class="pool poolrail" data-pool data-mincol="200" data-fit>
+          ${f.vols.slice().sort((a, b) => b.pct - a.pct).map((v) => bay({
+            led: v.pct >= 90 ? "crit" : v.pct >= 80 ? "warn" : "",
             l1: esc(v.mnt), l2: `已用 ${(v.used_gb / 1000).toFixed(2)} TB / ${(v.total_gb / 1000).toFixed(1)} TB · ${esc(v.fs)}`,
             value: String(v.pct), unit: "%", vclass: thrUsage(v.pct), stale,
-          })).join("") || `<div class="empty">所有卷低于 80% 阈值</div>`}
-          <div style="margin-top:auto;padding-top:var(--s2)" class="summary-line">
-            <span>最满 <b>${Math.max(...f.vols.map((v) => v.pct))}%</b></span><span class="sep">·</span>
-            <span>剩余 <b>${f.vol_sum.free_tb} TB</b></span><span class="sep">·</span>
-            <span>阵列 <b>${f.raid.filter((r) => r.ok).length}/${f.raid.length}</b> 正常</span>
-          </div>
+          })).join("")}
+        </div>
+        <div style="padding-top:var(--s1)" class="summary-line">
+          <span>最满 <b>${Math.max(...f.vols.map((v) => v.pct))}%</b></span>
+          <span>阵列 <b>${f.raid.filter((r) => r.ok).length}/${f.raid.length}</b> 正常</span>
         </div>
       </div>
     </div>
@@ -308,7 +328,7 @@ function renderStorage(f) {
       <div class="card">
         <div class="card-head"><span class="card-title">全部存储卷 · ${f.vols.length}</span>
           <span class="card-note">条上刻度 = 80 / 90 阈值</span></div>
-        <div class="rail-list">
+      <div class="pool poolrail" data-pool data-mincol="240">
           ${f.vols.map((v) => bay({
             led: thrUsage(v.pct) || "ok",
             l1: esc(v.mnt),
@@ -318,15 +338,15 @@ function renderStorage(f) {
           })).join("")}
         </div>
       </div>
-      <div class="row" style="grid-template-rows:1fr 1fr">
+      <div class="row" style="grid-template-rows:auto 1fr">
         <div class="card">
           <div class="card-head"><span class="card-title">阵列与同步</span></div>
           <div class="rail-list" style="padding-left:var(--s5)">
             ${f.raid.map((r) => bay({
               led: r.ok ? "ok" : "crit",
               l1: `${esc(r.dev)} · ${esc(r.lvl)}`,
-              l2: `${r.have}/${r.want} 盘在线 · ${r.sync_pct >= 0 ? esc(r.what) + " " + r.sync_pct + "%" : r.ok ? "无同步任务" : "recovery 待执行"}`,
-              value: r.ok ? "正常" : "降级", vclass: r.ok ? "" : "crit", stale,
+              l2: `${r.have}/${r.want} 在线 · ${r.sync_pct >= 0 ? esc(r.what) + " " + r.sync_pct + "%" : r.ok ? "无同步任务" : "recovery 待执行"}`,
+              value: r.ok ? "正常" : "降级", vclass: r.ok ? "" : "crit", stale, one: true,
             })).join("")}
           </div>
         </div>
@@ -336,7 +356,7 @@ function renderStorage(f) {
             ${f.disks.map((d) => bay({
               led: d.rd + d.wr > 10 ? "ident" : "", ledIdent: "color:var(--id-store)",
               l1: esc(d.dev), l2: `读 ${d.rd.toFixed(1)} · 写 ${d.wr.toFixed(1)} MB/s`,
-              value: (d.rd + d.wr).toFixed(1), unit: "MB/s", stale,
+              value: (d.rd + d.wr).toFixed(1), unit: "MB/s", stale, one: true,
             })).join("")}
           </div>
         </div>
@@ -348,6 +368,9 @@ function renderStorage(f) {
 /* ---------------- P2 网络 ---------------- */
 function renderNetwork(f) {
   const stale = f.trust.state === "stale";
+  /* 吞吐量程按「窗口内」峰值自适应（下行/上行共用同一量程，便于两条线互相比较）。
+     不并入历史峰值 peak_down（86.2 MB/s）：那是文字读数，把它算进量程会让曲线重新贴底。 */
+  const netYmax = niceCeil(Math.max(...f.net.down_series, ...f.net.up_series, 0.1) * 1.25);
   return `<div class="page" style="grid-template-rows:132rem 1fr 92rem">
     <div class="dual-hero">
       <div class="hero-val">
@@ -374,7 +397,7 @@ function renderNetwork(f) {
           { color: "var(--id-down)", data: f.net.down_series },
           { color: "var(--id-up)", data: f.net.up_series },
         ],
-        ymax: 100, yTop: "量程 100 MB/s",
+        ymax: netYmax, yTop: `量程 ${fmtRange(netYmax)} MB/s`,
         readouts:
           readoutItem("var(--id-down)", "DOWN", `${f.net.down.toFixed(1)} MB/s · 峰 ${f.net.peak_down}`) +
           readoutItem("var(--id-up)", "UP", `${f.net.up.toFixed(1)} MB/s · 峰 ${f.net.peak_up}`),
@@ -406,6 +429,26 @@ function renderNetwork(f) {
   </div>`;
 }
 
+/* ---------------- 自适应助手（数据量 × 视口） ---------------- */
+const MOD_TXT = { ok: "正常", stale: "旧值", missing: "未上报", denied: "权限不足", error: "错误", disabled: "已关闭", na: "无此项" };
+const MOD_CLS = { ok: "", stale: "warn", missing: "warn", denied: "crit", error: "crit", disabled: "", na: "" };
+const EV_ROWH = 55;                       // ev 行实测高（rem，含 padding 与两行文案）
+const EV_GAP = 8;                          // .events gap（--s2）
+/* 采集段状态摘要：由数据算出，不再用固定文案（"全部正常" 与 zfs=无此项 曾互相矛盾） */
+function modNote(f) {
+  const odd = f.modules.filter((m) => m.state !== "ok");
+  return odd.length
+    ? `${f.modules.length - odd.length} 正常 · ${odd.map((m) => `${m.name} ${MOD_TXT[m.state] || m.state}`).join("、")}`
+    : "全部正常";
+}
+/* 同屏条数口径：容器高 40vh ÷ 行高，与 .events 的 max-height 保持一致 */
+function evNote(n) {
+  if (!n) return "按严重度排序，严重不被截断";
+  const U = parseFloat(getComputedStyle(document.documentElement).fontSize) || 1;
+  const vis = Math.min(n, Math.max(1, Math.floor((window.innerHeight * 0.4 + EV_GAP) / ((EV_ROWH + EV_GAP) * U))));
+  return `${vis < n ? `显示前 ${vis} / ${n}` : `显示 ${n} / ${n}`} · 按严重度排序，严重不被截断`;
+}
+
 /* ---------------- P3 系统 ---------------- */
 function renderSystem(f) {
   const stale = f.trust.state === "stale";
@@ -413,8 +456,8 @@ function renderSystem(f) {
   return `<div class="page" style="grid-template-rows:auto 1fr">
     <div class="card" style="border-color:${f.alerts.length ? "rgba(255,176,32,.3)" : "var(--etch)"}">
       <div class="card-head"><span class="card-title">异常与事件 · ${f.alerts.length}</span>
-        <span class="card-note">显示 ${f.alerts.length} / ${f.alerts.length} · 按严重度排序，严重不被截断</span></div>
-      <div class="events" style="max-height:150rem">
+        <span class="card-note">${evNote(f.alerts.length)}</span></div>
+      <div class="events">
         ${f.alerts.length ? f.alerts.map((a) => ev({ ...a, stale })).join("") :
           `<div class="empty">${stale ? "告警状态未知 · 保留旧数据" : "暂无告警事件"}</div>`}
       </div>
@@ -423,29 +466,24 @@ function renderSystem(f) {
       <div class="card">
         <div class="card-head"><span class="card-title">容器服务 · ${f.containers.length ? `${f.containers.filter((c) => c.up).length}/${f.containers.length} 运行` : "未上报"}</span>
           <span class="card-note">停止的排前 · 名称+同行状态</span></div>
-        <div class="rail-list">
-          ${f.containers.length ? [...f.containers].sort((a, b) => Number(b.up) - Number(a.up)).map((c) => bay({
+        ${f.containers.length ? `<div class="pool poolrail" data-pool data-mincol="200">
+          ${[...f.containers].sort((a, b) => Number(b.up) - Number(a.up)).map((c) => bay({
             led: c.up ? "ok" : "warn",
             l1: esc(c.n), l2: c.up ? "" : `意外退出 · ${esc(c.s)}`,
             value: c.up ? "运行中" : "已停止", vclass: c.up ? "" : "warn", stale,
-          })).join("") : `<div class="empty">未采集到容器 · 采集段 docker 未上报（${esc(f.mod_note.split("·")[1] || "已关闭或权限不足")}）</div>`}
-        </div>
+          })).join("")}
+        </div>` : `<div class="rail-list"><div class="empty">未采集到容器 · 采集段 docker ${MOD_TXT[(f.modules.find((m) => m.name === "docker") || {}).state] || "未上报"}</div></div>`}
       </div>
       <div class="card">
         <div class="card-head"><span class="card-title">硬件温度 · 最热 4 路</span>
-          <span class="card-note">全部通道见「温度」页</span></div>
-        <div class="rail-list">
+          <span class="card-note">危险 <b style="color:var(--led-crit)">${f.temp.crit_n}</b> 路 · 注意 <b style="color:var(--led-warn)">${f.temp.warn_n}</b> 路 · 共 ${f.temp.channels.length} 路</span></div>
+        <div class="pool poolrail" data-pool data-mincol="240">
           ${f.temp.channels.slice().sort((a, b) => b.c - a.c).slice(0, 4).map((t) => bay({
             led: thrTemp(t.c) || "ident", ledIdent: "color:var(--id-temp)",
             l1: `${esc(t.ch)} · ${esc(t.dn || t.dev)}`,
             l2: `${esc(t.dev)} · 阈值 60 / 75°C`,
             value: t.c.toFixed(1), unit: "°C", vclass: stale ? "" : thrTemp(t.c), stale,
           })).join("")}
-          <div style="margin-top:auto;padding-top:var(--s2)" class="summary-line">
-            <span>危险 <b style="color:var(--led-crit)">${f.temp.crit_n}</b> 路</span><span class="sep">·</span>
-            <span>注意 <b style="color:var(--led-warn)">${f.temp.warn_n}</b> 路</span><span class="sep">·</span>
-            <span>共 <b>${f.temp.channels.length}</b> 路</span>
-          </div>
         </div>
       </div>
     </div>
@@ -455,11 +493,13 @@ function renderSystem(f) {
 /* ---------------- P4 温度（数据自适应：行形态由 ch 有无决定） ---------------- */
 function renderTemp(f) {
   const stale = f.trust.state === "stale";
-  const chans = f.temp.channels;
-  const per = Math.ceil(chans.length / 3);
-  const cols = [0, 1, 2].map((ci) => chans.slice(ci * per, (ci + 1) * per));
+  const chans = f.temp.channels.slice().sort((a, b) => {
+    const ka = (a.dev || a.n || "") + "\u0000" + (a.ch || "");
+    const kb = (b.dev || b.n || "") + "\u0000" + (b.ch || "");
+    return ka < kb ? -1 : ka > kb ? 1 : 0;
+  });
   const hasCh = chans.some((t) => t.ch);
-  return `<div class="page" style="grid-template-rows:76rem 1fr">
+  return `<div class="page" style="grid-template-rows:68rem 1fr">
     <div class="card" style="padding-top:var(--s2);padding-bottom:var(--s2);justify-content:center;gap:4rem">
       <div class="summary-line">
         <b>${chans.length}</b> 路传感器 · 最热 <b>${esc(f.temp.max_dev)}${f.temp.max_ch ? " · " + esc(f.temp.max_ch) : ""}</b>
@@ -475,9 +515,9 @@ function renderTemp(f) {
     <div class="card">
       <div class="card-head"><span class="card-title">温度传感器 · 全部通道</span>
         <span class="card-note">顺序 = 设备名 → 通道名，不随温度跳动</span></div>
-      <div class="card-body" style="display:grid;grid-template-columns:repeat(3,1fr);gap:var(--s3)">
-        ${cols.map((col) => `<div class="rail-list">
-          ${col.map((t) => hasCh && t.ch ? bay({
+      <div class="card-body">
+        <div class="pool poolrail" data-pool data-mincol="260">
+          ${chans.map((t) => hasCh && t.ch ? bay({
             led: thrTemp(t.c) || "ident", ledIdent: "color:var(--id-temp)",
             l1: esc(t.dn || t.dev), l2: esc(t.ch),
             value: t.c.toFixed(1), unit: "°C", vclass: stale ? "" : thrTemp(t.c), stale,
@@ -486,7 +526,7 @@ function renderTemp(f) {
             l1: esc(t.dn || t.n || t.dev),
             value: t.c.toFixed(1), unit: "°C", vclass: stale ? "" : thrTemp(t.c), stale,
           })).join("")}
-        </div>`).join("")}
+        </div>
       </div>
     </div>
   </div>`;
@@ -520,13 +560,9 @@ function renderDiag(f) {
     </div>
     <div class="card">
       <div class="card-head"><span class="card-title">全部采集段 · ${f.modules.length}</span>
-        <span class="card-note">${esc(f.mod_note)}</span></div>
-      <div class="kv-list">
-        ${f.modules.map((m) => {
-          const map = { ok: ["正常", ""], stale: ["旧值", "warn"], missing: ["未上报", "warn"], denied: ["权限不足", "crit"], error: ["错误", "crit"], disabled: ["已关闭", ""], na: ["无此项", ""] };
-          const [txt, cls] = map[m.state] || [m.state, ""];
-          return `<div class="kv"><span class="k">${esc(m.name)}</span><span class="v ${cls}">${txt}</span></div>`;
-        }).join("")}
+        <span class="card-note">${esc(modNote(f))}</span></div>
+      <div class="pool poolrail" data-pool data-mincol="200">
+        ${f.modules.map((m) => `<div class="kv"><span class="k">${esc(m.name)}</span><span class="v ${MOD_CLS[m.state] || ""}">${MOD_TXT[m.state] || m.state}</span></div>`).join("")}
       </div>
     </div>
     <div class="card" style="padding:var(--s2) var(--s4)">
@@ -544,6 +580,7 @@ function renderDiag(f) {
 
 /* ---------------- 配对（每阶段一个主操作） ---------------- */
 function renderPair(f) {
+  const poll = (f.trust && f.trust.poll) || {};
   return `<div class="page" style="grid-template-rows:48rem 1fr">
     <div class="card" style="padding:0 var(--s4);flex-direction:row;align-items:center;gap:var(--s5)">
       <span class="summary-line"><b style="font-size:var(--t-sub)">连接 NAS · 第 2/4 步</b></span>
@@ -560,30 +597,35 @@ function renderPair(f) {
     <div class="row" style="grid-template-columns:2fr 3fr">
       <div class="card">
         <div class="card-head"><span class="card-title">现在要做的事</span></div>
-        <div class="card-body" style="gap:var(--s3);justify-content:center">
-          <div class="summary-line"><span>目标 NAS</span><b style="margin-left:auto;font-size:var(--t-sub)">192.168.0.119</b></div>
+        <div class="card-body" style="gap:var(--s3)">
+          <div class="summary-line"><span>目标 NAS</span><b style="margin-left:auto;font-size:var(--t-sub)">192.168.0.119:8799</b></div>
           <div class="summary-line"><span>伴侣服务</span><b style="margin-left:auto;color:var(--led-ok)">已发现 · 8798</b></div>
+          <div class="summary-line"><span>采集链路</span><b style="margin-left:auto">轮询 ${esc(poll.interval || "1s")} · 成功 ${poll.ok ?? 0} / 失败 ${poll.fail ?? 0}</b></div>
           <div style="height:1rem;background:var(--etch)"></div>
           <div class="summary-line" style="color:var(--silk-2)"><span>在 NAS 的「屏幕伴侣」页面上读取 6 位配对码，输入下面的槽位。配对码 300 秒内有效。</span></div>
-          ${micro("等待输入 · 300s", "na")}
+          <div class="summary-line"><b style="color:var(--silk-2)">读不到码？</b></div>
+          <div class="summary-line" style="color:var(--silk-3)"><span>确认 NAS 上「屏幕伴侣」页已打开（码只在页面可见时生成），且本机与 NAS 在同一网段；网段不同时改用 IP 直连。</span></div>
+          <div style="margin-top:auto">${micro("等待输入 · 300s", "na")}</div>
         </div>
       </div>
       <div class="card">
         <div class="card-head"><span class="card-title">配对码</span>
           <span class="card-note">错误提示紧贴输入区，不与步骤文案混排</span></div>
-        <div class="card-body" style="flex-direction:row;gap:var(--s5);align-items:center;justify-content:center">
-          <div class="code-slots">
+        <div class="card-body" style="display:grid;grid-template-rows:auto 1fr;gap:var(--s4);align-items:stretch">
+          <div class="code-slots" style="justify-content:center">
             <div class="code-slot filled">4</div><div class="code-slot filled">1</div><div class="code-slot filled">7</div>
             <div class="code-slot empty"></div><div class="code-slot empty"></div><div class="code-slot empty"></div>
           </div>
-          <div class="numpad">
-            ${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `<div class="key">${n}</div>`).join("")}
-            <div class="key util">清除</div><div class="key">0</div><div class="key util">退格</div>
-          </div>
-          <div style="display:flex;flex-direction:column;gap:var(--s2);align-items:stretch">
-            <span class="btn primary" style="height:44rem;justify-content:center">下一步</span>
-            <span class="btn ghost" style="height:44rem;justify-content:center">返回</span>
-            <span style="font:400 var(--t-meta)/1.3 var(--font-ui);color:var(--led-warn);text-align:center">输入的码已过期 · 请重新读取</span>
+          <div style="display:flex;flex-direction:row;gap:var(--s4);align-items:stretch;justify-content:center;min-height:0">
+            <div class="numpad">
+              ${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `<div class="key">${n}</div>`).join("")}
+              <div class="key util">清除</div><div class="key">0</div><div class="key util">退格</div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:var(--s2);justify-content:center;width:160rem">
+              <span class="btn primary" style="height:44rem;justify-content:center">下一步</span>
+              <span class="btn ghost" style="height:44rem;justify-content:center">返回</span>
+              <span style="font:400 var(--t-meta)/1.3 var(--font-ui);color:var(--led-warn);text-align:center">输入的码已过期 · 请重新读取</span>
+            </div>
           </div>
         </div>
       </div>
@@ -601,8 +643,8 @@ function renderApp(page, fixture) {
   const showRail = page !== "pair";
   document.getElementById("root").innerHTML = `
     ${renderHead(f)}
-    ${showRail ? renderRail(page, f) : `<nav class="rail" style="visibility:hidden"></nav>`}
-    <main class="body">${PAGES[page](f)}</main>
+    ${showRail ? renderRail(page, f) : `<nav class="app-rail" style="visibility:hidden"></nav>`}
+    <main class="app-body">${PAGES[page](f)}</main>
     ${renderFoot(f)}`;
   document.title = `v11 mockup · ${page} · ${fixture}`;
 }

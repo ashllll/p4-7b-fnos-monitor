@@ -862,3 +862,187 @@ I (68963) fnos_data: poll ok=30 fail=0 11ms …                             ← 
 即：**刷完固件 → 自动弹卡 → 屏上选网络输口令 → 存 NVS → 拿到 IP → 继续走 HTTPS 读 NAS**，
 全程没有电脑参与。凭据落在 NVS（`fnos_wifi_store.c`），NVS 优先于编译期默认；`wifi clear`
 退回默认、`wifi show` 只报"有/没有"不读口令。
+
+## 23. UI 全量迁到 LVGL 原生（ui_kit）+ 动画接线 + 实机逐页取证（2026-10-07 Round 2）
+
+本轮目标（用户指令，逐字）：**自适应为第一优先级**；推进**实机验证**；**清理掉其他残留 ui 设计方案**；
+**不要使用 kk_ui**；全局切换为 **LVGL**；**保证动画效果**。
+
+### 23.1 动画（"保证动画效果"）
+
+| 用途 | 实现 | 实测 |
+|---|---|---|
+| 换页入场 | `page_enter()` → 每个子对象 `uk_anim_fade(c, LV_OPA_20, 160, delay)`，错峰 20ms | 中途帧与稳态帧逐像素比：卡片区平均亮度比 **0.64–0.74**、白字峰值 **226 → 121~145** |
+| 严重告警点 | `uk_anim_pulse()` 700ms 往复，**只在级别翻转时**调用 | 否则每秒被 `refresh()` 重启动，观感是"卡一下"而不是呼吸 |
+| 值条 | `uk_bar_set()` → `lv_bar_set_value(..., LV_ANIM_ON)` | 180ms 原生补间 |
+
+**动效不改最终像素**：`bash tools/preview/run.sh /tmp/prev-settle` 产出 57 张，与"关掉动画（dy=0）"
+基线 `/tmp/prev-dy0` **57/57 逐字节相同**。想看动画本身用 `PREVIEW_ENTER_MID=<页号>`（跳过
+`uk_anim_settle()` 的稳态化，截 60ms 处的中途帧）。
+
+**为什么入场只用透明度**：`translate_y` 会算进对象 coords（`lv_obj_pos.c` 的 `refr_pos`），
+贴边卡片在动画那一帧就被父对象裁掉，主机预览直接报
+`child out of parent: "" child=[99,255]-[1011,553] parent=[99,68]-[1011,545]`（正好 8px）。
+
+### 23.2 自适应（主机 trace + 实机拍屏）
+
+`UK_POOL_TRACE=1 ./build/preview /tmp/out` 实测池解：
+
+```
+[pool] n=24 W=863 H=314 cols=3 shown=24     ← 温度页 24 路：三列全显
+[pool] n=12 W=575 H=171 cols=2 shown=12     ← 12 个卷：两列
+[pool] n=10 W=887 H=94  cols=3 shown=10     ← 10 块磁盘：三列
+[pool] n=16 W=270 H=339 cols=1 shown=16     ← 限量态 16 个容器：单列滚动（不静默截断）
+```
+
+实机照片（`python3 tools/page_shot.py --page N` → `read_image` 亲眼看）：
+p0 总览（CPU 5% / 内存 50% / 最高温 74℃ Aquantia / 存储 14.4 of 26.7 TB / 6 卷 54% / 阵列 3/3 / ok 96 fail 0）、
+p1 存储（6 卷两列 + 阵列 3 行 + 磁盘 5 项两列）、p4 温度（24 路三列全显，MAC 74.0℃ 琥珀，ok 241 fail 1）、
+p3 系统（三列；容器空态 / 硬件温度 / 暂无告警事件）。
+
+阈值口径核实：`fnos_ui.c:2619-2624` 注释与代码一致表明用量阈值是 **60 暖 / 85 满**（`uk_pct_color`），
+"与旧实现的 80/90 不一致是**有意改的**：全项目只能有一套阈值"；实机 60%/67% 显琥珀与此吻合。
+
+### 23.3 实机缺陷：配网卡自己冒出来盖住系统页（本轮最有价值的一条）
+
+**现象**：p3 照片里"接入 Wi-Fi"卡自行弹出、正在扫描，而串口 `wifi show` 回显
+`凭据：有 / SSID：llll / 状态：已连接 llll（192.168.0.214）`。
+
+**第一次修（方向对但不够）**：开机规则的判据从 `fnos_net_configured()`（要等网络层读完 NVS 才置真，
+与 ~3.5 s 的截止时刻存在竞态）换成权威存储 `fnos_wifi_store_load()`。烧录后抓串口 26 s，
+**开机规则确实没再触发**——可卡还开着。
+
+**真根因**：`wifi_build()` 建出来的 `s_ui.wifi_card` **默认可见**（没加 `LV_OBJ_FLAG_HIDDEN`）；
+卡可见性只由 `wifi_show()` 控制，而"有凭据"时没人调过它 ⇒ `set_page()` 里
+`if (s_wifi_open) wifi_show(false)` 收不掉一张本来就可见的卡。
+
+**修复 + 回归网**：`wifi_build()` 结尾建完即 HIDDEN；主机预览加断言（有凭据 + p3 ⇒ 卡上的
+"重新扫描/手动输入"不可见；点顶栏入口才出现）。复跑 `tools/preview/run.sh` 后**只有 6 张 p3 相关样张变化**
+（01/02/03/04/05-*-p3 + 06-system-scroll），其余 51 张逐字节不变；重新烧录拍屏，p3 恢复正常三列。
+
+**为什么主机预览没抓到**：预览的 fixture 全是"没凭据"，那条会先 `wifi_show(true)` 再由 harness 的
+`set_page()` 收掉，正好绕开"有凭据且从未开卡"这个真实状态。**fixture 覆盖不到的路径只有实机能证伪。**
+
+### 23.4 清理（残留 UI 方案）
+
+- `components/fnos_monitor/kk_ui/`（6 文件）**已删**；`tools/verify_all.sh` L2.5 改成全树扫 `kk_*`
+  （排除 build/.git/archive）守着，`tools/freshness_check.py` 的预览 roots 改指 `ui_kit/`。
+- `tools/mockup-v11/`（HTML/CSS 原型 + 18 张渲染图 + 测量脚本）→ `docs/archive/ui/mockup-v11/`
+  （`git mv`，18 个 rename；全仓引用同步改到新路径，只剩归档件自己提旧路径）。
+- 备而不用的动画 API `uk_page_load()` / `uk_anim_int()` **已删**（本板一个 screen + 五个隐藏页，
+  `lv_screen_load_anim` 无从下手；数值补间没有调用点）。
+- 文档：`tools/preview/README.md` 整篇重写（五页 / 57 张 / 稳态帧 / 两个只读探针 / page_shot.py）；
+  `docs/ui-v12-lvgl-native.md` §4 动画规范按实测重写、§6 清理清单收口、§7 证据状态更新、新增 §11 本轮记录。
+
+### 23.5 证据分级（不许越级）
+
+| 级别 | 证据 | 结果 |
+|---|---|---|
+| L1 主机预览 | `bash tools/preview/run.sh` | 57 张 + 四条审计 + 配对/连接原因断言全绿；新增"配网卡不该冒出来"断言 |
+| L1 自适应 | `UK_POOL_TRACE=1` | 池列数 1/2/3 随池宽条数自适应（见 23.2） |
+| L2 构建 | `./idf.sh build` | `fnos_monitor.bin` 0x1b1240（app 分区余 81%） |
+| L3 实机 | 230400 刷录（hash verified）+ 串口 25 s + 逐页拍屏 | 无 assert/panic；heap internal=215KB psram=27097KB；p0/p1/p3/p4 真实数据下版面正确 |
+
+**未完成**：p2 网络页未单独拍屏（逻辑与其余页同源）；L4 长跑（≥30 min）未做；本轮改动**未提交**
+（AGENTS.md 要求提交/推送需用户当下授权）。
+
+**取证照片（`docs/evidence/`，手机相机预览截图，非设备抓屏）**：
+
+| 文件 | 内容 |
+|---|---|
+| `2026-10-07-ui-lvgl-p0-overview.png` | 总览：CPU 5% / 内存 50% / 最高温 74℃ / 存储 14.4 of 26.7 TB / 6 卷 54% / 阵列 3/3 / ok 96 fail 0 |
+| `2026-10-07-ui-lvgl-p1-storage.png` | 存储：6 卷两列 + 阵列 3 行 + 磁盘 5 项两列 |
+| `2026-10-07-ui-lvgl-p4-temp-24ch.png` | 温度：24 路三列全显，MAC 74.0℃ 琥珀（ok 241 fail 1） |
+| `2026-10-07-ui-lvgl-p3-wifi-card-bug.png` | **缺陷证据**：配网卡自行弹出盖住系统页（当时 `wifi show` 已回显"凭据：有 / 已连接"） |
+| `2026-10-07-ui-lvgl-p3-after-card-fix.png` | 修复后：系统页三列正常，卡不再出现 |
+
+**复现命令**：`bash tools/preview/run.sh`（主机 + 审计）→ `./idf.sh build` →
+`./idf.sh -p /dev/tty.usbmodem5CF71088571 -b 230400 flash` → `python3 tools/page_shot.py --page N`
+（N=0/1/2/3/4；会临时把板子复位一次并在拍照期间保持串口打开）→ `read_image` 亲眼看图。
+
+## 24. 温度清单改成"按设备分组"（2026-10-07 用户反馈："温度显示全部错位 间距过近而且传感器存在多个重复 系统与温度界面"）
+
+### 24.1 三个抱怨分别是什么（都先在主机预览里复现出来再改）
+
+| 用户看到的 | 实际原因 |
+|---|---|
+| 传感器"多个重复" | 界面只印 `dn`（人读设备名）。同型号多块 NVMe 的 `dn` **完全相同**（真机是 4× `PCIe-8-SSD 512GB`、2× `ZHITAI TiPlus7100 1TB`），而采集端给的 `dev`（`nvme0n1`…）才是唯一 id —— `nas/fnos-agent.py` 的 `_temps()` 原话："dev 保证是稳定的 id（界面上要能一行一行认住）"，界面从没用过它 |
+| "间距过近" | 一条通道一行，行内上下 padding=0，行与行之间只靠 1px 下边线当间距 |
+| "全部错位" | ① 数值与"通道名"同一行、视觉重心偏下；② 列宽 ~277px 里 `°C` 恰好压在**列滚动条**上，竖条把单位从中间劈开（放大 8× 可见 `/tmp/edge-new.png`）；③ 设备名在 cjk_16 下折成两行，块高不齐 |
+
+### 24.2 改法
+
+- **一台设备一个块**（`components/fnos_monitor/fnos_ui.c` 的 `temp_groups()` / `temp_blk_build()` / `temp_blk_fill()`）：
+  块头 = 状态点 + 设备名 + 该设备最热温度；块体 = 每通道一行（通道名 + 温度）。设备名只出现一次。
+- **消歧**：`dn` 同名的设备在名字后附 `dev`（`"ZHITAI TiPlus7100 1TB · nvme2n1"`）；名字允许折两行
+  （WRAP + `max_height = 2 行`），**不能用省略号** —— 省略号省掉的正好是识别用的那截（实机第一版就是
+  `"ZHITAI TIPlus7100 1TB · nv…"`，等于白消歧）。
+- **间距**：块内通道行距 `UK_S1`(4px)，块底 `pad_bottom UK_S3`(12px) + 1px 线；通道行行高由字体决定（num_20 → 24px），
+  不再用 `uk_row`（它带 `UK_ROW_MIN=40` 的最小高，24 路按 40px 排必然溢出）。
+- **数值与单位（用户第二次反馈"温度界面还有错位"的真因）**：`num_20` 的数值与 `txt_12` 的 `"°C"`
+  原来直接并排放在**居中对齐**的 flex 行里，12px 的单位先被垂直居中、再被 `pad_bottom: 3` 往上顶 ⇒
+  单位浮在数字上方看着像上标（8× 放大 `/tmp/u-before.png` vs `/tmp/u-after.png`）。
+  修法：新增 `temp_value_box(parent, &val)` —— "数值 + 单位"装进一个**交叉轴 END 对齐**的小盒子
+  （照抄 `uk_row` 里验证过的 valbox），数值与单位基线一致、数值与单位之间留 4px（`pad_column UK_S1`，
+  2px 时"34.0˚C"看着连成一片）。
+- **块头改为顶对齐**（`temp_line(parent, top_align)`）：设备名可能折两行，居中对齐会把"该设备最热温度"
+  推到第二行的高度上，一块一个位置 ⇒ 看着就是数值没对齐。顶对齐后状态点、名字首行、最热温度在同一条基线上。
+- **单通道设备**：通道名并进块头（`inline_ch`），不再单起一行重复同一个数值。
+- **老采集端**（无 `ch`/`dn`）：只有 `dev`，那就只留块头一行。
+- **系统页（p3）**：改成**一台设备一行**：名字走第一行（cjk_16，不附 dev），第二行 `最热 <ch> · N 路 · <dev>`
+  —— dev 放在第二行才不会把 cjk_16 的名字顶成两行、把第 8 台设备挤到卡外。
+- **池引擎两处配套改动**（`components/fnos_monitor/ui_kit/uk.c`）：
+  1. 列分配由 `c = i / per_col` 改成"保持列主序 + 按剩余高度容量换列"（`cap = 剩余高度/剩余列数 + UK_S5*2`），
+     并把单列测量到的 `item_h[]` 记进 `uk_pool_t`：等高条目时结果与原来逐像素一致，块高悬殊时不再切出 417px 的列；
+  2. 列容器 `pad_right = UK_SCROLL_W + 2`：LVGL 只在滚动条可见时才从内容宽扣它，首帧排完版、滚动条后出现时
+     内容不重排 ⇒ 预留条带后 `°C` 不再被竖条劈开。
+- **预览 fixture 补齐真机条件**：`tools/preview/preview.c` 的温度桩把两组设备名改成与真机相同的重复型号
+  （`PCIe-8-SSD 512GB` ×2、`ZHITAI TiPlus7100 1TB` ×2，24 路 / 8 设备）—— 原来 8 个名字全唯一，
+  **恰好绕开了"同型号多块盘"这个真实条件**。
+
+### 24.3 证据
+
+| 级别 | 证据 | 结果 |
+|---|---|---|
+| L1 主机预览 | `bash tools/preview/run.sh`（多轮） | 每轮 exit 0 / 57 张 / 0 断言失败；`04-healthy-p4.png` = 8 个设备块三列（名字各一次、通道 4px 行距、数值右对齐阈值色）；`04-healthy-p3.png` = 8 行设备摘要且 8 台全在卡内；`09-legacy-p4.png` = 7 个单行设备块 |
+| L1 放大复核 | 8× 裁剪 `/tmp/edge-fixed.png` | `°C` 与列滚动条之间有缝，不再被劈开 |
+| L1 池 trace | `UK_POOL_TRACE=1` | 温度页条目数由 24 路变 8 块，列数 3，全部装下不滚动 |
+| L2 构建 | `./idf.sh build` | `fnos_monitor.bin` 0x1b1cb0（app 分区余 81%） |
+| L3 实机 | 230400 刷录 + `python3 tools/page_shot.py --page 3 / --page 4` | 系统页 7 台设备各一行、同型号用 `nvme0n1/nvme1n1/nvme2n1/nvme3n1` 分开；温度页每台设备一个块（Core 0-5 + Package、MAC/PHY 75.0℃ 红、4 块 NVMe 各自的 Composite/Sensor 1-3），`ok 25 / ok 20 · fail 0` |
+
+**取证照片**：`docs/evidence/2026-10-07-ui-temp-grouped-p3-devices.png`、
+`docs/evidence/2026-10-07-ui-temp-grouped-p4-allch.png`（手机相机预览截图，非设备抓屏）。
+
+## 24.4 第三轮：滚动条重叠 + 自动精简 + "自适应框架到底是不是真的"（2026-10-07）
+
+用户原话："还是错位状态 温度界面的温度符号和上下滑动的 UI 条还是有重叠。还有，这么多传感器显示的温度
+几乎都是一致的，是否可以自动做精简，一个设备只显示一个温度？这个自适应 UI 框架是否真的已经实现了？"
+
+**① 符号与滚动条重叠 —— 预留量算错了一格。**
+LVGL 把纵向滚动条画在 `[right-10, right-6]`（SB part 的 `pad_right=6` + 宽 `UK_SCROLL_W=4`），
+而**只在条子可见时**才从内容宽里扣它（`lv_obj_get_content_width` 不算条子；首帧排完版、条子后出现时
+内容不会重排）。上一轮给池列加的是 `pad_right = UK_SCROLL_W + 2` = 6px —— 恰好等于条子的**右缘**，
+于是 `°C` 与竖条贴死（用户看到的就是"重叠"）。
+修法：`components/fnos_monitor/ui_kit/uk.c` 里改为 `pad_right = UK_SCROLL_INSET + 2` = 14px
+（12 让开整条 + 2px 缝）。
+
+**② 自动精简（一个设备一个温度）。**
+`fnos_ui.c` 新增 `#define TEMP_AGREE_DELTA 3.0f`：`temp_blk_fill()` 里算同一设备各通道的极差，
+`极差 ≤ 3.0℃ ⇒ 只留块头那一行`（块头本来就是该设备最热温度），块尾写一句范围
+`"%d 路 · %.1f-%.1f°C"`（例如 `7 路 · 33.0-34.0°C`）—— 收起不等于丢信息，范围本身仍是数据。
+极差大（NVMe 的 Composite 与某一路差 10℃ 这种）才展开逐路，那一路上榜才有意义。
+连接符用 ASCII `-`：字库是按文案子集生成的，U+2013 不在里面（预览直接 `missing glyph` abort）。
+
+**③ "自适应框架是否真的实现了" —— 分三层回答，都有证据。**
+
+| 层 | 结论 | 证据 |
+|---|---|---|
+| 布局引擎 | **是**：没有任何绝对坐标 | `grep -c 'lv_obj_set_pos\|lv_obj_set_x(\|lv_obj_set_y('`：`ui_kit/uk.c` = **0**、`fnos_ui.c` = **1**（`lv_obj_set_pos(s_ui.page[i], 0, 0)`，五页叠在原点靠显隐切换）。其余全是 `LV_PCT` / flex / 池 |
+| 数据自适应 | **是**：条数、形态、颜色都跟数据走 | 池列数 1/2/3 随池宽条数变（`UK_POOL_TRACE`）；24 路 → 8 块；无 ch 的老采集端只出一行；离线降级 T3；阈值 60/75 |
+| 分辨率自适应 | **部分**：新增 `PREVIEW_SIZE=WxH` 后，**1280×800 四条审计全绿；800×480 抓出两个真缺陷并已修** | 修前 800×480：`child out of parent: "NAS" child=[8,481]-[32,495] parent=[0,0]-[75,479]`（rail 五档导航固定 60px ⇒ 末尾标签被挤出）；`child out of parent: panel [807,12 130x32] parent=[87,0]-[799,55]`（顶栏状态牌越出 head）。修法：`build_rail()` 按 `lv_display_get_vertical_resolution()` 算导航项高度（`nav_h = clamp(余量/5, 36, 60)`，真放不下就收起装饰性的 "NAS" 标签）；`build_header()` 按内容宽 <900 收起状态牌（页脚已有同一信息）并把标题列 320→200 |
+
+**仍未做**：800×480 下系统页三列（容器/温度/告警）在 ~700px 里仍有一处子对象越界（`parent=[112,636]-[293,730]`，
+一个 203px 宽的文本压在 181px 的列里）—— 需要在窄屏把三列降级成两列或改成上下堆叠，没改完。
+面板本身只有 1024×600 一档，其余分辨率**只有主机预览证据，没有实机证据**。
+
+**未提交**：本轮改动仍未提交（`AGENTS.md:12` 要求提交/推送需用户当下授权）。
