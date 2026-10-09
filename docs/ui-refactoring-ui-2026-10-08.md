@@ -215,3 +215,34 @@ DSH Desktop 提供定向意见并补查最终系统高度判据，其余 `fnos_u
 - 恢复探针（`PREVIEW_AUDIT_ALL=1`）全轮 0 命中；`PREVIEW_NUMBERS=1` 与 `PREVIEW_DATA_MOTION=1`
   均 PASS；逐页逐帧差异曲线 p0 5765 / p1 1308 / p2 7819 / p3 868 / p4 3069 / p5 24（p5 是告警页，
   按设计不做数字过渡），其中 p0/p2/p4 与改前逐像素一致。
+
+## 实机验证（2026-10-09 迭代三，烧录后）
+
+环境：本机没有系统级 ESP-IDF，但项目包装环境可用 —— `FNOS_IDF_ENV` 指向 ESP-IDF 5.5.3
+（`~/.platformio/packages/framework-espidf@3.50503.0`）+ 已验证的 riscv32 工具链 14.2.0
+（`toolchain-riscv32-esp@14.2.0+20251107`）+ `~/.espressif/python_env/idf5.5_py3.9_env`，
+一行激活脚本即可让 `./idf.sh`、`stack_check.py` 全部就绪。串口 `/dev/cu.usbmodem5CF71088571`
+（ESP32-P4，MAC `e8:f6:0a:e8:ba:68`，走原生 USB-Serial-JTAG，与波特率无关）。
+
+`bash tools/verify_all.sh --flash --port /dev/cu.usbmodem5CF71088571` → **10 PASS / 0 FAIL**：
+
+- L1：预览构建、84 状态渲染、PPM→PNG、几何审计（无越界/压叠/字形缺口）；
+- L2：固件构建（`fnos_monitor.bin` 0x6b5420 = 6.7 MB，app 分区余 25%）、四条入口栈深在预算内、
+  kk_ui 出局；
+- L3：烧录（bootloader/分区表/应用三段哈希校验成功，随后硬复位）、30 s 串口无崩溃与复位标记、
+  `boot complete`（`fnos_ui: ui created (pages=6)`）。
+
+3 分钟串口观察（`tools/serial_capture.py --seconds 180`）：poll ok 30→180、fail 0；cpu 2.2–4.6%；
+内部堆 217→216 KB、DMA 178 KB、PSRAM 21931 KB 全程不动（无泄漏趋势）；alerts 0。第 29 秒出现夜间
+模式调背光到 20%，是既有定时行为。
+
+相机取景逐张人眼复核（`tools/page_shot.py`；原始图仅留本地）：
+
+- 存储页：6 个卷完整两行、3 个阵列两行（改动前只能看到一行）；
+- 系统页：6 个容器两行、6 个温度块两行（改动前硬件温度卡被切 37px）；
+- 总览页：存储容量磁贴露出一整条卷行；
+- 温度页（`--temp 0` 展开第 0 台设备）：设备块内的通道网格照常展开，块外两行设备仍在。
+
+这次烧录验证的是功能、版面与运行健康；**250 ms 逐字符滑动的曲线本身仍只有主机预览的逐帧像素
+证据**（相机快门时间抓不到中途帧）。另一个操作教训：第一次抓温度页时 settle=3 s 拍到了上一页，
+提到 8 s 才拍到——切页是"下一跳生效"，取景前要留够。
