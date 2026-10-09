@@ -1,82 +1,94 @@
-# nas/ —— NAS 侧只读采集器
+# NAS 侧采集：飞牛应用与独立 Linux 服务
 
-`fnos-agent.py` 是给这块板子（也给任何想要一份紧凑 NAS 状态的脚本）用的采集端点：
-单文件、只用 Python3 标准库、只读、常驻约 11 MB。
+日常在飞牛上使用，推荐 [NAS 屏幕伴侣 FPK](fpk/README.md)：应用中心安装、飞牛桌面管理、默认 HTTPS + 设备配对，遥测默认端口 `8798`。本目录的 `fnos-agent.py` 是保留的独立 Python / systemd 方案，默认 HTTP `8799`。**`install.sh` 安装的是独立采集器，不是飞牛应用包。**
 
-## 安装 / 卸载 / 排错
+| 项目 | 飞牛应用 `nasscreencompanion` | 独立 `fnos-agent` |
+| --- | --- | --- |
+| 部署 | 飞牛应用中心手动安装 FPK | SSH + sudo 安装 systemd 单元 |
+| 管理入口 | 飞牛桌面内的管理页 | 命令行、journal、简易 HTTP 页面 |
+| 默认遥测 | HTTPS / `8798` / 配对令牌 | HTTP / `8799` / 无令牌 |
+| 服务身份 | 普通包用户；可选受限 root 容器读取辅助进程 | 示例 systemd 单元为 root，附带只读加固 |
+| 配置 | 安装向导与服务设置 | CLI 参数、环境变量与本地单元覆盖 |
+| 并存 | 安装、升级、卸载不接管旧服务 | 由自身安装 / 卸载脚本管理 |
 
-```bash
-cd nas
-# 安装（会 scp 到 /tmp，再用 sudo 安装到 /usr/local/bin + /etc/systemd/system 并启动）
-SSHPASS='<ssh 口令>' NAS_SUDO_PASS='<sudo 口令>' ./install.sh
-# 卸载
-SSHPASS='...' NAS_SUDO_PASS='...' ./install.sh uninstall
+下面说明**独立采集器**；飞牛应用安装与配对请使用 [fpk/README.md](fpk/README.md)。
 
-# NAS 上直接验证
-curl -s http://127.0.0.1:8799/api/v1/status | python3 -m json.tool | head -40
-python3 /usr/local/bin/fnos-agent.py --selftest     # 逐段自检，哪一段抛异常会指出来
-python3 /usr/local/bin/fnos-agent.py --temps        # 只打温度表：设备名 / 通道 / 数值（只读）
-journalctl -u fnos-agent -n 50 --no-pager           # 需要 root 或 adm 组
-```
+## 部署独立采集器
 
-**部署前先看命名**（只读：不启服务、不占 8799、不动正在跑的那个进程）：
+采集器只使用 Python 3 标准库。NAS 需要 Python 3、systemd、SSH，部署账号需要 sudo 权限。以下命令从仓库根目录执行，替换示例地址与用户名：
 
 ```bash
-bash nas/preview-naming.sh                  # 默认 llll@192.168.0.119
-SSHPASS='...' bash nas/preview-naming.sh    # 密码认证（本机装了 sshpass 时）
+# 可先查看设备 / 温度命名：只运行一次，不启动监听服务。
+bash nas/preview-naming.sh your-user@nas.example.test
+
+# 安装并启动；SSH 默认使用现有公钥或连接，sudo 默认使用非交互模式。
+NAS_HOST=nas.example.test NAS_USER=your-user bash nas/install.sh
+# 卸载本采集器。
+NAS_HOST=nas.example.test NAS_USER=your-user bash nas/install.sh uninstall
 ```
 
-它把 `fnos-agent.py` 拷到 NAS 的 `/tmp` 跑一次 `--temps`（输出"设备名 / 通道 / 数值"表），
-退出时自动删掉。名字看着对，再 `./install.sh` 真正部署 —— 部署后**板子不用重烧**，
-面板上 `NIC`/`NVME2` 这类类型名会换成从硬件读出来的设备名
-（`Aquantia AQC113CS 10GbE`、`Samsung SSD 990 PRO 2TB`、`Intel N100`…）。
+`install.sh` 将文件投送到 NAS 的私有 `0700` 临时目录，以 sudo 安装到 `/usr/local/bin/fnos-agent.py` 和 systemd 单元路径，再启动服务。需要密码认证时，脚本支持 `SSHPASS`（本机需 `sshpass`）和 `NAS_SUDO_PASS`；在自己的本地环境提供，不把真实值写进命令示例、仓库或日志。现有脚本不保存 SSH 主机密钥，自动部署前应通过自己的可信连接核实 NAS 身份。
 
-## 采集内容
+在 NAS 上进行只读检查：
 
-| 字段 | 来源 |
+```bash
+curl --fail --silent http://127.0.0.1:8799/api/v1/health
+python3 /usr/local/bin/fnos-agent.py --selftest
+python3 /usr/local/bin/fnos-agent.py --temps
+journalctl -u fnos-agent -n 50 --no-pager
+```
+
+日志访问可能需要 root 或日志组权限。启用 `FNAS_TOKEN` 后，遥测请求需带对应令牌。完整 JSON 和诊断输出可能包含设备、挂载与网络信息，应仅保存在自己的本地验证目录。
+
+## 数据与接口
+
+| 字段 | 主要来源 |
 | --- | --- |
-| `cpu`（pct/load1-15/cores/temp） | `/proc/stat` 差值、`/proc/loadavg`、hwmon `coretemp` |
-| `mem`（total/used/avail/pct/swap） | `/proc/meminfo` |
-| `net`（if/rx_kbs/tx_kbs/累计） | `/proc/net/dev` 差值；网卡自动取默认路由那个（本机是 `enp1s0-ovs`） |
-| `vols`（各存储池） | `/proc/mounts` 过滤 + `statvfs`；按设备去重（`/tmp`、`/var/tmp` 是 `/` 的 bind mount） |
-| `raid`（md 阵列、成员数、同步进度） | `/proc/mdstat` |
-| `disks`（读写 KB/s，按繁忙度取前 10） | `/proc/diskstats` 差值 |
-| `temps` | `/sys/class/hwmon/*/temp*_input`（NVMe×4、CPU、网卡、核显） |
-| `docker`（名称/是否运行/状态） | 直接对 `/var/run/docker.sock` 发 HTTP/1.0 请求（不依赖 docker 包） |
-| `zfs`（ARC 大小、命中率） | `/proc/spl/kstat/zfs/arcstats` 差值 |
-| `alerts` | 由上面几项派生：阵列异常/同步、空间 ≥80%/≥90%、CPU ≥80°C、内存 ≥90%、负载 > 核数、曾运行的容器掉线 |
+| `cpu` | `/proc/stat` 差值、`/proc/loadavg`、可读 CPU hwmon |
+| `mem` | `/proc/meminfo` |
+| `net` | `/proc/net/dev` 差值；默认接口摘要与完整非 loopback 接口清单 |
+| `vols` | `/proc/mounts` 过滤 + `statvfs`，按设备去重 |
+| `raid` | `/proc/mdstat`，阵列成员及同步进度 |
+| `disks` | `/proc/diskstats` 差值，包含系统提供的逻辑块设备 |
+| `temps` | `/sys/class/hwmon/*/temp*_input`，设备与通道身份 |
+| `docker` | Unix Socket 上固定 `GET /containers/json`，不依赖 Docker Python 包 |
+| `zfs` | 存在时读取 `/proc/spl/kstat/zfs/arcstats` |
+| `alerts` | 根据采集状态派生容量、阵列、温度、内存、负载及容器告警 |
 
-## 端点
-
-| 路径 | 说明 |
+| 路径 | 作用 |
 | --- | --- |
-| `GET /api/v1/status` | 完整状态（约 2.35 KB，实测 16 ms）；某一段采集失败时该段保留上一份值并列出 `errors` |
-| `GET /api/v1/history` | `{"cols":["ts","cpu","mem","rx_kbs","tx_kbs"],"rows":[[...]]}`，最近 300 个采样 |
-| `GET /api/v1/health` | `{"ok":true,"ts":…,"age_s":1,"host":"nas"}` —— 带快照新鲜度，便于外部探测"采集是否还活着" |
-| `GET /` | 浏览器里看的简易实时页面（排查用） |
+| `GET /api/v1/status` | 当前完整状态；某一来源失败时保留其上一份数据并列出错误 |
+| `GET /api/v1/history` | CPU / 内存 / 默认网口收发历史，默认保留 300 个样本 |
+| `GET /api/v1/health` | 存活与快照新鲜度探针 |
+| `GET /` | 简易实时页面，供排查使用 |
 
-健壮性相关的几处刻意设计（都是评审提出后补的）：
+完整清单的 JSON 大小随实际硬件和名称变化，没有固定“小帧”保证。速率使用单调时间；网络接口分别处理热插拔和计数器复位。跳过会阻塞 `statvfs` 的 NFS / SMB / fuse 挂载；每段采集独立处理错误。固件超出整帧字节预算时保留最后有效快照并报错，不静默裁掉设备。
 
-* 每个连接 15 秒空闲超时 + accept 队列 64：板子掉线留下的半开连接不会永久占线程/fd。
-* 跳过 NFS/SMB/fuse 挂载：`statvfs` 在硬挂载的网络文件系统上会进 D 态，采样线程再也回不来，
-  而端点还会一直返回 `ready:true` 的旧数据。
-* 速率差值一律用 `time.monotonic()`：墙钟被 NTP 回拨时不会把速率算成天文数字。
-* 逐段 try/except：某一段（比如 docker）失败只让那一段沿用上一份值，不会整帧作废。
-* docker 列表上限 16 条、名称/状态截断：payload 不会涨过板子 8 KB 的接收缓冲。
-* 先绑定端口再等第一帧采样：systemd 报 active 的时刻端口就能连上。
-* `server_bind` 跳过 Python 默认的反向 DNS（解析不可达时会阻塞几十秒才监听）。
+## 配置
 
-参数：`--bind`（默认 0.0.0.0）、`--port`（8799）、`--interval`（1.0 s）、`--hist`（300）、`--selftest`、
-`--temps`（只打温度表：设备名 / 通道 / 数值，只读不启服务）。
-环境变量：`FNAS_TOKEN`（非空则要求 token）、`FNAS_NETIF`、`FNAS_VOLUMES`；
-测试用 `FNAS_SYSFS` / `FNAS_PROC` 可把采集根指到假树（见 `nas/fpk/temps_check.py`）。
+| 入口 | 默认 / 用途 |
+| --- | --- |
+| `--bind` | `0.0.0.0`，按需改为指定地址 |
+| `--port` | `8799` |
+| `--interval` | `1.0` 秒 |
+| `--hist` | `300` 个样本 |
+| `--selftest` / `--temps` | 单次来源自检 / 温度表，不启动服务 |
+| `FNAS_TOKEN` | 非空时要求查询令牌或 `X-Token` |
+| `FNAS_NETIF` / `FNAS_VOLUMES` | 选择摘要网口 / 存储卷 |
+| `FNAS_SYSFS` / `FNAS_PROC` | 测试用假树根路径 |
 
-## 只读边界
+这套独立端点没有飞牛应用的 HTTPS 证书配对流程。开发板使用回退端点时，在本地配置里设置实际 `FNOS_HOST`、`FNOS_PORT` 和可选 `FNOS_TOKEN`；不要把旧 HTTP 端口输入需要 HTTPS 的配对流程。默认监听所有内网地址且无令牌，适用范围由自己的网络与部署策略确定；需要设备配对时使用 FPK 方案。
 
-* 代码里没有任何写文件、发命令、改配置的路径；docker 只调 `GET /containers/json`。
-* systemd 单元：`ProtectSystem=strict`、`ProtectHome=true`、`PrivateTmp=true`、
-  `NoNewPrivileges=true`、`ProtectKernelTunables/Modules/ControlGroups=true`、
-  `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6`、`CapabilityBoundingSet=CAP_NET_BIND_SERVICE`、
-  `CPUQuota=25%`、`MemoryMax=192M`、`Nice=5`。
-* 端口监听在局域网内、无认证（默认）。同一网段的人都能读到 NAS 的负载与容量。
-  要收紧就设 `FNAS_TOKEN`（板子端在 `fnos_config.h` 填同一个值），或把 `--bind` 改成具体地址。
+## 运行边界与排障
+
+采集逻辑读取本机状态，不提供磁盘、阵列或容器控制接口。随附 systemd 单元使用 `ProtectSystem=strict`、`ProtectHome`、`PrivateTmp`、`NoNewPrivileges` 及能力、地址族、CPU、内存限制；**它的服务身份仍是 root**，与 FPK 的包用户管理服务不同。安装与卸载脚本会修改本采集器的程序和服务文件，不能将部署操作也称为只读。
+
+| 现象 | 检查 |
+| --- | --- |
+| SSH / sudo 安装失败 | NAS 地址、SSH 认证、sudo 非交互权限、本机 `sshpass` 是否可用 |
+| 端口无法访问 | `journalctl`、实际 `--bind` / `--port`、本机防火墙与路由 |
+| 容器或温度缺失 | Docker Socket / hwmon 来源及服务身份的读取权限 |
+| 健康探针可达但值不更新 | 查看数据年龄和逐段错误；端口监听不等于采集正常 |
+| 固件仅显示旧清单 | 确认部署的是当前采集源码，检查响应与固件字节预算 |
+
+固件上手、动态清单与许可证见 [项目 README](../README.md)。飞牛日常使用、升级保留、证书固定与容器辅助进程见 [应用 README](fpk/README.md)。

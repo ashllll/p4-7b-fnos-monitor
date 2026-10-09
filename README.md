@@ -1,284 +1,210 @@
-# p4-7b-fnos-monitor
+# p4-7b-fnos-monitor · 飞牛 NAS 状态屏
 
-当前界面使用 C / LVGL 9.5 与原生 ui_kit，包含总览、存储、网络、系统、温度五页及配对、配网、诊断面板。硬件清单按实际数据创建、重排和滚动，最新实现与验证边界见 [硬件数量自适应记录](docs/ui-hardware-adaptive-audit-2026-10-08.md)；原生界面结构见 [v12 实现记录](docs/ui-v12-lvgl-native.md)。下方标为 v2 的内容是历史记录。
+把 **Waveshare ESP32-P4-WIFI6-Touch-LCD-7B** 做成独立 NAS 监控屏：开发板运行 C / LVGL 9.5 原生界面，飞牛配套应用采集本机状态，两端通过 HTTPS 和设备配对连接。无需将 NAS 管理员账号或密码写入固件。
 
-把 **Waveshare ESP32-P4-WIFI6-Touch-LCD-7B**（7 英寸 1024×600 MIPI-DSI + GT911 触摸）做成
-**飞牛 fnOS NAS 的状态监视器**：上电直接进仪表盘，4 页数据、触摸导航。
+硬盘、存储卷、网口、容器和温度通道按实际数据创建卡片；名称换行、列数随可用空间调整，长清单通过滚动查看。采集失败、旧值、权限不足和未启用来源有各自的状态提示。
 
-数据来源不是把 NAS 的账号密码塞进固件，而是在 NAS 上跑一个**单文件只读采集器**
-（`nas/fnos-agent.py`，Python3 标准库 + systemd），它把 NAS 的现状压成约 2.3 KB 的 JSON，
-板子每秒 HTTP 取一次。
+**当前开发源码为 `cc2da56`，包含六个数据页面，配套应用为 1.2.4。** 公开源码仍为五页基线 `ce67298`，本次只推送文档；两者差异见[最近迭代](#最近迭代与版本边界)。
 
-```
-┌──────────────────────── 飞牛 NAS 192.168.0.119 ────────────────────────┐
-│  /proc /sys statvfs /proc/mdstat docker.sock /proc/spl/kstat/zfs      │
-│                     │  只读读取，1 Hz 采样                            │
-│              fnos-agent.py (systemd, root, 只读加固)                   │
-│                     │  http://192.168.0.119:8799/api/v1/status        │
-└─────────────────────┼─────────────────────────────────────────────────┘
-                      │  纯 HTTP + 小 JSON（不用 TLS：本板内部 RAM 只有 ~361 KB）
-┌─────────────────────┼─────────────────────────────────────────────────┐
-│ ESP32-P4 7B          ▼                                                │
-│  fnos_net.c   Wi-Fi STA（板载 C6 / ESP-Hosted）+ SNTP                  │
-│  fnos_data.c  esp_http_client + cJSON → 快照 + 曲线环形缓冲（PSRAM）    │
-│  fnos_view.c  LVGL 9.5 四页仪表盘 + 触摸导航/翻页                      │
-└───────────────────────────────────────────────────────────────────────┘
-```
+| 范围 | 当前状态 |
+| --- | --- |
+| 当前开发源码 | 总览、存储、网络、系统、温度、独立告警六页，配对 / 配网 / 诊断覆盖层 |
+| 公开固件源码 | 总览、存储、网络、系统、温度五个数据页面；配对、配网和诊断覆盖层 |
+| 飞牛应用 | [1.2.4 安装包](nas/fpk/nasscreencompanion.fpk)，x86，最低 fnOS 1.2.0701，依赖 `python312` |
+| 最近开发进展 | 独立告警页、监控维度摘要、页面高度预算修复、温度展开取证和格式残留审计 |
+| 官方应用库 | 尚未提交；目前通过应用中心手动安装 |
+| 固件分发 | 源码与配置模板；个人实机 `.bin`、NVS 和凭据不随仓库分发 |
 
-## 面板上的五页（界面 v2）
+## 界面与监控内容
 
-设计合同与令牌见 [`docs/ui-redesign.md`](docs/ui-redesign.md)，实机验收记录见
-[`docs/verification.md`](docs/verification.md) 第 8 节。要点：
+默认 `device` 主题采用深紫画布、薄荷绿与桃色卡片、底部导航，提供运行时长主块、趋势图和容量比较。页面与覆盖层复用同一套 `fnos_ui.c` / `ui_kit`；主机预览编译这份真实 LVGL 源码。
 
-* **字体**：IBM Plex Mono（数值，等宽 tabular，刷新不跳动）+ IBM Plex Sans（拉丁标签）
-  + Noto Sans SC 子集（中文标签）。`tools/gen_fonts.sh` 一键重现，中文字形从源码字符串自动提取。
-* **状态三层**：身份色（CPU 蓝 / 内存青 / 温度橙 / 网络下行青、上行蓝）、严重度色（正常绿 / 注意黄 /
-  危险红）、可信度（在线 / 陈旧 Ns / 采集端离线 / 等待数据）。三者互不覆盖。
+| 页面 | 主要内容 |
+| --- | --- |
+| 总览 | NAS 运行时长、CPU、内存、网络趋势、容器摘要与存储卷比较 |
+| 存储 | 容量摘要、动态卷卡片、阵列状态与同步进度、磁盘读写活动 |
+| 网络 | 收发速率、双线历史、累计流量、采集状态及各网络接口清单 |
+| 系统 | 系统摘要、来源状态、容器服务及硬件温度摘要 |
+| 温度 | 按设备身份分组的温度卡片；手动展开多通道，不自动跳切 |
+| 告警 | 严重度与事件清单；健康态展示存储、温度、容器和采集维度 |
+| 配对 / 配网 / 诊断 | NAS 地址与证书确认、Wi-Fi 扫描与键盘、连接阶段和失败原因 |
 
-| 页 | 第一眼 | 第二眼 | 第三眼 |
-| --- | --- | --- | --- |
-| 总览 | 健康结论（正常/注意/危险 + 检查数 + **原因行**） | CPU / 内存 / 最高温度 / 运行时长四块遥测（含迷你条） | 6 个存储空间占用一览 + CPU·内存双轨趋势 |
-| 存储 | 已用容量 Hero（14.1 TB）+ **容量堆叠条**（按卷总量分段着色） | 6 个卷卡片：用量条 + 80%/90% 阈值刻度 + 已用/总量 | RAID 状态词（正常 n/m、同步 %、降级）+ 磁盘读写活动 |
-| 网络 | 下行 / 上行双主值（单位档位带迟滞） | 双轨吞吐趋势（面积纹理 + 亮线 + 右轴刻度） | 累计收发 / 采集延迟 / 曲线采样数 |
-| 系统 | 容器清单（状态点 + 状态词 + 容器自带状态） | 7 路温度（热条 + 阈值色：≥60 黄、≥75 红） | **告警列表**（危险/注意逐条列出）+ 采集端点自检 8 行（两列：标签 / 右对齐值） |
-| 温度 | **逐路温度**：设备名 + 通道名 + 数值（阈值色），三列铺满一屏 | 页头一句话结论（`N 路传感器 · 最热 设备 · 通道 xx.x°C` + 危险/注意计数） | 设备名来自系统事实（`/sys/class/block` 的 model、PCI `pci.ids`、`/proc/cpuinfo`），不写死别名表 |
+点导航显示对应页面；横向拖动跟随手指，短滑回弹，纵向操作交给清单滚动。夜间背光与温度、容量参考阈值可配置。颜色参考值不能替代各硬件厂商的健康阈值。
 
-顶栏：主机名 + 端点 + **Wi-Fi 按钮**（没配网时橙色写着"Wi-Fi 未配置"，配好后是网络名，点开就是配网卡）+ 可信度胶囊 + **Wi-Fi 信号条** + 时钟。
-底栏：轮询统计 + **告警带**（严重度色点 + 一行原因）。
-导航：左侧五项（几何图标 + 中文标签 + 选中态），点选切页；配对卡与配网卡是整页覆盖层，与"采集诊断"同槽位互斥；内容区左右滑动翻页（阈值 70 px，原子换页）。
-夜间 23:00–07:00 背光降到 12%。
+以下为公开源码的匿名原生预览，**不是物理屏幕照片，也不包含个人 NAS 清单**：
 
-## 板子侧工程结构
+![总览原生 LVGL 预览](docs/evidence/published-1.2.4/02-live-p0.png)
 
-```
-main/main.cpp                    上电流程：NVS → Wi-Fi → BSP 显示 → UI → 轮询任务 → 夜间背光
-components/fnos_monitor/
-├── fnos_net.c/.h                Wi-Fi STA（ESP-Hosted）+ SNTP + 断线指数退避重连
-├── fnos_data.c/.h               HTTP 轮询、cJSON 解析、快照与曲线环形缓冲
-├── fnos_view.c/.h               LVGL 仪表盘（4 页 + 顶部/底部栏 + 触摸）
-├── fnos_config.h(.example.h)    Wi-Fi / NAS 地址端口 / token / 时区 / 背光 —— 真实文件不入库
-├── Kconfig                      FNOS_HEAP_DEBUG、FNOS_CHART_WINDOW
-└── idf_component.yml            cjson + esp_wifi_remote(==1.2.5) + esp_hosted(1.4.*)
-components/esp32_p4_wifi6_touch_lcd_7b/   工程内 BSP 副本（唯一改动：LVGL 绘制缓冲放 PSRAM）
-components/lvgl_mem_psram/                LVGL 对象/样式的自定义分配器（PSRAM 优先）
+[存储](docs/evidence/published-1.2.4/02-live-p1.png) · [网络](docs/evidence/published-1.2.4/02-live-p2.png) · [系统](docs/evidence/published-1.2.4/02-live-p3.png) · [温度](docs/evidence/published-1.2.4/02-live-p4.png) · [配对](docs/evidence/published-1.2.4/07-pair-code.png)
+
+## 两端如何连接
+
+```mermaid
+flowchart LR
+    A["NAS 本机 /proc、/sys、statvfs"] --> B["飞牛监控 1.2.4：包用户采集与管理服务"]
+    D["可选 Docker 只读辅助进程"] --> B
+    B -->|HTTPS 遥测，默认端口 8798| C["ESP32-P4 / LVGL 状态屏"]
+    E["飞牛桌面管理页"] -->|设置、能力矩阵、配对、诊断| B
 ```
 
-### 编译 / 烧录
+管理页通过飞牛应用网关打开；遥测端口供屏幕取数据，两者分别工作。采集使用 Linux 本机来源，当前实现没有调用飞牛私有遥测 API。具体可读能力取决于本机驱动、挂载、权限及启用选项，以管理页「能力矩阵」为准。
+
+| 数据 | 主要来源 |
+| --- | --- |
+| CPU、负载、内存 | `/proc/stat`、`/proc/loadavg`、`/proc/meminfo` |
+| 网络接口与速率 | `/proc/net/dev`、默认路由；各接口按自己的计数器计算 |
+| 存储卷、阵列、磁盘 IO | `/proc/mounts` + `statvfs`、`/proc/mdstat`、`/proc/diskstats` |
+| 温度 | `/sys/class/hwmon/*/temp*_input`；只有实际可读通道才有测量值 |
+| 容器服务 | 显式启用后，由受限辅助进程查询固定 Docker GET |
+
+磁盘 IO 清单可能包含 md / dm 等逻辑设备；网络清单可能包含虚拟接口，不能将条目数视为物理硬盘或网口数量。没有 hwmon 来源的 SATA 温度、SMART 健康与所有厂商专用传感器不在兼容承诺内。
+
+## 快速开始
+
+### 1. 安装飞牛配套应用
+
+1. 在 fnOS 应用中心安装依赖 `python312`。
+2. 下载仓库内 [nasscreencompanion.fpk](nas/fpk/nasscreencompanion.fpk)，在「应用中心 → 手动安装」上传。
+3. 保持默认 HTTPS、配对令牌和遥测端口 `8798`；按需启用容器采集。
+4. 从飞牛桌面打开「飞牛监控」，检查「能力矩阵」及「诊断」。
+
+管理服务以普通包用户运行；独立 root 辅助进程仅提供固定的容器状态读取。应用无需 SSH 部署，也不会接管旧 `fnos-agent` 的 systemd 服务。安装、升级、证书与权限排障见 [飞牛应用说明](nas/fpk/README.md)。
+
+当前包 SHA-256：
+
+```text
+cc10d47fa9cad827ad867c243ce0f697aaaf87f847ad0b3e761ac5114eccd7b2
+```
+
+### 2. 构建并烧录开发板
+
+| 项目 | 已验证配置 |
+| --- | --- |
+| 开发板 | Waveshare ESP32-P4-WIFI6-Touch-LCD-7B |
+| 显示 / 触摸 | 7 英寸，1024×600 MIPI-DSI，EK79007 / GT911 |
+| Wi-Fi | 板载 ESP32-C6，通过 ESP-Hosted SDIO |
+| 工具链 / 目标 | ESP-IDF 5.5.3 / `esp32p4` |
+| 硅片配置 | 默认 P4 rev3.x；pre-v3 与 rev3.x 固件不能互刷 |
+
+先按自己的 ESP-IDF 安装方式激活环境，使 `IDF_PATH` 和所需 Python、RISC-V 工具链可用。例如使用 ESP-IDF 的 `export.sh`，或 EIM 提供的 activation script。
 
 ```bash
-cd /Users/llll/code/esp/p4-7b-fnos-monitor
-cp components/fnos_monitor/fnos_config.example.h components/fnos_monitor/fnos_config.h   # 填 Wi-Fi 与 NAS 地址
+git clone https://github.com/ashllll/p4-7b-fnos-monitor.git
+cd p4-7b-fnos-monitor
+cp components/fnos_monitor/fnos_config.example.h components/fnos_monitor/fnos_config.h
 ./idf.sh build
-./idf.sh -p /dev/tty.usbmodem5CF71088571 flash monitor    # 本板串口（CH343P，230400 更稳）
 ```
 
-`idf.sh` 里 `. /Users/llll/code/esp/use-esp-idf-5.5.3.sh` 之后**必须**补
-`export ESP_IDF_VERSION=5.5`：本机 IDF 来自 PlatformIO 包，没有这个变量时
-`esp_wifi_remote` 的 Kconfig 被静默跳过，ESP-Hosted 会退回 SPI（本板 C6 是 SDIO），Wi-Fi 起不来。
+模板可以直接构建；真实 Wi-Fi、NAS 地址及令牌可留在被忽略的 `fnos_config.h`，也可在屏幕上配置。`idf.sh` 支持 `FNOS_IDF_ENV=/path/to/activation.sh ./idf.sh build`，并自动设置 IDF major.minor 版本变量。模板的 `FNOS_PORT=8799` 是旧采集器回退值；使用飞牛应用时，在屏幕配对表单填写应用实际端口（默认 `8798`），保存后的运行时端点覆盖模板值。
 
-## NAS 侧：fnos-agent
-
-细节见 [`nas/README.md`](nas/README.md)。一句话版本：
+识别自己的开发板串口，替换下面的示例路径。CH343 经 USB Hub 时，已验证的 230400 波特率可作为起点：
 
 ```bash
-cd nas
-SSHPASS='<ssh 口令>' NAS_SUDO_PASS='<sudo 口令>' ./install.sh      # 安装并启动
-SSHPASS='...' NAS_SUDO_PASS='...' ./install.sh uninstall           # 卸载
+export FNOS_SERIAL_PORT='/dev/cu.YOUR_BOARD_PORT'
+./idf.sh -p "$FNOS_SERIAL_PORT" -b 230400 flash
+./idf.sh -p "$FNOS_SERIAL_PORT" monitor
 ```
 
-* 只读：只读 `/proc`、`/sys`、`statvfs`、`/proc/mdstat`、`docker.sock`、`/proc/spl/kstat/zfs/arcstats`，
-  不写任何文件；systemd 单元带 `ProtectSystem=strict / ProtectHome / PrivateTmp / NoNewPrivileges`
-  等只读加固，实测常驻内存 ~11 MB。
-* 端点：`/api/v1/status`（约 2.35 KB）、`/api/v1/history`（最近 300 个采样，供板子重启后回填曲线）、
-  `/api/v1/health`（带 `ts`/`age_s`，可判断"采集是否还活着"）、`/`（浏览器可直接看的实时页面）。
-* 采样与请求解耦：后台线程 1 Hz 采样，HTTP 只返回快照，实测响应 ~16 ms。
-* 可选 `FNAS_TOKEN`：设置后要求 `?token=` 或 `X-Token` 头匹配。
+依赖版本记录在 [dependencies.lock](dependencies.lock)。`sdkconfig.defaults` 是初始默认值；修改后已有 `sdkconfig` 不会自动覆盖，请先备份本地设置，再重新生成。本板的显示缓冲、LVGL 内存与任务栈使用 PSRAM，TLS 缓冲也配置为外部内存；移植时要保留相关配置。
 
-## 已知边界（都不是 bug）
+### 3. 连 Wi-Fi 并配对
 
-* **界面文字是 ASCII**：LVGL 内置 Montserrat 只有 ASCII 字形，装一份中文字体要多几 MB 且要生成子集。
-  采集器输出的告警文案因此也统一成英文（`RAID md127 degraded`）。
-* **拿不到 SATA 机械盘温度**：NAS 上没装 `smartctl`，且 sda–sdh 没有 `drivetemp` hwmon 节点；
-  温度页显示的是 4 块 NVMe、CPU、网卡、核显。要机械盘温度得在 NAS 装 smartmontools。
-* **没有用 netdata**：NAS 上 netdata(:19999) 正在跑，但它的 `disk_space` 只看得到 `/` 与 `/config`，
-  各存储池剩余、RAID、Docker 都没有；而且 `allmetrics` 一次 319 KB。所以自己采一份小的。
-* **fnOS 自身的私有 API 没有使用**：走的是本机 `/proc`/`statvfs`/`docker.sock`，不依赖 fnOS 版本，
-  也不需要把 NAS 账号交给任何容器。
-* **md127 目前是 degraded**（`broken raid1`，只剩 nvme1n1p1）——这是 NAS 的真实状态，
-  仪表盘底部会一直挂着红色告警；镜像成员是否要重建由你决定。
+1. 在开发板 Wi-Fi 面板扫描并连接自己的无线网络；凭据保存到 NVS。
+2. 在 NAS 管理页「设备配对」生成六位配对码。
+3. 在开发板配对面板填写 NAS 地址、遥测端口及配对码。
+4. 将开发板计算的证书 SHA-256 指纹与 NAS 管理页显示的指纹逐段比对，一致后确认配对。
+5. 配对完成后查看总览的数据新鲜度，并检查需要的来源状态。
 
-## 沿用 p4-7b-unifi-app 的板级结论
+开发板保存地址、令牌和固定证书；NAS 只保存配对令牌的哈希。换证书需要重新确认信任；撤销设备后，该设备的后续遥测请求被拒绝。首次明文引导仅提供公开证书，不代替人工指纹确认。
 
-这块板子的显示/触摸/内存坑在资料仓 `../../esp32-p4-wifi6-touch-lcd-7b/README.md` 与
-`../p4-7b-unifi-app/README.md` 有完整记录，本工程直接沿用：
+## 硬件自适应与资源边界
 
-1. **`touch_flags` 必须全 0**（`swap_xy=0, mirror_x=0, mirror_y=0`）：adapter 只旋转 framebuffer，
-   输入路径没有任何坐标变换，官方示例那组镜像在本板 + `ROTATE_180` 下等于多做一次 180° 翻转。
-2. **撕裂规避用 `TRIPLE_PARTIAL`**（`ESP_LV_ADAPTER_TEAR_AVOID_MODE_DEFAULT_MIPI_DSI`），
-   配 `CONFIG_BSP_LCD_DPI_BUFFER_NUMS=3`；官方 brookesia 示例的 `DOUBLE_DIRECT` + 2 个 buffer 起不来。
-3. **内部 RAM 只有 ~361 KB**：LVGL 绘制缓冲（工程内 BSP 一行补丁 `.use_psram = true`）、
-   LVGL 对象（`lvgl_mem_psram`）、LVGL/轮询任务栈全部搬 PSRAM；大数组用 `EXT_RAM_BSS_ATTR`
-   （需要 `CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y`，否则该宏静默失效）。
-4. **数据链路走纯 HTTP**：上游 UniFi 版是 HTTPS，mbedTLS 缓冲默认吃内部 RAM，实测跑 ~170 秒后
-   内部分配打光 → 界面冻结 + 触摸失效。本工程不碰 TLS，从根上避开；
-   `CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC/DYNAMIC_BUFFER` 也照旧留着以防其它组件用到 TLS。
-5. **改 `sdkconfig.defaults` 不会覆盖已生成的 `sdkconfig`**：改完要 `rm sdkconfig` 重新生成。
-6. **自定义字体必须 `--no-compress`**（`tools/gen_fonts.sh` 已固定）：lv_font_conv 默认输出 RLE 压缩字体，
-   而 LVGL 9.5 的解压器用的是**一份全局状态**（`LV_GLOBAL_DEFAULT()->font_fmt_rle`，无锁），
-   本工程又开着 `CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=2`（两个 tile 两个线程并行绘制）——
-   两个线程同时解压字形就会互相踩状态，表现是**字体随机碎裂 + 闪烁**。LVGL 内置 Montserrat 未压缩，
-   所以只有换成自定义字体后才会暴露（详见 `docs/verification.md` 第 9 节）。
-7. **中文标签必须用带中文的字库**：界面混排 Plex（拉丁）与 Noto（中文），
-   把中文写进只有拉丁字形的标签会画成豆腐块。改完跑一遍审计脚本
-   （扫"拉丁字体 + 字符串含中文"的调用点，含动态 `ck_set` 目标）应输出 0。
+1.2.4 采集器默认完整传送卷、阵列、磁盘、温度、容器及非 loopback 网络接口清单，名称、路径和通道身份不按固定长度截断。各接口独立测速，处理热插拔和计数器复位。若调用者显式配置数量策略，响应仍包含总数与遗漏统计。
 
-## 当前交付状态（2026-09-20）
+固件的接收缓冲、动态快照和界面卡片按实际数据分配。清单增长、减少、空清单、多通道与长名称走同一布局逻辑，默认不轮播页面或温度分组。不同分辨率已通过主机矩阵验证；该开发板的物理面板仍是 1024×600。
 
-* NAS 上 `fnos-agent.service` 已安装并 enabled，端口 8799，重启 NAS 后自动起来。
-* 板子上已烧录本工程固件，开机直进仪表盘，实测：
-  * 13 分钟长跑 720 次轮询、0 崩溃/断言/看门狗，内部 RAM 稳态 234~244 KB；
-  * 四页版式用手机摄像头逐页核对通过，触摸导航/滑动翻页由用户实机确认（`docs/verification.md` 第 4 节）；
-  * 把采集器停掉 20 秒 → 面板立刻转红 `OFFLINE` + `AGENT UNREACHABLE`，重启后自动恢复。
-* 当前烧录的版本把 `CONFIG_FNOS_HEAP_DEBUG` 开着（串口每 10 秒一条堆余量 + 每 30 秒一条轮询统计），
-  长期摆放观察时很有用；不想要就把它改成 n 重新编译烧录。
+| 配置 | 默认 | 含义 |
+| --- | ---: | --- |
+| `CONFIG_FNOS_STATUS_MAX_BYTES` | 262144 B | 遥测整帧字节预算 |
+| `CONFIG_FNOS_SNAPSHOT_MAX_BYTES` | 1048576 B | 单份硬件清单与字符串存储预算 |
+| `CONFIG_FNOS_UI_LIST_MIN_WIDTH` | 260 px | 首选清单宽度，实际列数由可用空间和文本推导 |
+| `CONFIG_FNOS_UI_REDUCED_MOTION` | 关闭 | 开启后保留跟手，松手直接落定 |
+| `CONFIG_FNOS_PALETTE` | `device` | 也可选 `graphite`、`abyss`、`phosphor` |
 
-## 验证记录
+预算限制字节资源，**不是固定设备数量上限**。超预算或解析失败会保留最后有效快照并报错；UI 分配失败明确提示部分设备尚未显示。旧来源、权限不足与真正零值不能混为一谈。完整实现和矩阵范围见 [硬件自适应记录](docs/ui-hardware-adaptive-audit-2026-10-08.md)。
 
-见 `docs/verification.md`（编译、烧录、串口、视觉验收、离线恢复与长跑数据）。
+## 开发与验证
 
+以下命令都从仓库根目录执行；设备命令会操作指定开发板，请按当前任务选择阶段。
 
-## 第一次开机：把板子接进内网 Wi-Fi
+```bash
+# 首次先构建固件，生成真实 LVGL 配置与依赖。
+./idf.sh build
+# 原生界面预览与布局审计；默认输出 tools/preview/out/。
+bash tools/preview/run.sh
+# ELF 静态栈预算；不代替运行期测量。
+python3 tools/stack_check.py
 
-出厂固件里没有 Wi-Fi 凭据（`fnos_config.h` 的 `APP_WIFI_SSID` 还是 `your-ssid`），板子不会
-盲目去连，而是**开机约 3 秒后自己把配网卡推出来** —— 用户看到的本来只是一块"离线"的屏，
-不知道该点哪里。串口同一时刻会打一行 `fnos_ui: 没有 Wi-Fi 凭据：自动弹出配网卡`。
-
-卡片三步（全在触摸屏上完成，不需要电脑）：
-
-| 步骤 | 屏幕上做什么 | 背后发生的事 |
-| --- | --- | --- |
-| ① 选网络 | 列出扫描到的 **2.4G** 网络，按信号从强到弱；每行写「格数 · dBm · 加密/开放」，色弱也读得出 | `fnos_net_scan_request()` 只置位，真正的 `esp_wifi_scan_start()` 在**服务任务**里跑（本板 Wi-Fi 是到 C6 的同步 RPC，最坏阻塞数秒，绝不能进 LVGL 任务） |
-| ② 输口令 | 41 键全键盘（字母层 / 数字符号层、大写、退格、空格）、口令可点「显示」明文核对 | 不足 8 位直接拒绝，并在卡片副标题上写明原因（**这句话不会被下一拍刷新盖掉**） |
-| ③ 连接 | 成功显示 `已连接 <ssid>（ip） · 信号 -xx dBm`；失败显示人话原因与重试次数 | 凭据写进 NVS（`fnos_wifi_store.c`），此后**NVS 优先于编译期默认**，重启自动重连 |
-
-* 关掉卡片 = 这次开机不再自动弹；入口常驻在**顶栏**：没配网时是橙色的「Wi-Fi 未配置」，
-  配好后显示网络名，点一下随时能再打开。
-* 支持隐藏 SSID：点「手动输入」直接填网络名。
-* 串口兜底（没有屏幕或屏幕点不动时）：`wifi set <SSID> <口令>` / `wifi show` / `wifi clear`
-  —— 口令只写不读，`wifi show` 只回答"有/没有"和当前连接状态。
-* 板子的 Wi-Fi 是 **2.4G**（ESP-Hosted 到 C6）；5G 网络不会出现在列表里。
-
-## 开发板 ↔ 飞牛应用：通信与配对（一步步）
-
-> **先纠正一个最容易误解的点**：配对码是 **NAS 的应用管理页生成**的，开发板只负责**输入**这 6 位数字。
-> 板子这一侧没有任何东西需要"填回"应用包里 —— 板子不进固件、不进 fpk，参数是运行时存进它自己的 NVS。
-
-### 1. 两条链路（板子只做一件事：每秒 HTTP GET 一个 JSON）
-
-```
-未配对（装上就能用）      板子 ──HTTP 明文、无令牌──▶  http://<NAS>:8799/api/v1/status
-                          开发版采集器（systemd + /usr/local/bin/fnos-agent.py）
-
-已配对（更严的那条路）    板子 ──HTTPS + Bearer 令牌──▶  https://<NAS>:8798/api/v1/status
-                          飞牛应用「飞牛监控」（包用户身份运行，只读采集）
+# 采集、容器 IPC、权限迁移与配置保留回归。
+python3 nas/fpk/collector_check.py
+python3 nas/fpk/docker_check.py
+python3 nas/fpk/startup_permission_check.py
+python3 nas/fpk/config_persistence_check.py
+python3 nas/fpk/temps_check.py
+# 打包需要 fnpack；脚本清理缓存后检查包内文件。
+bash nas/fpk/build.sh
+# 在匿名临时布局中走安装、启动、设置、升级和卸载。
+bash nas/fpk/test_lifecycle.sh
 ```
 
-两条线**并存、互不干扰**：应用不监听 8799、不改动 systemd 单元；开发版也不认令牌。
-板子选哪条，就看它 NVS 里有没有配对记录。
+主机预览、硬件组合、首次配对、动效响应与分配失败命令见 [预览说明](tools/preview/README.md)。已有预览构建后，`bash tools/verify_all.sh` 汇总布局、固件构建和栈检查；`--flash --port "$FNOS_SERIAL_PORT"` 增加烧录及串口观察，`--photo` 调用本机 `capture-board`。
 
-| | 未配对 | 已配对 |
-| --- | --- | --- |
-| 地址来源 | 编译期 `components/fnos_monitor/fnos_config.h`（`FNOS_HOST`/`FNOS_PORT`，本机是 `192.168.0.119:8799`） | NVS（`fnos_pair` 保存的 host/port/tls/token/证书） |
-| 传输 | 明文 HTTP | HTTPS（固定板子自己取回的那张证书） |
-| 认证 | 无 | `Authorization: Bearer <令牌>`（NAS 侧只存 `sha256("nsc:"+token)`） |
-| 左栏「配对」入口 | 橙色（未配对） | 正常色（已配对） |
+当前开发版页面编号为 0–5，可用 `python3 tools/page_shot.py --port "$FNOS_SERIAL_PORT" --page 4 --temp 0` 查看第一个多通道温度设备的展开态。拍屏需要 pyserial、ADB 授权的 Android 手机、前台相机及可用的 `capture-board`。打开或关闭串口可能使板子复位，图片必须实际查看后才能用于验收。
 
-### 2. 烧录之后的初始状态
+字体 C 文件已生成，可直接构建。改文案或字库时使用 `bash tools/gen_fonts.sh`；源字体要求、可扩展字符范围与未压缩格式说明见 [预览说明](tools/preview/README.md#边界与坑)。字库不是任意 Unicode 的完整覆盖，缺字要扩展字体范围并重新渲染检查。
 
-0. **先连 Wi-Fi**（见下一节）：没有凭据时开机 ~3 秒后配网卡会自己弹出来，连上内网才有后面的数据；
-1. 首次上电 `fnos_pair_init()` 读 NVS —— 空的，于是**退回编译期默认参数**（明文、无令牌），
-   行为跟以前完全一样，面板直接出数据；
-2. 想改默认地址（比如让新板子默认就打应用）：`cp components/fnos_monitor/fnos_config.example.h
-   components/fnos_monitor/fnos_config.h` 改 `FNOS_HOST`/`FNOS_PORT`，再 `./idf.sh build` + 烧录。
-   注意 `fnos_config.h` 在 `.gitignore` 里（它要放 Wi-Fi 口令），别提交。
+### 最近迭代与版本边界
 
-### 3. 配对六步（左边是你在哪儿操作）
+2026-10-08 的公开基线补齐动态硬件清单、完整名称、多网口测速、快照所有权及失败状态，同时发布飞牛应用 1.2.4。发布检查覆盖模板构建、原生预览、采集契约、Docker IPC、配置保留和生命周期，结果见 [1.2.4 发布记录](docs/release-1.2.4.md)。随后在一台真实 fnOS NAS 上完成升级与服务、容器采集检查，保留现有设置和 TLS 证书，并查看总览、网络、系统实机画面。这个结果不代表穷举所有 NAS 硬件。
 
-| # | 在哪 | 做什么 | 实际发生的事 |
-| --- | --- | --- | --- |
-| 1 | **NAS 桌面** | 打开「飞牛监控」→「**设备配对**」→ 生成配对码 | `POST /api/pairing/new` 生成 **6 位码，5 分钟有效**（`ttl=300`），同一时刻只允许一个码 |
-| 2 | **开发板** | 左栏点「**配对**」→ 数字键盘输入这 6 位 → 按「**确认**」 | `fnos_pair_begin(code)`：先在**明文**连接上 `GET http://<NAS>:8798/api/v1/identity`（NAS 只在这一个接口接受明文），取回证书 PEM |
-| 3 | 开发板 | （自动）算指纹 | 板子**自己**解 base64 + SHA-256（`pem_fingerprint()`），不信服务器 JSON 里给的指纹字段 |
-| 4 | 开发板 | 屏幕显示指纹 **4 行 × 8 字节**、证书 CN 与到期日 | 状态 `FNOS_PAIR_CONFIRM`，等你表决 |
-| 5 | **你** | 把板子屏幕上的指纹与 NAS 管理页「**传输加密**」里的指纹**逐段比对**；一致点「**确认**」，不一致点「**关闭**」 | 点关闭 = `fnos_pair_confirm(false)`，**不会发出任何带令牌的请求** |
-| 6 | 开发板 | （自动）换令牌并保存 | `POST https://<NAS>:8798/api/v1/pair {"code":"…","name":"p4-7b-lcd"}` → 拿到令牌 → 写 NVS → `fnos_pair_generation()+1`，数据层重建客户端，此后每秒走 HTTPS |
+最新开发仓的 `86de188`、`591e54a`、`a98c296`、`70b6527`、`cc2da56` 提交包含：
 
-配对码错/过期时，板子会显示 NAS 返回的原因（例如 `没有正在进行的配对，请先在 NAS 管理页生成配对码`），
-回第 1 步重新生成即可。
+- 六页底部导航：总览、存储、网络、系统、温度、独立告警；告警健康态提供监控维度摘要。
+- 首页与网络页按内容高度重新分配空间，清单保留滚动入口，避免页面底部裁掉卡片。
+- 温度展开串口取证 `temp N`、`page_shot.py --temp N`，以及屏上未消费格式说明符审计。
 
-### 4. 为什么指纹非要人工比对一次
+这些是**尚未同步公开 main 的开发进展**，本次仅推送文档。当前开发目录已包含六页与新取证参数；从 GitHub 公开源码构建仍是五页，不支持 `--temp`。最新开发记录中的 84 张预览与十分钟观察不作为公开基线重新运行的结果。
 
-板子固定的是"**这一张**证书"，而"这一张是不是你那台 NAS"只能当面确认：中间人可以同时伪造证书和
-JSON 里的指纹字段，但伪造不了你眼睛看到的 NAS 管理页。所以指纹由板子自己算、由你比对，比对通过前
-不发任何带令牌的请求 —— 这是一次性的信任建立，之后板子只认这枚证书（不做公共 CA 链校验）。
+## 常见问题
 
-### 5. 解除配对 / 换 NAS / 回默认
-
-- **开发板**：「配对」页 → 「**解除配对**」**按两次**才生效（防误触）→ 清 NVS，立刻退回默认链路；
-- **NAS**：管理页把该设备从列表里删掉 → 它的令牌立即失效（两边都做才算干净）；
-- 换 NAS：先在旧 NAS 上删设备，再按上面六步重新配对即可。
-
-### 6. 排错
-
-| 现象 | 多半是 | 怎么办 |
-| --- | --- | --- |
-| 板子一直"离线"，顶栏是橙色的「Wi-Fi 未配置」 | 板子还没连内网 | 点顶栏那个橙色按钮打开配网卡（或串口 `wifi set <SSID> <口令>`）；只支持 2.4G，口令 8 位起 |
-| 板子显示"没有正在进行的配对" | 码没生成 / 超过 5 分钟 / 已被用过一次 | 管理页重新生成，立刻在板子上输入 |
-| 板子一直转圈 / 提示"配对请求没连上" | 请求没走通（证书、端口、请求体、服务端 5xx 都可能） | 串口敲 `tls`：它明文取证书 → `GET /health` → `POST` 一个假码，把失败的**那一层**指出来（2026-10-06 靠它定位到 POST 没发请求体） |
-| 板子上「确认」后停在取证书 | 板子连不到 `8798`，或 NAS 上应用没启动 | 先看应用中心里应用是否运行；`curl http://<NAS>:8798/api/v1/identity` 有 JSON 才算通 |
-| 指纹两处不一致 | 板子拿到的是别人的证书（或 NAS 重装过应用、证书重生成了） | 点「关闭」，核对 `curl -s http://<NAS>:8798/api/v1/identity` 里的 `tls_fingerprint` |
-| 配对成功但数据不变 | 板子还在读 8799（那也正常，两条线都在跑） | 「系统」页或「温度」页页头会显示数据源；想只走应用就在应用侧停掉开发版采集器 |
-| 想彻底回退 | —— | 板子「解除配对」+ NAS 管理页删设备；或重烧固件（NVS 会被清） |
-
-### 7. 相关代码
-
-| 位置 | 作用 |
+| 现象 | 先检查 |
 | --- | --- |
-| `components/fnos_monitor/fnos_pair.c` / `.h` | 状态机（未配对/取证书/等确认/换令牌/已配对/失败）、指纹计算、NVS 读写、`fnos_pair_forget()` |
-| `components/fnos_monitor/fnos_ui.c` | 「配对」卡片：数字键盘（`删除`/`确认`）、指纹四行显示、`关闭`/`解除配对`/`确认` 三个按钮 |
-| `components/fnos_monitor/fnos_data.c` | 按 `fnos_pair_active()` 拼 URL、按 `fnos_pair_generation()` 重建 HTTP 客户端 |
-| `nas/fpk/nasscreencompanion/app/server/nas_companion_server.py` | `new_pair_code(ttl=300)`、`try_pair()`、`/api/v1/identity`（明文引导）、`/api/v1/pair` |
-| `docs/fnos-companion-app-plan.md` | 这套配对协议当初的设计与信任模型推演 |
+| 应用无法启用或更新 | 应用中心日志、`python312`、端口冲突；日志与私有权限迁移见[应用排障](nas/fpk/README.md#装不上起不来的时候) |
+| 容器清单没有数据 | 容器开关、能力矩阵、Docker Socket 和辅助进程状态；`disabled` / `denied` 不等于零容器 |
+| 开发板连不上 NAS | 两端网络、地址与端口、监听是否仅本机；区分连接失败、TLS 失败和令牌拒绝 |
+| 指纹改变或令牌被撤销 | 核对 NAS 当前证书，再按配对流程重新授权 |
+| 清单遗漏或只见默认网口 | 确认采集器为 1.2.4，查看遗漏元数据及字节预算；固件不能补回旧来源未传的数据 |
+| 温度缺失 | 检查驱动、hwmon 节点及权限；缺失不代表 0°C，SMART 未实现不能靠改布局补出 |
+| 屏幕冻结、文字破碎、Wi-Fi 起不来 | 检查 PSRAM/TLS、未压缩字库及 IDF 版本变量 / SDIO；见[验证记录](docs/verification.md) |
 
+## 目录与文档
 
-## 下载 / 安装
-
-**飞牛应用包**（装到 NAS 上的那个，给开发板/副屏提供只读状态与逐路温度）：
-
-- 稳定下载地址（GitHub Release，永远指向最新版）：
-  <https://github.com/ashllll/p4-7b-fnos-monitor/releases/latest/download/nasscreencompanion-1.1.0.fpk>
-- 仓库里也带一份：`nas/fpk/nasscreencompanion.fpk`
-- 安装：飞牛桌面 → **应用中心 → 手动安装 → 上传该 fpk**；或在 NAS 上
-  `sudo appcenter-cli install-fpk nasscreencompanion-1.1.0.fpk`（依赖 `python312`）
-- 装完在飞牛桌面打开「飞牛监控」→ 管理页；开发板配对流程见
-  [issues 与 docs](docs/fnos-market-submission.md#5-与开发版并存的关系评审会被问到的点)
-
-**开发板固件**：`./idf.sh build` 后 `idf.py -p <串口> flash`（本机为 ESP32-P4 rev v3.2）。
-
-
-## 开源协议
-
-**Apache License 2.0** —— 继承自同作者的原始项目 `T-Display-S3-fnos-monitor`
-（同一个"飞牛监控"产品的上一代硬件版本），全文见 [LICENSE](LICENSE)。
-
-仓库内第三方组件各自的协议：
-
-| 组件 | 协议 |
+| 路径 | 职责 |
 | --- | --- |
-| `components/esp32_p4_wifi6_touch_lcd_7b/`（Espressif / Waveshare BSP） | Apache-2.0 |
-| LVGL（`managed_components/`，由组件管理器拉取，不入库） | MIT |
-| cJSON（ESP-IDF 内置） | MIT |
-| ESP-IDF | Apache-2.0 |
-| 界面字体（`tools/fonts/` 下的 Noto Sans SC、Inter） | 字体原文件不入库，只分发生成后的 C 字体文件 |
+| [components/fnos_monitor/](components/fnos_monitor/) | UI、网络、配对、轮询、动态快照及字库 |
+| [components/fnos_monitor/ui_kit/](components/fnos_monitor/ui_kit/) | 原生控件、共享布局、主题与动效令牌 |
+| [components/fnos_monitor/Kconfig](components/fnos_monitor/Kconfig) | 内存预算、图表窗口、主题、参考阈值与调试设置 |
+| [nas/fpk/](nas/fpk/README.md) | 飞牛应用、管理页、包构建及生命周期 |
+| [nas/](nas/README.md) | 可选 Linux/systemd 旧采集器，默认 HTTP 8799，与 FPK 分开部署 |
+| [tools/preview/](tools/preview/README.md) | 真实 LVGL 主机预览与交互 / 硬件矩阵 |
+| [docs/ui-device-reference.md](docs/ui-device-reference.md) | 当前视觉与动效方向 |
+| [docs/ui-v12-lvgl-native.md](docs/ui-v12-lvgl-native.md) | 原生 UI 架构及迁移记录 |
+| [docs/verification.md](docs/verification.md) | 历次验证索引，区分主机、构建、实机与 NAS 证据 |
+| [docs/fnos-market-submission.md](docs/fnos-market-submission.md) | 官方应用库提交准备与待完成项 |
+| [docs/archive/ui/](docs/archive/ui/README.md) | 旧版设计与 HTML 原型，仅作历史参考 |
 
-`nas/fnos-agent.py`（NAS 只读采集端）与 `nas/fpk/`（飞牛应用包工程）同样适用 Apache-2.0。
+开发与发布目录分离；只同步经过审查的源码、模板、匿名测试与文档，保留已发布历史。真实配置、私钥、配对令牌、实机固件、原始日志、个人网络信息与物理相机截图保留在本地。
+
+## 许可证
+
+本项目固件、采集器与飞牛应用适用 [Apache License 2.0](LICENSE)。第三方组件及字体保留各自许可：LVGL / cJSON 为 MIT；Inter、Noto Sans SC、Chakra Petch 字体为 SIL OFL。字体许可随生成文件保留在 [fonts/](components/fnos_monitor/fonts/)。
