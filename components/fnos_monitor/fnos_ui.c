@@ -4829,6 +4829,15 @@ static void pages_warm(void)
     }
 }
 
+/* 让显示刷新定时器"下一轮处理立刻跑"：LVGL 默认每 LV_DEF_REFR_PERIOD(15ms) 才看
+   一次有没有脏区，按下反馈与拖动帧就被这段等待拖住。lv_timer_ready 只是把它标成
+   到期 —— 渲染还是排在当前回调之后（同一个 lv_timer_handler 循环里），不重入。 */
+static void refresh_soon(void)
+{
+    lv_timer_t *t = lv_display_get_refr_timer(lv_display_get_default());
+    if (t) lv_timer_ready(t);
+}
+
 static void motion_paint(void)
 {
     /* 偏移没变就没有新像素可画：拖动时手指停住（或采样周期快过帧周期）会走到
@@ -4838,6 +4847,7 @@ static void motion_paint(void)
     lv_obj_set_style_translate_x(s_ui.page[s_motion.from], s_motion.offset, 0);
     lv_obj_set_style_translate_x(s_ui.page[s_motion.to], s_motion.offset + s_motion.direction * s_motion.width, 0);
     lv_obj_invalidate(s_ui.viewport);
+    refresh_soon();
 }
 
 /* exp(-k·i/64) 的 Q16 定点表（k = UK_MOTION_DAMPING）。手势动画每帧都要算一次
@@ -4901,6 +4911,7 @@ static void motion_finish(void)
         lv_obj_set_style_translate_x(s_ui.page[i], 0, 0);
     }
     lv_obj_invalidate(s_ui.viewport);
+    refresh_soon();
     if (s_refresh_pending) {
         s_refresh_pending = false;
         refresh(); pair_refresh();
@@ -5016,6 +5027,7 @@ void fnos_ui_set_page(int idx)
     }
     show(s_ui.diagnostics_button, idx == 3);
     lv_obj_invalidate(s_ui.viewport);
+    refresh_soon();     /* 切页的第一帧立刻出，不等刷新周期 */
 }
 
 static void motion_release(void)
@@ -5055,6 +5067,7 @@ static void motion_pointer_cb(lv_event_t *e)
         s_motion.velocity = 0;
         s_motion.tracking = true;
         motion_poll_set(true);
+        refresh_soon();     /* 按下的反馈帧别等下一个 15ms 刷新周期 */
     } else if (code == LV_EVENT_RELEASED) {
         motion_release();
     } else if ((code == LV_EVENT_SHORT_CLICKED || code == LV_EVENT_CLICKED) && s_motion.swallow_click) {
