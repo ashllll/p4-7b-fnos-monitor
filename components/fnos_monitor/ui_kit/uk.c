@@ -232,17 +232,26 @@ lv_obj_t *uk_label(lv_obj_t *parent, const lv_font_t *font, uint32_t hex, const 
     return l;
 }
 
+/* 短文本走栈缓冲：row/kpi 每 tick 要 set 很多次，measure+uk_alloc+lv_free
+   两个堆往返纯属浪费。超长文本仍走 heap 路径。 */
 void uk_set_text(lv_obj_t *label, const char *fmt, ...)
 {
     if (!label) return;
-    va_list ap, measure;
-    va_start(ap, fmt); va_copy(measure, ap);
-    int n=vsnprintf(NULL,0,fmt,measure);
-    va_end(measure);
-    char *b=n>=0 ? uk_alloc((size_t)n+1) : NULL;
+    char stack_buf[208];
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(stack_buf, sizeof stack_buf, fmt, ap);
+    va_end(ap);
+    if (n < 0) return;
+    if ((size_t)n < sizeof stack_buf) {
+        if (strcmp(lv_label_get_text(label), stack_buf)) lv_label_set_text(label, stack_buf);
+        return;
+    }
+    va_start(ap, fmt);
+    char *b = uk_alloc((size_t)n + 1);
     if (b) {
-        vsnprintf(b,(size_t)n+1,fmt,ap);
-        if (strcmp(lv_label_get_text(label),b)) lv_label_set_text(label,b);
+        vsnprintf(b, (size_t)n + 1, fmt, ap);
+        if (strcmp(lv_label_get_text(label), b)) lv_label_set_text(label, b);
         lv_free(b);
     }
     va_end(ap);

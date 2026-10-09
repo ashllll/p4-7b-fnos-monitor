@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "esp_attr.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -224,12 +225,73 @@ static fnos_status_t s_st = { .host="", .net={ .ifname="", .state="" } };
 static int64_t       s_seq;
 static bool          s_overview_gap[3]; /* CPU, memory, network; one gap on recovery. */
 
+/* 曲线按页裁剪：离屏页的样本先入环，切页时一次性灌入。
+   s_seq 游标照常推进（不丢样本语义）；环容量盖过图窗（UI_HIST=180），
+   溢出丢最老的点 —— 图窗本来就只留最后 180 个，视觉结果不变。
+   放 PSRAM：两个环共 ~9 KB，内部 RAM 本来就要养 ESP-Hosted/WiFi。 */
+#define CHART_RING_CAP 256
+typedef struct {
+    fnos_sample_t s;
+    uint8_t ov_live;            /* bit0=cpu bit1=mem bit2=net */
+} chart_ov_ent_t;
+static EXT_RAM_BSS_ATTR chart_ov_ent_t s_ov_ring[CHART_RING_CAP];
+static int s_ov_head, s_ov_n;
+static EXT_RAM_BSS_ATTR fnos_sample_t s_net_ring[CHART_RING_CAP];
+static int s_net_head, s_net_n;
+
+static void ov_ring_push(const fnos_sample_t *s, uint8_t live_mask)
+{
+    if (s_ov_n >= CHART_RING_CAP) { s_ov_head = (s_ov_head + 1) % CHART_RING_CAP; s_ov_n--; }
+    s_ov_ring[(s_ov_head + s_ov_n) % CHART_RING_CAP].s = *s;
+    s_ov_ring[(s_ov_head + s_ov_n) % CHART_RING_CAP].ov_live = live_mask;
+    s_ov_n++;
+}
+
+static void ov_ring_drain(void)
+{
+    while (s_ov_n > 0) {
+        const chart_ov_ent_t *e = &s_ov_ring[s_ov_head];
+        for (int k = 0; k < 3; k++) {
+            if (!(e->ov_live & (uint8_t)(1u << k))) continue;
+            lv_obj_t *chart = k < 2 ? s_ui.overview_resource[k].chart : s_ui.overview_net;
+            if (s_overview_gap[k]) {
+                uk_trend_push(chart, 0, LV_CHART_POINT_NONE);
+                if (k == 2) uk_trend_push(chart, 1, LV_CHART_POINT_NONE);
+                s_overview_gap[k] = false;
+            }
+            if (k < 2) uk_trend_push(chart, 0, (int32_t)(k == 0 ? e->s.cpu : e->s.mem));
+            else { uk_trend_push(chart, 0, e->s.rx_kbs); uk_trend_push(chart, 1, e->s.tx_kbs); }
+        }
+        s_ov_head = (s_ov_head + 1) % CHART_RING_CAP;
+        s_ov_n--;
+    }
+}
+
+static void net_ring_push(const fnos_sample_t *s)
+{
+    if (s_net_n >= CHART_RING_CAP) { s_net_head = (s_net_head + 1) % CHART_RING_CAP; s_net_n--; }
+    s_net_ring[(s_net_head + s_net_n) % CHART_RING_CAP] = *s;
+    s_net_n++;
+}
+
+static void net_ring_drain(void)
+{
+    while (s_net_n > 0) {
+        const fnos_sample_t *s = &s_net_ring[s_net_head];
+        uk_trend_push(s_ui.tr_net, 0, s->tx_kbs);
+        uk_trend_push(s_ui.tr_net, 1, s->rx_kbs);
+        s_net_head = (s_net_head + 1) % CHART_RING_CAP;
+        s_net_n--;
+    }
+}
+
 /* 各页自适应池的"上次解"：条数与池尺寸都没变就不重排（照 p4 的 s_p4_* 写法）。
    放在文件作用域而不是 refresh() 里的 static：同一个页面有多张池卡，
    函数内 static 会互相看不见谁是谁。 */
 static int s_p1_vol_n  = -1, s_p1_vol_w,  s_p1_vol_h;
 static int s_p1_raid_n = -1, s_p1_raid_w, s_p1_raid_h;
 static int s_p1_disk_n = -1, s_p1_disk_w, s_p1_disk_h;
+static int s_p2_net_n  = -1, s_p2_net_w,  s_p2_net_h;
 static int s_p3_dock_n = -1, s_p3_dock_w, s_p3_dock_h;
 static int s_p3_temp_n = -1, s_p3_temp_w, s_p3_temp_h;
 static int s_p4_n      = -1, s_p4_w,      s_p4_h;
@@ -279,17 +341,26 @@ static lv_obj_t *flex_btn(lv_obj_t *parent, const char *txt, int kind,
    序列中间**，画出来是乱码或豆腐块，而且不报错。配对卡片那段"接受之后…"的说明
    有 200 多字节，就是这么被切断的（预览的字形审计报 U+0000 才暴露出来）。
    384 字节够放 120 多个汉字；再长就该直接用 lv_label_set_text 而不是走格式化。 */
+/* 每 tick 要 set 几十次，短文本（绝大多数标签）走栈缓冲：一次 vsnprintf 就够，
+   不再 measure+uk_alloc+lv_free 两个堆往返。超长文本仍走原 heap 路径。 */
 static void set_txt(lv_obj_t *label, const char *fmt, ...)
 {
     if (!label) return;
-    va_list ap, measure;
-    va_start(ap,fmt); va_copy(measure,ap);
-    int n=vsnprintf(NULL,0,fmt,measure);
-    va_end(measure);
-    char *text=n>=0 ? uk_alloc((size_t)n+1) : NULL;
+    char stack_buf[208];
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(stack_buf, sizeof stack_buf, fmt, ap);
+    va_end(ap);
+    if (n < 0) return;
+    if ((size_t)n < sizeof stack_buf) {
+        if (strcmp(lv_label_get_text(label), stack_buf)) lv_label_set_text(label, stack_buf);
+        return;
+    }
+    va_start(ap, fmt);
+    char *text = uk_alloc((size_t)n + 1);
     if (text) {
-        vsnprintf(text,(size_t)n+1,fmt,ap);
-        if (strcmp(lv_label_get_text(label),text)) lv_label_set_text(label,text);
+        vsnprintf(text, (size_t)n + 1, fmt, ap);
+        if (strcmp(lv_label_get_text(label), text)) lv_label_set_text(label, text);
         lv_free(text);
     }
     va_end(ap);
@@ -472,12 +543,15 @@ static lv_obj_t *scroll_col(lv_obj_t *parent)
 /* 池重排守门：只有"条目数或池尺寸变了"才重排（照 p4 的 s_p4_* 写法，四页共用）。
    读尺寸前必须 update_layout —— lv_obj_get_width() 读的是布局结果，不是实时计算；
    页面还藏着（HIDDEN）时子树不参与 flex 布局，尺寸是 0，这时不能重排，
-   留成 cols<1 的脏态，等这一页真的显示出来后的第一次 refresh 再排。 */
+   留成 cols<1 的脏态，等这一页真的显示出来后的第一次 refresh 再排。
+   update_layout 只在"条数变了或首次（w0==0）"时才做：每 tick 无条件 update_layout
+   是 500ms 全页刷里的大头之一；尺寸变化由 pages_warm/page_layout 先跑自己的
+   update_layout 兜住，这里只读结果比较。 */
 static void pool_layout(int *n0, int *w0, int *h0, int n, lv_obj_t *pool,
                         int32_t min_col_w, bool data_fit, lv_obj_t *note)
 {
     if (!pool) return;
-    lv_obj_update_layout(pool);
+    if (n != *n0 || *w0 == 0) lv_obj_update_layout(pool);
     int w = lv_obj_get_width(pool), h = lv_obj_get_height(pool);
     if (n == *n0 && w == *w0 && h == *h0 && uk_pool_cols(pool) > 0) return;
     *n0 = n; *w0 = w; *h0 = h;
@@ -3263,49 +3337,60 @@ static void overview_refresh(const fnos_status_t *st)
         const char *state = overview_module_state(st, "docker");
         set_txt(s_ui.overview_service_note, "%s", state ? mod_status_cn(state) : "等待容器采集");
     }
-    /* Container count can gain digits independently of the viewport size. */
+    /* Container count can gain digits independently of the viewport size.
+       Both the service text length and the body width are cached: when neither
+       moved, the whole min-height recalculation (two update_layout + several
+       lv_text_get_size) is skipped — it used to run on every 500 ms tick. */
     lv_obj_t *service_body=lv_obj_get_parent(s_ui.overview_services);
     lv_obj_t *service_card=lv_obj_get_parent(service_body);
-    lv_obj_update_layout(service_body);
+    static int32_t s_svc_w, s_svc_text_len;
+    const char *svc_txt = lv_label_get_text(s_ui.overview_services);
+    int32_t svc_text_len = svc_txt ? (int32_t)strlen(svc_txt) : 0;
     int32_t service_width=lv_obj_get_content_width(service_body);
-    if (service_width>0) {
-        lv_point_t text;
-        lv_text_get_size(&text,lv_label_get_text(s_ui.overview_services),UK_FONT_NUM_32,
-                         0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
-        const lv_font_t *font=lv_display_get_vertical_resolution(NULL)>=UK_SCR_H && text.x<=service_width ?
-                             UK_FONT_NUM_32 : UK_FONT_NUM_20;
-        lv_obj_set_style_text_font(s_ui.overview_services,font,0);
-        lv_text_get_size(&text,lv_label_get_text(s_ui.overview_services),font,
-                         0,0,service_width,LV_TEXT_FLAG_NONE);
-        int32_t minimum=text.y+lv_obj_get_height(s_ui.overview_service_note)+
-            lv_obj_get_height(lv_obj_get_child(service_card,0))+
-            lv_obj_get_style_pad_top(service_card,0)+lv_obj_get_style_pad_bottom(service_card,0)+
-            2*lv_obj_get_style_border_width(service_card,0)+lv_obj_get_style_pad_row(service_card,0)+
-            lv_obj_get_style_pad_row(service_body,0);
-        lv_obj_set_style_min_height(service_card,minimum,0);
-        lv_obj_t *aux=lv_obj_get_parent(service_card), *resources=lv_obj_get_parent(aux);
-        minimum+=lv_obj_get_style_min_height(lv_obj_get_child(aux,0),0)+UK_CARD_GAP;
-        /* The clock card has its own intrinsic height; neither side can be
-           squeezed when a short viewport gives more space to the list below. */
-        lv_obj_t *hero=lv_obj_get_child(resources,0), *hero_body=uk_card_body(hero);
-        lv_obj_update_layout(hero);
-        int32_t hero_min=lv_obj_get_height(lv_obj_get_child(hero,0))+
-            lv_obj_get_style_pad_top(hero,0)+lv_obj_get_style_pad_bottom(hero,0)+
-            2*lv_obj_get_style_border_width(hero,0)+lv_obj_get_style_pad_row(hero,0);
-        int visible=0;
-        for (int i=0;i<(int)lv_obj_get_child_count(hero_body);i++) {
-            lv_obj_t *child=lv_obj_get_child(hero_body,i);
-            if (lv_obj_has_flag(child,LV_OBJ_FLAG_HIDDEN)) continue;
-            hero_min+=lv_obj_get_style_flex_grow(child,0) ?
-                      lv_obj_get_style_min_height(child,0) : lv_obj_get_height(child);
-            visible++;
+    if (svc_text_len != s_svc_text_len || service_width != s_svc_w) {
+        s_svc_text_len = svc_text_len;
+        lv_obj_update_layout(service_body);
+        service_width=lv_obj_get_content_width(service_body);
+        s_svc_w = service_width;
+        if (service_width>0) {
+            lv_point_t text;
+            lv_text_get_size(&text,lv_label_get_text(s_ui.overview_services),UK_FONT_NUM_32,
+                             0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
+            const lv_font_t *font=lv_display_get_vertical_resolution(NULL)>=UK_SCR_H && text.x<=service_width ?
+                                 UK_FONT_NUM_32 : UK_FONT_NUM_20;
+            lv_obj_set_style_text_font(s_ui.overview_services,font,0);
+            lv_text_get_size(&text,lv_label_get_text(s_ui.overview_services),font,
+                             0,0,service_width,LV_TEXT_FLAG_NONE);
+            int32_t minimum=text.y+lv_obj_get_height(s_ui.overview_service_note)+
+                lv_obj_get_height(lv_obj_get_child(service_card,0))+
+                lv_obj_get_style_pad_top(service_card,0)+lv_obj_get_style_pad_bottom(service_card,0)+
+                2*lv_obj_get_style_border_width(service_card,0)+lv_obj_get_style_pad_row(service_card,0)+
+                lv_obj_get_style_pad_row(service_body,0);
+            lv_obj_set_style_min_height(service_card,minimum,0);
+            lv_obj_t *aux=lv_obj_get_parent(service_card), *resources=lv_obj_get_parent(aux);
+            minimum+=lv_obj_get_style_min_height(lv_obj_get_child(aux,0),0)+UK_CARD_GAP;
+            /* The clock card has its own intrinsic height; neither side can be
+               squeezed when a short viewport gives more space to the list below. */
+            lv_obj_t *hero=lv_obj_get_child(resources,0), *hero_body=uk_card_body(hero);
+            lv_obj_update_layout(hero);
+            int32_t hero_min=lv_obj_get_height(lv_obj_get_child(hero,0))+
+                lv_obj_get_style_pad_top(hero,0)+lv_obj_get_style_pad_bottom(hero,0)+
+                2*lv_obj_get_style_border_width(hero,0)+lv_obj_get_style_pad_row(hero,0);
+            int visible=0;
+            for (int i=0;i<(int)lv_obj_get_child_count(hero_body);i++) {
+                lv_obj_t *child=lv_obj_get_child(hero_body,i);
+                if (lv_obj_has_flag(child,LV_OBJ_FLAG_HIDDEN)) continue;
+                hero_min+=lv_obj_get_style_flex_grow(child,0) ?
+                          lv_obj_get_style_min_height(child,0) : lv_obj_get_height(child);
+                visible++;
+            }
+            if (visible>1) hero_min+=(visible-1)*lv_obj_get_style_pad_row(hero_body,0);
+            lv_obj_set_style_min_height(hero,hero_min,0);
+            minimum=LV_MAX(minimum,hero_min);
+            lv_obj_set_style_min_height(resources,minimum,0);
+            lv_obj_set_style_min_height(lv_obj_get_parent(resources),minimum+
+                lv_font_get_line_height(UK_FONT_CJK_12)+UK_S1,0);
         }
-        if (visible>1) hero_min+=(visible-1)*lv_obj_get_style_pad_row(hero_body,0);
-        lv_obj_set_style_min_height(hero,hero_min,0);
-        minimum=LV_MAX(minimum,hero_min);
-        lv_obj_set_style_min_height(resources,minimum,0);
-        lv_obj_set_style_min_height(lv_obj_get_parent(resources),minimum+
-            lv_font_get_line_height(UK_FONT_CJK_12)+UK_S1,0);
     }
 
     bool net_readable = overview_readable(st, "net");
@@ -3414,10 +3499,46 @@ static void inventory_notice(void)
     lv_obj_set_style_bg_color(s_ui.foot_dot, uk_c(UK_WARN), 0);
 }
 
+/* ── 按页刷新 ─────────────────────────────────────────────────────────
+   顶栏/底栏/健康 chip 每 tick 都要新；页面正文只刷当前页。其他页记 dirty，
+   切页时由 page_layout（motion_prepare / pages_warm）或 set_page 补刷。
+   数据 1Hz、UI 2Hz，原来 500ms 把 5 页全刷一遍，一半是白做的。 */
+static bool s_page_dirty[FNOS_UI_PAGE_COUNT];
+static int  s_force_page = -1;   /* -1 = 跟随 s_page；>=0 = 只刷这一页 */
+
+static bool page_on(int k)
+{
+    return k == (s_force_page >= 0 ? s_force_page : s_page);
+}
+
+/* 切页/预热时补刷目标页正文：目标页必须在露出来之前就是新数据。 */
+static void refresh_page(int idx)
+{
+    if (idx < 0 || idx >= FNOS_UI_PAGE_COUNT) return;
+    int prev = s_force_page;
+    s_force_page = idx;
+    refresh();
+    s_force_page = prev;
+}
+
 static void refresh(void)
 {
     const fnos_status_t *st = &s_st;
     char b[160], c1[32], c2[32];
+
+    /* 刷新正文前先把"没刷到的页"记脏：下一次切页/预热必须补上。
+       强制单页刷（refresh_page）只清自己的脏位，不去标脏别人 —— 预热一页
+       不该把刚刷过的当前页标脏。 */
+    {
+        int cur = s_force_page >= 0 ? s_force_page : s_page;
+        if (s_force_page < 0)
+            for (int i = 0; i < FNOS_UI_PAGE_COUNT; i++)
+                if (i != cur) s_page_dirty[i] = true;
+        if (cur >= 0 && cur < FNOS_UI_PAGE_COUNT) s_page_dirty[cur] = false;
+    }
+    /* 切到哪页就把哪页的曲线积压灌掉：露出来那一帧就要能看到完整历史。 */
+    if (page_on(0)) ov_ring_drain();
+    if (page_on(2)) net_ring_drain();
 
     /* 顶栏：主机 / 端点 / 状态胶囊 / 信号 */
     set_txt(s_ui.h_host, "%s", st->host[0] ? st->host : "fnos");
@@ -3473,15 +3594,16 @@ static void refresh(void)
     for (int i = 0; i < st->ndocker; i++) if (st->docker[i].up) running++;
     uint32_t health_color = !st->ever_ok ? UK_T3 : !st->online ? UK_WARN : critical ? UK_DANGER : warnings ? UK_WARN : UK_OK;
     const char *health_note = !st->ever_ok ? "等待数据" : !st->online ? "采集端离线" : critical ? "存在严重告警" : warnings ? "需要关注" : "无采集告警";
+    /* 健康 chip 是外壳的一部分，每 tick 都要新；系统页那行同文案属于正文。 */
     set_txt(s_ui.health, "%s", health_note);
-    set_txt(s_ui.system_state, "%s", health_note);
+    if (page_on(3)) set_txt(s_ui.system_state, "%s", health_note);
     lv_obj_set_style_text_color(s_ui.health, uk_c(health_color), 0);
     /* 健康卡右侧那行摘要同时是"为什么连不上"的公告栏：在线时报告运行概况，
        离线时报告原因（见 link_reason）——比再来一行"离线"有用得多。 */
     const char *why = st->online ? NULL : link_reason(st);
 
     /* P0: current readings and histories use the same snapshot/cursor as detail pages. */
-    overview_refresh(st);
+    if (page_on(0)) overview_refresh(st);
 
     float used = 0, total = 0, free_gb = 0;
     for (int i = 0; i < st->nvols; i++) {
@@ -3489,9 +3611,12 @@ static void refresh(void)
         total += st->vols[i].total_gb;
         free_gb += st->vols[i].free_gb;
     }
-    float capacities[] = { used, total, free_gb };
-    for (int i = 0; i < 3; i++)
-        set_txt(s_ui.storage_value[i], "%s", st->ever_ok && st->nvols ? fmt_cap(b, sizeof b, capacities[i]) : "-");
+    if (page_on(1)) {
+        float capacities[] = { used, total, free_gb };
+        for (int i = 0; i < 3; i++)
+            set_txt(s_ui.storage_value[i], "%s", st->ever_ok && st->nvols ? fmt_cap(b, sizeof b, capacities[i]) : "-");
+    }
+    if (page_on(0)) {
     if (!st->online) {
         set_txt(s_ui.overview_note, "%s", why ? why : "离线，显示最后一次采集快照");
     } else {
@@ -3512,12 +3637,14 @@ static void refresh(void)
         if (have) set_txt(s_ui.overview_note, "%s %.0f°C · %s · %s", old_temp ? "温度旧值" : "最高", hottest, sensor, containers);
         else set_txt(s_ui.overview_note, "温度不可用 · %s · 运行 %s", containers, fmt_uptime(b, sizeof b, st->uptime_s));
     }
-    {
+    }
+    if (page_on(2)) {
         char nb[64];
         set_txt(s_ui.net_title, "网络吞吐 · %s", hist_span_text(nb, sizeof nb, st));
     }
     /* P1：卷 / 阵列 / 硬盘。行按需建、**多出来的销毁**（不能只 HIDDEN，理由见
        row_trim 的注释）；池的重排只在"条数或池尺寸变了"时才发生（pool_layout 判脏）。 */
+    if (page_on(1)) {
     int nvol = st->nvols;
     nvol = rows_sync(&s_ui.vol_row, &s_ui.vol_made, nvol, s_ui.vol_pool, false, true);
     for (int i = 0; i < nvol; i++) {
@@ -3579,10 +3706,12 @@ static void refresh(void)
                    NULL, NULL, -1, st->online ? UK_OK : UK_OFF);
     }
     pool_layout(&s_p1_disk_n, &s_p1_disk_w, &s_p1_disk_h, ndisk, s_ui.disk_pool, UK_LIST_MIN_WIDTH, false, NULL);
+    }
 
     /* ── P2：网络 ─────────────────────────────────────────────────────
        4 张速率 KPI + 吞吐趋势 + 网卡信息条。数值与单位分给两个 label
        （uk_kpi 的 val/unit），单位才会小一号。 */
+    if (page_on(2)) {
     {
         char nb[32], sb[64];
         const char *v, *u;
@@ -3659,13 +3788,16 @@ static void refresh(void)
         else if (net->state[0]) set_txt(row->name1,"%s · %s",net->ifname,net->state);
     }
     show(s_ui.net_card, nnets>0);
-    uk_pool_relayout(s_ui.net_pool, UK_LIST_MIN_WIDTH, false, NULL);
+    pool_layout(&s_p2_net_n, &s_p2_net_w, &s_p2_net_h, nnets,
+                s_ui.net_pool, UK_LIST_MIN_WIDTH, false, NULL);
+    }
 
-    const char *dock_state = overview_module_state(st, "docker");
     const char *dock_note = docker_module_note(st);
     bool dock_live = st->ever_ok && overview_live(st, "docker");
-    bool dock_partial = st->online && dock_state && !strcmp(dock_state, "partial");
+    bool dock_partial = st->online && overview_module_state(st, "docker") &&
+                        !strcmp(overview_module_state(st, "docker"), "partial");
     int ndock = st->ever_ok ? st->ndocker : 0;
+    if (page_on(3)) {
     char dock_summary[96];
     if (dock_live) {
         if (ndock > 0) snprintf(dock_summary, sizeof dock_summary, "容器 %d/%d 运行", running, ndock);
@@ -3687,14 +3819,20 @@ static void refresh(void)
             st->cpu.load1, st->cpu.load5, st->cpu.load15, st->cpu.procs,
             st->mem.swap_used_mb / 1024.f, st->mem.swap_total_mb / 1024.f,
             fmt_uptime(c2, sizeof c2, st->uptime_s));
+    }
     /* 空态与池二选一：空态盒子要独占卡体才能居中，所以池空的时候把它收起来
        （池空着呢，藏不藏都一样看不见；下次有数据时尺寸变化会触发重排）。 */
-    show(s_ui.vol_empty, st->nvols == 0); show(s_ui.vol_pool, st->nvols > 0);
-    show(s_ui.raid_empty, st->nraid == 0); show(s_ui.raid_pool, st->nraid > 0);
-    show(s_ui.disk_empty, st->ndisks == 0); show(s_ui.disk_pool, st->ndisks > 0);
-    show(s_ui.dock_empty, ndock == 0); show(s_ui.dock_pool, ndock > 0);
-    show(s_ui.temp_empty, st->ntemps == 0); show(s_ui.p3_temp_pool, st->ntemps > 0);
+    if (page_on(1)) {
+        show(s_ui.vol_empty, st->nvols == 0); show(s_ui.vol_pool, st->nvols > 0);
+        show(s_ui.raid_empty, st->nraid == 0); show(s_ui.raid_pool, st->nraid > 0);
+        show(s_ui.disk_empty, st->ndisks == 0); show(s_ui.disk_pool, st->ndisks > 0);
+    }
+    if (page_on(3)) {
+        show(s_ui.dock_empty, ndock == 0); show(s_ui.dock_pool, ndock > 0);
+        show(s_ui.temp_empty, st->ntemps == 0); show(s_ui.p3_temp_pool, st->ntemps > 0);
+    }
     if (!st->ever_ok) {
+        if (page_on(2)) {
         for (int i = 0; i < 4; i++) uk_kpi_set(s_ui.kpi2[i], "-", "", "等待数据", -1);
         for (int i = 0; i < 4; i++) set_txt(s_ui.info_val[i], "-");
         set_txt(s_ui.if_name, "-");
@@ -3703,13 +3841,17 @@ static void refresh(void)
         set_txt(s_ui.net_axis, "无数据");
         /* 从没采到过数据：把图清空，不留上一轮的残影 */
         chart_clear(s_ui.tr_net, 2);
+        }
+        if (page_on(3)) {
         set_txt(s_ui.system_note, "等待采集，尚无有效快照");
         set_txt(s_ui.system_note2, "");
+        }
     }
     /* ── P3：容器 / 温度 ───────────────────────────────────────────────
        两张清单都是自适应池：行按需建、多出来的行销毁（不是隐藏 —— 池的条目收集
        不看 HIDDEN，隐藏的行下一拍会被重新显示成上一帧的旧行）。 */
-    network_layout();
+    if (page_on(2)) network_layout();
+    if (page_on(3)) {
     ndock = rows_sync(&s_ui.dock_row, &s_ui.dock_made, ndock, s_ui.dock_pool, false, false);
     for (int i = 0; i < ndock; i++) {
         const fnos_docker_t *d = &st->docker[i];
@@ -3723,12 +3865,14 @@ static void refresh(void)
     }
     pool_layout(&s_p3_dock_n, &s_p3_dock_w, &s_p3_dock_h, ndock,
                 s_ui.dock_pool, UK_LIST_MIN_WIDTH, false, NULL);
+    } /* page_on(3) 容器行 */
 
     /* ── P3：硬件温度摘要 = **一台设备一行** ─────────────────────────────
        原来按"通道"一行（24 路 24 行），设备名与通道名混在一行里、"PCIe-8-SSD 512GB"
        这种同型号的盘看起来就是一堆重复行。现在一台设备一行：设备名 + 最热通道 + 路数，
        全量通道在「温度」页。分组见 temp_groups()。 */
-    if (temp_groups()) {
+    bool tgrp_ok = (page_on(3) || page_on(4)) && temp_groups();
+    if (tgrp_ok && page_on(3)) {
     int ndev = s_tgrp_n;
     ndev = rows_sync(&s_ui.p3_temp_row, &s_ui.p3_temp_made, ndev, s_ui.p3_temp_pool, true, true);
     for (int i = 0; i < ndev; i++) {
@@ -3754,7 +3898,9 @@ static void refresh(void)
     }
     pool_layout(&s_p3_temp_n, &s_p3_temp_w, &s_p3_temp_h, ndev,
                 s_ui.p3_temp_pool, UK_LIST_MIN_WIDTH, false, NULL);
+    }
 
+    if (tgrp_ok && page_on(4)) {
     /* P4: topology and user choice drive layout; ordinary samples update values. */
     int nblk = s_tgrp_n;
     for (int i = 0; i < nblk; i++) {
@@ -3797,6 +3943,7 @@ static void refresh(void)
     }
     } /* A failed grouping keeps copied labels and owned device IDs for retry. */
     /* Visual reference counts are separate from collector health alerts. */
+    if (page_on(4)) {
     if (!st->ever_ok) {
         set_txt(s_ui.temp_note, "等待数据");
         set_txt(s_ui.temp_note2, "");
@@ -3823,7 +3970,9 @@ static void refresh(void)
         set_txt(s_ui.temp_note2, "参考区间 ≥%.0f°C 关注 %d 路 · ≥%.0f°C 高温 %d 路 · 采集告警见系统",
                 (double)UK_TEMP_WARM, warn, (double)UK_TEMP_DANGER, danger);
     }
+    } /* page_on(4) 温度摘要 */
 
+    if (page_on(3)) {
     set_txt(s_ui.agent_detail[0], "%s", st->host[0] ? st->host : "-");
     set_txt(s_ui.agent_detail[1], "%s:%d", FNOS_HOST, FNOS_PORT);
     set_txt(s_ui.agent_detail[2], "%d ms (状态 %d)", st->http_ms, st->last_status);
@@ -3895,8 +4044,10 @@ static void refresh(void)
             set_txt(s_ui.alert_lbl[i], "%s%s", st->online ? "" : "上次采集：", st->alerts[i].m);
         }
     }
-    storage_layout();
-    system_layout();
+    } /* page_on(3) 诊断/告警 */
+
+    if (page_on(1)) storage_layout();
+    if (page_on(3)) system_layout();
     inventory_notice();
 }
 
@@ -3960,31 +4111,28 @@ static void ui_tick(lv_timer_t *t)
         chart_clear(s_ui.overview_net, 2);
         chart_clear(s_ui.tr_net, 2);
         memset(s_overview_gap, 0, sizeof s_overview_gap);
+        s_ov_n = s_ov_head = 0;
+        s_net_n = s_net_head = 0;
     }
     bool live[] = { overview_live(&s_st, "cpu"), overview_live(&s_st, "mem"), overview_live(&s_st, "net") };
     /* History has no per-point validity. Do not plot retained module values as
        new measurements while the current module explicitly reports stale/error. */
     if (s_st.ever_ok)
         for (int k = 0; k < 3; k++) if (!live[k]) s_overview_gap[k] = true;
-    for (int i = 0; i < n; i++) {
-        for (int k = 0; k < 2; k++) if (live[k]) {
-            lv_obj_t *chart = s_ui.overview_resource[k].chart;
-            if (s_overview_gap[k]) uk_trend_push(chart, 0, LV_CHART_POINT_NONE);
-            uk_trend_push(chart, 0, (int32_t)(k == 0 ? smp[i].cpu : smp[i].mem));
-            s_overview_gap[k] = false;
+    /* 曲线按页裁剪：总览图只在 s_page==0 时推，tr_net 在 s_page==2 或手势 pending
+       （两页都在动）时推。其余先入环，s_seq 照常推进，切页时补齐。 */
+    {
+        uint8_t mask = 0;
+        if (live[0]) mask |= 1u;
+        if (live[1]) mask |= 2u;
+        if (live[2]) mask |= 4u;
+        for (int i = 0; i < n; i++) {
+            ov_ring_push(&smp[i], mask);
+            net_ring_push(&smp[i]);
         }
-        if (live[2]) {
-            if (s_overview_gap[2]) {
-                uk_trend_push(s_ui.overview_net, 0, LV_CHART_POINT_NONE);
-                uk_trend_push(s_ui.overview_net, 1, LV_CHART_POINT_NONE);
-            }
-            uk_trend_push(s_ui.overview_net, 0, smp[i].rx_kbs);
-            uk_trend_push(s_ui.overview_net, 1, smp[i].tx_kbs);
-            s_overview_gap[2] = false;
-        }
-        uk_trend_push(s_ui.tr_net, 0, smp[i].tx_kbs);
-        uk_trend_push(s_ui.tr_net, 1, smp[i].rx_kbs);
     }
+    if (page_on(0)) ov_ring_drain();
+    if (page_on(2) || s_refresh_pending) net_ring_drain();
     if (n > 0) s_seq = next;
 
     /* Consume real samples even during a long drag. Only the expensive text and
@@ -4097,6 +4245,8 @@ void fnos_ui_dump_card_map(void)
 static struct {
     int from, to, direction;
     int32_t offset, start, end, width, press_offset;
+    int32_t painted;        /* last translate_x actually applied; INT32_MIN = force */
+    int32_t spring_b;       /* integer form of phase_velocity + k*displacement */
     bool active, tracking, dragging, swallow_click;
     lv_point_t press, last;
     uint32_t last_tick;
@@ -4105,6 +4255,7 @@ static struct {
     float phase_velocity;
     lv_indev_t *pointer;
 } s_motion;
+static lv_timer_t *s_motion_poll;
 
 #ifdef CONFIG_FNOS_UI_MOTION_STATS
 static struct {
@@ -4140,6 +4291,9 @@ static bool motion_busy(void) { return s_motion.active; }
 
 static void page_layout(int idx)
 {
+    /* 先补数据再排版：目标页不能带着上一帧（或空态）露出来。
+       dirty 才刷 —— pages_warm 靠它避免每 tick 重刷没变的离屏页。 */
+    if (idx >= 0 && idx < FNOS_UI_PAGE_COUNT && s_page_dirty[idx]) refresh_page(idx);
     /* All pages already hold the latest snapshot. Navigation only has to resolve
        the incoming geometry, never format and relayout the entire application. */
     lv_obj_update_layout(s_ui.page[idx]);
@@ -4150,7 +4304,8 @@ static void page_layout(int idx)
         pool_layout(&s_p1_disk_n, &s_p1_disk_w, &s_p1_disk_h, s_ui.disk_made, s_ui.disk_pool, UK_LIST_MIN_WIDTH, false, NULL);
     } else if (idx == 2) {
         network_layout();
-        if (s_ui.net_pool) uk_pool_relayout(s_ui.net_pool,UK_LIST_MIN_WIDTH,false,NULL);
+        pool_layout(&s_p2_net_n, &s_p2_net_w, &s_p2_net_h, s_ui.net_made,
+                    s_ui.net_pool, UK_LIST_MIN_WIDTH, false, NULL);
     } else if (idx == 3) {
         system_layout();
         pool_layout(&s_p3_dock_n, &s_p3_dock_w, &s_p3_dock_h, s_ui.dock_made, s_ui.dock_pool, UK_LIST_MIN_WIDTH, false, NULL);
@@ -4192,25 +4347,61 @@ static void pages_warm(void)
     }
 }
 
+/* 两页都在平移，整视口 invalidate 是对的；但 offset 没变就别刷 —— 手指停住或
+   动画末段位移 <1px 时，原来每帧照样触发一次全视口重绘。 */
 static void motion_paint(void)
 {
+    if (s_motion.offset == s_motion.painted) return;
+    s_motion.painted = s_motion.offset;
     lv_obj_set_style_translate_x(s_ui.page[s_motion.from], s_motion.offset, 0);
     lv_obj_set_style_translate_x(s_ui.page[s_motion.to], s_motion.offset + s_motion.direction * s_motion.width, 0);
     lv_obj_invalidate(s_ui.viewport);
+}
+
+/* exp(-k*i/64) in Q16, k = 10 = UK_MOTION_DAMPING, i = 0..64 covers t in [0,1].
+   Linear interpolation between steps keeps the closed-form curve within ~3 px
+   on a 1024-wide page. Regenerate if UK_MOTION_DAMPING changes. */
+static const uint32_t s_motion_exp_q16[65] = {
+    65536u, 56056u, 47947u, 41011u, 35079u, 30005u, 25664u, 21952u,
+    18776u, 16060u, 13737u, 11750u, 10050u, 8596u, 7353u, 6289u,
+    5380u, 4601u, 3936u, 3366u, 2879u, 2463u, 2107u, 1802u,
+    1541u, 1318u, 1128u, 964u, 825u, 706u, 604u, 516u,
+    442u, 378u, 323u, 276u, 236u, 202u, 173u, 148u,
+    127u, 108u, 93u, 79u, 68u, 58u, 50u, 42u,
+    36u, 31u, 27u, 23u, 19u, 17u, 14u, 12u,
+    10u, 9u, 8u, 6u, 6u, 5u, 4u, 3u,
+    3u,
+};
+
+static int32_t motion_div_round(int64_t num, int64_t den)
+{
+    if (num >= 0) return (int32_t)((num + den / 2) / den);
+    return -(int32_t)(((-num) + den / 2) / den);
 }
 
 static void motion_exec(void *unused, int32_t value)
 {
     (void)unused;
     /* Closed-form critical damping remains stable with dropped frames and
-       preserves the current velocity when a tap reverses an in-flight page. */
-    float t = value / 1024.0f;
-    float displacement = s_motion.start - s_motion.end;
-    float b = s_motion.phase_velocity + UK_MOTION_DAMPING * displacement;
-    float decay = expf(-UK_MOTION_DAMPING * t);
-    int32_t offset = s_motion.end + (int32_t)lroundf((displacement + b * t) * decay);
-    s_motion.velocity = (int32_t)lroundf((b - UK_MOTION_DAMPING * (displacement + b * t)) * decay
-                                       * 1000.0f / s_motion.duration);
+       preserves the current velocity when a tap reverses an in-flight page.
+       Integer form of  x(t) = end + (d + b*t) * exp(-k*t),  t = value/1024:
+       the Q16 exp table replaces expf and every product stays in int64, so a
+       frame no longer pays for two lroundf + one expf. */
+    const int32_t d = s_motion.start - s_motion.end;
+    const int32_t b = s_motion.spring_b;
+    uint32_t idx = (uint32_t)value >> 4;            /* value/16 -> 0..64 */
+    uint32_t frac = (uint32_t)value & 15u;
+    uint32_t e0 = s_motion_exp_q16[idx];
+    uint32_t e1 = (idx < 64u) ? s_motion_exp_q16[idx + 1u] : e0;
+    uint32_t decay_q16 = e0 + (uint32_t)(((int32_t)e1 - (int32_t)e0) * (int32_t)frac / 16);
+    /* (d + b*t) in 1/1024 px */
+    int64_t poly_q10 = ((int64_t)d << 10) + (int64_t)b * value;
+    int32_t offset = s_motion.end +
+                     motion_div_round(poly_q10 * (int64_t)decay_q16, (int64_t)1 << 26);
+    /* x'(t) in px per unit-t, reported as px/s: (b - k*(d + b*t)) * decay * 1000/duration */
+    int64_t vel_q10 = ((int64_t)b << 10) - (int64_t)UK_MOTION_DAMPING * poly_q10;
+    s_motion.velocity = motion_div_round(vel_q10 * (int64_t)decay_q16 * 1000,
+                                         (int64_t)s_motion.duration << 26);
     if (value == 1024) { offset = s_motion.end; s_motion.velocity = 0; }
     if (offset == s_motion.offset) return;
     s_motion.offset = offset;
@@ -4275,6 +4466,8 @@ static void motion_snap(bool commit)
     float d = s_motion.start - s_motion.end;
     if (d * s_motion.phase_velocity < 0 && fabsf(s_motion.phase_velocity) > UK_MOTION_DAMPING * fabsf(d))
         s_motion.phase_velocity = -UK_MOTION_DAMPING * d;
+    /* Integer twin of the float setup above; motion_exec consumes this only. */
+    s_motion.spring_b = (int32_t)lroundf(s_motion.phase_velocity + UK_MOTION_DAMPING * d);
     s_motion.active = true;
     lv_anim_t a;
     lv_anim_init(&a);
@@ -4298,9 +4491,12 @@ static void motion_prepare(int from, int to, int direction)
     s_motion.width = lv_obj_get_content_width(s_ui.viewport);
     if (s_motion.width < 1) s_motion.width = lv_display_get_horizontal_resolution(NULL);
     s_motion.offset = 0;
+    s_motion.painted = INT32_MIN;   /* 新的一对页面：强制 paint 一次 */
     s_motion.velocity = 0;
     s_motion.active = true;
     for (int i = 0; i < FNOS_UI_PAGE_COUNT; i++) show(s_ui.page[i], i == from || i == to);
+    /* 目标页先补数据再排版：滑入的那一帧就必须是新数据。 */
+    refresh_page(to);
     page_layout(to);
     motion_paint();
 #ifdef CONFIG_FNOS_UI_MOTION_STATS
@@ -4322,14 +4518,15 @@ void fnos_ui_set_page(int idx)
     s_motion.tracking = false;
     s_motion.dragging = false;
     if (idx == s_page) {
-        bool pending = s_refresh_pending;
+        /* 同页请求不值得同步整页刷：置 pending，下个 ui_tick 再刷。 */
         fnos_ui_motion_settle();
-        if (!pending) refresh();
+        s_refresh_pending = true;
         return;
     }
     lv_anim_delete(&s_motion, motion_exec);
     if (s_page < 0 || motion_reduced()) {
         bool pending = s_refresh_pending;
+        refresh_page(idx);          /* 露出来之前就是新数据 */
         nav_select(idx); motion_finish();
         if (!pending) refresh();
     } else if (s_motion.active && idx == s_motion.from) {
@@ -4338,6 +4535,7 @@ void fnos_ui_set_page(int idx)
         s_motion.from = s_motion.to; s_motion.to = old;
         s_motion.offset += s_motion.direction * s_motion.width;
         s_motion.direction = -s_motion.direction;
+        refresh_page(s_motion.to);
         motion_snap(true);
     } else {
         int from = s_page;
@@ -4366,6 +4564,15 @@ static void motion_release(void)
     motion_snap(distance || flick);
 }
 
+/* 手势轮询只在 tracking 期间开：空闲时每 8ms 醒一次是纯浪费。
+   PRESSED 时 resume + ready，同一拍就能跟手。 */
+static void motion_poll_set(bool on)
+{
+    if (!s_motion_poll) return;
+    if (on) { lv_timer_resume(s_motion_poll); lv_timer_ready(s_motion_poll); }
+    else    lv_timer_pause(s_motion_poll);
+}
+
 static void motion_pointer_cb(lv_event_t *e)
 {
     lv_indev_t *indev = lv_event_get_target(e);
@@ -4384,6 +4591,7 @@ static void motion_pointer_cb(lv_event_t *e)
         s_motion.last_tick = lv_tick_get();
         s_motion.velocity = 0;
         s_motion.tracking = true;
+        motion_poll_set(true);
     } else if (code == LV_EVENT_RELEASED) {
         motion_release();
     } else if ((code == LV_EVENT_SHORT_CLICKED || code == LV_EVENT_CLICKED) && s_motion.swallow_click) {
@@ -4394,8 +4602,8 @@ static void motion_pointer_cb(lv_event_t *e)
 static void motion_tick(lv_timer_t *timer)
 {
     (void)timer;
-    if (!s_motion.tracking || !s_motion.pointer) return;
-    if (lv_indev_get_state(s_motion.pointer) != LV_INDEV_STATE_PRESSED) { motion_release(); return; }
+    if (!s_motion.tracking || !s_motion.pointer) { motion_poll_set(false); return; }
+    if (lv_indev_get_state(s_motion.pointer) != LV_INDEV_STATE_PRESSED) { motion_release(); motion_poll_set(false); return; }
     lv_point_t point; lv_indev_get_point(s_motion.pointer, &point);
     int32_t dx = point.x - s_motion.press.x, dy = point.y - s_motion.press.y;
     int32_t lock = s_motion.width * UK_SWIPE_LOCK_PCT / 100;
@@ -4403,6 +4611,7 @@ static void motion_tick(lv_timer_t *timer)
     if (!s_motion.dragging) {
         if (abs(dy) > lock && abs(dy) > abs(dx)) {
             s_motion.tracking = false;
+            motion_poll_set(false);
             if (s_motion.active) motion_snap(s_page == s_motion.to);
             return;
         }
@@ -4440,7 +4649,8 @@ static void motion_init(void)
     for (lv_indev_t *indev = lv_indev_get_next(NULL); indev; indev = lv_indev_get_next(indev))
         if (lv_indev_get_type(indev) == LV_INDEV_TYPE_POINTER)
             lv_indev_add_event_cb(indev, motion_pointer_cb, LV_EVENT_ALL, NULL);
-    lv_timer_create(motion_tick, UK_GESTURE_POLL_MS, NULL);
+    s_motion_poll = lv_timer_create(motion_tick, UK_GESTURE_POLL_MS, NULL);
+    motion_poll_set(false);
 }
 
 int fnos_ui_page(void)
