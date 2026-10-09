@@ -75,3 +75,29 @@ Sanitizer 构建使用 `-DFNOS_PREVIEW_SANITIZE=ON`，分别运行数字夹具�
 六页照片和 8 秒总览相机预览录像保存在本机 `Documents/ChatGPT/board-camera/number-motion-verify-20261009-113931/`，未复制到版本库。录像抽取逐帧检查，确认读数持续变化；相机反光、摩尔纹和采样限制使其不能充当精确帧率或面板撕裂测量。此次通过串口切页，未验证手指触摸、每个滚动列表的全部末项或全部故障态。
 
 交付配置仍是关闭自动轮播、保留数字动画；没有写入临时轮播固件，也未同步发布目录或推送。
+
+## 2026-10-09 存储页行读数（迭代对齐其他页）
+
+存储页此前只有容量汇总卡在做数字过渡。根因在 `uk_row_set`：行身份判定把"第二行文本"也算进去，
+而卷/阵列的第二行正是逐秒变化的读数，调用方只能传占位空格、再用 `set_txt` 覆盖 ⇒ `same_reading`
+恒为假，val 永不进入过渡；name2 本身走的也是静态写入。改前逐帧实测：p1 的过渡帧与终帧**逐像素相同**
+（0 差异），p0/p2/p3/p4 则有 250–350 ms 的滑动曲线。
+
+- `components/fnos_monitor/ui_kit/uk.c`：`same_reading` 只比较 name1 + unit；name2 改走
+  `uk_number_set_text(..., true)`（name1/name2 本来就是 number label）。
+- `components/fnos_monitor/fnos_ui.c`：卷行/阵列行把真实的第二行文本交给 `uk_row_set`，
+  删掉随后覆盖 name2 的 `set_txt`（它就是把这层动效写回静态的那一行）。
+- `components/fnos_monitor/ui_kit/uk_number.c`：`uk_number_selfcheck()` 增补"行内读数"用例
+  （第二行是数据时 val 与 name2 必须同时 active）。
+- `tools/preview/preview.c`：六页数据夹具补上磁盘读写速率——磁盘行此前完全没进夹具。
+
+验证（1024×600，`PREVIEW_DATA_MOTION=1`，每帧与终帧整屏逐像素比对）：p1 由全 0 变为
+684 → 1117（150 ms 峰值）→ 0（350 ms），曲线形状与 p0/p2/p3/p4 相同；其余五页逐像素与改前一致。
+分区看：卷块（y240–275）524 → 800 峰值 → 0，磁盘块（y490–515）160 → 351 → 0。
+`PREVIEW_NUMBERS=1` 自检通过；把 `uk.c` 的门控回退成旧写法后，该用例在 val 断言处 abort，
+说明判据确实咬得住。`tools/preview/run.sh` 84 帧 + 四项几何审计 + 格式残渣 + 对比度 4.5:1 通过。
+
+未纳入本次：行内值条的补间（`uk_bar_set` 传 `LV_ANIM_ON`，但没有主题/样式设置
+`LV_STYLE_ANIM_DURATION`，时长 0 ⇒ 所有页的值条都是一次到位，属全局既有行为，`uk.h` 中
+"时长固定 180 ms"的注释已失真）；系统页 dock 行与温度页副行仍沿用
+`uk_row_set` + `set_txt(name2)` 的旧写法，行为与改前一致（静态）。

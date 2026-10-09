@@ -448,12 +448,17 @@ void uk_row_set(uk_row_t *r, const char *l1, const char *l2,
 {
     if (!r) return;
     const bool two = (l2 && l2[0]);
+    /* "还是同一行"只看名字和单位。第二行装的是**读数**（"已用 5.4 TB / 总计 7.3 TB"、
+       "读 12 MB/s · 写 3 MB/s"），它每秒都在变，把它算进身份判定，val 的过渡就永远
+       进不来——存储页的卷百分比/阵列状态一直是这样被写死的（2026-10-09 实测：
+       p1 过渡帧与终帧逐像素相同，p0/p2/p3/p4 都有 250 ms 滑动）。 */
     const bool same_reading = !strcmp(lv_label_get_text(r->unit), unit ? unit : "") &&
-        !strcmp(lv_label_get_text(r->name1), l1 ? l1 : "") &&
-        !strcmp(lv_label_get_text(r->name2), two ? l2 : "");
+        !strcmp(lv_label_get_text(r->name1), l1 ? l1 : "");
 
     uk_set_text(r->name1, "%s", l1 ? l1 : "");
-    uk_set_text(r->name2, "%s", two ? l2 : "");
+    /* 第二行同样是 number label（mk_label_raw），没理由比 val 少一层动效：
+       卷容量、阵列成员、磁盘读写速率都要逐字符滑动。 */
+    uk_number_set_text(r->name2, two ? l2 : "", true);
     uk_number_set_text(r->val,val ? val : "",same_reading);
     uk_set_text(r->unit, "%s", unit ? unit : "");
 

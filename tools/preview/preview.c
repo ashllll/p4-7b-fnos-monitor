@@ -3406,6 +3406,12 @@ static void record_data_numbers(void)
             s_motion_fixture.vols[i].used_gb+=1;
             s_motion_fixture.vols[i].pct+=1;
         }
+        /* 磁盘行（只有存储页有）此前完全没进夹具：它的读写速率是第二行读数，
+           动效恰恰要靠这一跳才看得出来。 */
+        for (int i=0;i<s_motion_fixture.ndisks;i++) {
+            s_motion_fixture.disks[i].rd_kbs+=1024;
+            s_motion_fixture.disks[i].wr_kbs+=512;
+        }
         s_no_settle=true;
         vtick_advance(500); lv_timer_handler();
         for (unsigned elapsed=0;elapsed<=UK_NUMBER_MS+UK_NUMBER_MAX_STAGGER_MS;elapsed+=25) {

@@ -3936,9 +3936,9 @@ static void refresh(void)
            与旧实现的 80/90 不一致是**有意改的**：全项目只能有一套阈值。
            百分号写在数值里（val = "54%"）而不是拆到 unit：预览会断言
            "54%" 这个**整串**在屏幕上，拆成两个 label 就找不到了。 */
-        uk_row_set(row, v->mnt, " ", c1, NULL, (int32_t)v->pct, 0);
-        set_txt(row->name2,"已用 %s / 总计 %s · %s",fmt_cap(c1,sizeof c1,v->used_gb),
-                fmt_cap(c2,sizeof c2,v->total_gb),v->fs[0] ? v->fs : "-");
+        /* 副行交给 uk_row_set（它会把 name2 也走数字过渡）；再 set_txt 覆盖一遍
+           会把这层动效按静态文本写掉。 */
+        uk_row_set(row, v->mnt, b, c1, NULL, (int32_t)v->pct, 0);
         lv_obj_set_style_text_color(row->val, uk_c(uk_pct_color((int32_t)v->pct)), 0);
     }
     pool_layout(&s_p1_vol_n, &s_p1_vol_w, &s_p1_vol_h, nvol, s_ui.vol_pool, UK_LIST_MIN_WIDTH, false, NULL);
@@ -3958,8 +3958,7 @@ static void refresh(void)
             vtxt = c1;
             col = UK_WARN;
         }
-        uk_row_set(row,r->dev," ",vtxt,NULL,-1,col);
-        set_txt(row->name2,"%s · %d/%d · %s",r->lvl,r->have,r->want,r->state);
+        uk_row_set(row,r->dev,b,vtxt,NULL,-1,col);
         /* 右侧那列默认是等宽数字字体；写中文（正常/降级）时必须换回 CJK，
            否则预览直接报缺字（num 字体里没有汉字）。 */
         if (!syncing) lv_obj_set_style_text_font(row->val, UK_FONT_CJK_16, 0);

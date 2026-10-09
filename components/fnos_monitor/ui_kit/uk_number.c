@@ -323,6 +323,14 @@ void uk_number_selfcheck(lv_obj_t *parent)
     assert(((number_label_t *)k->val)->active);
     uk_kpi_set(k,"1.0","GB/s","",-1); assert(!((number_label_t *)k->val)->active);
     lv_obj_delete(k->box); lv_free(k);
-
+    /* 行内读数（存储页的卷/阵列/磁盘形态）：第二行是每秒都在变的**数据**，
+       它既不能挡住 val 的过渡，自己也要能滑（见 uk_row_set 的 same_reading）。 */
+    uk_row_t *r=uk_row_create(parent,false,true);
+    uk_row_set(r,"/vol1","已用 5.4 TB / 总计 7.3 TB · btrfs","75%",NULL,75,0);
+    lv_obj_update_layout(parent);
+    uk_row_set(r,"/vol1","已用 5.5 TB / 总计 7.3 TB · btrfs","76%",NULL,76,0);
+    assert(((number_label_t *)r->val)->active);
+    assert(((number_label_t *)r->name2)->active);
+    lv_obj_delete(r->row); lv_free(r);
 }
 #endif
