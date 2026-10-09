@@ -527,9 +527,9 @@ static void dump_near(lv_obj_t *o, int x, int y, int depth)
     lv_area_t a;
     lv_obj_get_coords(o, &a);
     if (x >= a.x1 - 8 && x <= a.x2 + 8 && y >= a.y1 - 8 && y <= a.y2 + 8) {
-        const char *txt = lv_obj_check_type(o, &lv_label_class) ? lv_label_get_text(o) : "";
+        const char *txt = lv_obj_has_class(o, &lv_label_class) ? lv_label_get_text(o) : "";
         fprintf(stderr, "    near: %s [%d,%d %dx%d] %.40s\n",
-                lv_obj_check_type(o, &lv_label_class) ? "label" :
+                lv_obj_has_class(o, &lv_label_class) ? "label" :
                 lv_obj_check_type(o, &lv_button_class) ? "button" :
                 lv_obj_check_type(o, &lv_chart_class) ? "chart" : "panel",
                 (int)a.x1, (int)a.y1, (int)(a.x2 - a.x1 + 1), (int)(a.y2 - a.y1 + 1), txt);
@@ -580,19 +580,19 @@ static void audit_bounds(lv_obj_t *o)
             lv_area_t ca;
             lv_obj_get_coords(ch, &ca);
             if (ca.x1 < pa.x1 - 2 || ca.x2 > pa.x2 + 2 || ca.y1 < pa.y1 - 2 || ca.y2 > pa.y2 + 2) {
-                const char *txt = lv_obj_check_type(ch, &lv_label_class) ? lv_label_get_text(ch) : "?";
+                const char *txt = lv_obj_has_class(ch, &lv_label_class) ? lv_label_get_text(ch) : "?";
                 {   /* 报坐标不够：把"父亲是谁、孩子是谁"也说出来，否则只能靠猜 */
-                    const char *pt = lv_obj_check_type(o, &lv_label_class) ? lv_label_get_text(o) : "";
+                    const char *pt = lv_obj_has_class(o, &lv_label_class) ? lv_label_get_text(o) : "";
                     lv_obj_t *gp = lv_obj_get_parent(o);
                     fprintf(stderr, "  parent=%s[%d,%d] text=\"%.24s\" gp=%s\n",
-                            lv_obj_check_type(o, &lv_label_class) ? "label" :
+                            lv_obj_has_class(o, &lv_label_class) ? "label" :
                             lv_obj_check_type(o, &lv_button_class) ? "button" : "panel",
                             (int)pa.x1, (int)pa.y1, pt,
-                            gp ? (lv_obj_check_type(gp, &lv_label_class) ? "label" :
+                            gp ? (lv_obj_has_class(gp, &lv_label_class) ? "label" :
                                   lv_obj_check_type(gp, &lv_button_class) ? "button" : "panel") : "none");
                     fprintf(stderr, "  child=%s text=\"%.24s\"\n",
-                            lv_obj_check_type(ch, &lv_label_class) ? "label" : "panel",
-                            lv_obj_check_type(ch, &lv_label_class) ? lv_label_get_text(ch) : "");
+                            lv_obj_has_class(ch, &lv_label_class) ? "label" : "panel",
+                            lv_obj_has_class(ch, &lv_label_class) ? lv_label_get_text(ch) : "");
                 }
                 dump_near(lv_screen_active(), (ca.x1 + ca.x2) / 2, (ca.y1 + ca.y2) / 2, 0);
                 fprintf(stderr, "child out of parent: \"%s\" child=[%d,%d]-[%d,%d] parent=[%d,%d]-[%d,%d]\n",
@@ -649,17 +649,17 @@ static void collect_tappable(lv_obj_t *o)
 static const char *describe_obj(lv_obj_t *o)
 {
     static char buf[768];
-    int n = snprintf(buf, sizeof buf, "%s", lv_obj_check_type(o, &lv_label_class) ? "label" :
+    int n = snprintf(buf, sizeof buf, "%s", lv_obj_has_class(o, &lv_label_class) ? "label" :
                      lv_obj_check_type(o, &lv_button_class) ? "button" :
                      lv_obj_check_type(o, &lv_chart_class) ? "chart" : "panel");
-    if (lv_obj_check_type(o, &lv_label_class)) {
+    if (lv_obj_has_class(o, &lv_label_class)) {
         n += snprintf(buf + n, sizeof buf - n, " text=\"%.40s\"", lv_label_get_text(o));
     }
     for (lv_obj_t *p = lv_obj_get_parent(o); p && n < (int)sizeof buf - 40; p = lv_obj_get_parent(p)) {
-        n += snprintf(buf + n, sizeof buf - n, " < %s", lv_obj_check_type(p, &lv_label_class) ? "label" :
+        n += snprintf(buf + n, sizeof buf - n, " < %s", lv_obj_has_class(p, &lv_label_class) ? "label" :
                       lv_obj_check_type(p, &lv_button_class) ? "button" :
                       lv_obj_check_type(p, &lv_chart_class) ? "chart" : "panel");
-        if (lv_obj_check_type(p, &lv_label_class)) {
+        if (lv_obj_has_class(p, &lv_label_class)) {
             n += snprintf(buf + n, sizeof buf - n, "\"%.24s\"", lv_label_get_text(p));
         }
         lv_area_t a; lv_obj_get_coords(p, &a);
@@ -708,8 +708,8 @@ static void audit_overlap(void)
                     fprintf(stderr, "  tapB %s %dx%d at %d,%d\n", describe_obj(b),
                             (int)(bx.x2 - bx.x1 + 1), (int)(bx.y2 - bx.y1 + 1), (int)bx.x1, (int)bx.y1);
                 }
-                const char *ta = lv_obj_check_type(a, &lv_label_class) ? lv_label_get_text(a) : "?";
-                const char *tb = lv_obj_check_type(b, &lv_label_class) ? lv_label_get_text(b) : "?";
+                const char *ta = lv_obj_has_class(a, &lv_label_class) ? lv_label_get_text(a) : "?";
+                const char *tb = lv_obj_has_class(b, &lv_label_class) ? lv_label_get_text(b) : "?";
                 fprintf(stderr, "tappable overlap: \"%s\"[%d,%d]-[%d,%d] vs \"%s\"[%d,%d]-[%d,%d]\n",
                         ta, x.x1, x.y1, x.x2, x.y2, tb, y.x1, y.y1, y.x2, y.y2);
                 abort();
@@ -762,7 +762,7 @@ static void seen_add(const void *p)
 static void audit_format_residue(lv_obj_t *o, const char *tag)
 {
     if (lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return;
-    if (lv_obj_check_type(o, &lv_label_class)) {
+    if (lv_obj_has_class(o, &lv_label_class)) {
         const char *text = lv_label_get_text(o);
         for (const char *p = text; *p; p++) {
             if (*p != '%') continue;
@@ -793,7 +793,7 @@ static void audit_labels(lv_obj_t *o)
         for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) {
             lv_obj_t *child = lv_obj_get_child(o, i);
             if (lv_obj_has_flag(child, LV_OBJ_FLAG_HIDDEN)) continue;
-            if (!lv_obj_check_type(child, &lv_label_class)) { all_labels = false; break; }
+            if (!lv_obj_has_class(child, &lv_label_class)) { all_labels = false; break; }
             const lv_font_t *font = lv_obj_get_style_text_font(child, 0);
             number |= font == UK_FONT_NUM_32;
             lv_point_t size;
@@ -812,7 +812,7 @@ static void audit_labels(lv_obj_t *o)
             }
         }
     }
-    if (lv_obj_check_type(o, &lv_label_class)) {
+    if (lv_obj_has_class(o, &lv_label_class)) {
         const char *text = lv_label_get_text(o);
         const lv_font_t *font = lv_obj_get_style_text_font(o, 0);
         for (uint32_t i = 0; text[i]; ) {
@@ -841,7 +841,7 @@ static void audit_labels(lv_obj_t *o)
 static void probe_tree(lv_obj_t *o, int depth)
 {
     lv_area_t a;
-    if (lv_obj_check_type(o, &lv_label_class)) {
+    if (lv_obj_has_class(o, &lv_label_class)) {
         lv_area_t la;
         lv_obj_get_coords(o, &la);
         printf("%*sLBL \"%s\" x=[%d,%d] y=[%d,%d] w=%d align=%d long=%d parent_w=%d\n",
@@ -853,7 +853,7 @@ static void probe_tree(lv_obj_t *o, int depth)
     }
     if (lv_obj_check_type(o, &lv_obj_class)) {
         lv_obj_get_coords(o, &a);
-        const char *txt = lv_obj_check_type(o, &lv_label_class) ? lv_label_get_text(o) : NULL;
+        const char *txt = lv_obj_has_class(o, &lv_label_class) ? lv_label_get_text(o) : NULL;
         char head[96];
         if (lv_obj_get_scrollbar_mode(o) != LV_SCROLLBAR_MODE_OFF) {
             snprintf(head, sizeof head, "LIST");
@@ -911,7 +911,7 @@ static void audit_text_overlap(lv_obj_t *parent)
         lv_obj_t *a = lv_obj_get_child(parent, i);
         if (lv_obj_has_flag(a, LV_OBJ_FLAG_HIDDEN)) continue;
         audit_text_overlap(a);
-        if (!lv_obj_check_type(a, &lv_label_class) || !lv_label_get_text(a)[0]) continue;
+        if (!lv_obj_has_class(a, &lv_label_class) || !lv_label_get_text(a)[0]) continue;
         /* 只比"字形真正占的地方"，不是标签盒。v9 之前这里直接用 coords，
            于是一个 248 宽的副行标签和一个 64 宽的状态标签本来不重叠（字只占左边一半），
            却因为"盒挨着"被判成 text overlap —— 假阳性会逼着人把版面改坏去迁就测试。 */
@@ -919,7 +919,7 @@ static void audit_text_overlap(lv_obj_t *parent)
         text_glyph_area(a, &ra);
         for (uint32_t j = i + 1; j < n; j++) {
             lv_obj_t *b = lv_obj_get_child(parent, j);
-            if (lv_obj_has_flag(b, LV_OBJ_FLAG_HIDDEN) || !lv_obj_check_type(b, &lv_label_class) || !lv_label_get_text(b)[0]) continue;
+            if (lv_obj_has_flag(b, LV_OBJ_FLAG_HIDDEN) || !lv_obj_has_class(b, &lv_label_class) || !lv_label_get_text(b)[0]) continue;
             lv_area_t rb;
             text_glyph_area(b, &rb);
             int ox = LV_MIN(ra.x2, rb.x2) - LV_MAX(ra.x1, rb.x1) + 1;
@@ -1065,9 +1065,9 @@ static void trace_cards(lv_obj_t *o, int depth)
 {
     lv_area_t a;
     lv_obj_get_coords(o, &a);
-    const char *txt = lv_obj_check_type(o, &lv_label_class) ? lv_label_get_text(o) : "";
+    const char *txt = lv_obj_has_class(o, &lv_label_class) ? lv_label_get_text(o) : "";
     fprintf(stderr, "[tree]%*s%s tag=%s [%d,%d]-[%d,%d] %dx%d text=\"%.18s\"\n",
-            depth * 2, "", lv_obj_check_type(o, &lv_label_class) ? "label" :
+            depth * 2, "", lv_obj_has_class(o, &lv_label_class) ? "label" :
             lv_obj_check_type(o, &lv_button_class) ? "button" : "panel", card_tag(o),
             a.x1, a.y1, a.x2, a.y2, a.x2 - a.x1 + 1, a.y2 - a.y1 + 1, txt);
     for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) trace_cards(lv_obj_get_child(o, i), depth + 1);
@@ -1099,7 +1099,7 @@ static void probe_geom(lv_obj_t *o, int depth, int maxdepth)
     lv_area_t a;
     lv_obj_get_coords(o, &a);
     printf("%*s%s y=[%d,%d] h=%d minh=%d grow=%d sb=%d ch=%u\n", depth * 2, "",
-           lv_obj_check_type(o, &lv_label_class) ? "LBL" : "obj",
+           lv_obj_has_class(o, &lv_label_class) ? "LBL" : "obj",
            (int)a.y1, (int)a.y2, (int)(a.y2 - a.y1 + 1),
            (int)lv_obj_get_style_min_height(o, 0),
            (int)lv_obj_get_style_flex_grow(o, 0),
@@ -1278,7 +1278,7 @@ static void run_state(preview_state_t st, int index)
 static lv_obj_t *visible_text(lv_obj_t *o, const char *text)
 {
     if (lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return NULL;
-    if (lv_obj_check_type(o, &lv_label_class) && strcmp(lv_label_get_text(o), text) == 0) return o;
+    if (lv_obj_has_class(o, &lv_label_class) && strcmp(lv_label_get_text(o), text) == 0) return o;
     for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) {
         lv_obj_t *found = visible_text(lv_obj_get_child(o, i), text);
         if (found) return found;
@@ -1461,7 +1461,7 @@ static void verify_transitions(void)
 static lv_obj_t *visible_text_clickable(lv_obj_t *o, const char *text)
 {
     if (lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return NULL;
-    if (lv_obj_check_type(o, &lv_label_class) && strcmp(lv_label_get_text(o), text) == 0) {
+    if (lv_obj_has_class(o, &lv_label_class) && strcmp(lv_label_get_text(o), text) == 0) {
         lv_obj_t *p = lv_obj_get_parent(o);
         if (p && lv_obj_get_event_count(p) > 0) return o;
     }
@@ -1504,7 +1504,7 @@ static void click_text(const char *text)
 static lv_obj_t *visible_text_containing(lv_obj_t *o, const char *needle)
 {
     if (lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return NULL;
-    if (lv_obj_check_type(o, &lv_label_class) && strstr(lv_label_get_text(o), needle)) return o;
+    if (lv_obj_has_class(o, &lv_label_class) && strstr(lv_label_get_text(o), needle)) return o;
     for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) {
         lv_obj_t *found = visible_text_containing(lv_obj_get_child(o, i), needle);
         if (found) return found;
@@ -1773,7 +1773,7 @@ static int audit_stale_running_labels(lv_obj_t *o)
 {
     if (lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return 0;
     int count = 0;
-    if (lv_obj_check_type(o, &lv_label_class)) {
+    if (lv_obj_has_class(o, &lv_label_class)) {
         const char *text = lv_label_get_text(o);
         if (strstr(text, "运行中")) {
             assert(strstr(text, "上次") || strstr(text, "旧") || strstr(text, "历史") || strstr(text, "部分可读"));
@@ -2057,7 +2057,7 @@ static void verify_temperature_protocol_limit(void)
 static void collect_texts(lv_obj_t *o)
 {
     if (lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return;
-    if (lv_obj_check_type(o, &lv_label_class)) {
+    if (lv_obj_has_class(o, &lv_label_class)) {
         const char *t = lv_label_get_text(o);
         if (t && t[0] && s_texts_n < MAX_TEXTS) s_texts[s_texts_n++] = t;
     }
@@ -2185,7 +2185,7 @@ static uint32_t s_worst_fg, s_worst_bg;
 static void audit_contrast(lv_obj_t *o)
 {
     if (lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return;
-    if (lv_obj_check_type(o, &lv_label_class)) {
+    if (lv_obj_has_class(o, &lv_label_class)) {
         const char *t = lv_label_get_text(o);
         if (t && t[0]) {
             lv_opa_t opa = lv_obj_get_style_text_opa(o, 0);
@@ -2569,12 +2569,12 @@ static int s_never_printed;
 static void audit_never_visible(lv_obj_t *o)
 {
     if (!seen_has(o)) {
-        bool interesting = lv_obj_check_type(o, &lv_label_class) ||
+        bool interesting = lv_obj_has_class(o, &lv_label_class) ||
                            lv_obj_get_child_count(o) == 0;
         if (interesting) {
             lv_area_t c;
             lv_obj_get_coords(o, &c);
-            const char *what = lv_obj_check_type(o, &lv_label_class)
+            const char *what = lv_obj_has_class(o, &lv_label_class)
                              ? lv_label_get_text(o) : "(叶子容器)";
             /* 只打前 8 条：全量输出会把真正有用的失败信息淹掉（57 行噪声里找一行错误）。 */
             if (s_never_printed++ < 8)
@@ -2612,7 +2612,7 @@ static unsigned motion_ms(const char *name, unsigned fallback, bool allow_zero)
 
 static void motion_prepare(void)
 {
-    if (!getenv("PREVIEW_MOTION")) return;
+    if (!getenv("PREVIEW_MOTION") && !getenv("PREVIEW_DATA_MOTION")) return;
     /* Freeze both clock-dependent telemetry text and the history cursor; advancing
        native LVGL time must not manufacture new NAS samples or change freshness. */
     s_motion_clock_us = 1000000000LL;
@@ -3339,6 +3339,86 @@ static void hardware_inventory(const char *path)
     puts("PASS: all hardware identities and final entries reachable, channel expansion and inventory shrink");
 }
 
+static FILE *number_timeline(void)
+{
+    char path[512]; snprintf(path,sizeof path,"%s/motion.csv",s_outdir);
+    FILE *f=fopen(path,"w"); if (!f) { perror(path); exit(1); }
+    fputs("file,time_ms,page,phase\n",f); return f;
+}
+static void number_frame(FILE *timeline, const char *name, int page, const char *phase)
+{
+    snapshot(name);
+    fprintf(timeline,"%s.ppm,%u,%d,%s\n",name,vtick_get(),page,phase);
+}
+
+/* Render the actual numeric widget with a deterministic LVGL clock. */
+static void record_numbers(void)
+{
+    FILE *timeline=number_timeline();
+    lv_obj_t *root=lv_screen_active();
+    lv_obj_set_style_bg_color(root,uk_c(UK_BG),0);
+    lv_obj_set_flex_flow(root,LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(root,LV_FLEX_ALIGN_CENTER,LV_FLEX_ALIGN_CENTER,LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(root,UK_S4,0);
+    uk_number_selfcheck(root);
+    const char *initial[]={"65%","69%","99","43.9", "9.9 MB/s", "01:59"};
+    const char *next[]={"66%","70%","100","44.0", "10.0 MB/s", "02:00"};
+    lv_obj_t *labels[sizeof initial/sizeof initial[0]];
+    for (unsigned i=0;i<sizeof labels/sizeof labels[0];i++) {
+        labels[i]=uk_label(root,UK_FONT_NUM_44,UK_T1,initial[i]);
+        lv_obj_remove_flag(labels[i],LV_OBJ_FLAG_CLICKABLE);
+    }
+    lv_obj_update_layout(root);
+    number_frame(timeline,"number-before",0,"before");
+    for (unsigned i=0;i<sizeof labels/sizeof labels[0];i++) uk_number_set_text(labels[i],next[i],true);
+    s_no_settle=true;
+    for (unsigned elapsed=0;elapsed<=UK_NUMBER_MS+UK_NUMBER_MAX_STAGGER_MS+100;elapsed+=25) {
+        char name[64]; snprintf(name,sizeof name,"number-%03u",elapsed);
+        number_frame(timeline,name,0,"transition"); vtick_advance(25); lv_timer_handler();
+    }
+    s_no_settle=false;
+    number_frame(timeline,"number-after",0,"after");
+    for (unsigned i=0;i<sizeof labels/sizeof labels[0];i++) {
+        assert(!strcmp(lv_label_get_text(labels[i]),next[i]));
+        uk_number_set_text(labels[i],"--",false);
+    }
+    number_frame(timeline,"number-unavailable",0,"unavailable");
+    fclose(timeline);
+    puts("checks: Apple curve, carry, retarget continuity, repeat, missing, allocation and deletion PASS");
+}
+
+static void record_data_numbers(void)
+{
+    FILE *timeline=number_timeline();
+    for (int page=0;page<FNOS_UI_PAGE_COUNT;page++) {
+        fnos_ui_set_page(page);
+        vtick_advance(500); lv_timer_handler();
+        fnos_ui_motion_settle(); uk_anim_settle(lv_screen_active());
+        char name[64]; snprintf(name,sizeof name,"data-p%d-before",page); number_frame(timeline,name,page,"before");
+        s_motion_fixture.cpu.pct=page%2 ? 37 : 63;
+        s_motion_fixture.cpu.load1+=.12f;
+        s_motion_fixture.mem.pct=page%2 ? 52 : 67;
+        s_motion_fixture.uptime_s+=60;
+        s_motion_fixture.net.rx_kbs+=1024;
+        s_motion_fixture.net.tx_kbs+=512;
+        for (int i=0;i<s_motion_fixture.ntemps;i++) s_motion_fixture.temps[i].c+=.2f;
+        for (int i=0;i<s_motion_fixture.nvols;i++) {
+            s_motion_fixture.vols[i].used_gb+=1;
+            s_motion_fixture.vols[i].pct+=1;
+        }
+        s_no_settle=true;
+        vtick_advance(500); lv_timer_handler();
+        for (unsigned elapsed=0;elapsed<=UK_NUMBER_MS+UK_NUMBER_MAX_STAGGER_MS;elapsed+=25) {
+            snprintf(name,sizeof name,"data-p%d-%03u",page,elapsed); number_frame(timeline,name,page,"transition");
+            vtick_advance(25); lv_timer_handler();
+        }
+        s_no_settle=false;
+        snprintf(name,sizeof name,"data-p%d-after",page); number_frame(timeline,name,page,"after");
+    }
+    fclose(timeline);
+    puts("checks: six-page numeric transition frames and geometry PASS");
+}
+
 int main(int argc, char **argv)
 {
     if (argc > 1) s_outdir = argv[1];
@@ -3360,7 +3440,9 @@ int main(int argc, char **argv)
     lv_display_t *d = lv_display_create(s_scr_w, s_scr_h);
     static uint16_t buf[SCR_MAX_W * SCR_MAX_H];
     lv_display_set_color_format(d, LV_COLOR_FORMAT_RGB565);
-    lv_display_set_buffers(d, buf, NULL, sizeof buf, LV_DISPLAY_RENDER_MODE_FULL);
+    if (getenv("PREVIEW_PARTIAL"))
+        lv_display_set_buffers(d,buf,NULL,(size_t)s_scr_w*50*sizeof(uint16_t),LV_DISPLAY_RENDER_MODE_PARTIAL);
+    else lv_display_set_buffers(d, buf, NULL, sizeof buf, LV_DISPLAY_RENDER_MODE_FULL);
     lv_display_set_flush_cb(d, flush_cb);
 
     lv_indev_t *touch = lv_indev_create();
@@ -3378,7 +3460,9 @@ int main(int argc, char **argv)
        verify_transitions() to set up the Wi-Fi fixture first. */
     if (getenv("PREVIEW_PAIR_FIRST_ENTRY") || getenv("PREVIEW_HARDWARE_FIXTURE"))
         wifi_stub(true, true, "PREVIEW-LAN", NULL);
+    if (getenv("PREVIEW_NUMBERS")) { record_numbers(); return 0; }
     fnos_ui_create();
+    if (getenv("PREVIEW_DATA_MOTION")) { record_data_numbers(); return 0; }
 
     /* 卡片几何的"唯一来源"：把已建好的卡片按真实 coords 吐出来，
        看门狗（scroll_gap.js）读它。手抄一张卡片表 → 抄错一次就报 15 处假不合格。 */

@@ -65,7 +65,7 @@ static void style_card_edge(lv_obj_t *o)
 
 static lv_obj_t *mk_label_raw(lv_obj_t *parent, const lv_font_t *font, uint32_t hex)
 {
-    lv_obj_t *l = lv_label_create(parent);
+    lv_obj_t *l = uk_number_label_create(parent);
     lv_obj_set_style_text_font(l, font, 0);
     lv_obj_set_style_text_color(l, uk_c(hex), 0);
     lv_label_set_long_mode(l, LV_LABEL_LONG_MODE_DOTS);
@@ -289,7 +289,7 @@ void uk_set_text(lv_obj_t *label, const char *fmt, ...)
     char *b=n>=0 ? uk_alloc((size_t)n+1) : NULL;
     if (b) {
         vsnprintf(b,(size_t)n+1,fmt,ap);
-        if (strcmp(lv_label_get_text(label),b)) lv_label_set_text(label,b);
+        uk_number_set_text(label,b,false);
         lv_free(b);
     }
     va_end(ap);
@@ -448,10 +448,13 @@ void uk_row_set(uk_row_t *r, const char *l1, const char *l2,
 {
     if (!r) return;
     const bool two = (l2 && l2[0]);
+    const bool same_reading = !strcmp(lv_label_get_text(r->unit), unit ? unit : "") &&
+        !strcmp(lv_label_get_text(r->name1), l1 ? l1 : "") &&
+        !strcmp(lv_label_get_text(r->name2), two ? l2 : "");
 
     uk_set_text(r->name1, "%s", l1 ? l1 : "");
     uk_set_text(r->name2, "%s", two ? l2 : "");
-    uk_set_text(r->val, "%s", val ? val : "");
+    uk_number_set_text(r->val,val ? val : "",same_reading);
     uk_set_text(r->unit, "%s", unit ? unit : "");
 
     /* 数值的位置跟着数据形态走：有通道名 → 第二行右侧；没有 → 回到第一行右侧 */
@@ -738,9 +741,10 @@ uk_kpi_t *uk_kpi_create(lv_obj_t *parent, const char *label)
 void uk_kpi_set(uk_kpi_t *k, const char *val, const char *unit, const char *sub, int32_t pct)
 {
     if (!k) return;
-    uk_set_text(k->val, "%s", val ? val : "");
+    const bool same_unit = !strcmp(lv_label_get_text(k->unit),unit ? unit : "");
+    uk_number_set_text(k->val,val ? val : "",same_unit);
     uk_set_text(k->unit, "%s", unit ? unit : "");
-    uk_set_text(k->sub, "%s", sub ? sub : "");
+    uk_number_set_text(k->sub,sub ? sub : "",same_unit);
     if (k->bar) {
         if (pct < 0) lv_obj_add_flag(k->bar, LV_OBJ_FLAG_HIDDEN);
         else {
@@ -954,6 +958,7 @@ void uk_anim_settle(lv_obj_t *root)
         lv_anim_delete(root, opa_anim_cb);
         lv_obj_set_style_opa(root, LV_OPA_COVER, 0);
     }
+    uk_number_settle(root);
     uk_anim_reveal_settle(root);
     uint32_t n = lv_obj_get_child_count(root);
     for (uint32_t i = 0; i < n; i++) uk_anim_settle(lv_obj_get_child(root, i));

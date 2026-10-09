@@ -42,6 +42,7 @@ add_executable(preview
   "${REPO}/managed_components/espressif__cjson/cJSON/cJSON.c"
   "${COMP}/fnos_ui.c"
   "${COMP}/ui_kit/uk.c"
+    "${COMP}/ui_kit/uk_number.c"
   "${COMP}/ui_kit/uk_theme.c"
   ${FONT_SRC}
 )

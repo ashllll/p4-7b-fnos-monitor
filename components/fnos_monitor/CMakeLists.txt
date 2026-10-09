@@ -10,6 +10,7 @@ set(PROJ_SRCS
     "fnos_pair.c"
     "fnos_ui.c"
     "ui_kit/uk.c"
+    "ui_kit/uk_number.c"
     "ui_kit/uk_theme.c"
     "fonts/ui_font_cjk_12.c"
     "fonts/ui_font_cjk_16.c"

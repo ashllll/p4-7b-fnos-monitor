@@ -84,6 +84,14 @@ void uk_card_flex(lv_obj_t *card, int32_t grow);
 /* 常用组合：主文本 / 次文本 / 行标签 / 轴标签 / 数字。 */
 lv_obj_t *uk_label(lv_obj_t *parent, const lv_font_t *font, uint32_t hex, const char *txt);
 void uk_set_text(lv_obj_t *label, const char *fmt, ...);   /* printf 风格，自动 lv_label_set_text */
+/* Numeric labels retain the lv_label API. Explicit opt-in prevents animating IDs/input. */
+lv_obj_t *uk_number_label_create(lv_obj_t *parent);
+void uk_number_set_text(lv_obj_t *label, const char *text, bool animate);
+void uk_number_settle(lv_obj_t *label);
+void uk_number_motion_enable(bool enabled);
+#ifdef FNOS_UI_TESTING
+void uk_number_selfcheck(lv_obj_t *parent);
+#endif
 void uk_label_ellipsis(lv_obj_t *label);                   /* 超宽省略号（默认不换行） */
 lv_obj_t *uk_hairline(lv_obj_t *parent);                   /* 1px 分隔线，撑满宽 */
 lv_obj_t *uk_dot(lv_obj_t *parent, uint32_t hex, int32_t d);  /* 状态点（圆形） */

@@ -306,20 +306,28 @@ static lv_obj_t *flex_btn(lv_obj_t *parent, const char *txt, int kind,
    序列中间**，画出来是乱码或豆腐块，而且不报错。配对卡片那段"接受之后…"的说明
    有 200 多字节，就是这么被切断的（预览的字形审计报 U+0000 才暴露出来）。
    384 字节够放 120 多个汉字；再长就该直接用 lv_label_set_text 而不是走格式化。 */
-static void set_txt(lv_obj_t *label, const char *fmt, ...)
+static void set_text_v(lv_obj_t *label, bool animate, const char *fmt, va_list ap)
 {
     if (!label) return;
-    va_list ap, measure;
-    va_start(ap,fmt); va_copy(measure,ap);
+    va_list measure;
+    va_copy(measure,ap);
     int n=vsnprintf(NULL,0,fmt,measure);
     va_end(measure);
     char *text=n>=0 ? uk_alloc((size_t)n+1) : NULL;
     if (text) {
         vsnprintf(text,(size_t)n+1,fmt,ap);
-        if (strcmp(lv_label_get_text(label),text)) lv_label_set_text(label,text);
+        uk_number_set_text(label,text,animate);
         lv_free(text);
     }
-    va_end(ap);
+}
+
+static void set_txt(lv_obj_t *label, const char *fmt, ...)
+{
+    va_list ap; va_start(ap,fmt); set_text_v(label,false,fmt,ap); va_end(ap);
+}
+static void set_num(lv_obj_t *label, const char *fmt, ...)
+{
+    va_list ap; va_start(ap,fmt); set_text_v(label,true,fmt,ap); va_end(ap);
 }
 
 
@@ -1398,7 +1406,7 @@ static void network_layout(void)
             lv_obj_t *child = lv_obj_get_child(box, j);
             if (lv_obj_has_flag(child, LV_OBJ_FLAG_HIDDEN)) continue;
             int32_t child_h = lv_obj_get_height(child);
-            if (lv_obj_check_type(child, &lv_label_class)) {
+            if (lv_obj_has_class(child, &lv_label_class)) {
                 lv_point_t size;
                 lv_text_get_size(&size, lv_label_get_text(child), lv_obj_get_style_text_font(child, 0),
                                  lv_obj_get_style_text_letter_space(child, 0), lv_obj_get_style_text_line_space(child, 0),
@@ -3318,7 +3326,7 @@ static void temp_blk_fill(int i)
     if (strcmp(lv_label_get_text(b->name), g->name)) s_p4_n = -1;
     set_txt(b->name, "%s", g->name);
     lv_obj_set_style_text_color(b->name, uk_c(on ? UK_T1 : UK_T3), 0);
-    set_txt(b->vmax, "%.1f", g->max_c);
+    set_num(b->vmax, "%.1f", g->max_c);
     lv_obj_set_style_text_color(b->vmax, uk_c(color), 0);
     lv_obj_set_style_bg_color(b->led, uk_c(color), 0);
     dot_glow(b->led, color, on ? UK_GLOW_OPA : 0);
@@ -3334,7 +3342,7 @@ static void temp_blk_fill(int i)
         if (k >= b->made) temp_ch_build(b, k);
         temp_ch_t *ch = &b->channels[k];
         set_txt(ch->name, "%s", t->ch[0] ? t->ch : "温度");
-        set_txt(ch->val, "%.1f", t->c);
+        set_num(ch->val, "%.1f", t->c);
         lv_obj_set_style_text_color(ch->val, uk_c(on ? uk_temp_color(t->c) : UK_T3), 0);
         show(ch->line, true);
     }
@@ -3344,7 +3352,7 @@ static void temp_blk_fill(int i)
     b->shown_lines = count;
     if (g->count > 1) {
         /* Always reserve the same summary line: numeric refresh cannot change block height. */
-        set_txt(b->more, "%d 路 · %.1f-%.1f°C · %s", g->count,
+        set_num(b->more, "%d 路 · %.1f-%.1f°C · %s", g->count,
                 g->min_c, g->max_c, b->collapsed ? "展开" : "收起");
         show(b->more, true);
         lv_obj_move_to_index(b->more, -1);
@@ -3486,43 +3494,8 @@ static const char *docker_module_note(const fnos_status_t *st)
     return mod_status_cn(state); /* Includes stale/partial and future status words. */
 }
 
-static void overview_refresh(const fnos_status_t *st)
+static void overview_layout(void)
 {
-    static const char *const modules[] = { "cpu", "mem" };
-    char b[160], c1[32], c2[32];
-    for (int i = 0; i < 2; i++) {
-        overview_resource_t *r = &s_ui.overview_resource[i];
-        const char *state = overview_module_state(st, modules[i]);
-        bool readable = overview_readable(st, modules[i]);
-        bool live = readable && overview_live(st, modules[i]);
-        float pct = i == 0 ? st->cpu.pct : st->mem.pct;
-        set_txt(r->value, readable ? "%.0f" : "--", pct);
-        set_txt(r->unit, "%s", readable ? "%" : "");
-        if (!readable) set_txt(r->meta, "%s", st->ever_ok && state ? mod_status_cn(state) : "等待数据");
-        else if (i == 0) set_txt(r->meta, "%d 核 · 负载 %.2f · 队列 %d", st->cpu.cores, st->cpu.load1, st->cpu.runq);
-        else set_txt(r->meta, "%.1f / %.1f GB · 交换 %.1fG", st->mem.used_mb / 1024.f, st->mem.total_mb / 1024.f, st->mem.swap_used_mb / 1024.f);
-        lv_obj_set_style_text_color(r->value, uk_c(live ? UK_T1 : UK_T3), 0);
-
-        show(r->chart, readable);
-        lv_obj_set_style_opa(r->chart, live ? LV_OPA_COVER : LV_OPA_40, 0);
-        if (!readable) set_txt(r->context, "无有效读数");
-        else if (!chart_sample_count(r->chart)) set_txt(r->context, "等待历史采样");
-        else set_txt(r->context, "%s%d 次采集 · 峰 %d%%", live ? "" : "旧历史 · ", chart_sample_count(r->chart), chart_peak(r->chart, 0));
-    }
-
-    const bool system_live = overview_live(st, "cpu");
-    if (overview_readable(st, "cpu")) {
-        const uint32_t hours = st->uptime_s / 3600u;
-        set_txt(s_ui.overview_clock, "%02u:%02u", (unsigned)(hours % 24u),
-                (unsigned)(st->uptime_s / 60u % 60u));
-        set_txt(s_ui.overview_clock_note, "%s运行 %s", system_live ? "" : "旧快照 · ",
-                fmt_uptime(b, sizeof b, st->uptime_s));
-    } else {
-        set_txt(s_ui.overview_clock, "--:--");
-        set_txt(s_ui.overview_clock_note, "运行时长不可用");
-    }
-    lv_obj_set_style_text_color(s_ui.overview_clock, uk_c(system_live ? UK_T1 : UK_T3), 0);
-
     /* 英雄卡自己量一遍高度：时钟字号、副行文案、采样脚注都随视口和数据变，
        写死常数会算漏。右列现在只有内存卡，所以 resources 的 min 就是
        「英雄卡 / 内存卡」取大 —— 这两个数决定首页会不会被页底裁掉。 */
@@ -3550,13 +3523,54 @@ static void overview_refresh(const fnos_status_t *st)
         lv_obj_set_style_min_height(lv_obj_get_parent(resources), minimum, 0);
     }
 
+}
+
+static void overview_refresh(const fnos_status_t *st)
+{
+    static const char *const modules[] = { "cpu", "mem" };
+    char b[160], c1[32], c2[32];
+    for (int i = 0; i < 2; i++) {
+        overview_resource_t *r = &s_ui.overview_resource[i];
+        const char *state = overview_module_state(st, modules[i]);
+        bool readable = overview_readable(st, modules[i]);
+        bool live = readable && overview_live(st, modules[i]);
+        float pct = i == 0 ? st->cpu.pct : st->mem.pct;
+        (live ? set_num : set_txt)(r->value, readable ? "%.0f" : "--", pct);
+        set_txt(r->unit, "%s", readable ? "%" : "");
+        if (!readable) (live ? set_num : set_txt)(r->meta, "%s", st->ever_ok && state ? mod_status_cn(state) : "等待数据");
+        else if (i == 0) (live ? set_num : set_txt)(r->meta, "%d 核 · 负载 %.2f · 队列 %d", st->cpu.cores, st->cpu.load1, st->cpu.runq);
+        else (live ? set_num : set_txt)(r->meta, "%.1f / %.1f GB · 交换 %.1fG", st->mem.used_mb / 1024.f, st->mem.total_mb / 1024.f, st->mem.swap_used_mb / 1024.f);
+        lv_obj_set_style_text_color(r->value, uk_c(live ? UK_T1 : UK_T3), 0);
+
+        show(r->chart, readable);
+        lv_obj_set_style_opa(r->chart, live ? LV_OPA_COVER : LV_OPA_40, 0);
+        if (!readable) (live ? set_num : set_txt)(r->context, "无有效读数");
+        else if (!chart_sample_count(r->chart)) (live ? set_num : set_txt)(r->context, "等待历史采样");
+        else (live ? set_num : set_txt)(r->context, "%s%d 次采集 · 峰 %d%%", live ? "" : "旧历史 · ", chart_sample_count(r->chart), chart_peak(r->chart, 0));
+    }
+
+    const bool system_live = overview_live(st, "cpu");
+    if (overview_readable(st, "cpu")) {
+        const uint32_t hours = st->uptime_s / 3600u;
+        (system_live ? set_num : set_txt)(s_ui.overview_clock, "%02u:%02u", (unsigned)(hours % 24u),
+                (unsigned)(st->uptime_s / 60u % 60u));
+        set_txt(s_ui.overview_clock_note, "%s运行 %s", system_live ? "" : "旧快照 · ",
+                fmt_uptime(b, sizeof b, st->uptime_s));
+    } else {
+        set_num(s_ui.overview_clock, "--:--");
+        set_txt(s_ui.overview_clock_note, "运行时长不可用");
+    }
+    lv_obj_set_style_text_color(s_ui.overview_clock, uk_c(system_live ? UK_T1 : UK_T3), 0);
+
+    overview_layout();
+
     bool net_readable = overview_readable(st, "net");
     bool net_live = net_readable && overview_live(st, "net");
     for (int i = 0; i < 2; i++) {
         const char *v, *unit;
         snprintf(b, sizeof b, "%s", fmt_rate(c1, sizeof c1, i == 0 ? st->net.rx_kbs : st->net.tx_kbs));
         rate_split(b, &v, &unit);
-        set_txt(s_ui.overview_rate[i], "%s", net_readable ? v : "--");
+        (net_live ? set_num : set_txt)(s_ui.overview_rate[i], "%s", net_readable ? v : "--");
         set_txt(s_ui.overview_unit[i], "%s", net_readable ? unit : "");
         lv_obj_set_style_text_color(s_ui.overview_rate[i], uk_c(net_live ? UK_T1 : UK_T3), 0);
     }
@@ -3564,7 +3578,7 @@ static void overview_refresh(const fnos_status_t *st)
     lv_obj_set_style_opa(s_ui.overview_net, net_live ? LV_OPA_COVER : LV_OPA_40, 0);
     if (!net_readable) {
         const char *state = overview_module_state(st, "net");
-        set_txt(s_ui.overview_net_context, "%s", st->ever_ok && state ? mod_status_cn(state) : "等待网络数据");
+        set_num(s_ui.overview_net_context, "%s", st->ever_ok && state ? mod_status_cn(state) : "等待网络数据");
     } else {
         float top = chart_peak(s_ui.overview_net, 0);
         if (top < chart_peak(s_ui.overview_net, 1)) top = chart_peak(s_ui.overview_net, 1);
@@ -3574,9 +3588,9 @@ static void overview_refresh(const fnos_status_t *st)
         int32_t ymax = (int32_t)top;
         if ((float)ymax < top) ymax++;
         uk_trend_set_range(s_ui.overview_net, 0, ymax);
-        if (!net_live) set_txt(s_ui.overview_net_context, "旧历史 · 暂停更新");
-        else if (!chart_sample_count(s_ui.overview_net)) set_txt(s_ui.overview_net_context, "等待历史采样");
-        else set_txt(s_ui.overview_net_context, "%d 次采集 · 0-%s", chart_sample_count(s_ui.overview_net), fmt_rate(b, sizeof b, ymax));
+        if (!net_live) set_num(s_ui.overview_net_context, "旧历史 · 暂停更新");
+        else if (!chart_sample_count(s_ui.overview_net)) set_num(s_ui.overview_net_context, "等待历史采样");
+        else set_num(s_ui.overview_net_context, "%d 次采集 · 0-%s", chart_sample_count(s_ui.overview_net), fmt_rate(b, sizeof b, ymax));
     }
 
     float used = 0, total = 0, free_gb = 0;
@@ -3587,10 +3601,10 @@ static void overview_refresh(const fnos_status_t *st)
     for (int i = 0; i < st->nraid; i++) if (st->raid[i].ok) healthy_raid++;
     bool storage = overview_readable(st, "vols") && st->nvols > 0 && total > 0;
     bool storage_live = storage && overview_live(st, "vols");
-    set_txt(s_ui.capacity, "%s", storage ? fmt_cap(b, sizeof b, used) : "--");
+    (storage_live ? set_num : set_txt)(s_ui.capacity, "%s", storage ? fmt_cap(b, sizeof b, used) : "--");
     lv_obj_set_style_text_color(s_ui.capacity, uk_c(storage_live ? UK_T1 : UK_T3), 0);
-    if (storage) set_txt(s_ui.capacity_detail, "已用 / 总计 %s · 可用 %s", fmt_cap(c1, sizeof c1, total), fmt_cap(c2, sizeof c2, free_gb));
-    else set_txt(s_ui.capacity_detail, "%s", st->ever_ok ? "没有可用容量数据" : "等待存储数据");
+    if (storage) set_num(s_ui.capacity_detail, "已用 / 总计 %s · 可用 %s", fmt_cap(c1, sizeof c1, total), fmt_cap(c2, sizeof c2, free_gb));
+    else set_num(s_ui.capacity_detail, "%s", st->ever_ok ? "没有可用容量数据" : "等待存储数据");
     show(s_ui.capacity_bar, storage);
     uk_bar_set(s_ui.capacity_bar, total > 0 ? (int32_t)(used / total * 100) : 0);
     lv_obj_set_style_bg_color(s_ui.capacity_bar, uk_c(storage_live ? UK_S_CPU : UK_OFF), LV_PART_INDICATOR);
@@ -3619,7 +3633,7 @@ static void overview_refresh(const fnos_status_t *st)
         }
         const fnos_vol_t *vol = &st->vols[i];
         set_txt(row->name, "%s", vol->mnt);
-        set_txt(row->value, vol->total_gb > 0 ? "%.0f%%" : "--", vol->pct);
+        (storage_live ? set_num : set_txt)(row->value, vol->total_gb > 0 ? "%.0f%%" : "--", vol->pct);
         show(row->bar, vol->total_gb > 0);
         uk_bar_set(row->bar, (int32_t)vol->pct);
         lv_obj_set_style_bg_color(row->bar, uk_c(storage_live ? UK_S_CPU : UK_OFF), LV_PART_INDICATOR);
@@ -3755,6 +3769,8 @@ static void refresh(void)
     const fnos_status_t *st = &s_st;
     char b[160], c1[32], c2[32];
 
+    uk_number_motion_enable(st->online);
+
     /* 顶栏：主机 / 端点 / 状态胶囊 / 信号 */
     set_txt(s_ui.h_host, "%s", st->host[0] ? st->host : "fnos");
     header_refresh();
@@ -3766,7 +3782,7 @@ static void refresh(void)
     /* 底栏：左边是轮询统计，右边是"最严重的一条告警"。底栏只说**一件事**：
        现在要不要动手；全量告警在系统页那一列里。 */
     if (s_ui.foot_poll)
-        set_txt(s_ui.foot_poll, "轮询 1s · ok %u · fail %u",
+        set_num(s_ui.foot_poll, "轮询 1s · ok %u · fail %u",
                 (unsigned)st->ok_count, (unsigned)st->fail_count);
     if (s_ui.foot_txt && s_ui.foot_dot) {
         uint32_t band = UK_OK;
@@ -3850,7 +3866,7 @@ static void refresh(void)
     }
     float capacities[] = { used, total, free_gb };
     for (int i = 0; i < 3; i++)
-        set_txt(s_ui.storage_value[i], "%s", st->ever_ok && st->nvols ? fmt_cap(b, sizeof b, capacities[i]) : "-");
+        set_num(s_ui.storage_value[i], "%s", st->ever_ok && st->nvols ? fmt_cap(b, sizeof b, capacities[i]) : "-");
     /* P1 的容量条与上面的三栏数字同源：一眼看出"还剩多少"。 */
     if (s_ui.storage_bar) {
         int32_t pct = (st->ever_ok && st->nvols && total > 0) ? (int32_t)(used / total * 100.0f + 0.5f) : 0;
@@ -3859,7 +3875,7 @@ static void refresh(void)
     }
     if (!st->online) {
         set_txt(s_ui.overview_note, "%s", why ? why : "离线，显示最后一次采集快照");
-        set_txt(s_ui.home_temp_value, "--");
+        set_num(s_ui.home_temp_value, "--");
         set_txt(s_ui.home_temp_unit, "");
         set_txt(s_ui.home_temp_name, "%s", "离线 · 显示上次快照");
         lv_obj_set_style_bg_color(s_ui.home_temp_dot, uk_c(UK_T3), 0);
@@ -3886,13 +3902,13 @@ static void refresh(void)
         else set_txt(s_ui.overview_note, "温度不可用 · %s · 运行 %s", containers, fmt_uptime(b, sizeof b, st->uptime_s));
         /* 首页"最热温度"磁贴：与上面同一次扫描，值按温度上色，点进去看全部通道。 */
         if (have) {
-            set_txt(s_ui.home_temp_value, "%.0f", hottest);
+            (old_temp ? set_txt : set_num)(s_ui.home_temp_value, "%.0f", hottest);
             set_txt(s_ui.home_temp_unit, "°C");
             set_txt(s_ui.home_temp_name, "%s", sensor);
             lv_obj_set_style_text_color(s_ui.home_temp_value, uk_c(old_temp ? UK_T3 : UK_T1), 0);
             lv_obj_set_style_bg_color(s_ui.home_temp_dot, uk_c(uk_temp_color(hottest)), 0);
         } else {
-            set_txt(s_ui.home_temp_value, "--");
+            set_num(s_ui.home_temp_value, "--");
             set_txt(s_ui.home_temp_unit, "");
             set_txt(s_ui.home_temp_name, "%s", containers);
             lv_obj_set_style_bg_color(s_ui.home_temp_dot, uk_c(UK_T3), 0);
@@ -4003,10 +4019,10 @@ static void refresh(void)
         if (top < st->net.tx_kbs * 1.2f) top = st->net.tx_kbs * 1.2f;
         if (top < 20) top = 20;
         uk_trend_set_range(s_ui.tr_net, 0, (int32_t)top);
-        set_txt(s_ui.net_axis, "量程 0 - %s", fmt_rate(b, sizeof b, top));
-        set_txt(s_ui.tr_tx_lbl, "%s · 峰 %s",
+        set_num(s_ui.net_axis, "量程 0 - %s", fmt_rate(b, sizeof b, top));
+        set_num(s_ui.tr_tx_lbl, "%s · 峰 %s",
                 fmt_rate(c1, sizeof c1, st->net.tx_kbs), fmt_rate(c2, sizeof c2, peak_tx));
-        set_txt(s_ui.tr_rx_lbl, "%s · 峰 %s",
+        set_num(s_ui.tr_rx_lbl, "%s · 峰 %s",
                 fmt_rate(c1, sizeof c1, st->net.rx_kbs), fmt_rate(c2, sizeof c2, peak_rx));
     }
 
@@ -4019,15 +4035,19 @@ static void refresh(void)
     for (int i = 0; i < nnets; i++) {
         const fnos_netif_t *net = st->nnets ? &st->nets[i] : &st->net;
         uk_row_t *row = s_ui.net_rows[i];
-        uk_row_set(row, net->ifname, "", "", "", -1,
-                   net_live && (!net->state[0] || !strcmp(net->state,"up")) ? UK_OK : UK_T3);
-        set_txt(row->name2, "%s下行 %s · 上行 %s", net_live ? "" : "上次 · ", fmt_rate(c1,sizeof c1,net->rx_kbs),
+        if (net->state[0] && net->speed_mbps>0)
+            snprintf(b,sizeof b,"%s · %s · %d Mbps",net->ifname,net->state,net->speed_mbps);
+        else if (net->state[0]) snprintf(b,sizeof b,"%s · %s",net->ifname,net->state);
+        else snprintf(b,sizeof b,"%s",net->ifname);
+        uint32_t led = net_live && (!net->state[0] || !strcmp(net->state,"up")) ? UK_OK : UK_T3;
+        /* Reset on identity/link changes; retain the presented rate on ordinary refresh. */
+        if (strcmp(lv_label_get_text(row->name1),b))
+            uk_row_set(row,b,"","","",-1,led);
+        else if (row->led) lv_obj_set_style_bg_color(row->led,uk_c(led),0);
+        (net_live ? set_num : set_txt)(row->name2, "%s下行 %s · 上行 %s", net_live ? "" : "上次 · ", fmt_rate(c1,sizeof c1,net->rx_kbs),
                                                   fmt_rate(c2,sizeof c2,net->tx_kbs));
         show(lv_obj_get_parent(row->name2),true);
         lv_obj_set_style_text_color(row->name2,uk_c(net_live ? UK_T2 : UK_T3),0);
-        if (net->state[0] && net->speed_mbps>0)
-            set_txt(row->name1,"%s · %s · %d Mbps",net->ifname,net->state,net->speed_mbps);
-        else if (net->state[0]) set_txt(row->name1,"%s · %s",net->ifname,net->state);
     }
     show(s_ui.net_card, nnets>0);
     uk_pool_relayout(s_ui.net_pool, UK_LIST_MIN_WIDTH, false, NULL);
@@ -4054,7 +4074,7 @@ static void refresh(void)
     /* 文案长度受盒宽约束（892px，cjk_12）：40 个中文字 ≈ 890px 就到顶。
        "0.1 / 2.0 GB" 写成 "0.1/2.0G" 省 60px，否则会折行、第二行被卡片裁掉
        （audit_bounds 报 `child out of parent`）。 */
-    set_txt(s_ui.system_note2, "负载 %.2f/%.2f/%.2f · 进程 %d · 交换 %.1f/%.1fG · 运行 %s",
+    set_num(s_ui.system_note2, "负载 %.2f/%.2f/%.2f · 进程 %d · 交换 %.1f/%.1fG · 运行 %s",
             st->cpu.load1, st->cpu.load5, st->cpu.load15, st->cpu.procs,
             st->mem.swap_used_mb / 1024.f, st->mem.swap_total_mb / 1024.f,
             fmt_uptime(c2, sizeof c2, st->uptime_s));
@@ -4067,13 +4087,13 @@ static void refresh(void)
     show(s_ui.temp_empty, st->ntemps == 0); show(s_ui.p3_temp_pool, st->ntemps > 0);
     if (!st->ever_ok) {
         for (int i = 0; i < 4; i++) uk_kpi_set(s_ui.kpi2[i], "-", "", "等待数据", -1);
-        set_txt(s_ui.tr_tx_lbl, "等待数据");
-        set_txt(s_ui.tr_rx_lbl, "等待数据");
-        set_txt(s_ui.net_axis, "无数据");
+        set_num(s_ui.tr_tx_lbl, "等待数据");
+        set_num(s_ui.tr_rx_lbl, "等待数据");
+        set_num(s_ui.net_axis, "无数据");
         /* 从没采到过数据：把图清空，不留上一轮的残影 */
         chart_clear(s_ui.tr_net, 2);
         set_txt(s_ui.system_note, "等待采集，尚无有效快照");
-        set_txt(s_ui.system_note2, "");
+        set_num(s_ui.system_note2, "");
     }
     /* ── P3：容器 / 温度 ───────────────────────────────────────────────
        两张清单都是自适应池：行按需建、多出来的行销毁（不是隐藏 —— 池的条目收集
@@ -4167,14 +4187,14 @@ static void refresh(void)
     } /* A failed grouping keeps copied labels and owned device IDs for retry. */
     /* Visual reference counts are separate from collector health alerts. */
     if (!st->ever_ok) {
-        set_txt(s_ui.temp_hero, "--");
+        set_num(s_ui.temp_hero, "--");
         set_txt(s_ui.temp_hero_unit, "");
         set_txt(s_ui.temp_note, "等待数据");
         set_txt(s_ui.temp_note2, "");
         lv_obj_set_style_bg_color(s_ui.temp_hero_dot, uk_c(UK_T3), 0);
         dot_glow(s_ui.temp_hero_dot, UK_T3, 0);
     } else if (st->ntemps == 0) {
-        set_txt(s_ui.temp_hero, "--");
+        set_num(s_ui.temp_hero, "--");
         set_txt(s_ui.temp_hero_unit, "°C");
         set_txt(s_ui.temp_note, "采集端没有上报温度通道");
         set_txt(s_ui.temp_note2, "看「设置」页的采集段一行：temps 可能是 denied / missing");
@@ -4196,7 +4216,7 @@ static void refresh(void)
         /* 大字沿用桃色卡自带的墨色（夜间由 theme_apply 改成 UK_T2），严重度只由
            左侧信号点承载：彩色数字压在暖底上对比度不够（01-warming-p4 曾掉到 1.13:1）。 */
         const uint32_t hc = st->online ? uk_temp_color(h->c) : UK_T3;
-        set_txt(s_ui.temp_hero, "%.1f", h->c);
+        set_num(s_ui.temp_hero, "%.1f", h->c);
         set_txt(s_ui.temp_hero_unit, "°C");
         lv_obj_set_style_bg_color(s_ui.temp_hero_dot, uk_c(hc), 0);
         dot_glow(s_ui.temp_hero_dot, hc, st->online ? UK_GLOW_OPA : 0);
@@ -4208,14 +4228,14 @@ static void refresh(void)
 
     set_txt(s_ui.agent_detail[0], "%s", st->host[0] ? st->host : "-");
     set_txt(s_ui.agent_detail[1], "%s:%d", FNOS_HOST, FNOS_PORT);
-    set_txt(s_ui.agent_detail[2], "%d ms (状态 %d)", st->http_ms, st->last_status);
-    set_txt(s_ui.agent_detail[3], "%u / %u", (unsigned)st->ok_count, (unsigned)st->fail_count);
+    set_num(s_ui.agent_detail[2], "%d ms (状态 %d)", st->http_ms, st->last_status);
+    set_num(s_ui.agent_detail[3], "%u / %u", (unsigned)st->ok_count, (unsigned)st->fail_count);
     set_txt(s_ui.agent_detail[4], "%s", st->last_err[0] ? st->last_err : "无");
-    set_txt(s_ui.agent_detail[5], "%s", fmt_age(c1, sizeof c1, data_age_ms(st)));
-    set_txt(s_ui.agent_detail[6], "%u KB",
+    set_num(s_ui.agent_detail[5], "%s", fmt_age(c1, sizeof c1, data_age_ms(st)));
+    set_num(s_ui.agent_detail[6], "%u KB",
             (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024));
 
-    set_txt(s_ui.agent_detail[7], st->has_zfs ? "%.1f GB · 命中 %.1f%%" : "未采集到 ZFS 数据", st->zfs_arc_gb, st->zfs_hit_pct);
+    set_num(s_ui.agent_detail[7], st->has_zfs ? "%.1f GB · 命中 %.1f%%" : "未采集到 ZFS 数据", st->zfs_arc_gb, st->zfs_hit_pct);
 
     /* 协议：只在真比本机新时说清楚"哪些东西看不到"，不然用户会以为界面漏了数据。 */
     if (st->proto <= 0)        set_txt(s_ui.agent_detail[8], "未上报（旧版应用，按 v1 读）");
@@ -4482,6 +4502,7 @@ void fnos_ui_create(void)
     s_created = true;
     s_page = -1;
     fnos_ui_set_page(0);
+    overview_layout(); /* Measure placeholder content before the first data tick. */
     night_apply();
 
     lv_timer_create(ui_tick, 500, NULL);

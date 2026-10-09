@@ -52,7 +52,8 @@ ROOTS = {
 # 作为对应入口的 indirect 项的上限参考。
 CALLBACK_TARGETS = ["ui_tick", "pair_btn_cb", "pair_pad_cb", "pair_ok_cb",
                     "pair_cancel_cb", "pair_forget_cb", "diagnostics_cb",
-                    "temp_toggle_cb", "wifi_result_cb", "wifi_connect_cb"]
+                    "temp_toggle_cb", "wifi_result_cb", "wifi_connect_cb",
+                    "number_event", "number_step", "number_destroy"]
 
 
 def load(elf, objdump):

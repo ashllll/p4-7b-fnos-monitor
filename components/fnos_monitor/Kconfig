@@ -57,8 +57,41 @@ menu "fnOS monitor"
             bool "Use gentler page transitions"
             default n
             help
-                Keep finger tracking and navigation, but settle directly on
+                Show numeric updates immediately. Keep finger tracking and navigation, but settle directly on
                 release. Content and selection feedback remain visible.
+
+        config FNOS_UI_NUMBER_BUDGET_BYTES
+            int "Transient numeric glyph layer budget (bytes)"
+            range 1024 524288
+            default 131072
+            help
+                Optional animation falls back to the latest static reading on
+                budget exhaustion. This never limits telemetry or inventory.
+
+        config FNOS_UI_NUMBER_MS
+            int "Numeric transition duration (ms; 0 disables motion)"
+            range 0 500
+            default 250
+
+        config FNOS_UI_NUMBER_STAGGER_MS
+            int "Numeric changed-position stagger (ms)"
+            range 0 100
+            default 50
+
+        config FNOS_UI_NUMBER_MAX_STAGGER_MS
+            int "Maximum total numeric stagger (ms)"
+            range 0 200
+            default 100
+
+        config FNOS_UI_NUMBER_TRAVEL_PCT
+            int "Numeric travel (% of font line height)"
+            range 0 50
+            default 25
+
+        config FNOS_UI_NUMBER_BLUR_PCT
+            int "Numeric sampled blur (% of font line height; 0 disables)"
+            range 0 10
+            default 6
 
         config FNOS_UI_MOTION_STATS
             bool "Log page preparation and render timing"
