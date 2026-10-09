@@ -3419,11 +3419,14 @@ static void inventory_sections(lv_obj_t *container, lv_obj_t **cards,
             2*lv_obj_get_style_border_width(cards[i],0)+
             lv_obj_get_height(lv_obj_get_child(cards[i],0))+lv_obj_get_style_pad_row(cards[i],0);
         int32_t content=lv_font_get_line_height(UK_FONT_CJK_16);
-        int32_t item_min=content, readable=0, overhead=0;
+        int32_t item_min=content, readable=0;
         if (pools[i] && counts[i]) {
             if (lv_obj_has_flag(pools[i],LV_OBJ_FLAG_USER_2))
                 uk_pool_relayout(pools[i],UK_LIST_MIN_WIDTH,false,NULL);
             lv_obj_update_layout(pools[i]);
+            if (lv_obj_has_flag(pools[i],LV_OBJ_FLAG_USER_2) &&
+                lv_obj_get_style_pad_row(pools[i],0)!=UK_ITEM_GAP)
+                lv_obj_set_style_pad_row(pools[i],UK_ITEM_GAP,0);
             /* 三个高度全部由 uk_list_* 按实测条目高与列数算，不读坐标：重排之后
                （尤其是非活动页）条目的 coords 可能还是上一次布局留下的旧值。 */
             item_min=LV_MAX(item_min,uk_list_readable_min(pools[i],1));  /* 完整一行 */
@@ -3432,20 +3435,13 @@ static void inventory_sections(lv_obj_t *container, lv_obj_t **cards,
                此前只有"最高条目"这一条 —— 那只保证一行：p1 的三张卡因此各剩 55px，
                第二行必须滚动才看得到。 */
             readable=uk_list_readable_min(pools[i],uk_list_promise(pools[i]));
-            /* 卡里除池以外的部分按**当前布局**量出来（标题、内外边距、隐藏的空态
-               占位都算进去）。手算的 chrome 会把它们占的行距漏掉 —— p1 的池就这
-               样比"卡最小高"少 8px，第二整行正好被切掉。改用 LV_SIZE_CONTENT 量
-               卡同样不行：grow=1 且 min_height=0 的子对象（空态盒子）会让卡直接
-               塌成标题高，里面的文字反而溢出（audit_bounds 报 child out of parent）。
-               池的 min_height 是硬下限，卡按这个差值把池垫到 readable 高。 */
-            overhead=LV_MAX(lv_obj_get_height(cards[i])-lv_obj_get_height(pools[i]),0);
             lv_obj_set_style_min_height(pools[i],readable,0);
         }
         /* 卡片高度 = 池把**全部条目**摊开需要的高度（content）+ 卡里池以外的实测部分。
            下限仍是池自己的 min_height（readable/item_min：至少完整露出承诺的项数）——
            卡比池的下限还矮的话，池会溢到卡外面去。
            两者都基于实测的 overhead，量不出时退回手算 chrome。 */
-        int32_t other=overhead>0 ? overhead : chrome;
+        int32_t other=chrome;
         want[i/cols]=LV_MAX(want[i/cols],other+LV_MAX(content,LV_MAX(item_min,readable)));
     }
     /* 高度由内容定，不再夹在"父层分到的余量 h"上：内容比一屏高时就把容器撑高，
