@@ -1,5 +1,6 @@
 #pragma once
 #include <stdbool.h>
+#include <stdint.h>
 #include "fnos_data.h"     /* fnos_status_t：fnos_ui_link_reason() 要按值看它的 last_err */
 
 // UIManager（KK_UI 生命周期层）：
@@ -37,6 +38,13 @@ void fnos_ui_request_page(int idx);
 /* 串口 'temp n' 用：切到温度页并展开第 n 台设备的通道网格（同样只置标志）。
    加它是因为"展开态"必须先点一下才看得到，而实机验收时人不在板子跟前。 */
 void fnos_ui_request_temp_expand(int idx);
+
+/* 测量台架（fnos_perf.c 的合成手势）专用：**只读**几何探针，屏幕坐标。
+   加它们是因为"按下→首帧"必须打在真实控件上，而坐标只有 UI 自己知道；
+   要点的导航按钮、要滑的显示区都随分辨率/布局变，脚本里写死坐标等于在测别的东西。
+   对象还没建或索引越界时返回 false。生产代码不调。 */
+bool fnos_ui_nav_center(int idx, int32_t *x, int32_t *y);
+bool fnos_ui_swipe_point(int dir, int32_t *x, int32_t *y);
 
 /* 把采集端写在 last_err 里的失败标签翻成用户能照着处理的一句话；不认识的标签返回 NULL。
    它是 refresh() 里那行"为什么连不上"的唯一来源，**公开出来是为了能被断言**：
