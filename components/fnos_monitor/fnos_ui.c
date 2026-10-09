@@ -1358,10 +1358,15 @@ static void build_p2(lv_obj_t *page)
        成功率=ok/fail），删掉它省下 134px —— 否则网口清单会被 443px 的页底静默裁掉。 */
     s_ui.net_note = NULL;
     s_ui.net_card = ui_card(page, "网口与接口", NULL);
-    uk_card_flex(s_ui.net_card, 1);
+    /* 卡片按内容定高：几个网口就多高（余量全给上面的趋势图，装不下时页级滚动）。
+       以前这里吃满余量 —— 只有一个网口时卡下半截是空的。 */
+    uk_card_flex(s_ui.net_card, 0);
     lv_obj_set_style_min_height(s_ui.net_card,
         2*UK_S3 + 2*lv_font_get_line_height(UK_FONT_CJK_16) + UK_ROW_H, 0);
     s_ui.net_pool = uk_pool_create(uk_card_body(s_ui.net_card), UK_LIST_MIN_WIDTH);
+    /* 卡片按内容定高 ⇒ 池也要按内容定高（见 build_p4 同名注释）。 */
+    lv_obj_set_flex_grow(s_ui.net_pool, 0);
+    lv_obj_set_height(s_ui.net_pool, LV_SIZE_CONTENT);
     uk_pool_stretch(s_ui.net_pool, false);
 }
 
@@ -1573,12 +1578,12 @@ static void build_p3(lv_obj_t *page)
 /* ── P4: device summaries; every reported channel is available on demand. ── */
 static void build_p4(lv_obj_t *page)
 {
-    /* v12：本页不再算坐标——摘要卡按内容自然高，通道卡吃掉剩余高度，
-       通道的分列与行高由自适应池解（屏幕多大就用多少）。 */
-    lv_obj_set_flex_flow(page, LV_FLEX_FLOW_COLUMN);   /* 页 = flex 列 */
-    lv_obj_set_style_pad_all(page, 0, 0);             /* shell owns inset */
-    lv_obj_set_style_pad_row(page, UK_CARD_GAP, 0);
-    lv_obj_clear_flag(page, LV_OBJ_FLAG_SCROLLABLE);
+    /* v13：本页不再算坐标——两张卡都按内容自然高（设备多高卡就多高），分列与行高
+       由自适应池解（屏幕多大就用多少）。卡片按内容定高之后，一屏装不下就是常态，
+       页必须和其它页一样可滚，否则被页边界裁掉的那截连滚都滚不到
+       （设备多时温度卡比整页还高）。以前这里手摆 flex、显式关掉页滚动，
+       是"卡片永远吃满一屏"时代的写法。 */
+    ui_page(page);
     lv_obj_t *note = ui_card(page, NULL, NULL);
     uk_card_flex(note, 0);                       /* 摘要卡不抢空间：内容多高就多高 */
     lv_obj_t *nbody = uk_card_body(note);
@@ -1600,7 +1605,9 @@ static void build_p4(lv_obj_t *page)
     lv_obj_set_width(s_ui.temp_note2, LV_PCT(100));
 
     s_ui.temp_card = ui_card(page, "设备温度", "点按设备查看通道");
-    uk_card_flex(s_ui.temp_card, 1);             /* 卡片吃满余量 */
+    /* 卡片按内容定高：装多少台设备就多高（页级滚动接管多出来的部分）。
+       以前这里吃满余量，设备少时卡下半截是空的 —— 边界不跟着内容走。 */
+    uk_card_flex(s_ui.temp_card, 0);
     lv_obj_t *body = uk_card_body(s_ui.temp_card);
 
     /* 空态：池外的一条提示（池里没有行时它就是卡片里唯一的内容） */
@@ -1612,6 +1619,10 @@ static void build_p4(lv_obj_t *page)
 
     /* Column count follows available content width and configured preferred width. */
     s_ui.temp_pool = uk_pool_create(body, UK_LIST_MIN_WIDTH);
+    /* 卡片按内容定高 ⇒ 池也必须按内容定高（grow 0）：池的 flex_grow 1 在
+       "按内容定高"的卡里分不到余量，会被算成 0 高（同 uk_card_flex 的注释）。 */
+    lv_obj_set_flex_grow(s_ui.temp_pool, 0);
+    lv_obj_set_height(s_ui.temp_pool, LV_SIZE_CONTENT);
     /* 一台设备一块、块内还能展开通道（展开后一块 200~260px，比视口还高）——
        这类可变高复合块只承诺"完整露出一块"，不能按行承诺两项。 */
     uk_list_mark_one(s_ui.temp_pool);
@@ -1787,7 +1798,9 @@ static void build_p5(lv_obj_t *page)
     panel_peach(s_ui.alert_page_sum);
 
     lv_obj_t *card = ui_card(page, "告警与事件", NULL);
-    uk_card_flex(card, 1);
+    /* 卡片按明细内容定高：几条告警就多高，不再吃满整页（明细再多由页级滚动接管）。
+       卡体仍是滚动列 —— 池要求条目等高等宽，而一条告警可能折成好几行。 */
+    uk_card_flex(card, 0);
     {
         lv_obj_t *body = uk_card_body(card);
         lv_obj_add_flag(body, LV_OBJ_FLAG_SCROLLABLE);
@@ -3392,10 +3405,8 @@ static void inventory_sections(lv_obj_t *container, lv_obj_t **cards,
     if (h<min_sum) cols=LV_MIN(n,LV_MAX(1,(w+gap)/(UK_LIST_MIN_WIDTH+2*UK_S3+gap)));
     int rows=(n+cols-1)/cols;
     int32_t *want=uk_alloc((size_t)rows*sizeof *want);
-    int32_t *minimum=uk_alloc((size_t)rows*sizeof *minimum);
-    if (!want || !minimum) { lv_free(want); lv_free(minimum); return; }
+    if (!want) return;
     memset(want,0,(size_t)rows*sizeof *want);
-    memset(minimum,0,(size_t)rows*sizeof *minimum);
     for (int i=0;i<n;i++) {
         int32_t cw=(w-gap*(cols-1))/cols;
         if (i==n-1 && n%cols==1) cw=w;
@@ -3429,23 +3440,18 @@ static void inventory_sections(lv_obj_t *container, lv_obj_t **cards,
             overhead=LV_MAX(lv_obj_get_height(cards[i])-lv_obj_get_height(pools[i]),0);
             lv_obj_set_style_min_height(pools[i],readable,0);
         }
-        /* ① want：池把全部条目都摊开（content）时卡要多高；
-           ② minimum：池只承诺 readable 行时卡要多高。
+        /* 卡片高度 = 池把**全部条目**摊开需要的高度（content）+ 卡里池以外的实测部分。
+           下限仍是池自己的 min_height（readable/item_min：至少完整露出承诺的项数）——
+           卡比池的下限还矮的话，池会溢到卡外面去。
            两者都基于实测的 overhead，量不出时退回手算 chrome。 */
         int32_t other=overhead>0 ? overhead : chrome;
-        int r=i/cols;
-        minimum[r]=LV_MAX(minimum[r],other+LV_MAX(item_min,readable));
-        want[r]=LV_MAX(want[r],other+content);
+        want[i/cols]=LV_MAX(want[i/cols],other+LV_MAX(content,LV_MAX(item_min,readable)));
     }
-    int32_t min_total=(rows-1)*rowgap,desired=(rows-1)*rowgap;
-    for (int r=0;r<rows;r++) { min_total+=minimum[r]; desired+=want[r]; }
-    int32_t target=LV_MAX(min_total,LV_MIN(h,desired));
-    int32_t remaining=target-min_total,extra=desired-min_total;
-    for (int i=0;i<n;i++) {
-        int r=i/cols;
-        int32_t height=minimum[r]+(extra>0 ? (int64_t)remaining*(want[r]-minimum[r])/extra : 0);
-        lv_obj_set_height(cards[i],height);
-    }
+    /* 高度由内容定，不再夹在"父层分到的余量 h"上：内容比一屏高时就把容器撑高，
+       多出来的那截交给页级滚动（见下面那段注释）。 */
+    int32_t target=(rows-1)*rowgap;
+    for (int r=0;r<rows;r++) target+=want[r];
+    for (int i=0;i<n;i++) lv_obj_set_height(cards[i],want[i/cols]);
     /* 内容比视口高时**不能**留在 grow=1：父层会把超出部分裁掉，而页级滚动的范围是
        按容器自己的高度算的 —— 被裁的那截连滚都滚不到（p3 的硬件温度卡就这样少露
        37px，四项几何审计因为"父可滚动"跳过了这一层，一直报不出来）。钉在 target
@@ -3453,7 +3459,7 @@ static void inventory_sections(lv_obj_t *container, lv_obj_t **cards,
     lv_obj_set_flex_grow(container,0);
     lv_obj_set_height(container,target);
     lv_obj_update_layout(container);
-    lv_free(want); lv_free(minimum);
+    lv_free(want);
 }
 
 static void storage_layout(void)
@@ -3715,8 +3721,13 @@ static void alert_health_sync(const fnos_status_t *st)
 {
     if (!s_ui.alert_health) return;
     const bool on = st->ever_ok && st->online && st->nalerts == 0;
-    /* "暂无告警事件"那句：体检块露面时收成一行让位，单独出现时仍整卡居中。 */
-    if (s_ui.alert_page_empty) lv_obj_set_flex_grow(s_ui.alert_page_empty, on ? 0 : 1);
+    /* "暂无告警事件"那句：体检块露面时收成一行让位，单独出现时仍占一行。
+       卡片按内容定高 ⇒ 空态盒子不能靠 flex_grow 撑高（分不到余量会被算成 0 高，
+       字全跑到卡外），得像系统页告警卡那样给它一个真实高度。 */
+    if (s_ui.alert_page_empty) {
+        lv_obj_set_flex_grow(s_ui.alert_page_empty, 0);
+        lv_obj_set_height(s_ui.alert_page_empty, lv_font_get_line_height(UK_FONT_CJK_16));
+    }
     show(s_ui.alert_health, on);
     if (!on) return;
 
