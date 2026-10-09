@@ -50,7 +50,7 @@ static struct {
     int32_t x0, y0, x, y, span;
     int step, steps, dir;
     bool pressed, press_seen, rel_seen;
-    bool wait_first, wait_rel, frame_arm;
+    bool wait_first, wait_rel, frame_arm, wait_p2rs;
     int64_t press_us, release_us;
     uint32_t frames;
 } s_run;
@@ -61,7 +61,16 @@ static uint32_t s_iv[PF_SAMPLES];    /* 相邻帧间隔：拖动跟手 / 稳态�
 static uint32_t s_tick[PF_SAMPLES];  /* ui_tick 总耗时（数据刷新 + 图表 + 行重建） */
 static int s_np2f, s_nr2f, s_niv, s_ntick;
 
+/* 帧的三段分解（按下→首帧 与 拖动帧间隔 都只是一个总数，拆开才知道该优化哪一段）：
+   p2rs = 按下 → RENDER_START（等采样/等刷新周期/等上一次 flush）
+   rs2rr= RENDER_START → RENDER_READY（真正的绘制 + flush 提交）
+   rr2rs= 上一帧 RENDER_READY → 下一帧 RENDER_START（帧间空档：刷新定时器周期 + flush 等待） */
+static uint32_t s_p2rs[PF_SAMPLES], s_rs2rr[PF_SAMPLES], s_rr2rs[PF_SAMPLES];
+static int s_np2rs, s_nrs2rr, s_nrr2rs;
+
 static int64_t s_last_frame_us;
+static int64_t s_frame_start_us, s_last_ready_us;
+static bool s_have_ready;
 
 /* ---------------------------------------------------------------- 统计 */
 
@@ -158,6 +167,7 @@ static void pf_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
         s_run.press_seen = true;
         s_run.press_us   = esp_timer_get_time();
         s_run.wait_first = true;
+        s_run.wait_p2rs  = true;
         s_run.frame_arm  = true;
     } else if (!s_run.pressed && s_run.press_seen && !s_run.rel_seen) {
         s_run.rel_seen   = true;
@@ -176,17 +186,35 @@ static void pf_detach(void)
 
 /* ---------------------------------------------------------------- 帧事件 */
 
+static void pf_start_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_RENDER_START) return;
+    int64_t now = esp_timer_get_time();
+    s_frame_start_us = now;
+    if (!s_run.active) { s_last_ready_us = 0; s_have_ready = false; return; }
+    if (s_run.frame_arm && s_have_ready && s_last_ready_us) {
+        pf_push(s_rr2rs, &s_nrr2rs, (uint32_t)(now - s_last_ready_us));   /* 与 iv 同一批样本 */
+    }
+    if (s_run.wait_p2rs) { s_run.wait_p2rs = false; pf_push(s_p2rs, &s_np2rs, (uint32_t)(now - s_run.press_us)); }
+}
+
 static void pf_render_cb(lv_event_t *e)
 {
     if (lv_event_get_code(e) != LV_EVENT_RENDER_READY) return;
     int64_t now = esp_timer_get_time();
-    if (!s_run.active) { s_last_frame_us = now; return; }
+    if (!s_run.active) { s_last_frame_us = now; s_frame_start_us = 0; return; }
 
     s_run.frames++;
     if (s_run.wait_first) { s_run.wait_first = false; pf_push(s_p2f, &s_np2f, (uint32_t)(now - s_run.press_us)); }
     if (s_run.wait_rel)   { s_run.wait_rel   = false; pf_push(s_r2f, &s_nr2f, (uint32_t)(now - s_run.release_us)); }
     if (s_run.frame_arm && s_last_frame_us) pf_push(s_iv, &s_niv, (uint32_t)(now - s_last_frame_us));
+    if (s_frame_start_us) {
+        if (s_run.frame_arm) pf_push(s_rs2rr, &s_nrs2rr, (uint32_t)(now - s_frame_start_us));
+        s_frame_start_us = 0;
+    }
     s_last_frame_us = now;
+    s_last_ready_us = now;
+    s_have_ready    = true;
 }
 
 /* ---------------------------------------------------------------- 报告 */
@@ -202,6 +230,8 @@ static void pf_report(void)
     printf("[bench] kind=%s page=%d cycles=%d misses=%d p2f_n=%d p2f_p50_us=%u p2f_p95_us=%u p2f_max_us=%u"
            " r2f_n=%d r2f_p50_us=%u r2f_p95_us=%u r2f_max_us=%u"
            " iv_n=%d iv_p50_us=%u iv_p95_us=%u iv_max_us=%u frames=%u wall_ms=%u fps_avg=%.1f fps_p50=%.1f"
+           " p2rs_n=%d p2rs_p50_us=%u rs2rr_n=%d rs2rr_p50_us=%u rs2rr_p95_us=%u"
+           " rr2rs_n=%d rr2rs_p50_us=%u rr2rs_p95_us=%u"
            " tick_n=%d tick_p50_us=%u tick_p95_us=%u tick_max_us=%u cpu_lvgl=%.1f cpu_idle=%.1f\n",
            s_run.kind == PF_TAP ? "tap" : (s_run.kind == PF_SWIPE ? "swipe" : "idle"),
            s_run.page, s_run.cycles, s_run.misses,
@@ -210,6 +240,9 @@ static void pf_report(void)
            s_niv, iv50, pf_pct(s_iv, s_niv, 95), pf_max(s_iv, s_niv),
            s_run.frames, wall_ms, wall_ms ? 1000.0 * s_run.frames / wall_ms : 0.0,
            iv50 ? 1000000.0 / iv50 : 0.0,
+           s_np2rs, pf_pct(s_p2rs, s_np2rs, 50),
+           s_nrs2rr, pf_pct(s_rs2rr, s_nrs2rr, 50), pf_pct(s_rs2rr, s_nrs2rr, 95),
+           s_nrr2rs, pf_pct(s_rr2rs, s_nrr2rs, 50), pf_pct(s_rr2rs, s_nrr2rs, 95),
            s_ntick, pf_pct(s_tick, s_ntick, 50), pf_pct(s_tick, s_ntick, 95), pf_max(s_tick, s_ntick),
            total ? 100.0 * lvgl / total : 0.0, total ? 100.0 * idle / total : 0.0);
     fflush(stdout);
@@ -329,6 +362,10 @@ static void pf_start(void)
     memset(s_iv, 0, sizeof s_iv);
     memset(s_tick, 0, sizeof s_tick);
     s_np2f = s_nr2f = s_niv = s_ntick = 0;
+    s_np2rs = s_nrs2rr = s_nrr2rs = 0;
+    s_frame_start_us = 0;
+    s_last_ready_us = 0;
+    s_have_ready = false;
     s_last_frame_us = 0;
 
     pf_detach();   /* 上一轮留下的挂载先摘干净，否则会把 pf_read_cb 当成"真实回调"套娃 */
@@ -440,7 +477,10 @@ void fnos_perf_init(void)
     done = true;
 
     lv_display_t *disp = lv_display_get_default();
-    if (disp) lv_display_add_event_cb(disp, pf_render_cb, LV_EVENT_RENDER_READY, NULL);
+    if (disp) {
+        lv_display_add_event_cb(disp, pf_render_cb, LV_EVENT_RENDER_READY, NULL);
+        lv_display_add_event_cb(disp, pf_start_cb, LV_EVENT_RENDER_START, NULL);
+    }
     s_script_timer = lv_timer_create(pf_script_tick, PF_STEP_MS, NULL);
     lv_timer_pause(s_script_timer);
     lv_timer_create(pf_req_poll, PF_REQ_POLL_MS, NULL);

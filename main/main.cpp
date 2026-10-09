@@ -101,6 +101,15 @@ extern "C" void app_main(void)
     bsp_display_cfg_t cfg = {
         .lv_adapter_cfg = lv_cfg,
         .rotation = ESP_LV_ADAPTER_ROTATE_180,
+        // 显示路径 A/B 都试过、都不可用（别重复踩）：
+        //  · DOUBLE_DIRECT：LVGL 直渲面板整帧缓冲、flush 只切地址，但本板起不来 ——
+        //    适配器 LVGL 任务在首帧 flush 里等 VSYNC 通知，一直持锁 → app_main 的
+        //    esp_lv_adapter_lock 超时（"display lock failed"），UI 根本没建出来。
+        //  · NONE：flush 只按脏区 draw_bitmap（面积成正比、没有整帧 blit），但适配器
+        //    明确拒绝旋转："rotation not supported under TEAR_AVOID_MODE_NONE"，
+        //    本板要 ROTATE_180。
+        // TRIPLE_PARTIAL 每帧固定成本 = 局部区拷进中间缓冲 + 整帧 blit（1024×600×2B ×2），
+        // 实测约 8ms/帧且与内容无关（轻页 22.6ms vs 重页 26.5ms，tick 差 8 倍而帧成本只差 17%）。
         .tear_avoid_mode = ESP_LV_ADAPTER_TEAR_AVOID_MODE_DEFAULT_MIPI_DSI,
         // 触摸不做任何镜像：adapter 只旋转 framebuffer，输入路径没有坐标变换，
         // 官方示例的 mirror_x/mirror_y 在本板 + ROTATE_180 下等于再做一次 180° 翻转。
