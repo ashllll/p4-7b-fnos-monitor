@@ -570,7 +570,9 @@ static lv_display_t *bsp_display_lcd_init(const bsp_display_cfg_t *cfg)
             .hor_res = BSP_LCD_H_RES,
             .ver_res = BSP_LCD_V_RES,
             /* 50 行时一次全屏重绘要 12 个切片（每片 100 KB），120 行降到 5 片：
-               切片越少，每帧的 flush 次数与"画-送"之间的空转越少。仍走 PSRAM。 */
+               切片越少，每帧的 flush 次数与"画-送"之间的空转越少。仍走 PSRAM。
+               A/B（2026-10-10）：600 行（单切片）跑不动 bench —— 拖动用例 180s 内
+               不出 [bench] 行，且 [dbg-flush] 的 rot/prep/blit/dirty 与 120 行无异。 */
             .buffer_height = 120,
             /* 本地补丁（本工程唯一改动）：官方 BSP 把 LVGL 绘制缓冲写死在内部 RAM，
              * partial 模式下每块 1024x50x2 = 100 KB，显示初始化一次就吃掉 ~142 KB
