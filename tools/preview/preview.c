@@ -623,10 +623,10 @@ static unsigned audit_motion_page_bounds(lv_obj_t *root)
     return found;
 }
 
-/* 清单可读性审计：清单容器（uk_list_is）的高度必须够它承诺的行数 ——
+/* 清单可读性审计：清单容器（uk_list_is）的高度必须够它**自己承诺的项数** ——
    判据与布局用的是同一条式子（uk_list_readable_min）。
-   池承诺 UK_LIST_MIN_ROWS 行；非池的清单容器（首页那条紧凑对比条）
-   只承诺一整行，所以按 1 行判。
+   承诺几项由容器带（uk_list_promise）：池和滚动列默认 UK_LIST_MIN_ROWS 项，
+   可变高复合块清单（温度页设备池）与首页紧凑对比条明确降到一整项。
    这条不变量是"卡片太小 / 上下过窄"的**正面**判据：几何审计只查"跑出父对象"，
    而"池里只露出一行"完全合法（内容多时本来就允许滚动），所以 p1 三张卡各只剩
    一行 55px、首页卷池只有 21px（比一行还矮）时，四个审计一个都没报。 */
@@ -634,23 +634,28 @@ static void audit_list_floors(lv_obj_t *o)
 {
     if (lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return;
     if (uk_list_is(o)) {
-        int32_t rows = uk_pool_is(o) ? UK_LIST_MIN_ROWS : 1;
-        int32_t floor_h = uk_list_readable_min(o, rows);
+        int32_t items = uk_list_promise(o);
+        int32_t floor_h = uk_list_readable_min(o, items);
+        /* 块清单（承诺一整项）里，单项本身就比容器高时连一整项都放不下 —— 这是
+           温度页设备块展开态的合法形态（块内通道多、比视口高，靠滚动看全），免检。
+           只承诺一项才免检：行清单承诺两项，条目只是"比容器高一点点"仍是违规（p0 曾
+           把 25px 的行塞进 21px 的池）。 */
+        if (items == 1 && uk_list_item_max(o) > lv_obj_get_height(o)) return;
         if (floor_h > 0 && lv_obj_get_height(o) < floor_h) {
             lv_area_t a;
             lv_obj_get_coords(o, &a);
             lv_obj_t *parent = lv_obj_get_parent(o);
-            fprintf(stderr, "list too short: pool=[%d,%d]-[%d,%d] h=%d floor=%d rows=%d items=%u\n",
+            fprintf(stderr, "list too short: list=[%d,%d]-[%d,%d] h=%d floor=%d items=%d/%u\n",
                     (int)a.x1, (int)a.y1, (int)a.x2, (int)a.y2, (int)lv_obj_get_height(o),
-                    (int)floor_h, (int)rows, (unsigned)lv_obj_get_child_count(o));
+                    (int)floor_h, (int)items, (unsigned)lv_obj_get_child_count(o));
             if (parent) {
                 lv_area_t pa;
                 lv_obj_get_coords(parent, &pa);
                 fprintf(stderr, "  parent=[%d,%d]-[%d,%d] h=%d\n",
                         (int)pa.x1, (int)pa.y1, (int)pa.x2, (int)pa.y2, (int)lv_obj_get_height(parent));
             }
-            fprintf(stderr, "  → 清单容器至少要完整露出 %d 行（行高实测 %d px，含行距）\n",
-                    (int)rows, (int)((floor_h - (rows - 1) * lv_obj_get_style_pad_row(o, 0)) / rows));
+            fprintf(stderr, "  → 清单容器至少要完整露出 %d 项（项高实测 %d px，含行距）\n",
+                    (int)items, (int)((floor_h - (items - 1) * lv_obj_get_style_pad_row(o, 0)) / items));
             if (getenv("PREVIEW_AUDIT_ALL")) s_audit_fail++; else abort();
         }
         return;   /* 池里不会再套池 */

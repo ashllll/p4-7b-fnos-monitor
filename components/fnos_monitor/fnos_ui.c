@@ -497,6 +497,7 @@ static lv_obj_t *scroll_col(lv_obj_t *parent)
     lv_obj_set_style_border_width(c, 0, 0);
     lv_obj_set_style_pad_all(c, 0, 0);
     lv_obj_set_style_pad_row(c, UK_S3, 0);
+    uk_list_mark(c);   /* 滚动列也是清单：默认承诺 UK_LIST_MIN_ROWS 项 */
     lv_obj_set_style_pad_right(c, UK_SCROLL_INSET, 0);
     lv_obj_set_style_min_height(c, 0, 0);
     lv_obj_set_flex_flow(c, LV_FLEX_FLOW_COLUMN);
@@ -1189,7 +1190,7 @@ static void build_p0(lv_obj_t *page)
        实测条目高算，这里只是"还没数据"时的占位 —— 建树时池里还没有条目。 */
     int32_t list_min = lv_font_get_line_height(UK_FONT_CJK_12) + UK_S1 + UK_BAR_H;
     lv_obj_set_style_min_height(s_ui.overview_volumes, list_min, 0);
-    uk_list_mark(s_ui.overview_volumes);
+    uk_list_mark_one(s_ui.overview_volumes);
     lv_obj_set_style_pad_row(s_ui.overview_volumes, UK_S1, 0);
     lv_obj_set_style_pad_right(s_ui.overview_volumes, UK_SCROLL_W + UK_S1, 0);
     lv_obj_set_style_width(s_ui.overview_volumes, UK_SCROLL_W, LV_PART_SCROLLBAR);
@@ -1282,7 +1283,6 @@ static void build_p1(lv_obj_t *page)
         lv_obj_t *body = uk_card_body(s_ui.vol_card);
         s_ui.vol_empty = empty_box(body, "未采集到存储卷", NULL);
         s_ui.vol_pool = uk_pool_create(body, UK_LIST_MIN_WIDTH);
-        uk_list_mark(s_ui.vol_pool);   /* 行清单：承诺完整露出 UK_LIST_MIN_ROWS 行 */
         lv_obj_set_style_pad_row(s_ui.vol_pool, UK_ITEM_GAP, 0);
         uk_pool_stretch(s_ui.vol_pool, false);
         s_ui.vol_made = 0;
@@ -1294,7 +1294,6 @@ static void build_p1(lv_obj_t *page)
         lv_obj_t *body = uk_card_body(s_ui.raid_card);
         s_ui.raid_empty = empty_box(body, "未采集到阵列", NULL);
         s_ui.raid_pool = uk_pool_create(body, UK_LIST_MIN_WIDTH);
-        uk_list_mark(s_ui.raid_pool);
         lv_obj_set_style_pad_row(s_ui.raid_pool, UK_ITEM_GAP, 0);
         uk_pool_stretch(s_ui.raid_pool, false);
         s_ui.raid_made = 0;
@@ -1308,7 +1307,6 @@ static void build_p1(lv_obj_t *page)
         lv_obj_t *body = uk_card_body(s_ui.disk_card);
         s_ui.disk_empty = empty_box(body, "未采集到磁盘活动", NULL);
         s_ui.disk_pool = uk_pool_create(body, UK_LIST_MIN_WIDTH);
-        uk_list_mark(s_ui.disk_pool);
         lv_obj_set_style_pad_row(s_ui.disk_pool, UK_ITEM_GAP, 0);
         uk_pool_stretch(s_ui.disk_pool, false);
         s_ui.disk_made = 0;
@@ -1470,7 +1468,6 @@ static void build_p3(lv_obj_t *page)
         lv_obj_t *body = uk_card_body(s_ui.dock_card);
         s_ui.dock_empty = empty_box(body, "等待容器采集", &s_ui.dock_empty_label);
         s_ui.dock_pool = uk_pool_create(body, UK_LIST_MIN_WIDTH);
-        uk_list_mark(s_ui.dock_pool);
         lv_obj_set_style_pad_row(s_ui.dock_pool, UK_ITEM_GAP, 0);
         uk_pool_stretch(s_ui.dock_pool, false);
         s_ui.dock_made = 0;
@@ -1483,7 +1480,6 @@ static void build_p3(lv_obj_t *page)
         lv_obj_t *body = uk_card_body(s_ui.p3_temp_card);
         s_ui.temp_empty = empty_box(body, "未采集到温度", NULL);
         s_ui.p3_temp_pool = uk_pool_create(body, UK_LIST_MIN_WIDTH);
-        uk_list_mark(s_ui.p3_temp_pool);
         lv_obj_set_style_pad_row(s_ui.p3_temp_pool, UK_ITEM_GAP, 0);
         uk_pool_stretch(s_ui.p3_temp_pool, false);
         s_ui.p3_temp_made = 0;
@@ -1616,6 +1612,9 @@ static void build_p4(lv_obj_t *page)
 
     /* Column count follows available content width and configured preferred width. */
     s_ui.temp_pool = uk_pool_create(body, UK_LIST_MIN_WIDTH);
+    /* 一台设备一块、块内还能展开通道（展开后一块 200~260px，比视口还高）——
+       这类可变高复合块只承诺"完整露出一块"，不能按行承诺两项。 */
+    uk_list_mark_one(s_ui.temp_pool);
     lv_obj_set_style_pad_row(s_ui.temp_pool, UK_CARD_GAP, 0);
     /* 一块一台设备、块高参差：不要让池把余量平分进每块（那会在块与块之间留大片空白） */
     uk_pool_stretch(s_ui.temp_pool, false);
@@ -1807,6 +1806,7 @@ static void build_p5(lv_obj_t *page)
             s_ui.alert_page_col[g] = uk_col(body, 0);
             lv_obj_set_width(s_ui.alert_page_col[g], LV_PCT(100));
             lv_obj_set_style_pad_row(s_ui.alert_page_col[g], UK_S2, 0);
+            uk_list_mark(s_ui.alert_page_col[g]);   /* 三条一组的告警列也是清单 */
             s_ui.alert_page_made[g] = 0;
         }
         s_ui.alert_page_empty = empty_box(body, "暂无告警事件", NULL);
@@ -1817,6 +1817,7 @@ static void build_p5(lv_obj_t *page)
         s_ui.alert_health = uk_col(body, 0);
         lv_obj_set_width(s_ui.alert_health, LV_PCT(100));
         lv_obj_set_style_pad_row(s_ui.alert_health, UK_S1, 0);
+        uk_list_mark(s_ui.alert_health);            /* 健康态的四行维度表 */
         lv_obj_add_flag(s_ui.alert_health, LV_OBJ_FLAG_HIDDEN);
         {
             static const char *const hname[] = { "存储容量", "温度", "容器", "采集" };
@@ -3415,10 +3416,10 @@ static void inventory_sections(lv_obj_t *container, lv_obj_t **cards,
                （尤其是非活动页）条目的 coords 可能还是上一次布局留下的旧值。 */
             item_min=LV_MAX(item_min,uk_list_readable_min(pools[i],1));  /* 完整一行 */
             content =uk_list_content_min(pools[i]);                       /* 全部摊开 */
-            /* 可读性下限：清单池至少完整露出 UK_LIST_MIN_ROWS 行（见 uk_list_readable_min）。
+            /* 可读性下限：清单池至少完整露出它承诺的项数（见 uk_list_readable_min）。
                此前只有"最高条目"这一条 —— 那只保证一行：p1 的三张卡因此各剩 55px，
                第二行必须滚动才看得到。 */
-            readable=uk_list_readable_min(pools[i],UK_LIST_MIN_ROWS);
+            readable=uk_list_readable_min(pools[i],uk_list_promise(pools[i]));
             /* 卡里除池以外的部分按**当前布局**量出来（标题、内外边距、隐藏的空态
                占位都算进去）。手算的 chrome 会把它们占的行距漏掉 —— p1 的池就这
                样比"卡最小高"少 8px，第二整行正好被切掉。改用 LV_SIZE_CONTENT 量
@@ -3548,12 +3549,13 @@ static void overview_layout(void)
         lv_obj_set_style_min_height(lv_obj_get_parent(resources), minimum, 0);
     }
 
-    /* 首页卷池：紧凑对比条（一格宽、和另外两张卡并列），只承诺"完整露出一行"
-       —— 两行会把这排磁贴顶高 29px、把上面那排卡挤出可视区。它不写常数：
-       下限按实测条目高算（曾按 "12px 行 + 4 + 条高" 手算成 21px，比一行还矮）。 */
+    /* 首页卷池：紧凑对比条（一格宽、和另外两张卡并列），只承诺"完整露出一项"
+       （uk_list_mark_one）—— 两行会把这排磁贴顶高 29px、把上面那排卡挤出可视区。
+       它不写常数：下限按实测条目高算（曾按 "12px 行 + 4 + 条高" 手算成 21px，比一行还矮）。 */
     if (s_ui.overview_volumes && !lv_obj_has_flag(s_ui.overview_volumes, LV_OBJ_FLAG_HIDDEN)) {
         lv_obj_update_layout(s_ui.overview_volumes);
-        int32_t readable = uk_list_readable_min(s_ui.overview_volumes, 1);
+        int32_t readable = uk_list_readable_min(s_ui.overview_volumes,
+                                                uk_list_promise(s_ui.overview_volumes));
         if (readable > 0) lv_obj_set_style_min_height(s_ui.overview_volumes, readable, 0);
     }
 

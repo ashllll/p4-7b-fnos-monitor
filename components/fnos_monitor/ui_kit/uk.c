@@ -527,6 +527,7 @@ lv_obj_t *uk_pool_create(lv_obj_t *parent, int32_t min_col_w)
     lv_obj_set_flex_align(p, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     lv_obj_set_style_min_height(p, 0, 0);
     lv_obj_add_flag(p, LV_OBJ_FLAG_USER_2);
+    uk_list_mark(p);   /* 池建出来就是清单：默认承诺 UK_LIST_MIN_ROWS 项，见 uk_list_mark_one */
     uk_pool_t *st = lv_malloc(sizeof *st);
     LV_ASSERT_MALLOC(st);
     memset(st, 0, sizeof *st);
@@ -546,29 +547,43 @@ int32_t uk_pool_shown(lv_obj_t *pool)
 { uk_pool_t *st=lv_obj_get_user_data(pool); return st ? st->shown : 0; }
 
 /* ── 清单可读性下限 ───────────────────────────────────────────────────
-   只有调用方显式 uk_list_mark() 的容器才按"行清单"处理。池**不**自动打标：温度页的
-   设备块是可变高的复合块，一块就能合法地比视口还高，对它承诺"两行"没有意义。 */
-void uk_list_mark(lv_obj_t *list) { if (list) lv_obj_add_flag(list, UK_LIST_FLAG); }
+   池和滚动列建出来就带标记（见 uk_pool_create / fnos_ui.c 的 scroll_col），
+   默认承诺 UK_LIST_MIN_ROWS 项；条目是可变高复合块的清单用 uk_list_mark_one()
+   把承诺降到一整项。 */
+void uk_list_mark(lv_obj_t *list)     { if (list) lv_obj_add_flag(list, UK_LIST_FLAG); }
+void uk_list_mark_one(lv_obj_t *list) { if (list) lv_obj_add_flag(list, UK_LIST_FLAG | UK_LIST_ONE_FLAG); }
 bool uk_list_is(lv_obj_t *o) { return o && lv_obj_has_flag(o, UK_LIST_FLAG); }
 bool uk_pool_is(lv_obj_t *o) { return o && lv_obj_has_flag(o, LV_OBJ_FLAG_USER_2); }
+int32_t uk_list_promise(lv_obj_t *list)
+{ return (list && lv_obj_has_flag(list, UK_LIST_ONE_FLAG)) ? 1 : UK_LIST_MIN_ROWS; }
 
-/* 至少完整露出前面 rows 行需要多高。只用**条目高度**和列数算，不用坐标：
-   重排之后（尤其是非活动页）条目的 coords 可能还是上一次布局的旧值，而高度是新的。
-   行高按"最高条目"保守取，行距取容器当前行距（viewport_snap 撑大过就算撑大后的）。 */
-int32_t uk_list_readable_min(lv_obj_t *list, int32_t rows)
+/* 清单里最高的一条（没有可见条目时 0）。单项就比视口高的块清单靠它豁免下限审计。 */
+int32_t uk_list_item_max(lv_obj_t *list)
 {
-    if (!list || rows <= 0) return 0;
-    int32_t item=0, seen=0;
+    int32_t item=0;
+    if (!list) return 0;
     for (uint32_t i=0;i<lv_obj_get_child_count(list);i++) {
         lv_obj_t *it=lv_obj_get_child(list,i);
         if (lv_obj_has_flag(it,LV_OBJ_FLAG_HIDDEN)) continue;
         item=LV_MAX(item,lv_obj_get_height(it));
-        seen++;
     }
-    if (!seen) return 0;
+    return item;
+}
+
+/* 至少完整露出前面 items 项需要多高。只用**条目高度**和列数算，不用坐标：
+   重排之后（尤其是非活动页）条目的 coords 可能还是上一次布局的旧值，而高度是新的。
+   项高按"最高条目"保守取，行距取容器当前行距（viewport_snap 撑大过就算撑大后的）。
+   条目本来就没那么多项时返回内容总高 —— 空清单返回 0，不会误报。 */
+int32_t uk_list_readable_min(lv_obj_t *list, int32_t items)
+{
+    if (!list || items <= 0) return 0;
+    int32_t item=uk_list_item_max(list), seen=0;
+    if (!item) return 0;
+    for (uint32_t i=0;i<lv_obj_get_child_count(list);i++)
+        if (!lv_obj_has_flag(lv_obj_get_child(list,i),LV_OBJ_FLAG_HIDDEN)) seen++;
     int32_t cols=uk_pool_is(list) ? LV_MAX(1, uk_pool_cols(list)) : 1;
     int32_t total=(seen+cols-1)/cols;
-    int32_t want=LV_MIN(rows,total);
+    int32_t want=LV_MIN(items,total);
     return want*item+(want-1)*lv_obj_get_style_pad_row(list,0);
 }
 

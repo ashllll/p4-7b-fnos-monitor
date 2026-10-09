@@ -136,18 +136,30 @@ void uk_pool_force_cols(lv_obj_t *pool, int32_t cols);
    （容器装得下时行距回到 base_gap）。base_gap = 本来要用的那个行距。 */
 void uk_viewport_snap(lv_obj_t *box, int32_t base_gap);
 
-/* ── 清单可读性下限 ───────────────────────────────────────────────────
-   "清单容器" = 可滚动、按行排条目的纵向列表（自适应池、事件列、首页的紧凑对比条）。
-   它承诺至少完整露出 UK_LIST_MIN_ROWS 行：卡片因此不可能被算得"比一行还矮"
-   （p1 的三张卡曾按 UK_ROW_H 手算成一行 55px、首页卷池曾手算成 21px）。
-   行数只是下限，**行高一律实测**（条目自然高 + 容器行距），不写常数。
-   uk_list_readable_min() 就是要用的下限高度（内容本来就不够那么多行时返回内容总高），
-   布局拿它当 min_height，preview 的清单可读性审计用同一条式子判违规。 */
-#define UK_LIST_FLAG LV_OBJ_FLAG_USER_3
-void    uk_list_mark(lv_obj_t *list);                    /* 打上"清单容器"标记（行清单才打） */
+/* ── 清单可读性下限（全页统一） ───────────────────────────────────────
+   "清单容器" = 纵向排条目、内容多了自己滚的列表（自适应池、事件列、告警列、
+   首页的紧凑对比条）。它承诺至少完整露出**若干整项**：卡片因此不可能被算得
+   "比一项还矮"（p1 的三张卡曾按 UK_ROW_H 手算成一行 55px、首页卷池曾手算成 21px）。
+   项数只是下限，**高度一律实测**（条目自然高 + 容器行距），不写常数。
+   uk_list_readable_min() 就是要用的下限高度（内容本来就不够那么多项时返回内容总高），
+   布局拿它当 min_height，preview 的清单可读性审计用同一条式子判违规。
+
+   承诺几项由容器自己带：
+   - 池（uk_pool_create）和滚动列（scroll_col）**建出来就是清单**，默认承诺
+     UK_LIST_MIN_ROWS 项 —— 新加的列表自动被审计覆盖，不需要记得打标；
+   - 条目是可变高复合块（温度页的设备块：展开后一块能比视口还高）或容器本身
+     就没有第二项的空间（首页那条紧凑对比条，两行会把磁贴顶高、把上面的卡挤出去）时，
+     调用方用 uk_list_mark_one() 把承诺降到一整项。**单项本身就比视口高**时（设备块
+     展开态）连"露一整项"都做不到，审计对这种清单免检（它由"能滚 + 文本不被裁"兜底）。 */
+#define UK_LIST_FLAG     LV_OBJ_FLAG_USER_3   /* 是清单容器（参与下限审计） */
+#define UK_LIST_ONE_FLAG LV_OBJ_FLAG_USER_1   /* 只承诺一整项（默认承诺 UK_LIST_MIN_ROWS 项） */
+void    uk_list_mark(lv_obj_t *list);                    /* 承诺 UK_LIST_MIN_ROWS 项 */
+void    uk_list_mark_one(lv_obj_t *list);                /* 只承诺一整项（块清单 / 放不下的紧凑条） */
 bool    uk_list_is(lv_obj_t *o);
 bool    uk_pool_is(lv_obj_t *o);                         /* 池（USER_2） */
-int32_t uk_list_readable_min(lv_obj_t *list, int32_t rows);   /* 完整露出 rows 行需要的高 */
+int32_t uk_list_promise(lv_obj_t *list);                 /* 该清单承诺几项（1 或 UK_LIST_MIN_ROWS） */
+int32_t uk_list_item_max(lv_obj_t *list);                /* 清单里最高的一条（0 = 没有可见条目） */
+int32_t uk_list_readable_min(lv_obj_t *list, int32_t items);  /* 完整露出 items 项需要的高 */
 int32_t uk_list_content_min(lv_obj_t *list);                  /* 全部条目摊开需要的高 */
 
 /* ── KPI 格（标签 / 大数字 / 单位 / 副读数 / 阈值条） ──────────────── */
