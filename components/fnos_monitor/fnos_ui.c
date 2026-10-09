@@ -935,6 +935,7 @@ static lv_obj_t *hero_bar(lv_obj_t *parent)
     lv_obj_set_style_bg_opa(b, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_bg_color(b, uk_c(UK_OK), LV_PART_INDICATOR);
     lv_obj_set_style_bg_opa(b, LV_OPA_COVER, LV_PART_INDICATOR);
+    lv_obj_set_style_anim_duration(b, UK_BAR_ANIM_MS, LV_PART_MAIN);
     return b;
 }
 
@@ -1183,10 +1184,12 @@ static void build_p0(lv_obj_t *page)
        The pool still scrolls when its measured content exceeds this viewport. */
     s_ui.overview_volumes = uk_col(body, 1);
     lv_obj_set_width(s_ui.overview_volumes, LV_PCT(100));
-    /* 只要求露出一整行（其余靠滚动与 uk_viewport_snap）：UK_ROW_MIN 的 40px
-       下限会把整行高度顶高 11px，磁贴因此挤掉上面那排卡。 */
+    /* 紧凑对比条是行清单，但只承诺**一整行**（UK_LIST_MIN_ROWS 的两行会把这排
+       磁贴顶高 29px、把上面那排卡挤出可视区）：真实下限在 overview_layout() 里按
+       实测条目高算，这里只是"还没数据"时的占位 —— 建树时池里还没有条目。 */
     int32_t list_min = lv_font_get_line_height(UK_FONT_CJK_12) + UK_S1 + UK_BAR_H;
     lv_obj_set_style_min_height(s_ui.overview_volumes, list_min, 0);
+    uk_list_mark(s_ui.overview_volumes);
     lv_obj_set_style_pad_row(s_ui.overview_volumes, UK_S1, 0);
     lv_obj_set_style_pad_right(s_ui.overview_volumes, UK_SCROLL_W + UK_S1, 0);
     lv_obj_set_style_width(s_ui.overview_volumes, UK_SCROLL_W, LV_PART_SCROLLBAR);
@@ -1279,6 +1282,7 @@ static void build_p1(lv_obj_t *page)
         lv_obj_t *body = uk_card_body(s_ui.vol_card);
         s_ui.vol_empty = empty_box(body, "未采集到存储卷", NULL);
         s_ui.vol_pool = uk_pool_create(body, UK_LIST_MIN_WIDTH);
+        uk_list_mark(s_ui.vol_pool);   /* 行清单：承诺完整露出 UK_LIST_MIN_ROWS 行 */
         lv_obj_set_style_pad_row(s_ui.vol_pool, UK_ITEM_GAP, 0);
         uk_pool_stretch(s_ui.vol_pool, false);
         s_ui.vol_made = 0;
@@ -1290,6 +1294,7 @@ static void build_p1(lv_obj_t *page)
         lv_obj_t *body = uk_card_body(s_ui.raid_card);
         s_ui.raid_empty = empty_box(body, "未采集到阵列", NULL);
         s_ui.raid_pool = uk_pool_create(body, UK_LIST_MIN_WIDTH);
+        uk_list_mark(s_ui.raid_pool);
         lv_obj_set_style_pad_row(s_ui.raid_pool, UK_ITEM_GAP, 0);
         uk_pool_stretch(s_ui.raid_pool, false);
         s_ui.raid_made = 0;
@@ -1303,6 +1308,7 @@ static void build_p1(lv_obj_t *page)
         lv_obj_t *body = uk_card_body(s_ui.disk_card);
         s_ui.disk_empty = empty_box(body, "未采集到磁盘活动", NULL);
         s_ui.disk_pool = uk_pool_create(body, UK_LIST_MIN_WIDTH);
+        uk_list_mark(s_ui.disk_pool);
         lv_obj_set_style_pad_row(s_ui.disk_pool, UK_ITEM_GAP, 0);
         uk_pool_stretch(s_ui.disk_pool, false);
         s_ui.disk_made = 0;
@@ -1464,6 +1470,7 @@ static void build_p3(lv_obj_t *page)
         lv_obj_t *body = uk_card_body(s_ui.dock_card);
         s_ui.dock_empty = empty_box(body, "等待容器采集", &s_ui.dock_empty_label);
         s_ui.dock_pool = uk_pool_create(body, UK_LIST_MIN_WIDTH);
+        uk_list_mark(s_ui.dock_pool);
         lv_obj_set_style_pad_row(s_ui.dock_pool, UK_ITEM_GAP, 0);
         uk_pool_stretch(s_ui.dock_pool, false);
         s_ui.dock_made = 0;
@@ -1476,6 +1483,7 @@ static void build_p3(lv_obj_t *page)
         lv_obj_t *body = uk_card_body(s_ui.p3_temp_card);
         s_ui.temp_empty = empty_box(body, "未采集到温度", NULL);
         s_ui.p3_temp_pool = uk_pool_create(body, UK_LIST_MIN_WIDTH);
+        uk_list_mark(s_ui.p3_temp_pool);
         lv_obj_set_style_pad_row(s_ui.p3_temp_pool, UK_ITEM_GAP, 0);
         uk_pool_stretch(s_ui.p3_temp_pool, false);
         s_ui.p3_temp_made = 0;
@@ -3393,28 +3401,40 @@ static void inventory_sections(lv_obj_t *container, lv_obj_t **cards,
         lv_obj_set_flex_grow(cards[i],0);
         lv_obj_set_width(cards[i],cw);
         lv_obj_update_layout(cards[i]);
+        /* 卡里"除池以外"的部分：手算值当兜底（标题 + 内外边距），有池时下面改用实测。 */
         int32_t chrome=lv_obj_get_style_pad_top(cards[i],0)+lv_obj_get_style_pad_bottom(cards[i],0)+
-            2*lv_obj_get_style_border_width(cards[i],0)+lv_obj_get_height(lv_obj_get_child(cards[i],0))+
-            lv_obj_get_style_pad_row(cards[i],0);
-        int32_t content=lv_font_get_line_height(UK_FONT_CJK_16), first=0,last=0;
-        int32_t item_min=content;
+            2*lv_obj_get_style_border_width(cards[i],0)+
+            lv_obj_get_height(lv_obj_get_child(cards[i],0))+lv_obj_get_style_pad_row(cards[i],0);
+        int32_t content=lv_font_get_line_height(UK_FONT_CJK_16);
+        int32_t item_min=content, readable=0, overhead=0;
         if (pools[i] && counts[i]) {
             if (lv_obj_has_flag(pools[i],LV_OBJ_FLAG_USER_2))
                 uk_pool_relayout(pools[i],UK_LIST_MIN_WIDTH,false,NULL);
             lv_obj_update_layout(pools[i]);
-            int items=(int)lv_obj_get_child_count(pools[i]);
-            for (int j=0;j<items;j++) {
-                lv_obj_t *item=lv_obj_get_child(pools[i],j);
-                lv_area_t a; lv_obj_get_coords(item,&a);
-                if (!j || a.y1<first) first=a.y1;
-                if (!j || a.y2>last) last=a.y2;
-                item_min=LV_MAX(item_min,lv_obj_get_height(item));
-            }
-            if (items) content=last-first+1;
+            /* 三个高度全部由 uk_list_* 按实测条目高与列数算，不读坐标：重排之后
+               （尤其是非活动页）条目的 coords 可能还是上一次布局留下的旧值。 */
+            item_min=LV_MAX(item_min,uk_list_readable_min(pools[i],1));  /* 完整一行 */
+            content =uk_list_content_min(pools[i]);                       /* 全部摊开 */
+            /* 可读性下限：清单池至少完整露出 UK_LIST_MIN_ROWS 行（见 uk_list_readable_min）。
+               此前只有"最高条目"这一条 —— 那只保证一行：p1 的三张卡因此各剩 55px，
+               第二行必须滚动才看得到。 */
+            readable=uk_list_readable_min(pools[i],UK_LIST_MIN_ROWS);
+            /* 卡里除池以外的部分按**当前布局**量出来（标题、内外边距、隐藏的空态
+               占位都算进去）。手算的 chrome 会把它们占的行距漏掉 —— p1 的池就这
+               样比"卡最小高"少 8px，第二整行正好被切掉。改用 LV_SIZE_CONTENT 量
+               卡同样不行：grow=1 且 min_height=0 的子对象（空态盒子）会让卡直接
+               塌成标题高，里面的文字反而溢出（audit_bounds 报 child out of parent）。
+               池的 min_height 是硬下限，卡按这个差值把池垫到 readable 高。 */
+            overhead=LV_MAX(lv_obj_get_height(cards[i])-lv_obj_get_height(pools[i]),0);
+            lv_obj_set_style_min_height(pools[i],readable,0);
         }
+        /* ① want：池把全部条目都摊开（content）时卡要多高；
+           ② minimum：池只承诺 readable 行时卡要多高。
+           两者都基于实测的 overhead，量不出时退回手算 chrome。 */
+        int32_t other=overhead>0 ? overhead : chrome;
         int r=i/cols;
-        minimum[r]=LV_MAX(minimum[r],chrome+item_min);
-        want[r]=LV_MAX(want[r],chrome+content);
+        minimum[r]=LV_MAX(minimum[r],other+LV_MAX(item_min,readable));
+        want[r]=LV_MAX(want[r],other+content);
     }
     int32_t min_total=(rows-1)*rowgap,desired=(rows-1)*rowgap;
     for (int r=0;r<rows;r++) { min_total+=minimum[r]; desired+=want[r]; }
@@ -3425,7 +3445,12 @@ static void inventory_sections(lv_obj_t *container, lv_obj_t **cards,
         int32_t height=minimum[r]+(extra>0 ? (int64_t)remaining*(want[r]-minimum[r])/extra : 0);
         lv_obj_set_height(cards[i],height);
     }
-    if (target<h) { lv_obj_set_flex_grow(container,0); lv_obj_set_height(container,target); }
+    /* 内容比视口高时**不能**留在 grow=1：父层会把超出部分裁掉，而页级滚动的范围是
+       按容器自己的高度算的 —— 被裁的那截连滚都滚不到（p3 的硬件温度卡就这样少露
+       37px，四项几何审计因为"父可滚动"跳过了这一层，一直报不出来）。钉在 target
+       上：卡片永远完整，多出来的高度交给页级滚动。 */
+    lv_obj_set_flex_grow(container,0);
+    lv_obj_set_height(container,target);
     lv_obj_update_layout(container);
     lv_free(want); lv_free(minimum);
 }
@@ -3521,6 +3546,15 @@ static void overview_layout(void)
         lv_obj_t *resources = lv_obj_get_parent(hero);
         lv_obj_set_style_min_height(resources, minimum, 0);
         lv_obj_set_style_min_height(lv_obj_get_parent(resources), minimum, 0);
+    }
+
+    /* 首页卷池：紧凑对比条（一格宽、和另外两张卡并列），只承诺"完整露出一行"
+       —— 两行会把这排磁贴顶高 29px、把上面那排卡挤出可视区。它不写常数：
+       下限按实测条目高算（曾按 "12px 行 + 4 + 条高" 手算成 21px，比一行还矮）。 */
+    if (s_ui.overview_volumes && !lv_obj_has_flag(s_ui.overview_volumes, LV_OBJ_FLAG_HIDDEN)) {
+        lv_obj_update_layout(s_ui.overview_volumes);
+        int32_t readable = uk_list_readable_min(s_ui.overview_volumes, 1);
+        if (readable > 0) lv_obj_set_style_min_height(s_ui.overview_volumes, readable, 0);
     }
 
 }
@@ -4104,9 +4138,12 @@ static void refresh(void)
         uk_row_t *r = s_ui.dock_row[i];
         const char *prefix = dock_live ? "" : (dock_partial ? "部分可读 · " : "上次");
         if (strcmp(lv_label_get_text(r->name1), d->n)) s_p3_dock_n = -1;
-        /* Name and state each own a line; a long raw Docker status cannot erase identity. */
-        uk_row_set(r,d->n," ","",NULL,-1,0);
-        set_txt(r->name2,"%s%s",prefix,d->up ? "运行中" : d->s);
+        /* Name and state each own a line; a long raw Docker status cannot erase identity.
+           状态文本交给 uk_row_set（第二行也走数字过渡）。这里传 " " 只会让第二行
+           变成静态占位 —— 旧写法正是传 " " 再 set_txt 覆盖，白丢一层动效。 */
+        char sub[80];
+        snprintf(sub, sizeof sub, "%s%s", prefix, d->up ? "运行中" : d->s);
+        uk_row_set(r, d->n, sub[0] ? sub : " ", "", NULL, -1, 0);
         lv_obj_set_style_text_color(r->name2, uk_c(dock_live && d->up ? UK_OK : UK_T3), 0);
     }
     pool_layout(&s_p3_dock_n, &s_p3_dock_w, &s_p3_dock_h, ndock,
@@ -4133,9 +4170,8 @@ static void refresh(void)
         const char *nm = g0->dn[0] ? g0->dn : g0->dev;
         snprintf(vb, sizeof vb, "%.1f", g->max_c);
         uk_row_set(r, nm, sub, vb, "°C", (int32_t)g->max_c, 0);
-        if (g->dup) set_txt(r->name2,"%s · %d 路 · %s",g->dev,g->count,ht->ch);
-        else if (ht->ch[0]) set_txt(r->name2,"最热 %s · %d 路",ht->ch,g->count);
-        else set_txt(r->name2,"%d 路",g->count);
+        /* 原来这里再 set_txt(name2, 与 sub 同文) 覆盖一遍：文本一样，却把
+           uk_row_set 里刚起的数字过渡清掉，副行永远是静态的。删掉即可。 */
         uint32_t tc = st->online ? uk_temp_color(g->max_c) : UK_T3;
         lv_obj_set_style_text_color(r->val, uk_c(tc), 0);
         if (r->bar) lv_obj_set_style_bg_color(r->bar, uk_c(tc), LV_PART_INDICATOR);

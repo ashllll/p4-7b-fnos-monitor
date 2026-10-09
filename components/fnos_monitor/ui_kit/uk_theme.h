@@ -71,6 +71,10 @@
 #define UK_RADIUS_SM     4          /* 胶囊 / 按钮                    */
 #define UK_BAR_H         4          /* 阈值条高                       */
 #define UK_BAR_H_HERO    8          /* 主容量条高                     */
+/* 值条补间时长：LVGL 的 lv_bar_set_value(..., LV_ANIM_ON) 从 LV_STYLE_ANIM_DURATION
+   取时长，而主题/样式默认不给这条属性（=0 ⇒ 一次到位）。所以要在**建条时**显式设置，
+   否则 uk_bar_set 传的 LV_ANIM_ON 等于白传（条形跳变，数字却在滑）。 */
+#define UK_BAR_ANIM_MS   180
 #define UK_SCR_W         1024
 #define UK_SCR_H         600
 #define UK_RAIL_W        76         /* 左导航宽（中文标签，令牌 44 是桌面值） */
@@ -113,6 +117,11 @@
 #define UK_SWIPE_FLICK_PCT 60 /* viewport percent per second */
 #define UK_ROW_H         44         /* 清单行基准高（装不下时长高）   */
 #define UK_ROW_MIN       40         /* 行最小高（触控/可读下限）      */
+/* 清单可读性下限：清单容器至少完整露出几行才算"看得清"（见 uk.h 的
+   uk_list_readable_min）。这里是**行数**不是像素 —— 行高一律实测。
+   没有这道下限时，"这卡能显示几行"全靠每个调用点手算常量：p1 的三张卡
+   按 UK_ROW_H 手算成一行（池 55px），首页卷池更算成 21px（比一行还矮）。 */
+#define UK_LIST_MIN_ROWS 2
 #define UK_DOT           8
 #define UK_SCROLL_W      4
 #define UK_SCROLL_INSET  12

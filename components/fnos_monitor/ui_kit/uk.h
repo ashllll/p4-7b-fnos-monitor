@@ -136,6 +136,20 @@ void uk_pool_force_cols(lv_obj_t *pool, int32_t cols);
    （容器装得下时行距回到 base_gap）。base_gap = 本来要用的那个行距。 */
 void uk_viewport_snap(lv_obj_t *box, int32_t base_gap);
 
+/* ── 清单可读性下限 ───────────────────────────────────────────────────
+   "清单容器" = 可滚动、按行排条目的纵向列表（自适应池、事件列、首页的紧凑对比条）。
+   它承诺至少完整露出 UK_LIST_MIN_ROWS 行：卡片因此不可能被算得"比一行还矮"
+   （p1 的三张卡曾按 UK_ROW_H 手算成一行 55px、首页卷池曾手算成 21px）。
+   行数只是下限，**行高一律实测**（条目自然高 + 容器行距），不写常数。
+   uk_list_readable_min() 就是要用的下限高度（内容本来就不够那么多行时返回内容总高），
+   布局拿它当 min_height，preview 的清单可读性审计用同一条式子判违规。 */
+#define UK_LIST_FLAG LV_OBJ_FLAG_USER_3
+void    uk_list_mark(lv_obj_t *list);                    /* 打上"清单容器"标记（行清单才打） */
+bool    uk_list_is(lv_obj_t *o);
+bool    uk_pool_is(lv_obj_t *o);                         /* 池（USER_2） */
+int32_t uk_list_readable_min(lv_obj_t *list, int32_t rows);   /* 完整露出 rows 行需要的高 */
+int32_t uk_list_content_min(lv_obj_t *list);                  /* 全部条目摊开需要的高 */
+
 /* ── KPI 格（标签 / 大数字 / 单位 / 副读数 / 阈值条） ──────────────── */
 typedef struct {
     lv_obj_t *box, *label, *val, *unit, *sub, *bar;
@@ -168,7 +182,8 @@ void uk_anim_settle(lv_obj_t *root);
 /* Draw panel outlines immediately; fill and content follow with a stagger. */
 void uk_anim_reveal(lv_obj_t *panel, uint32_t ms, uint32_t delay_ms);
 void uk_anim_reveal_settle(lv_obj_t *panel);
-/* 值条：原生动画（LV_ANIM_ON），时长固定 180ms，避免每帧重排。 */
+/* 值条：原生补间（LV_ANIM_ON），时长取 UK_BAR_ANIM_MS —— 这个值必须在**建条时**
+   写进 LV_STYLE_ANIM_DURATION（主题默认 0，不写就是一次到位），见 uk_theme.h。 */
 void uk_bar_set(lv_obj_t *bar, int32_t v);
 
 /* ── 阈值配色（唯一来源，供条/点/数字复用） ──────────────────────── */

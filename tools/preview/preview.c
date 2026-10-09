@@ -623,6 +623,42 @@ static unsigned audit_motion_page_bounds(lv_obj_t *root)
     return found;
 }
 
+/* 清单可读性审计：清单容器（uk_list_is）的高度必须够它承诺的行数 ——
+   判据与布局用的是同一条式子（uk_list_readable_min）。
+   池承诺 UK_LIST_MIN_ROWS 行；非池的清单容器（首页那条紧凑对比条）
+   只承诺一整行，所以按 1 行判。
+   这条不变量是"卡片太小 / 上下过窄"的**正面**判据：几何审计只查"跑出父对象"，
+   而"池里只露出一行"完全合法（内容多时本来就允许滚动），所以 p1 三张卡各只剩
+   一行 55px、首页卷池只有 21px（比一行还矮）时，四个审计一个都没报。 */
+static void audit_list_floors(lv_obj_t *o)
+{
+    if (lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return;
+    if (uk_list_is(o)) {
+        int32_t rows = uk_pool_is(o) ? UK_LIST_MIN_ROWS : 1;
+        int32_t floor_h = uk_list_readable_min(o, rows);
+        if (floor_h > 0 && lv_obj_get_height(o) < floor_h) {
+            lv_area_t a;
+            lv_obj_get_coords(o, &a);
+            lv_obj_t *parent = lv_obj_get_parent(o);
+            fprintf(stderr, "list too short: pool=[%d,%d]-[%d,%d] h=%d floor=%d rows=%d items=%u\n",
+                    (int)a.x1, (int)a.y1, (int)a.x2, (int)a.y2, (int)lv_obj_get_height(o),
+                    (int)floor_h, (int)rows, (unsigned)lv_obj_get_child_count(o));
+            if (parent) {
+                lv_area_t pa;
+                lv_obj_get_coords(parent, &pa);
+                fprintf(stderr, "  parent=[%d,%d]-[%d,%d] h=%d\n",
+                        (int)pa.x1, (int)pa.y1, (int)pa.x2, (int)pa.y2, (int)lv_obj_get_height(parent));
+            }
+            fprintf(stderr, "  → 清单容器至少要完整露出 %d 行（行高实测 %d px，含行距）\n",
+                    (int)rows, (int)((floor_h - (rows - 1) * lv_obj_get_style_pad_row(o, 0)) / rows));
+            if (getenv("PREVIEW_AUDIT_ALL")) s_audit_fail++; else abort();
+        }
+        return;   /* 池里不会再套池 */
+    }
+    for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++)
+        audit_list_floors(lv_obj_get_child(o, i));
+}
+
 /* 可点击对象之间不许互相压住。这条是针对"控件被画到不该在的地方"最实在的检查：
    配对键盘第四行（删除 / 0 / 确认）原先掉出了键盘盒子，正好压在"关闭"按钮上——
    两个都能点、都看得见、各自都"存在"，字形审计和文字断言全都不会说话，而真机上
@@ -1183,6 +1219,7 @@ static void snapshot(const char *name)
         assert(audit_motion_page_bounds(lv_screen_active()) > 0 &&
                "motion bounds audit requires native page identity metadata");
     } else {
+        audit_list_floors(lv_screen_active());
         audit_bounds(lv_screen_active());
         audit_overlap();
     }

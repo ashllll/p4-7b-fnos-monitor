@@ -439,6 +439,7 @@ uk_row_t *uk_row_create(lv_obj_t *parent, bool with_led, bool with_bar)
         lv_obj_set_style_bg_color(r->bar, uk_c(UK_OK), LV_PART_INDICATOR);
         lv_obj_set_style_bg_opa(r->bar, LV_OPA_COVER, LV_PART_INDICATOR);
         lv_obj_set_style_radius(r->bar, UK_BAR_H / 2, LV_PART_INDICATOR);
+        lv_obj_set_style_anim_duration(r->bar, UK_BAR_ANIM_MS, LV_PART_MAIN);
     }
     return r;
 }
@@ -543,6 +544,36 @@ int32_t uk_pool_cols(lv_obj_t *pool)
 { uk_pool_t *st=lv_obj_get_user_data(pool); return st ? st->cols : 0; }
 int32_t uk_pool_shown(lv_obj_t *pool)
 { uk_pool_t *st=lv_obj_get_user_data(pool); return st ? st->shown : 0; }
+
+/* ── 清单可读性下限 ───────────────────────────────────────────────────
+   只有调用方显式 uk_list_mark() 的容器才按"行清单"处理。池**不**自动打标：温度页的
+   设备块是可变高的复合块，一块就能合法地比视口还高，对它承诺"两行"没有意义。 */
+void uk_list_mark(lv_obj_t *list) { if (list) lv_obj_add_flag(list, UK_LIST_FLAG); }
+bool uk_list_is(lv_obj_t *o) { return o && lv_obj_has_flag(o, UK_LIST_FLAG); }
+bool uk_pool_is(lv_obj_t *o) { return o && lv_obj_has_flag(o, LV_OBJ_FLAG_USER_2); }
+
+/* 至少完整露出前面 rows 行需要多高。只用**条目高度**和列数算，不用坐标：
+   重排之后（尤其是非活动页）条目的 coords 可能还是上一次布局的旧值，而高度是新的。
+   行高按"最高条目"保守取，行距取容器当前行距（viewport_snap 撑大过就算撑大后的）。 */
+int32_t uk_list_readable_min(lv_obj_t *list, int32_t rows)
+{
+    if (!list || rows <= 0) return 0;
+    int32_t item=0, seen=0;
+    for (uint32_t i=0;i<lv_obj_get_child_count(list);i++) {
+        lv_obj_t *it=lv_obj_get_child(list,i);
+        if (lv_obj_has_flag(it,LV_OBJ_FLAG_HIDDEN)) continue;
+        item=LV_MAX(item,lv_obj_get_height(it));
+        seen++;
+    }
+    if (!seen) return 0;
+    int32_t cols=uk_pool_is(list) ? LV_MAX(1, uk_pool_cols(list)) : 1;
+    int32_t total=(seen+cols-1)/cols;
+    int32_t want=LV_MIN(rows,total);
+    return want*item+(want-1)*lv_obj_get_style_pad_row(list,0);
+}
+
+/* 全部条目摊开需要的高度（"内容定高"里的 content）。 */
+int32_t uk_list_content_min(lv_obj_t *list) { return uk_list_readable_min(list, 0x7fffffff); }
 
 /* ── 视口行对齐：把"半行"赶出视口 ──────────────────────────────────────
    滚动容器（自适应池 / 事件列 / 卷清单）内容超出视口时，底边常把最后一行切成半截：
@@ -740,6 +771,7 @@ uk_kpi_t *uk_kpi_create(lv_obj_t *parent, const char *label)
     lv_obj_set_style_bg_opa(k->bar, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_bg_color(k->bar, uk_c(UK_OK), LV_PART_INDICATOR);
     lv_obj_set_style_bg_opa(k->bar, LV_OPA_COVER, LV_PART_INDICATOR);
+    lv_obj_set_style_anim_duration(k->bar, UK_BAR_ANIM_MS, LV_PART_MAIN);
     return k;
 }
 
@@ -962,6 +994,15 @@ void uk_anim_settle(lv_obj_t *root)
     if (lv_anim_get(root, opa_anim_cb)) {
         lv_anim_delete(root, opa_anim_cb);
         lv_obj_set_style_opa(root, LV_OPA_COVER, 0);
+    }
+    /* 值条也有原生补间（UK_BAR_ANIM_MS），同样得落到终值：否则快照正好拍在
+       补间中途 —— p0 的容量条第一拍就会截成"空条"，参考图每次都不一样。
+       lv_bar_get_value 在补间一开始就已经是目标值，直接 set_value(同值) 会被
+       库里早退，所以先挪一格再用 ANIM_OFF 落回（第一次调用顺手删掉在飞的动画）。 */
+    if (lv_obj_check_type(root, &lv_bar_class)) {
+        int32_t v = lv_bar_get_value(root);
+        lv_bar_set_value(root, v > 0 ? v - 1 : v + 1, LV_ANIM_OFF);
+        lv_bar_set_value(root, v, LV_ANIM_OFF);
     }
     uk_number_settle(root);
     uk_anim_reveal_settle(root);

@@ -97,7 +97,35 @@ Sanitizer 构建使用 `-DFNOS_PREVIEW_SANITIZE=ON`，分别运行数字夹具�
 `PREVIEW_NUMBERS=1` 自检通过；把 `uk.c` 的门控回退成旧写法后，该用例在 val 断言处 abort，
 说明判据确实咬得住。`tools/preview/run.sh` 84 帧 + 四项几何审计 + 格式残渣 + 对比度 4.5:1 通过。
 
-未纳入本次：行内值条的补间（`uk_bar_set` 传 `LV_ANIM_ON`，但没有主题/样式设置
+未纳入本次（两项都已在下一节修掉）：行内值条的补间（`uk_bar_set` 传 `LV_ANIM_ON`，但没有主题/样式设置
 `LV_STYLE_ANIM_DURATION`，时长 0 ⇒ 所有页的值条都是一次到位，属全局既有行为，`uk.h` 中
 "时长固定 180 ms"的注释已失真）；系统页 dock 行与温度页副行仍沿用
 `uk_row_set` + `set_txt(name2)` 的旧写法，行为与改前一致（静态）。
+
+## 2026-10-09 迭代二：值条补间、第二行读数旧写法清理
+
+上一节末尾列的两项遗留都在本轮修掉。
+
+**值条补间（全局）**：`components/fnos_monitor/ui_kit/uk_theme.h` 新增 `UK_BAR_ANIM_MS 180`；
+三个建条点在建条时写入 `lv_obj_set_style_anim_duration(..., UK_BAR_ANIM_MS, LV_PART_MAIN)`：
+`components/fnos_monitor/ui_kit/uk.c` 的行内条与 KPI 条、`components/fnos_monitor/fnos_ui.c` 的首页
+hero 条。`lv_bar_set_value(..., LV_ANIM_ON)` 的时长取自 `LV_STYLE_ANIM_DURATION`，此前全仓库没有
+一处设置它 ⇒ 时长 0 ⇒ 所有页的值条都是一次到位；`uk.h` 里"时长固定 180 ms"的注释原本与代码不符，
+现在一致了。
+
+配套修了快照副作用：`uk_anim_settle()`（`components/fnos_monitor/ui_kit/uk.c`）以前只把数字层落到
+终值，值条补间在飞时会被定格，`PREVIEW_DATA_MOTION` 的 before 帧因此拍到"空条"（p0 的
+before-vs-after 从 5765 虚增到 8043）。现在 settle 对值条做一次 `get_value` → ±1 → 原值的
+`LV_ANIM_OFF` 往返，把在飞的补间抹掉（`get_value` 取的是目标值，直接 `set_value(同值, OFF)` 会
+提前返回，所以要挪一格再挪回来）。`uk_anim_settle()` 只被 preview 的快照路径调用，设备侧行为不变。
+
+**第二行读数的旧写法**：`components/fnos_monitor/fnos_ui.c` 的系统页 dock 行改成把状态文本交给
+`uk_row_set`（空串兜底 `" "` 以保持两行布局），删掉随后覆盖 name2 的 `set_txt`；系统页硬件温度行
+删掉与 `sub` 同文的 `set_txt(name2, ...)`（它会把 `uk_row_set` 刚起的过渡清掉）。温度页副行本就该
+静态（那是通道名，不是读数），不动。
+
+验证：`PREVIEW_DATA_MOTION=1` 六页通过。值条补间 + 旧写法清理之后、版面整改之前：逐帧比对
+p0/p2/p3/p4/p5 与改前逐像素一致（p0 5765、p2 7819、p4 3069、p5 全 0），p1 785（峰值 1148@150 ms）；
+卷行值条右端 574 → 575（75 ms）→ 576（150 ms）→ 577（200 ms）逐帧增长，不再是 574→577 一步到位。
+`tools/preview/run.sh` 84 帧 + 四项几何审计 + 对比度通过。（版面整改之后 p1/p3 的差异像素变多，
+是因为这两页可见的读数行变多了，见 `docs/ui-refactoring-ui-2026-10-08.md` 的"清单可读性下限"。）
