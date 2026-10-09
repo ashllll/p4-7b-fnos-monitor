@@ -100,6 +100,17 @@ menu "fnOS monitor"
                 Print aggregate timing for page transitions, without telemetry
                 or endpoint details. Enable locally when profiling the display.
 
+        config FNOS_UI_PERF_BENCH
+            bool "Touch/render benchmark console (bench command)"
+            default n
+            help
+                Add the serial `bench` command: while a run is active it
+                substitutes a scripted pointer sequence for the panel reading,
+                then prints press-to-frame latency, drag frame intervals,
+                refresh cost and per-task CPU. Nothing is compiled or called
+                when this is off, and the real touch callback is restored as
+                soon as a run ends. Bench devices only.
+
         config FNOS_UI_USAGE_WARM
             int "Usage attention reference (%)"
             range 1 99

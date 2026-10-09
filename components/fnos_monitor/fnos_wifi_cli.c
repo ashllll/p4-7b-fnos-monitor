@@ -8,6 +8,7 @@
 // 口令只写不读：`wifi show` 只报"有没有凭据、SSID 是什么、连到哪了"，永不回显口令。
 #include "fnos_net.h"
 #include "fnos_pair.h"
+#include "fnos_perf.h"
 #include "fnos_wifi_store.h"
 #include "fnos_ui.h"
 
@@ -29,6 +30,7 @@ static void usage(void)
            "  page <0-5>                    切页：总览/存储/网络/系统/温度/告警（实机验收用）\n"
            "  temp <n>                      切到温度页并展开第 n 台设备（0 起）的通道网格\n"
            "  tls                           HTTPS 自检：明文取证书 + 用证书探一次 /health\n"
+           "  bench help                    触控/渲染台架（合成手势 + 计数器；仅带台架的固件有）\n"
            "  help                          显示这段说明\n\n");
 }
 
@@ -110,6 +112,8 @@ static void handle(char *line)
         usage();
         return;
     }
+    /* 台架命令放在最后兜底之前：它自成一套（bench …），认不出来会返回 false 交给下面报错。 */
+    if (fnos_perf_cli(line)) return;
     printf("不认识的命令：%s（输入 help 看用法）\n", line);
 }
 

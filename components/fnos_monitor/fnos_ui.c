@@ -30,6 +30,7 @@
 #include "fnos_fonts.h"
 #include "fnos_net.h"
 #include "fnos_pair.h"
+#include "fnos_perf.h"         /* 台架：只上报 ui_tick 耗时，关配置时是空函数 */
 #include "fnos_wifi_store.h"   /* 开机"有没有凭据"要问存储本身，别问网络层的标志 */
 #include "ui_kit/uk.h"   /* 新自适应层：LVGL 原生 flex，几何不写死 */
 
@@ -4394,6 +4395,7 @@ static void refresh(void)
 static void ui_tick(lv_timer_t *t)
 {
     (void)t;
+    int64_t t_bench = esp_timer_get_time();   /* 台架：这一次 tick 的总耗时（关配置时零成本） */
     uk_alloc_reset();
     if (s_night_req != s_night) {
         s_night = s_night_req;
@@ -4499,6 +4501,7 @@ static void ui_tick(lv_timer_t *t)
     pair_refresh();
     pages_warm();
     inventory_notice();
+    fnos_perf_note_tick((uint32_t)(esp_timer_get_time() - t_bench));
 }
 
 static lv_obj_t *build_page(lv_obj_t *content, int idx)
@@ -4555,7 +4558,32 @@ void fnos_ui_create(void)
 
     lv_timer_create(ui_tick, 500, NULL);
     motion_init();
+    fnos_perf_init();   /* 台架：CONFIG_FNOS_UI_PERF_BENCH=n 时是空函数 */
     ESP_LOGI(TAG, "ui created (pages=%d)", FNOS_UI_PAGE_COUNT);
+}
+
+/* 测量台架用的只读几何探针（见 fnos_ui.h）。特意不返回 lv_obj_t：
+   台架只需要一个能按下去的点，拿到对象就会有人在那里改 UI。 */
+bool fnos_ui_nav_center(int idx, int32_t *x, int32_t *y)
+{
+    if (idx < 0 || idx >= FNOS_UI_PAGE_COUNT || !s_ui.nav[idx]) return false;
+    lv_area_t a;
+    lv_obj_get_coords(s_ui.nav[idx], &a);
+    *x = (a.x1 + a.x2) / 2;
+    *y = (a.y1 + a.y2) / 2;
+    return true;
+}
+
+bool fnos_ui_swipe_point(int dir, int32_t *x, int32_t *y)
+{
+    if (!s_ui.viewport) return false;
+    lv_area_t a;
+    lv_obj_get_coords(s_ui.viewport, &a);
+    int32_t w = a.x2 - a.x1 + 1, h = a.y2 - a.y1 + 1;
+    /* 左滑从右侧 72% 起、右滑从左侧 28% 起：留出够滑的行程，又不会一出屏就撞边。 */
+    *x = a.x1 + (dir < 0 ? w * 72 / 100 : w * 28 / 100);
+    *y = a.y1 + h / 2;
+    return true;
 }
 
 /* 自描述：把已建好的卡片几何按行吐给主机工具。看门狗（tools/preview/scroll_gap.js）
