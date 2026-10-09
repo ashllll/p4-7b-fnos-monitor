@@ -219,6 +219,8 @@ static void pf_render_cb(lv_event_t *e)
 
 /* ---------------------------------------------------------------- 报告 */
 
+static bool s_reported;   /* 本轮是否已经落过 [bench] 行（兜底上报用） */
+
 static void pf_report(void)
 {
     uint32_t wall_ms = (uint32_t)((esp_timer_get_time() - s_run.run_us) / 1000);
@@ -246,12 +248,18 @@ static void pf_report(void)
            s_ntick, pf_pct(s_tick, s_ntick, 50), pf_pct(s_tick, s_ntick, 95), pf_max(s_tick, s_ntick),
            total ? 100.0 * lvgl / total : 0.0, total ? 100.0 * idle / total : 0.0);
     fflush(stdout);
+    s_reported = true;
 }
 
 static lv_timer_t *s_script_timer;
 
 static void pf_stop(void)
 {
+    /* 兜底：任何提前退出（arm 失败、超时、被新命令顶掉）都必须留下一行 [bench]，
+       否则 tools/perf_bench.py 只能干等到 180 s 超时，看不出断在哪一步
+       —— 2026-10-10 复现真基线时踩过：换回旧 fnos_ui.c 后 fnos_perf_init() 没人调用
+       （调用点就在 UI 文件里），定时器从未创建，CLI 只回 "已排队" 就再无输出。 */
+    if (s_run.active && !s_reported) pf_report();
     s_run.active = false;
     pf_detach();
     if (s_script_timer) lv_timer_pause(s_script_timer);
@@ -263,7 +271,11 @@ static void pf_arm(int64_t now)
 {
     if (s_run.kind == PF_SWIPE) {
         /* 左右交替，免得连着同方向滑把页面滑到边上。 */
-        if (!fnos_ui_swipe_point(s_run.dir, &s_run.x0, &s_run.y0)) { s_run.misses++; pf_stop(); return; }
+        if (!fnos_ui_swipe_point(s_run.dir, &s_run.x0, &s_run.y0)) {
+            printf("[bench] arm failed: swipe point unavailable (page=%d dir=%d)\n", s_run.page, s_run.dir);
+            fflush(stdout);
+            s_run.misses++; pf_stop(); return;
+        }
         if (s_run.px <= 0) {
             lv_display_t *d = lv_display_get_default();
             s_run.px = d ? lv_display_get_horizontal_resolution(d) / 2 : 512;
@@ -274,7 +286,11 @@ static void pf_arm(int64_t now)
         s_run.y = s_run.y0;
     } else {
         /* 点按导航键中心：按下有反馈、松手换页，两个时延都在同一次手势里量到。 */
-        if (!fnos_ui_nav_center(s_run.page, &s_run.x0, &s_run.y0)) { s_run.misses++; pf_stop(); return; }
+        if (!fnos_ui_nav_center(s_run.page, &s_run.x0, &s_run.y0)) {
+            printf("[bench] arm failed: nav center unavailable (page=%d)\n", s_run.page);
+            fflush(stdout);
+            s_run.misses++; pf_stop(); return;
+        }
         s_run.x = s_run.x0;
         s_run.y = s_run.y0;
         s_run.steps = 0;
@@ -367,6 +383,7 @@ static void pf_start(void)
     s_last_ready_us = 0;
     s_have_ready = false;
     s_last_frame_us = 0;
+    s_reported = false;
 
     pf_detach();   /* 上一轮留下的挂载先摘干净，否则会把 pf_read_cb 当成"真实回调"套娃 */
     s_nreal = 0;
