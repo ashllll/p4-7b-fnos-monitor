@@ -4720,6 +4720,8 @@ static struct {
     int32_t velocity;
     uint32_t duration;
     float phase_velocity;
+    int32_t spring_b;       /* lroundf(phase_velocity + UK_MOTION_DAMPING * displacement) */
+    int32_t painted;        /* 已画出的偏移：没变就不必再失效一次视口 */
     lv_indev_t *pointer;
 } s_motion;
 
@@ -4728,6 +4730,16 @@ static struct {
     int64_t prepared, render_start, render_total, render_max;
     uint32_t frames, started;
 } s_motion_stats;
+static lv_timer_t *s_motion_poll;   /* 8ms 手势轮询：只在按下期间跑，空闲即暂停 */
+
+/* 8ms 的手势轮询即使什么都不做，也在每 8ms 唤醒一次 LVGL 任务（空闲时它本该睡到
+   下一帧）。只在"按下→松手"这段开，平时暂停。 */
+static void motion_poll_set(bool on)
+{
+    if (!s_motion_poll) return;
+    if (on) { lv_timer_resume(s_motion_poll); lv_timer_ready(s_motion_poll); }
+    else lv_timer_pause(s_motion_poll);
+}
 
 static void motion_render_cb(lv_event_t *e)
 {
@@ -4819,23 +4831,51 @@ static void pages_warm(void)
 
 static void motion_paint(void)
 {
+    /* 偏移没变就没有新像素可画：拖动时手指停住（或采样周期快过帧周期）会走到
+       这里，省掉一次全视口失效。 */
+    if (s_motion.offset == s_motion.painted) return;
+    s_motion.painted = s_motion.offset;
     lv_obj_set_style_translate_x(s_ui.page[s_motion.from], s_motion.offset, 0);
     lv_obj_set_style_translate_x(s_ui.page[s_motion.to], s_motion.offset + s_motion.direction * s_motion.width, 0);
     lv_obj_invalidate(s_ui.viewport);
+}
+
+/* exp(-k·i/64) 的 Q16 定点表（k = UK_MOTION_DAMPING）。手势动画每帧都要算一次
+   expf + 两次 lroundf，在 PSRAM 上这些 libm 调用抵得上几毫秒；把归一化时间
+   量化到 1/64 后查表 + 整数乘除，走的是同一条闭式临界阻尼曲线。 */
+static const uint32_t s_motion_exp_q16[65] = {
+    65536, 56056, 47947, 41011, 35079, 30005, 25664, 21952,
+    18776, 16060, 13737, 11750, 10050, 8596, 7353, 6289,
+    5380, 4601, 3936, 3366, 2879, 2463, 2107, 1802,
+    1541, 1318, 1128, 964, 825, 706, 604, 516,
+    442, 378, 323, 276, 236, 202, 173, 148,
+    127, 108, 93, 79, 68, 58, 50, 42,
+    36, 31, 27, 23, 19, 17, 14, 12,
+    10, 9, 8, 6, 6, 5, 4, 3,
+    3,
+};
+
+static int32_t motion_div_round(int64_t num, int64_t den)
+{
+    return (int32_t)((num >= 0 ? num + den / 2 : num - den / 2) / den);
 }
 
 static void motion_exec(void *unused, int32_t value)
 {
     (void)unused;
     /* Closed-form critical damping remains stable with dropped frames and
-       preserves the current velocity when a tap reverses an in-flight page. */
-    float t = value / 1024.0f;
-    float displacement = s_motion.start - s_motion.end;
-    float b = s_motion.phase_velocity + UK_MOTION_DAMPING * displacement;
-    float decay = expf(-UK_MOTION_DAMPING * t);
-    int32_t offset = s_motion.end + (int32_t)lroundf((displacement + b * t) * decay);
-    s_motion.velocity = (int32_t)lroundf((b - UK_MOTION_DAMPING * (displacement + b * t)) * decay
-                                       * 1000.0f / s_motion.duration);
+       preserves the current velocity when a tap reverses an in-flight page.
+       t = value/1024 量化成 t64/64：(d + b·t)·e^(-k·t) 全部用整数算，
+       缩放常数 64(t) × 65536(decay) = 2^22。 */
+    int32_t t64 = value >> 4;
+    if (t64 < 0) t64 = 0; else if (t64 > 64) t64 = 64;   /* 表边界：LVGL 只给 0..1024 */
+    int32_t d = s_motion.start - s_motion.end;
+    int64_t num = (int64_t)d * 64 + (int64_t)s_motion.spring_b * t64;
+    uint32_t decay = s_motion_exp_q16[t64];
+    int32_t offset = s_motion.end + (int32_t)((num * decay) >> 22);
+    int64_t dv = (int64_t)s_motion.spring_b * 64 - (int64_t)UK_MOTION_DAMPING * num;
+    s_motion.velocity = motion_div_round(dv * (int64_t)decay * 1000,
+                                        (int64_t)4194304 * (int64_t)s_motion.duration);
     if (value == 1024) { offset = s_motion.end; s_motion.velocity = 0; }
     if (offset == s_motion.offset) return;
     s_motion.offset = offset;
@@ -4900,6 +4940,7 @@ static void motion_snap(bool commit)
     float d = s_motion.start - s_motion.end;
     if (d * s_motion.phase_velocity < 0 && fabsf(s_motion.phase_velocity) > UK_MOTION_DAMPING * fabsf(d))
         s_motion.phase_velocity = -UK_MOTION_DAMPING * d;
+    s_motion.spring_b = (int32_t)lroundf(s_motion.phase_velocity + UK_MOTION_DAMPING * d);
     s_motion.active = true;
     lv_anim_t a;
     lv_anim_init(&a);
@@ -4923,6 +4964,7 @@ static void motion_prepare(int from, int to, int direction)
     s_motion.width = lv_obj_get_content_width(s_ui.viewport);
     if (s_motion.width < 1) s_motion.width = lv_display_get_horizontal_resolution(NULL);
     s_motion.offset = 0;
+    s_motion.painted = INT32_MIN;   /* 首帧必须画出来 */
     s_motion.velocity = 0;
     s_motion.active = true;
     for (int i = 0; i < FNOS_UI_PAGE_COUNT; i++) show(s_ui.page[i], i == from || i == to);
@@ -4979,6 +5021,7 @@ void fnos_ui_set_page(int idx)
 static void motion_release(void)
 {
     if (!s_motion.tracking) return;
+    motion_poll_set(false);
     if (!s_motion.dragging) {
         s_motion.tracking = false;
         if (s_motion.active) motion_snap(s_page == s_motion.to);
@@ -5011,6 +5054,7 @@ static void motion_pointer_cb(lv_event_t *e)
         s_motion.last_tick = lv_tick_get();
         s_motion.velocity = 0;
         s_motion.tracking = true;
+        motion_poll_set(true);
     } else if (code == LV_EVENT_RELEASED) {
         motion_release();
     } else if ((code == LV_EVENT_SHORT_CLICKED || code == LV_EVENT_CLICKED) && s_motion.swallow_click) {
@@ -5021,7 +5065,7 @@ static void motion_pointer_cb(lv_event_t *e)
 static void motion_tick(lv_timer_t *timer)
 {
     (void)timer;
-    if (!s_motion.tracking || !s_motion.pointer) return;
+    if (!s_motion.tracking || !s_motion.pointer) { motion_poll_set(false); return; }
     if (lv_indev_get_state(s_motion.pointer) != LV_INDEV_STATE_PRESSED) { motion_release(); return; }
     lv_point_t point; lv_indev_get_point(s_motion.pointer, &point);
     int32_t dx = point.x - s_motion.press.x, dy = point.y - s_motion.press.y;
@@ -5030,6 +5074,7 @@ static void motion_tick(lv_timer_t *timer)
     if (!s_motion.dragging) {
         if (abs(dy) > lock && abs(dy) > abs(dx)) {
             s_motion.tracking = false;
+            motion_poll_set(false);
             if (s_motion.active) motion_snap(s_page == s_motion.to);
             return;
         }
@@ -5064,10 +5109,17 @@ static void motion_init(void)
     lv_display_add_event_cb(lv_display_get_default(), motion_render_cb, LV_EVENT_RENDER_START, NULL);
     lv_display_add_event_cb(lv_display_get_default(), motion_render_cb, LV_EVENT_RENDER_READY, NULL);
 #endif
-    for (lv_indev_t *indev = lv_indev_get_next(NULL); indev; indev = lv_indev_get_next(indev))
-        if (lv_indev_get_type(indev) == LV_INDEV_TYPE_POINTER)
-            lv_indev_add_event_cb(indev, motion_pointer_cb, LV_EVENT_ALL, NULL);
-    lv_timer_create(motion_tick, UK_GESTURE_POLL_MS, NULL);
+    for (lv_indev_t *indev = lv_indev_get_next(NULL); indev; indev = lv_indev_get_next(indev)) {
+        if (lv_indev_get_type(indev) != LV_INDEV_TYPE_POINTER) continue;
+        lv_indev_add_event_cb(indev, motion_pointer_cb, LV_EVENT_ALL, NULL);
+        /* 触摸采样周期默认跟 LV_DEF_REFR_PERIOD（15ms）：按下到"被读到"平均要等
+           半个周期，直接吃进"按下→首帧"的 p50。GT911 读一次只要几百微秒，抽到
+           8ms（= 手势轮询周期）把这段量化误差压掉一半。 */
+        lv_timer_t *read = lv_indev_get_read_timer(indev);
+        if (read) lv_timer_set_period(read, 8);
+    }
+    s_motion_poll = lv_timer_create(motion_tick, UK_GESTURE_POLL_MS, NULL);
+    motion_poll_set(false);
 }
 
 int fnos_ui_page(void)
