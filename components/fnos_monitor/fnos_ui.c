@@ -4725,21 +4725,23 @@ static struct {
     lv_indev_t *pointer;
 } s_motion;
 
-#ifdef CONFIG_FNOS_UI_MOTION_STATS
-static struct {
-    int64_t prepared, render_start, render_total, render_max;
-    uint32_t frames, started;
-} s_motion_stats;
 static lv_timer_t *s_motion_poll;   /* 8ms 手势轮询：只在按下期间跑，空闲即暂停 */
 
 /* 8ms 的手势轮询即使什么都不做，也在每 8ms 唤醒一次 LVGL 任务（空闲时它本该睡到
-   下一帧）。只在"按下→松手"这段开，平时暂停。 */
+   下一帧）。只在"按下→松手"这段开，平时暂停。注意别放进 MOTION_STATS 的 #ifdef 里：
+   它是行为不是统计，关掉统计时调用点还在。 */
 static void motion_poll_set(bool on)
 {
     if (!s_motion_poll) return;
     if (on) { lv_timer_resume(s_motion_poll); lv_timer_ready(s_motion_poll); }
     else lv_timer_pause(s_motion_poll);
 }
+
+#ifdef CONFIG_FNOS_UI_MOTION_STATS
+static struct {
+    int64_t prepared, render_start, render_total, render_max;
+    uint32_t frames, started;
+} s_motion_stats;
 
 static void motion_render_cb(lv_event_t *e)
 {
