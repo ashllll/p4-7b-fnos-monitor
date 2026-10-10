@@ -78,6 +78,79 @@ static void heap_timer_cb(void *arg)
 }
 #endif
 
+#if CONFIG_FNOS_SOAK_DIAG
+/* ── 72 小时长测诊断心跳（给 tools/audit125/soak72.py 只读采集）──────────────
+   故意跑在 **LVGL 事件循环**里：这个 lv_timer 由适配器的 LVGL 任务调用，所以
+   "有没有心跳"直接等于"LVGL 任务还活着"，两次心跳的间隔就是验收表里那条 ≤15 秒。
+   它**不测帧耗时、不测触摸延迟**——那两件事要另做屏幕/触摸验收，心跳再稳也不能
+   当流畅度证据。看堆余量给人读请开 FNOS_HEAP_DEBUG，这条只给机器解析。 */
+#include "esp_app_desc.h"     // esp_app_get_elf_sha256：固件 ELF 的 SHA-256
+#include "esp_system.h"       // esp_reset_reason：异常复位原因
+#include "fnos_pair.h"        // fnos_pair_stack_min_free
+#include "freertos/task.h"    // uxTaskGetStackHighWaterMark
+
+static void diag_timer_cb(lv_timer_t *t)
+{
+    (void)t;
+    static uint32_t n;
+    static int64_t  last_us;
+    static char     line[768];
+    static char     ev_name[16];          // 本次启动的异常复位名（只判定一次）
+
+    int64_t now_us = esp_timer_get_time();
+    int64_t gap_s = last_us ? (now_us - last_us) / 1000000 : 0;   // LVGL 心跳间隔
+    last_us = now_us;
+
+    if (!ev_name[0]) {
+        // 只有"上一轮跑挂了"才算异常：掉电/USB/软复位都是计划内动作，
+        // 长测前换固件重启不该被记成非计划复位（审计 §4：0 次非计划复位）。
+        const char *nm = NULL;
+        switch (esp_reset_reason()) {
+        case ESP_RST_PANIC:      nm = "panic";      break;
+        case ESP_RST_INT_WDT:    nm = "int_wdt";    break;
+        case ESP_RST_TASK_WDT:   nm = "task_wdt";   break;
+        case ESP_RST_WDT:        nm = "wdt";        break;
+        case ESP_RST_BROWNOUT:   nm = "brownout";   break;
+        case ESP_RST_CPU_LOCKUP: nm = "cpu_lockup"; break;
+        default: break;
+        }
+        if (nm) snprintf(ev_name, sizeof(ev_name), "%s", nm);
+    }
+
+    fnos_data_diag_t d;
+    fnos_data_diag(&d);
+    int64_t age_s = d.recv_ms ? (now_us / 1000 - d.recv_ms) / 1000 : -1;
+    char fw[80] = { 0 };
+    esp_app_get_elf_sha256(fw, sizeof(fw));      // 64 位小写 hex；和本地 sha256(ELF) 对齐
+    char ev_field[24] = "";
+    if (ev_name[0]) snprintf(ev_field, sizeof(ev_field), "\"%s\"", ev_name);
+
+    // 一次 snprintf 再一行日志：串口里不会出现被别的任务插进半行的情况。
+    n++;
+    snprintf(line, sizeof(line),
+             "FNOS_DIAG {\"n\":%u,\"up\":%lld,\"hz\":10,\"fw\":\"%s\",\"rst\":%d,\"ev\":[%s],"
+             "\"io\":{\"ok\":%u,\"fail\":%u,\"age\":%lld,\"p95\":%d,\"src\":%lld},"
+             "\"ui\":{\"age\":%lld},"
+             "\"mem\":{\"ifree\":%u,\"imin\":%u,\"imax\":%u,\"dfree\":%u,\"dmin\":%u,"
+             "\"pfree\":%u,\"pmin\":%u},"
+             "\"stk\":{\"lvgl\":%u,\"poll\":%u,\"pair\":%u}}",
+             (unsigned)n, (long long)(now_us / 1000), fw, (int)esp_reset_reason(), ev_field,
+             (unsigned)d.ok_count, (unsigned)d.fail_count, (long long)age_s, d.p95_ms,
+             (long long)(d.source_ts ? d.source_ts : -1), (long long)gap_s,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA),
+             (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_DMA),
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+             (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM),
+             (unsigned)uxTaskGetStackHighWaterMark(NULL),   // 当前任务就是 LVGL 任务
+             (unsigned)fnos_data_stack_min_free(),
+             (unsigned)fnos_pair_stack_min_free());
+    ESP_LOGI(TAG, "%s", line);
+}
+#endif
+
 extern "C" void app_main(void)
 {
     esp_err_t err = nvs_flash_init();
@@ -136,6 +209,11 @@ extern "C" void app_main(void)
        （改成 2s 后立刻通过，见 docs/perf-report-2026-10-10.md 第 12/18 条）。 */
     if (bsp_display_lock(2000)) {
         fnos_ui_create();
+#if CONFIG_FNOS_SOAK_DIAG
+        // 长测心跳：建在 LVGL 任务里，所以它活着 = LVGL 事件循环还在跑。
+        lv_timer_create(diag_timer_cb, 10 * 1000, NULL);
+        ESP_LOGW(TAG, "SOAK DIAG: 每 10 秒一行 FNOS_DIAG（长测专用，生产版请关掉）");
+#endif
 #if CONFIG_FNOS_AUTO_PAGE_SEC > 0
         lv_timer_create(auto_page_cb, CONFIG_FNOS_AUTO_PAGE_SEC * 1000, NULL);
         ESP_LOGW(TAG, "VERIFY MODE: auto page every %d s", CONFIG_FNOS_AUTO_PAGE_SEC);

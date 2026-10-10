@@ -2,6 +2,10 @@ idf_component_register(
     SRCS "main.cpp"
     INCLUDE_DIRS "."
     REQUIRES fnos_monitor esp32_p4_wifi6_touch_lcd_7b lvgl_mem_psram nvs_flash
+    # 诊断心跳（CONFIG_FNOS_SOAK_DIAG）用 esp_app_get_elf_sha256 报固件哈希；
+    # IDF 5.5 要求显式声明提供 esp_app_desc.h 的组件，否则构建报
+    # "esp_app_format component(s) is not in the requirements list of main"。
+    PRIV_REQUIRES esp_app_format
 )
 
 target_compile_options(${COMPONENT_LIB} PUBLIC -Wno-missing-field-initializers)

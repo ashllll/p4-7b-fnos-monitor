@@ -81,6 +81,11 @@ void fnos_pair_forget(void);
 bool     fnos_pair_tls_probe(char *out, size_t out_cap);
 void     fnos_pair_tls_probe_async(void);
 
+// 只读诊断：配对任务栈的剩余高水位（字节；ESP-IDF 该 API 单位就是字节）。
+// 0 = 任务没起来（fnos_pair_init 还没跑或建任务失败）⇒ 长测按"测不到"处理，
+// 不能当成"栈只剩 0 字节"。mbedTLS 握手吃栈最深，72h 长测靠它盯这条底线。
+uint32_t fnos_pair_stack_min_free(void);
+
 #ifdef __cplusplus
 }
 #endif

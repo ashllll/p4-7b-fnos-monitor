@@ -7,6 +7,18 @@ menu "fnOS monitor"
             打开后每 10 秒在串口打印内部 RAM / DMA / PSRAM 余量、LVGL 任务状态、
             轮询统计。排查"界面冻结""内存下滑"时打开它比猜快得多。
 
+    config FNOS_SOAK_DIAG
+        bool "72 小时长测诊断心跳（每 10 秒一行 FNOS_DIAG JSON）"
+        default n
+        help
+            打开后由 **LVGL 事件循环**每 10 秒往串口打一行机器可读诊断：堆历史最小值与
+            最大连续块（内部/DMA/PSRAM）、LVGL 与 fnos_poll/fnos_pair 三个任务的栈余量、
+            距上次刷新的秒数、轮询成功/失败计数与 P95 耗时、最近成功帧的 NAS 采集时间、
+            复位原因、固件 ELF 的 SHA-256。tools/audit125/soak72.py 只读采集这一行做
+            72 小时验收。心跳本身有观察开销（每 10 秒几十微秒），生产版保持关闭；
+            关掉后编译产物与打开前完全一致。它只证明 LVGL 任务还活着、间隔 ≤15 秒，
+            **不代表帧耗时或触摸延迟**。
+
     config FNOS_AUTO_PAGE_SEC
         int "自动轮播页面间隔（秒，0=关闭）"
         range 0 120

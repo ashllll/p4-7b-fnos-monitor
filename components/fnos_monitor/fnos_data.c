@@ -68,6 +68,13 @@ static SemaphoreHandle_t s_lock;
 static TaskHandle_t s_task;
 static volatile bool s_session_reset;
 
+/* 最近 64 次请求耗时（含失败），给长测的 P95 用。只在这里写、只在诊断接口里读，
+   不进 PSRAM 大对象，也不参与调度决策。 */
+#define HTTP_RING_N 64
+static int s_http_ring[HTTP_RING_N];
+static int s_http_ring_n;                    // 已收集样本数（<= HTTP_RING_N）
+static int s_http_ring_i;                    // 下一个写入位置
+
 static char s_url_status[160];
 static char s_url_hist[160];
 
@@ -348,6 +355,15 @@ static void mark_link_down(void)
     }
 }
 
+/* 调用方必须已持锁。失败也记：连不上同样是用户感受到的等待。 */
+static void http_ring_push(int ms)
+{
+    if (ms < 0) ms = 0;
+    s_http_ring[s_http_ring_i] = ms;
+    s_http_ring_i = (s_http_ring_i + 1) % HTTP_RING_N;
+    if (s_http_ring_n < HTTP_RING_N) s_http_ring_n++;
+}
+
 static void commit_status(const fnos_status_t *st, int http_ms, int status_code)
 {
     if (xSemaphoreTake(s_lock, portMAX_DELAY) != pdTRUE) {
@@ -366,6 +382,7 @@ static void commit_status(const fnos_status_t *st, int http_ms, int status_code)
     dst->last_err[0] = 0;
     dst->recv_ms = esp_timer_get_time() / 1000;
     dst->fail_ms = 0;
+    http_ring_push(http_ms);
 
     int idx = (int)(s_seq % FNOS_HIST_MAX);
     s_h_cpu[idx] = dst->cpu.pct;
@@ -387,6 +404,7 @@ static void note_failure(const char *why, int status_code, int http_ms)
     s_status.http_ms = http_ms;
     snprintf(s_status.last_err, sizeof(s_status.last_err), "%s", why);
     s_status.fail_ms = esp_timer_get_time() / 1000;
+    http_ring_push(http_ms);
     xSemaphoreGive(s_lock);
 }
 
@@ -552,4 +570,49 @@ int fnos_data_hist_read(int64_t since_seq, fnos_sample_t *out, int max, int64_t 
     if (next_seq) *next_seq = since_seq;
     xSemaphoreGive(s_lock);
     return n;
+}
+
+// ────────────────────────────── 只读诊断（72h 长测）
+
+/* P95：把环形缓冲拷出来插排。64 个 int 的插入排序在诊断回调里跑，
+   最坏 ~2000 次比较、每 10 秒一次，代价可以忽略。 */
+static int http_ring_p95_locked(void)
+{
+    if (s_http_ring_n <= 0) return 0;
+    int v[HTTP_RING_N];
+    for (int i = 0; i < s_http_ring_n; i++) v[i] = s_http_ring[i];
+    for (int i = 1; i < s_http_ring_n; i++) {
+        int x = v[i], j = i - 1;
+        while (j >= 0 && v[j] > x) { v[j + 1] = v[j]; j--; }
+        v[j + 1] = x;
+    }
+    int idx = (s_http_ring_n * 95) / 100;        // 上取整语义：n=64 -> 60
+    if (idx >= s_http_ring_n) idx = s_http_ring_n - 1;
+    return v[idx];
+}
+
+void fnos_data_diag(fnos_data_diag_t *out)
+{
+    if (!out) return;
+    memset(out, 0, sizeof(*out));
+    if (!s_lock || xSemaphoreTake(s_lock, pdMS_TO_TICKS(50)) != pdTRUE) {
+        return;                                  // 拿不到锁：全 0，调用方按"测不到"处理
+    }
+    out->ok_count   = s_status.ok_count;
+    out->fail_count = s_status.fail_count;
+    out->recv_ms    = s_status.recv_ms;
+    out->source_ts  = s_status.source_ts;
+    out->http_ms    = s_status.http_ms;
+    out->uptime_s   = s_status.uptime_s;
+    out->online     = s_status.online && s_valid;
+    out->p95_ms     = http_ring_p95_locked();
+    xSemaphoreGive(s_lock);
+}
+
+uint32_t fnos_data_stack_min_free(void)
+{
+    // ESP-IDF FreeRTOS：uxTaskGetStackHighWaterMark 返回**字节**（本工程没开
+    // CONFIG_FREERTOS_SMP，走 IDF 自带实现）。任务没起来就返回 0，让长测
+    // 按"测不到"判 INCOMPLETE，而不是当成"栈只剩 0 字节"。
+    return s_task ? (uint32_t)uxTaskGetStackHighWaterMark(s_task) : 0;
 }

@@ -1,0 +1,3872 @@
+diff --git a/components/fnos_monitor/Kconfig b/components/fnos_monitor/Kconfig
+index 61d1ee2..1da8bee 100644
+--- a/components/fnos_monitor/Kconfig
++++ b/components/fnos_monitor/Kconfig
+@@ -7,6 +7,18 @@ menu "fnOS monitor"
+             打开后每 10 秒在串口打印内部 RAM / DMA / PSRAM 余量、LVGL 任务状态、
+             轮询统计。排查"界面冻结""内存下滑"时打开它比猜快得多。
+ 
++    config FNOS_SOAK_DIAG
++        bool "72 小时长测诊断心跳（每 10 秒一行 FNOS_DIAG JSON）"
++        default n
++        help
++            打开后由 **LVGL 事件循环**每 10 秒往串口打一行机器可读诊断：堆历史最小值与
++            最大连续块（内部/DMA/PSRAM）、LVGL 与 fnos_poll/fnos_pair 三个任务的栈余量、
++            距上次刷新的秒数、轮询成功/失败计数与 P95 耗时、最近成功帧的 NAS 采集时间、
++            复位原因、固件 ELF 的 SHA-256。tools/audit125/soak72.py 只读采集这一行做
++            72 小时验收。心跳本身有观察开销（每 10 秒几十微秒），生产版保持关闭；
++            关掉后编译产物与打开前完全一致。它只证明 LVGL 任务还活着、间隔 ≤15 秒，
++            **不代表帧耗时或触摸延迟**。
++
+     config FNOS_AUTO_PAGE_SEC
+         int "自动轮播页面间隔（秒，0=关闭）"
+         range 0 120
+diff --git a/components/fnos_monitor/fnos_data.c b/components/fnos_monitor/fnos_data.c
+index c8417f1..29837f5 100644
+--- a/components/fnos_monitor/fnos_data.c
++++ b/components/fnos_monitor/fnos_data.c
+@@ -68,6 +68,13 @@ static SemaphoreHandle_t s_lock;
+ static TaskHandle_t s_task;
+ static volatile bool s_session_reset;
+ 
++/* 最近 64 次请求耗时（含失败），给长测的 P95 用。只在这里写、只在诊断接口里读，
++   不进 PSRAM 大对象，也不参与调度决策。 */
++#define HTTP_RING_N 64
++static int s_http_ring[HTTP_RING_N];
++static int s_http_ring_n;                    // 已收集样本数（<= HTTP_RING_N）
++static int s_http_ring_i;                    // 下一个写入位置
++
+ static char s_url_status[160];
+ static char s_url_hist[160];
+ 
+@@ -348,6 +355,15 @@ static void mark_link_down(void)
+     }
+ }
+ 
++/* 调用方必须已持锁。失败也记：连不上同样是用户感受到的等待。 */
++static void http_ring_push(int ms)
++{
++    if (ms < 0) ms = 0;
++    s_http_ring[s_http_ring_i] = ms;
++    s_http_ring_i = (s_http_ring_i + 1) % HTTP_RING_N;
++    if (s_http_ring_n < HTTP_RING_N) s_http_ring_n++;
++}
++
+ static void commit_status(const fnos_status_t *st, int http_ms, int status_code)
+ {
+     if (xSemaphoreTake(s_lock, portMAX_DELAY) != pdTRUE) {
+@@ -366,6 +382,7 @@ static void commit_status(const fnos_status_t *st, int http_ms, int status_code)
+     dst->last_err[0] = 0;
+     dst->recv_ms = esp_timer_get_time() / 1000;
+     dst->fail_ms = 0;
++    http_ring_push(http_ms);
+ 
+     int idx = (int)(s_seq % FNOS_HIST_MAX);
+     s_h_cpu[idx] = dst->cpu.pct;
+@@ -387,6 +404,7 @@ static void note_failure(const char *why, int status_code, int http_ms)
+     s_status.http_ms = http_ms;
+     snprintf(s_status.last_err, sizeof(s_status.last_err), "%s", why);
+     s_status.fail_ms = esp_timer_get_time() / 1000;
++    http_ring_push(http_ms);
+     xSemaphoreGive(s_lock);
+ }
+ 
+@@ -553,3 +571,48 @@ int fnos_data_hist_read(int64_t since_seq, fnos_sample_t *out, int max, int64_t
+     xSemaphoreGive(s_lock);
+     return n;
+ }
++
++// ────────────────────────────── 只读诊断（72h 长测）
++
++/* P95：把环形缓冲拷出来插排。64 个 int 的插入排序在诊断回调里跑，
++   最坏 ~2000 次比较、每 10 秒一次，代价可以忽略。 */
++static int http_ring_p95_locked(void)
++{
++    if (s_http_ring_n <= 0) return 0;
++    int v[HTTP_RING_N];
++    for (int i = 0; i < s_http_ring_n; i++) v[i] = s_http_ring[i];
++    for (int i = 1; i < s_http_ring_n; i++) {
++        int x = v[i], j = i - 1;
++        while (j >= 0 && v[j] > x) { v[j + 1] = v[j]; j--; }
++        v[j + 1] = x;
++    }
++    int idx = (s_http_ring_n * 95) / 100;        // 上取整语义：n=64 -> 60
++    if (idx >= s_http_ring_n) idx = s_http_ring_n - 1;
++    return v[idx];
++}
++
++void fnos_data_diag(fnos_data_diag_t *out)
++{
++    if (!out) return;
++    memset(out, 0, sizeof(*out));
++    if (!s_lock || xSemaphoreTake(s_lock, pdMS_TO_TICKS(50)) != pdTRUE) {
++        return;                                  // 拿不到锁：全 0，调用方按"测不到"处理
++    }
++    out->ok_count   = s_status.ok_count;
++    out->fail_count = s_status.fail_count;
++    out->recv_ms    = s_status.recv_ms;
++    out->source_ts  = s_status.source_ts;
++    out->http_ms    = s_status.http_ms;
++    out->uptime_s   = s_status.uptime_s;
++    out->online     = s_status.online && s_valid;
++    out->p95_ms     = http_ring_p95_locked();
++    xSemaphoreGive(s_lock);
++}
++
++uint32_t fnos_data_stack_min_free(void)
++{
++    // ESP-IDF FreeRTOS：uxTaskGetStackHighWaterMark 返回**字节**（本工程没开
++    // CONFIG_FREERTOS_SMP，走 IDF 自带实现）。任务没起来就返回 0，让长测
++    // 按"测不到"判 INCOMPLETE，而不是当成"栈只剩 0 字节"。
++    return s_task ? (uint32_t)uxTaskGetStackHighWaterMark(s_task) : 0;
++}
+diff --git a/components/fnos_monitor/fnos_data.h b/components/fnos_monitor/fnos_data.h
+index b21af9c..4a39858 100644
+--- a/components/fnos_monitor/fnos_data.h
++++ b/components/fnos_monitor/fnos_data.h
+@@ -28,7 +28,14 @@ extern "C" {
+ typedef struct { const char *ifname; float rx_kbs, tx_kbs, rx_total_gb, tx_total_gb;
+                  const char *state; int speed_mbps; bool physical; } fnos_netif_t;
+ typedef struct { const char *mnt, *fs; float total_gb, used_gb, free_gb, pct; } fnos_vol_t;
+-typedef struct { const char *dev, *lvl, *state; bool ok; int have, want; float sync_pct; } fnos_raid_t;
++/* health = 采集端给的**结构**健康度（ok/degraded/inactive/readonly/container/unknown），
++   what = 阵列正在做的维护动作（resync/recovery/check/repair…）。
++   两者都是追加字段：老采集端不给就是空串，界面当"未知"处理。
++   以前界面是在 state 里 strstr "sync"/"recover"/"reshape" 判断进度——而动作词在
++   what 里、state 只有首词（"active"），那个分支对真实数据**永远为假**，
++   于是降级阵列的进度百分比从来没显示过（审计 §8.2）。 */
++typedef struct { const char *dev, *lvl, *state, *health, *what; bool ok;
++                 int have, want; float sync_pct; } fnos_raid_t;
+ typedef struct { const char *dev; float rd_kbs, wr_kbs; } fnos_disk_t;
+ /* 温度：一条 = 一个**传感器通道**（不是一个设备）。
+    dev/ch = 内核短名与通道名（enp1s0 / PHY、nvme2n1 / Composite…），保证"同一路永远
+@@ -104,6 +111,28 @@ int  fnos_data_hist_read(int64_t since_seq, fnos_sample_t *out, int max, int64_t
+ // 当前已产生的样本总数（用于判断有无新数据）。
+ int64_t fnos_data_hist_seq(void);
+ 
++/* ── 只读诊断（72h 长测采集用）──────────────────────────────────────────
++   这几个接口只读、不加锁以外的工作、不改轮询节奏，也不参与任何控制路径：
++   打开 CONFIG_FNOS_SOAK_DIAG 后由 LVGL 事件循环每 10 秒抄一份打到串口。
++   时间戳单位是 esp_timer 毫秒（不是 epoch）；source_ts 是 NAS 那侧的采集时间
++   （epoch 秒，0 = 还没有成功帧）。p95_ms 是最近 64 次请求耗时的 P95——
++   失败也计入，因为"连不上"同样属于用户看到的延迟。 */
++typedef struct {
++    uint32_t ok_count, fail_count;
++    int64_t  recv_ms;      // 最近一次成功接收的时刻（0 = 从未成功）
++    int64_t  source_ts;    // 最近成功帧里 NAS 的采集时间戳
++    int      http_ms;      // 最近一次请求耗时
++    int      p95_ms;       // 最近 64 次请求耗时的 P95（样本不足时取已有个数）
++    uint32_t uptime_s;     // NAS 上报的开机时长
++    bool     online;
++} fnos_data_diag_t;
++
++// 复制一份诊断快照（线程安全）。任何字段缺失都是 0/false，不返回错误。
++void fnos_data_diag(fnos_data_diag_t *out);
++// 轮询任务栈的剩余高水位（字节，ESP-IDF 该 API 的单位就是字节）。
++// 0 = 任务还没起来 ⇒ 调用方要按"测不到"处理，不能当成 0 字节可用栈。
++uint32_t fnos_data_stack_min_free(void);
++
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/components/fnos_monitor/fnos_pair.c b/components/fnos_monitor/fnos_pair.c
+index 878b1b0..89ec7e8 100644
+--- a/components/fnos_monitor/fnos_pair.c
++++ b/components/fnos_monitor/fnos_pair.c
+@@ -482,6 +482,18 @@ static bool nvs_save(const fnos_pair_cfg_t *c)
+     if (ok && has_cert(c->cert_pem)) {
+         ok = nvs_set_str(h, KEY_CERT, c->cert_pem) == ESP_OK &&
+              nvs_set_str(h, KEY_FP, c->fingerprint) == ESP_OK;
++    } else if (ok) {
++        /* 明文配对：必须把上一次 HTTPS 留下的证书和指纹擦掉。留着它们的后果是
++           重启后 nvs_load 看见证书就把 tls 又打开，而 NAS 早就关掉了 HTTPS——
++           板子从此连不上，用户只会觉得"配对忽然坏了"（审计 N1）。
++           擦除失败也要让本次保存失败，否则"保存成功"是假的。 */
++        esp_err_t ec = nvs_erase_key(h, KEY_CERT);
++        esp_err_t ef = nvs_erase_key(h, KEY_FP);
++        ok = (ec == ESP_OK || ec == ESP_ERR_NVS_NOT_FOUND) &&
++             (ef == ESP_OK || ef == ESP_ERR_NVS_NOT_FOUND);
++        if (!ok) {
++            ESP_LOGE(TAG, "清除旧证书失败：cert=%d fp=%d", (int)ec, (int)ef);
++        }
+     }
+     if (ok) {
+         ok = nvs_commit(h) == ESP_OK;
+@@ -490,15 +502,22 @@ static bool nvs_save(const fnos_pair_cfg_t *c)
+     return ok;
+ }
+ 
+-static void nvs_wipe(void)
++static bool nvs_wipe(void)
+ {
+     nvs_handle_t h;
+     if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) {
+-        return;
++        return false;
+     }
+-    nvs_erase_all(h);
+-    nvs_commit(h);
++    /* 以前两个返回值都丢掉、函数还是 void：擦除/提交失败时 do_forget 照样告诉用户
++       "已清除"，重启后旧配对原样回来（审计 N2）。失败必须一路传上去。 */
++    esp_err_t e1 = nvs_erase_all(h);
++    esp_err_t e2 = nvs_commit(h);
+     nvs_close(h);
++    if (e1 != ESP_OK || e2 != ESP_OK) {
++        ESP_LOGE(TAG, "清除配对失败：erase=%d commit=%d", (int)e1, (int)e2);
++        return false;
++    }
++    return true;
+ }
+ 
+ // ────────────────────────────── 配对流程（跑在配对任务里）
+@@ -560,6 +579,14 @@ static void do_fetch(const char *code)
+ 
+     const cJSON *jtls = cJSON_GetObjectItemCaseSensitive(root, "tls");
+     const cJSON *jpem = cJSON_GetObjectItemCaseSensitive(root, "cert_pem");
++    /* tls 必须是 JSON 布尔。以前字段缺失、或类型不对（字符串 "false"、数字 0）都会
++       cJSON_IsTrue 成 false ⇒ 明明 NAS 开着 HTTPS，板子却按明文去连，屏幕只报"证书问题"
++       （审计 N3）。类型不对就明确失败，不猜。 */
++    if (!cJSON_IsBool(jtls)) {
++        cJSON_Delete(root);
++        set_view(FNOS_PAIR_FAILED, "NAS 返回的 tls 字段格式不对（应为 true/false）");
++        return;
++    }
+     bool tls = cJSON_IsTrue(jtls);
+     const char *pem = (cJSON_IsString(jpem) && jpem->valuestring) ? jpem->valuestring : "";
+ 
+@@ -603,6 +630,21 @@ static void do_fetch(const char *code)
+     set_view(FNOS_PAIR_CONFIRM, "请把屏幕上的指纹与 NAS 管理页逐段比对");
+ }
+ 
++/* 配对响应判定：只有"传输成功 + HTTP 200 + 非空且装得下的令牌"才算配对成功。
++   非 200 的响应体里也可能带 token 字段，照收就会把一次失败写进 NVS 变成"配对完成"
++   （审计 N3）。抽成纯函数，主机测试（tools/audit125/test_pair_nvs.py）直接抽取本函数
++   断言，判定逻辑只有这一份。 */
++static bool pair_response_accept(bool transport_ok, int status, const char *token, size_t token_cap)
++{
++    if (!transport_ok || status != 200) {
++        return false;
++    }
++    if (!token || !token[0]) {
++        return false;
++    }
++    return strlen(token) < token_cap;
++}
++
+ static void do_pair(void)
+ {
+     char url[128];
+@@ -638,8 +680,10 @@ static void do_pair(void)
+     cJSON *root = (ok || len > 0) ? cJSON_Parse(rx) : NULL;
+     const cJSON *jtok = root ? cJSON_GetObjectItemCaseSensitive(root, "token") : NULL;
+     const char *token = (jtok && cJSON_IsString(jtok) && jtok->valuestring) ? jtok->valuestring : NULL;
++    /* 判定只有一份：pair_response_accept。下面三档只是"为什么失败"的文案分派。 */
++    const bool accept = pair_response_accept(ok, status, token, sizeof(s_next.token));
+ 
+-    if (!token || !token[0]) {
++    if (!accept && (!token || !token[0])) {
+         const cJSON *jerr = root ? cJSON_GetObjectItemCaseSensitive(root, "error") : NULL;
+         const char *err = (jerr && cJSON_IsString(jerr)) ? jerr->valuestring : NULL;
+         char msg[112];
+@@ -660,6 +704,39 @@ static void do_pair(void)
+         return;
+     }
+ 
++    /* 真的配对成功只可能是 200 + token（nas_companion_server.py 的 /api/v1/pair：
++       成功 200/ok:true，失败 403/ok:false/error）。非 200 的响应体里也带 token 字段时
++       照收，就会把一次失败写进 NVS 变成"配对完成"（审计 N3）。 */
++    if (!accept && (!ok || status != 200)) {
++        const cJSON *jerr = root ? cJSON_GetObjectItemCaseSensitive(root, "error") : NULL;
++        const char *err = (jerr && cJSON_IsString(jerr)) ? jerr->valuestring : NULL;
++        char msg[112];
++        if (err) {
++            snprintf(msg, sizeof(msg), "配对失败：%s", err);
++        } else if (status == 0) {
++            snprintf(msg, sizeof(msg), "配对请求没连上：%s",
++                     s_http_diag[0] ? s_http_diag : "原因未知");
++        } else {
++            snprintf(msg, sizeof(msg), "配对失败：HTTP %d", status);
++        }
++        ESP_LOGW(TAG, "pair rejected: status=%d err=%s", status, err ? err : "-");
++        if (root) {
++            cJSON_Delete(root);
++        }
++        free(rx);
++        set_view(FNOS_PAIR_FAILED, msg);
++        return;
++    }
++
++    /* 令牌超长必须报错而不是截断：截断的令牌写进 NVS，症状是"配对成功但一直 401"，
++       用户完全无从排查（审计 N3；token[80] 见 fnos_pair.h）。走到这里只剩"超长"一种。 */
++    if (!accept) {
++        cJSON_Delete(root);
++        free(rx);
++        set_view(FNOS_PAIR_FAILED, "配对失败：NAS 发的令牌超出本机长度上限");
++        return;
++    }
++
+     fnos_pair_cfg_t *next = &s_next;      // 见 s_next 的注释：不压在配对任务的栈上
+     memset(next, 0, sizeof(*next));
+     snprintf(next->host, sizeof(next->host), "%s", s_cfg.host);
+@@ -692,7 +769,12 @@ static void do_pair(void)
+ 
+ static void do_forget(void)
+ {
+-    nvs_wipe();
++    /* 擦除/提交失败就不能说"已清除"：用户会以为 NAS 上的设备记录也一并失效了，
++       而重启后旧配对原样回来（审计 N2）。保持内存态不动，让界面如实显示失败。 */
++    if (!nvs_wipe()) {
++        set_view(FNOS_PAIR_FAILED, "清除配对失败（NVS 写入错误），请重试");
++        return;
++    }
+     if (xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
+         memset(&s_cfg, 0, sizeof(s_cfg));
+         snprintf(s_cfg.host, sizeof(s_cfg.host), "%s", FNOS_HOST);
+@@ -863,3 +945,10 @@ void fnos_pair_forget(void)
+ {
+     post_action(ACT_FORGET);
+ }
++
++uint32_t fnos_pair_stack_min_free(void)
++{
++    // 单位是字节（本工程用 IDF 自带 FreeRTOS，没开 CONFIG_FREERTOS_SMP）。
++    // 任务句柄只在 fnos_pair_init 里赋值、之后不再改，这里读它不需要加锁。
++    return s_task ? (uint32_t)uxTaskGetStackHighWaterMark(s_task) : 0;
++}
+diff --git a/components/fnos_monitor/fnos_pair.h b/components/fnos_monitor/fnos_pair.h
+index 8dd9a57..6f9c076 100644
+--- a/components/fnos_monitor/fnos_pair.h
++++ b/components/fnos_monitor/fnos_pair.h
+@@ -81,6 +81,11 @@ void fnos_pair_forget(void);
+ bool     fnos_pair_tls_probe(char *out, size_t out_cap);
+ void     fnos_pair_tls_probe_async(void);
+ 
++// 只读诊断：配对任务栈的剩余高水位（字节；ESP-IDF 该 API 单位就是字节）。
++// 0 = 任务没起来（fnos_pair_init 还没跑或建任务失败）⇒ 长测按"测不到"处理，
++// 不能当成"栈只剩 0 字节"。mbedTLS 握手吃栈最深，72h 长测靠它盯这条底线。
++uint32_t fnos_pair_stack_min_free(void);
++
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/components/fnos_monitor/fnos_snapshot.c b/components/fnos_monitor/fnos_snapshot.c
+index 94dd7e5..e75209f 100644
+--- a/components/fnos_monitor/fnos_snapshot.c
++++ b/components/fnos_monitor/fnos_snapshot.c
+@@ -91,7 +91,8 @@ bool fnos_status_create(fnos_status_t *out, const fnos_counts_t *c)
+     VECTOR(mods, nmods, mods); VECTOR(nets, nnets, nets);
+ #undef VECTOR
+     for (int i=0;i<s.nvols;i++) s.vols[i].mnt = s.vols[i].fs = "";
+-    for (int i=0;i<s.nraid;i++) s.raid[i].dev = s.raid[i].lvl = s.raid[i].state = "";
++    for (int i=0;i<s.nraid;i++) s.raid[i].dev = s.raid[i].lvl = s.raid[i].state =
++        s.raid[i].health = s.raid[i].what = "";
+     for (int i=0;i<s.ndisks;i++) s.disks[i].dev = "";
+     for (int i=0;i<s.ntemps;i++) s.temps[i].dev = s.temps[i].ch = s.temps[i].dn = "";
+     for (int i=0;i<s.ndocker;i++) s.docker[i].n = s.docker[i].s = "";
+@@ -170,6 +171,8 @@ bool fnos_status_parse(const char *json, fnos_status_t *out, const char **reason
+     }
+     i=0; cJSON_ArrayForEach(v,array(root,"raid")) {
+         fnos_raid_t *r=&s.raid[i++]; TEXT(r->dev,v,"dev"); TEXT(r->lvl,v,"lvl"); TEXT(r->state,v,"state");
++        /* 采集端 v1.2.5 起给结构健康度与维护动作；老采集端没有这两个键 ⇒ 空串 ⇒ 界面显示"状态未知"。 */
++        TEXT(r->health,v,"health"); TEXT(r->what,v,"what");
+         r->ok=cJSON_IsTrue(item(v,"ok")); r->have=number(v,"have");
+         r->want=number(v,"want"); r->sync_pct=number(v,"sync_pct");
+     }
+diff --git a/main/CMakeLists.txt b/main/CMakeLists.txt
+index d0c627a..acc6013 100644
+--- a/main/CMakeLists.txt
++++ b/main/CMakeLists.txt
+@@ -2,6 +2,10 @@ idf_component_register(
+     SRCS "main.cpp"
+     INCLUDE_DIRS "."
+     REQUIRES fnos_monitor esp32_p4_wifi6_touch_lcd_7b lvgl_mem_psram nvs_flash
++    # 诊断心跳（CONFIG_FNOS_SOAK_DIAG）用 esp_app_get_elf_sha256 报固件哈希；
++    # IDF 5.5 要求显式声明提供 esp_app_desc.h 的组件，否则构建报
++    # "esp_app_format component(s) is not in the requirements list of main"。
++    PRIV_REQUIRES esp_app_format
+ )
+ 
+ target_compile_options(${COMPONENT_LIB} PUBLIC -Wno-missing-field-initializers)
+diff --git a/main/main.cpp b/main/main.cpp
+index ba7cdd6..344afce 100644
+--- a/main/main.cpp
++++ b/main/main.cpp
+@@ -78,6 +78,79 @@ static void heap_timer_cb(void *arg)
+ }
+ #endif
+ 
++#if CONFIG_FNOS_SOAK_DIAG
++/* ── 72 小时长测诊断心跳（给 tools/audit125/soak72.py 只读采集）──────────────
++   故意跑在 **LVGL 事件循环**里：这个 lv_timer 由适配器的 LVGL 任务调用，所以
++   "有没有心跳"直接等于"LVGL 任务还活着"，两次心跳的间隔就是验收表里那条 ≤15 秒。
++   它**不测帧耗时、不测触摸延迟**——那两件事要另做屏幕/触摸验收，心跳再稳也不能
++   当流畅度证据。看堆余量给人读请开 FNOS_HEAP_DEBUG，这条只给机器解析。 */
++#include "esp_app_desc.h"     // esp_app_get_elf_sha256：固件 ELF 的 SHA-256
++#include "esp_system.h"       // esp_reset_reason：异常复位原因
++#include "fnos_pair.h"        // fnos_pair_stack_min_free
++#include "freertos/task.h"    // uxTaskGetStackHighWaterMark
++
++static void diag_timer_cb(lv_timer_t *t)
++{
++    (void)t;
++    static uint32_t n;
++    static int64_t  last_us;
++    static char     line[768];
++    static char     ev_name[16];          // 本次启动的异常复位名（只判定一次）
++
++    int64_t now_us = esp_timer_get_time();
++    int64_t gap_s = last_us ? (now_us - last_us) / 1000000 : 0;   // LVGL 心跳间隔
++    last_us = now_us;
++
++    if (!ev_name[0]) {
++        // 只有"上一轮跑挂了"才算异常：掉电/USB/软复位都是计划内动作，
++        // 长测前换固件重启不该被记成非计划复位（审计 §4：0 次非计划复位）。
++        const char *nm = NULL;
++        switch (esp_reset_reason()) {
++        case ESP_RST_PANIC:      nm = "panic";      break;
++        case ESP_RST_INT_WDT:    nm = "int_wdt";    break;
++        case ESP_RST_TASK_WDT:   nm = "task_wdt";   break;
++        case ESP_RST_WDT:        nm = "wdt";        break;
++        case ESP_RST_BROWNOUT:   nm = "brownout";   break;
++        case ESP_RST_CPU_LOCKUP: nm = "cpu_lockup"; break;
++        default: break;
++        }
++        if (nm) snprintf(ev_name, sizeof(ev_name), "%s", nm);
++    }
++
++    fnos_data_diag_t d;
++    fnos_data_diag(&d);
++    int64_t age_s = d.recv_ms ? (now_us / 1000 - d.recv_ms) / 1000 : -1;
++    char fw[80] = { 0 };
++    esp_app_get_elf_sha256(fw, sizeof(fw));      // 64 位小写 hex；和本地 sha256(ELF) 对齐
++    char ev_field[24] = "";
++    if (ev_name[0]) snprintf(ev_field, sizeof(ev_field), "\"%s\"", ev_name);
++
++    // 一次 snprintf 再一行日志：串口里不会出现被别的任务插进半行的情况。
++    n++;
++    snprintf(line, sizeof(line),
++             "FNOS_DIAG {\"n\":%u,\"up\":%lld,\"hz\":10,\"fw\":\"%s\",\"rst\":%d,\"ev\":[%s],"
++             "\"io\":{\"ok\":%u,\"fail\":%u,\"age\":%lld,\"p95\":%d,\"src\":%lld},"
++             "\"ui\":{\"age\":%lld},"
++             "\"mem\":{\"ifree\":%u,\"imin\":%u,\"imax\":%u,\"dfree\":%u,\"dmin\":%u,"
++             "\"pfree\":%u,\"pmin\":%u},"
++             "\"stk\":{\"lvgl\":%u,\"poll\":%u,\"pair\":%u}}",
++             (unsigned)n, (long long)(now_us / 1000), fw, (int)esp_reset_reason(), ev_field,
++             (unsigned)d.ok_count, (unsigned)d.fail_count, (long long)age_s, d.p95_ms,
++             (long long)(d.source_ts ? d.source_ts : -1), (long long)gap_s,
++             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
++             (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
++             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
++             (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA),
++             (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_DMA),
++             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
++             (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM),
++             (unsigned)uxTaskGetStackHighWaterMark(NULL),   // 当前任务就是 LVGL 任务
++             (unsigned)fnos_data_stack_min_free(),
++             (unsigned)fnos_pair_stack_min_free());
++    ESP_LOGI(TAG, "%s", line);
++}
++#endif
++
+ extern "C" void app_main(void)
+ {
+     esp_err_t err = nvs_flash_init();
+@@ -124,6 +197,11 @@ extern "C" void app_main(void)
+ 
+     if (bsp_display_lock(0)) {
+         fnos_ui_create();
++#if CONFIG_FNOS_SOAK_DIAG
++        // 长测心跳：建在 LVGL 任务里，所以它活着 = LVGL 事件循环还在跑。
++        lv_timer_create(diag_timer_cb, 10 * 1000, NULL);
++        ESP_LOGW(TAG, "SOAK DIAG: 每 10 秒一行 FNOS_DIAG（长测专用，生产版请关掉）");
++#endif
+ #if CONFIG_FNOS_AUTO_PAGE_SEC > 0
+         lv_timer_create(auto_page_cb, CONFIG_FNOS_AUTO_PAGE_SEC * 1000, NULL);
+         ESP_LOGW(TAG, "VERIFY MODE: auto page every %d s", CONFIG_FNOS_AUTO_PAGE_SEC);
+diff --git a/nas/fpk/board_fields.json b/nas/fpk/board_fields.json
+index 0333239..a8607d1 100644
+--- a/nas/fpk/board_fields.json
++++ b/nas/fpk/board_fields.json
+@@ -130,6 +130,14 @@
+    "raid",
+    "state"
+   ],
++  [
++   "raid",
++   "health"
++  ],
++  [
++   "raid",
++   "what"
++  ],
+   [
+    "raid",
+    "ok"
+diff --git a/nas/fpk/contract_check.py b/nas/fpk/contract_check.py
+index 27496aa..372a05c 100644
+--- a/nas/fpk/contract_check.py
++++ b/nas/fpk/contract_check.py
+@@ -373,7 +373,9 @@ def limits_problems():
+     # 状态帧的最坏情况：各段都到上限时的 payload 有多大。每项的字节数是**量出来的**
+     # （见 docs 里那节），不是拍的：满载实测约 8.3 KB，而板子原来只有 8 KB —— 会截断，
+     # cJSON 解不出来，板子一直显示「NAS 返回的数据解析不了」，而 NAS 那边一切正常。
+-    PER_ENTRY = {"vols": 110, "raid": 90, "disks": 60, "temps": 45,
++    # raid 从 90 提到 130：v1.2.5 起每行多两个键 —— `"health":"degraded"` 与
++    # `"what":"recovery"`（板端 RAID 卡与告警分级都靠它们），最长约 34 字节。
++    PER_ENTRY = {"vols": 110, "raid": 130, "disks": 60, "temps": 45,
+                  "docker": 95, "alerts": 250}
+     OVERHEAD = 1500          # cpu/mem/net/mods/trunc/caps 这些固定段
+     if limits:
+diff --git a/nas/fpk/nasscreencompanion/app/server/fnos_collector.py b/nas/fpk/nasscreencompanion/app/server/fnos_collector.py
+index 02478c3..357e4f6 100644
+--- a/nas/fpk/nasscreencompanion/app/server/fnos_collector.py
++++ b/nas/fpk/nasscreencompanion/app/server/fnos_collector.py
+@@ -54,6 +54,17 @@ def read_text(path, default=""):
+         return default
+ 
+ 
++def read_text_strict(path):
++    """读不到就抛。凡"空内容 != 正常"的来源必须走这里。
++
++    `read_text(default="")` 会把权限不足/IO 错误变成"空内容"，而空的 /proc/mdstat
++    在语义上是"这台机器没有阵列"——采样层于是拿它覆盖上一帧，板子上从"md0 正常"
++    直接跳成"未发现阵列"，全程没有任何一处报错（审计 R2）。
++    """
++    with open(path, "r", encoding="utf-8", errors="replace") as f:
++        return f.read()
++
++
+ def read_int(path, default=0):
+     try:
+         with open(path, "r", encoding="utf-8", errors="replace") as f:
+@@ -92,6 +103,38 @@ SKIP_MNT_PREFIX = ("/run", "/sys", "/dev", "/proc", "/var/lib/docker", "/var/lib
+                    "/tmp", "/var/tmp", "/var/lock", "/var/run")
+ 
+ 
++# 告警严重度：先按这个排序，再套 limits 截断——否则"限量"会先砍掉新出现的严重项
++SEV = {"crit": 0, "warn": 1, "info": 2}
++
++
++def raid_health(r):
++    """阵列的结构健康度：ok / degraded / inactive / readonly / container / unknown。
++
++    `ok` 原来是"默认 False，等汇总行来翻案"，而 RAID0/linear 本来就没有冗余、
++    内核也不给它们打 `[n/m] [UU]` 行 —— 于是这类阵列永远显示"降级"（审计 R5）。
++    维护进度（resync/check/repair）**不**进这个字段：健康与维护是两件事（审计 R1），
++    降级阵列正在恢复仍然是降级。
++    """
++    state = r.get("state") or ""
++    # 首词精确比较：`"active" in "inactive"` 为真，那是误判的来源（审计 R3）
++    first = (state.split() or [""])[0].lower()
++    lvl = (r.get("lvl") or "").lower()
++    if "read-only" in state.lower() or r.get("ro"):
++        return "readonly"
++    if lvl == "container":
++        return "container"                       # imsm/ddf 外部元数据容器：要在固件里组装
++    if first == "inactive":
++        return "inactive"
++    if first != "active":
++        return "unknown"
++    if r.get("summary"):
++        have, want, flags = int(r.get("have") or 0), int(r.get("want") or 0), r.get("flags") or ""
++        return "ok" if (have == want and "_" not in flags) else "degraded"
++    if lvl in ("raid0", "linear"):
++        return "ok"                              # 没有冗余就没有汇总行，这是正常形态
++    return "unknown"                             # 其余情况缺汇总行就不猜：未知不是健康
++
++
+ class Collector:
+     def _trim(self, name, seq):
+         """Full inventories by default; explicit installation policy stays visible."""
+@@ -303,7 +346,9 @@ class Collector:
+         return self._trim("vols", vols)
+ 
+     def _raid(self):
+-        txt = read_text("/proc/mdstat")
++        # 严格读：读失败要抛出去，让采样层保留上一帧并标 stale。
++        # 退回空串等于宣布"这台机器没有阵列"，比报错更糟（审计 R2）。
++        txt = read_text_strict("/proc/mdstat")
+         out = []
+         cur = None
+         for line in txt.splitlines():
+@@ -315,13 +360,18 @@ class Collector:
+             head = re.match(r"^(md\d+)\s*:\s*(\S+)\s*(.*)$", line)
+             if head:
+                 state, rest = head.group(2), head.group(3)
++                # "(read-only)" 跟级别名平级、在 state 之后（"md0 : active (read-only) raid1 …"），
++                # 只读阵列能照常读写失败才知道，必须在头行就认出来。
++                ro = "(read-only)" in rest
+                 m2 = re.match(r"^(raid\d+|linear|multipath|faulty|container)\b\s*(.*)$", rest)
+                 lvl, memtxt = (m2.group(1), m2.group(2)) if m2 else ("", rest)
+                 cur = {
+                     "dev": head.group(1), "state": state, "lvl": lvl,
+                     "members": ["%s%s" % (n, "(%s)" % fl if fl else "") for n, _i, fl in
+                                 re.findall(r"([a-z0-9]+)\[(\d+)\](?:\(([A-Z])\))?", memtxt)],
+-                    "have": 0, "want": 0, "ok": False, "sync_pct": -1.0, "what": "",
++                    "have": 0, "want": 0, "ok": False, "health": "unknown",
++                    "sync_pct": -1.0, "what": "",
++                    "flags": "", "summary": False, "ro": ro,
+                 }
+                 out.append(cur)
+                 continue
+@@ -331,18 +381,24 @@ class Collector:
+             if m:
+                 cur["want"] = int(m.group(1))
+                 cur["have"] = int(m.group(2))
+-                flags = m.group(3)
+-                cur["ok"] = (cur["have"] == cur["want"]) and ("_" not in flags) and \
+-                            ("active" in cur["state"])
++                cur["flags"] = m.group(3)
++                cur["summary"] = True
+                 continue
+             m = re.search(r"\[([=>.]+)\]\s*(\w+)\s*=\s*([\d.]+)%", line)
+             if m:
+-                # resync/recovery/check/repair 都只是进度。ok 只由 [n/m] 与 [U_] 决定：
+-                # 健康阵列每月做 check 的数小时里不该显示成异常。
+-                cur["sync_pct"] = float(m.group(3))
++                # resync/recovery/check/repair 都只是进度。结构健康度只由 [n/m] 与 [U_]
++                # 决定：健康阵列每月做 check 的数小时里不该显示成异常。
++                pct = float(m.group(3))
++                cur["sync_pct"] = pct if 0.0 <= pct <= 100.0 else -1.0   # 进度越界就不认
+                 cur["what"] = m.group(2)
+         # mdstat 的顺序是组装顺序，面板上按设备名排更易读
+         out.sort(key=lambda r: r["dev"])
++        for r in out:
++            r["health"] = raid_health(r)
++            r["ok"] = (r["health"] == "ok")         # 未知不是健康
++            r.pop("flags", None)
++            r.pop("summary", None)
++            r.pop("ro", None)
+         return self._trim("raid", out)
+ 
+     def _disk_io(self):
+@@ -671,30 +727,53 @@ class Collector:
+         return {"arc_gb": round(vals["size"] / 1024.0 ** 3, 2), "hit_pct": hit_pct}
+ 
+     def _alerts(self, snap):
++        # 段可能是 None（首次读取失败、或上层清空）——`snap.get("raid", [])` 对 None 依然
++        # 返回 None，紧接着迭代就抛异常，而外层 except 会把**整张告警表**退回上一帧：
++        # 同一帧里新出现的阵列/磁盘问题跟着一起被吞掉（审计 R4）。
+         out = []
+-        for r in snap.get("raid", []):
+-            if not r["ok"]:
+-                if r["sync_pct"] >= 0:
+-                    out.append({"lv": "info", "m": "%s %s %.1f%%" % (r["dev"], r["what"] or "resync", r["sync_pct"])})
+-                else:
+-                    out.append({"lv": "crit", "m": "RAID %s degraded (%s)" % (r["dev"], r["state"])})
+-        for v in snap.get("vols", []):
+-            if v["pct"] >= 90:
+-                out.append({"lv": "crit", "m": "%s free %.1f%% left" % (v["mnt"], 100 - v["pct"])})
+-            elif v["pct"] >= 80:
+-                out.append({"lv": "warn", "m": "%s used %.0f%%" % (v["mnt"], v["pct"])})
+-        cpu = snap.get("cpu", {})
++        for r in (snap.get("raid") or []):
++            health = r.get("health") or ("ok" if r.get("ok") else "unknown")
++            dev = r.get("dev", "?")
++            prog = " %s %.1f%%" % (r.get("what") or "resync", r["sync_pct"]) \
++                if r.get("sync_pct", -1) >= 0 else ""
++            if health == "degraded":
++                # 降级就是降级："正在恢复"不改变结构已经缺成员这件事（审计 R1）
++                out.append({"lv": "crit",
++                            "m": "RAID %s degraded (%s)%s" % (dev, r.get("state") or "?", prog)})
++            elif health == "inactive":
++                out.append({"lv": "crit", "m": "RAID %s inactive%s" % (dev, prog)})
++            elif health == "readonly":
++                out.append({"lv": "warn", "m": "RAID %s read-only%s" % (dev, prog)})
++            elif health == "container":
++                out.append({"lv": "info", "m": "RAID %s external container (%s)"
++                            % (dev, r.get("lvl") or "?")})
++            elif health == "unknown":
++                out.append({"lv": "info", "m": "RAID %s state unknown (%s)"
++                            % (dev, r.get("state") or "?")})
++            elif prog:
++                out.append({"lv": "info", "m": "%s%s" % (dev, prog)})
++        for v in (snap.get("vols") or []):
++            pct = v.get("pct") or 0
++            if pct >= 90:
++                out.append({"lv": "crit", "m": "%s free %.1f%% left" % (v["mnt"], 100 - pct)})
++            elif pct >= 80:
++                out.append({"lv": "warn", "m": "%s used %.0f%%" % (v["mnt"], pct)})
++        cpu = snap.get("cpu") or {}
++        mem = snap.get("mem") or {}
+         if cpu.get("temp_c") and cpu["temp_c"] >= 80:
+             out.append({"lv": "warn", "m": "CPU temp %.0fC" % cpu["temp_c"]})
+-        if snap.get("mem", {}).get("pct", 0) >= 90:
+-            out.append({"lv": "warn", "m": "MEM used %.0f%%" % snap["mem"]["pct"]})
+-        if cpu.get("cores") and cpu.get("load5", 0) > cpu["cores"]:
++        mem_pct = mem.get("pct") or 0
++        if mem_pct >= 90:
++            out.append({"lv": "warn", "m": "MEM used %.0f%%" % mem_pct})
++        cores = cpu.get("cores") or 0
++        if cores and (cpu.get("load5") or 0) > cores:
+             out.append({"lv": "warn", "m": "LOAD high %.2f" % cpu["load5"]})
+         for c in (snap.get("docker") or []):
+             # 只报"本来在跑、现在掉了"的容器；开机就停着的（如已弃用的 exporter）不刷告警
+-            if (snap.get("modules", {}).get("docker", {}).get("status", "ok") == "ok"
++            if (((snap.get("modules") or {}).get("docker") or {}).get("status", "ok") == "ok"
+                     and not c["up"] and c["n"] in self._docker_seen_up):
+                 out.append({"lv": "warn", "m": "container %s down" % c["n"]})
++        out.sort(key=lambda a: SEV.get(a["lv"], 9))    # 先排严重度，再套 limits 截断
+         return self._trim("alerts", out)
+ 
+ 
+diff --git a/tools/audit125/README.md b/tools/audit125/README.md
+new file mode 100644
+index 0000000..07108ea
+--- /dev/null
++++ b/tools/audit125/README.md
+@@ -0,0 +1,125 @@
++# tools/audit125 —— v1.2.5 候选专项审计的回归工具
++
++本目录是《v1.2.5 候选专项审计与整改》报告里那套补丁与测试的**本机可复现对应物**。
++报告 §3 声称的 `v1.2.5-candidate.patch` 与 `tools/audit125/*` 在公开仓库、本机任何位置都
++取不到（见 `docs/review-v1.2.5-audit-2026-10-10.md` §0），所以这里把它们按同一条目重新做出来：
++每个脚本要么驱动**真实生产文件**里抽出来的函数，要么对着固定判据做离线评价，不复制实现。
++
++对应关系：
++
++| 脚本 | 覆盖的审计条目 | 抽取/驱动的真实代码 |
++|---|---|---|
++| `test_raid.py` | R1 降级被进度掩盖、R2 读不到 mdstat 被当空清单、R3 `inactive` 命中 `active`、R4 其它段为 None 时告警整体丢失、R5 RAID0/linear 与容器误报降级 | `nas/fpk/nasscreencompanion/app/server/fnos_collector.py` 整个模块（只读导入） |
++| `test_pair_nvs.py` | N1 明文配对残留旧证书、N2 wipe 失败谎报已清除、N3 tls 类型/非 200/超长 token | `components/fnos_monitor/fnos_pair.c` 按函数名抽取 `has_cert`/`nvs_save`/`nvs_wipe`/`pair_response_accept` 与 `do_fetch` 的 tls 判定片段 |
++| `test_diag.py` | S1 板端诊断证据（心跳字段/单位/异常标记） | `main/main.cpp` 里真实的 `diag_timer_cb` 函数体 |
++| `soak72.py` | S1 72 小时只读采集 + 离线三态评价 | 无（只解析诊断行；判据按报告 §4） |
++| `test_soak72.py` | 上面那个评价器自身的回归 | 合成 `metrics.jsonl`，不接串口、不联网 |
++
++## 1. 主机侧（不需要板子，也不需要 IDF 工具链）
++
++```bash
++python3 tools/audit125/test_raid.py          # PASS 24 项，退出码 0
++python3 nas/fpk/collector_check.py           # 既有伴侣层检查
++python3 nas/fpk/contract_check.py            # 既有字段契约检查
++python3 tools/audit125/test_soak72.py        # 评价器自测（合成记录）
++```
++
++需要 C/C++ 编译器的两个（`test_pair_nvs.py` 用 `cc`，`test_diag.py` 用 `c++`）：
++
++```bash
++python3 tools/audit125/test_pair_nvs.py      # PASS 37 项
++python3 tools/audit125/test_diag.py          # PASS 136 项
++CC=gcc  python3 tools/audit125/test_pair_nvs.py     # 指定 C 编译器
++CXX=g++ python3 tools/audit125/test_diag.py         # 指定 C++ 编译器
++```
++
++Windows PowerShell 同上，用 `python` 代替 `python3`；没有 `cc`/`c++` 时用 `CC`/`CXX`
++指向本机编译器（例如 `$env:CC = "gcc"`）。这两个脚本会在系统临时目录里拼翻译单元，
++只用标准库 + 生产文件 + `managed_components/espressif__cjson`。
++
++## 2. 诊断固件（板端证据的来源，默认关闭）
++
++诊断心跳在 `CONFIG_FNOS_SOAK_DIAG=y` 时由 LVGL 事件循环每 10 秒打一行，默认 `n`。
++**必须走工程自己的入口构建**，否则 `ESP_IDF_VERSION` 没导出，kconfig 重配会丢掉
++`CONFIG_SLAVE_IDF_TARGET_*` 一族符号，`esp_hosted` 直接报 `#error "Unknown Slave Target"`：
++
++```bash
++FNOS_IDF_ENV=/Users/llll/code/esp/use-esp-idf-5.5.3.sh ./idf.sh build          # 默认版
++FNOS_IDF_ENV=/Users/llll/code/esp/use-esp-idf-5.5.3.sh ./idf.sh \
++    -B build_diag -D SDKCONFIG=$PWD/build_diag/sdkconfig build                 # 诊断版
++# 诊断版的 sdkconfig 是主 sdkconfig 的副本 + CONFIG_FNOS_SOAK_DIAG=y，不要手改主 sdkconfig
++python3 tools/stack_check.py --elf build_diag/fnos_monitor.elf
++```
++
++诊断行的契约（采集脚本按它解析，改字段等于改接口）：
++
++```text
++I (123456) main: FNOS_DIAG {"n":1234,"up":1234567,"hz":10,"fw":"<64位小写hex ELF SHA-256>",
++ "rst":4,"ev":["panic"],"io":{"ok":4200,"fail":1,"age":3,"p95":180,"src":1697000000},
++ "ui":{"age":2},"mem":{"ifree":180000,"imin":150000,"imax":65536,"dfree":90000,"dmin":80000,
++ "pfree":3000000,"pmin":2500000},"stk":{"lvgl":3000,"poll":2100,"pair":1800}}
++```
++
++| 字段 | 单位/含义 |
++|---|---|
++| `n` / `up` | 诊断序号 / 开机毫秒 |
++| `hz` | 标称周期秒（本构建 10） |
++| `fw` | 64 位小写 hex，等于**本次 ELF 的 SHA-256**（`esp_app_get_elf_sha256`） |
++| `rst` / `ev` | 复位原因编号 / 异常名（4 PANIC、5 INT_WDT、6 TASK_WDT、7 WDT、9 BROWNOUT、15 CPU_LOCKUP） |
++| `io.ok` / `io.fail` | 成功/失败接收计数 |
++| `io.age` | 距最近一次成功接收的秒数（从未成功 = -1） |
++| `io.p95` | 最近 64 次请求耗时的 P95（毫秒） |
++| `io.src` | 最近成功帧的 NAS `source_ts`（epoch 秒，无 = -1） |
++| `ui.age` | 两次诊断回调之间的秒数（**不代表帧耗时或触摸延迟**） |
++| `mem.*` | 字节；`imin/dmin/pmin` 是 heap_caps 历史最小，`imax` 是内部最大连续块。DMA 与内部 RAM 可能覆盖同一段堆，**不能相加** |
++| `stk.*` | `uxTaskGetStackHighWaterMark` 的**字节**高水位（本工程用 IDF FreeRTOS，不乘 4）；0 = 该任务没起来/测不到 |
++
++## 3. 72 小时实机长测
++
++串口只读采集，脚本不发任何数据、不管理 NAS/路由器，掉线只记一条并收工（不自动重开串口
++掩盖掉线）。pyserial 在 `open()` 前把 `dtr/rts/dsrdtr/rtscts` 全部置 false，避免 USB-Serial-JTAG
++把 DTR/RTS 当 BOOT/EN 造成"看起来板子自己重启"。
++
++Windows PowerShell（端口只在本机输入，不进任何文件）：
++
++```powershell
++python -m pip install pyserial
++$env:FNOS_SOAK_PORT = Read-Host '板端串口，仅在本机输入'
++python tools/audit125/soak72.py capture --hours 72 --elf build/fnos_monitor.elf --output soak72-results
++python tools/audit125/soak72.py analyze --input soak72-results/metrics.jsonl --hours 72 --elf build/fnos_monitor.elf --output soak72-review
++```
++
++故障窗口文件只含数字（`--fault-windows` 只影响评价、不产生故障；两次命令要传同一个文件）：
++
++```json
++[{"start_s":86400,"end_s":86460},{"start_s":129600,"end_s":129720}]
++```
++
++产物：`metrics.jsonl`（每行 `{"t":<接收时刻>,"rec":{…}}`，只有数值）与 `summary.json`
++（唯一的下游接口，含 verdict 与原因）。判据要点（报告 §4）：心跳覆盖 ≥99%、任意样本间隔
++≤30s、60s 无心跳 FAIL、栈高水位 ≥1024B、内部历史最小空闲 ≥32KiB/最大连续块 ≥16KiB、
++DMA ≥8KiB、PSRAM 历史最小空闲 ≥1MiB、前 2h 预热不计趋势、HTTP P95 ≤1000ms、
++板端最新成功接收年龄 ≤15s、`source_ts` 持续不变 >30s 或缺失 FAIL、登记故障窗口结束
++60s 内必须恢复。
++
++## 4. 退出码
++
++| 码 | 含义 |
++|---|---|
++| 0 | PASS：判据全部满足 |
++| 1 | FAIL：能证明违反了判据（含异常复位、心跳中断、栈/堆破线） |
++| 2 | INCOMPLETE：**证据不足**，不能判 PASS（缺结束标记、起止心跳、采样不够、主机时钟回拨等） |
++| 3 | INPUT_ERROR：输入本身不可用（文件空/坏、参数错、缺编译器、抽取失败） |
++
++`test_pair_nvs.py` 的 2/3 分别是"生产文件抽取失败"与"环境不可用"；`test_raid.py`、
++`test_diag.py`、`test_soak72.py` 只用 0/1。`soak72.py` 任何输入都会落一份 `summary.json`。
++
++## 5. 证据边界（这些脚本不给你盖什么章）
++
++* 主机测试里的 NVS、ESP-IDF、FreeRTOS、LVGL、cJSON 全是替身或真实库的主机编译：
++  它们证明**判断逻辑**，不证明 Flash 行为、真实 TLS 握手、真实 mdstat、真实触摸。
++* `test_diag.py` 证明字段契约，**不证明板上 LVGL 每 10 秒真的跑到**；那要靠 72h 的
++  心跳覆盖，而心跳也不等于画面流畅（不测 FPS、触摸 P95/P99）。
++* 诊断日志本身有观察开销，生产版关掉诊断后仍需一次短回归。
++* 磁盘/阵列结论只覆盖本次 mdstat 可见的成员状态，不等于 SMART、文件系统或其它池健康。
++* 72h 未跑完之前，本目录的任何绿灯都不能当作发布门槛已过；报告 §7 的缺口清单仍然有效。
+diff --git a/tools/audit125/soak72.py b/tools/audit125/soak72.py
+new file mode 100644
+index 0000000..56093bd
+--- /dev/null
++++ b/tools/audit125/soak72.py
+@@ -0,0 +1,966 @@
++#!/usr/bin/env python3
++"""72 小时实机长测：只读抓串口 → 只存数值记录 → 离线按固定判据评价 → 三态结论。
++
++审计报告要求"72 小时长测"可复核，而长测只有一次机会（跑完三天才发现判据写错，代价是三天），
++所以这里刻意把三件事分开：
++
++1. **采集只落数值**。串口上绝大多数字节是启动日志/文本，抄进证据只会让证据里混进主机名、
++   SSID、路径和令牌；真正要复核的是固件每 10s 打的那一行机器可读 JSON 里的数字。因此
++   capture 只写 metrics.jsonl（{"t":<接收时刻>,"rec":<诊断对象>}），其它文本立即丢弃并只计数。
++2. **不自动重开串口**。掉线时"静默重连"会把一段空白补成连续曲线，看起来像"一直在跑"；
++   这里掉线就记一条 error 并收工，让 analyze 判 INCOMPLETE——宁可说"证据不全"。
++3. **判据与采集分离**。判据只在 analyze 里实现，阈值是模块级常量，测试直接引用同一批常量，
++   改判据会立刻在 test_soak72.py 上现形。串口静默（板子不打了但线还插着）不是掉线，
++   由 analyze 的心跳覆盖率判定，这里不另设超时。
++
++analyze 的退出码只有四种含义：0=PASS、1=FAIL、2=INCOMPLETE、3=INPUT_ERROR；**任何**输入
++（空文件、只有半行、时间戳乱序、主机时钟回拨）都会落一份 summary.json 并给这四个码之一，
++不会抛未捕获异常——下游只看 summary.json 就能知道"这次有没有结论、为什么"。
++"文件最后一行残缺"是唯一被容忍的破损（采集被强杀时正在写的那行），其余破损一律退 3。
++
++用法：
++    python3 tools/audit125/soak72.py capture --hours 72 --elf build/fnos_monitor.elf \\
++        --output soak72-results [--port /dev/cu.usbmodemXXXX] [--fault-windows win.json]
++    python3 tools/audit125/soak72.py analyze --input soak72-results/metrics.jsonl \\
++        --hours 72 --elf build/fnos_monitor.elf --output soak72-review [--fault-windows win.json]
++退出码：0=PASS 1=FAIL 2=INCOMPLETE 3=INPUT_ERROR
++"""
++import argparse
++import datetime
++import hashlib
++import json
++import math
++import os
++import statistics
++import sys
++import time
++
++# ---------------------------------------------------------------- 判据阈值
++# 阈值集中在这里：test_soak72.py 直接 import 这批常量来造两侧数据，判据与测试不会各说各话。
++EXIT_PASS = 0
++EXIT_FAIL = 1
++EXIT_INCOMPLETE = 2
++EXIT_INPUT_ERROR = 3
++
++MARK = "FNOS_DIAG"                  # 诊断行标记（行内定位，前面可能带 IDF 日志前缀）
++BAUDRATE = 115200
++ENV_PORT = "FNOS_SOAK_PORT"
++
++HEARTBEAT_NOMINAL_S = 10.0          # 板端标称打印周期（hz）
++DURATION_SLACK_S = 30.0             # 板端 up 跨度允许比标称少 30s（起止边界）
++COVERAGE_MIN = 0.99                 # 心跳覆盖率
++RX_GAP_MAX_S = 30.0                 # 相邻串口接收样本最大间隔
++HEARTBEAT_LOST_S = 60.0             # 超过这个间隔记作"心跳中断"
++UI_AGE_MAX_S = 15.0                 # LVGL 存活
++STACK_MIN_BYTES = 1024              # uxTaskGetStackHighWaterMark 余量（字节）
++IMIN_MIN_BYTES = 32 * 1024
++IMAX_MIN_BYTES = 16 * 1024
++DMIN_MIN_BYTES = 8 * 1024
++PFREE_MIN_BYTES = 1024 * 1024
++WARMUP_S = 2 * 3600.0               # 预热期，不参与趋势
++TREND_WINDOW_S = 3600.0             # 趋势首尾各取 1h 的中位数
++TREND_BUCKET_S = 600.0              # 回归用的 10 分钟中位数序列
++TREND_MIN_BUCKETS = 3
++IFREE_LOSS_MAX = 8 * 1024
++IMAX_LOSS_MAX = 8 * 1024
++PFREE_LOSS_MAX = 256 * 1024
++IFREE_SLOPE_MIN = -128.0            # B/h
++IMAX_SLOPE_MIN = -128.0
++PFREE_SLOPE_MIN = -4096.0
++POLL_OK_RATE_MIN = 0.995
++FRESH_RATIO_MIN = 0.995
++P95_MAX_MS = 1000
++IO_AGE_MAX_S = 15.0                 # 0 <= age <= 15 才算"在线且新鲜"；-1 = 从未成功
++SRC_STALL_MAX_S = 30.0              # io.src 不变超过它 = 假在线
++FAULT_RECOVER_S = 60.0              # 故障窗口结束后的恢复期
++MIN_SAMPLE_RATIO = 0.5              # 有效样本下限 = 标称条数 * 0.5
++CLOCK_STEP_MAX_S = 60.0             # 接收时间戳回退超过它 = 主机时钟被回拨，时间轴不可信
++ANOMALOUS_RESET = frozenset((4, 5, 6, 7, 9, 15))   # PANIC/INT_WDT/TASK_WDT/WDT/BROWNOUT/CPU_LOCKUP
++
++VERDICT_EXIT = {"PASS": EXIT_PASS, "FAIL": EXIT_FAIL, "INCOMPLETE": EXIT_INCOMPLETE}
++
++# ---------------------------------------------------------------- 单行解析（纯函数，测试直接调）
++# 白名单=接口契约：键名/类型不对就整条拒收（返回 None），调用方按 malformed 计数。
++# 为什么用"键集合全等"而不是"取需要的键"：这是隐私边界——固件/代理一旦往里塞
++# token/ssid/path 之类的键，宁可丢样本也不能让它们落进证据文件。
++_REC_SCHEMA = {
++    "n": int,
++    "up": int,
++    "hz": int,
++    "fw": str,
++    "rst": int,
++    "ev": [str],
++    "io": {"ok": int, "fail": int, "age": int, "p95": int, "src": int},
++    "ui": {"age": int},
++    "mem": {"ifree": int, "imin": int, "imax": int, "dfree": int, "dmin": int,
++            "pfree": int, "pmin": int},
++    "stk": {"lvgl": int, "poll": int, "pair": int},
++}
++
++
++def _match(value, spec):
++    """按 spec 校验并**重建**（不返回原对象，避免调用方再挂私有键上去）。"""
++    if isinstance(spec, dict):
++        if type(value) is not dict or set(value) != set(spec):
++            return None
++        out = {}
++        for key, sub in spec.items():
++            got = _match(value[key], sub)
++            if got is None:
++                return None
++            out[key] = got
++        return out
++    if isinstance(spec, list):
++        if type(value) is not list or any(type(x) is not str for x in value):
++            return None
++        return list(value)
++    # 标量：用 `type(x) is int/str` 而不是 isinstance——bool 是 int 的子类，
++    # 而 `"rst": true` 这种记录必须被拒；浮点也一律拒收（接口是整数，单位固定）。
++    if spec is int:
++        return value if type(value) is int else None
++    if spec is str:
++        return value if type(value) is str else None
++    return None
++
++
++def sanitize(rec):
++    """校验一条诊断记录；不合法（缺字段/类型不对/多出未知键）返回 None。"""
++    return _match(rec, _REC_SCHEMA)
++
++
++def parse_line(text):
++    """从一行串口文本里取诊断记录：行内定位 MARK，标记之后必须是完整 JSON。
++
++    真实形态是 `I (123456) main: FNOS_DIAG {...}`，所以不能要求行首就是标记；
++    但也不做模糊匹配——标记之后解析不出 JSON 就当 malformed，由调用方计数。
++    """
++    idx = text.find(MARK)
++    if idx < 0:
++        return None
++    try:
++        obj = json.loads(text[idx + len(MARK):].strip())
++    except ValueError:
++        return None
++    if type(obj) is not dict:
++        return None
++    return sanitize(obj)
++
++
++def fresh(rec):
++    """在线且新鲜：io.age 是板端自报"距最近一次成功接收的秒数"，从未成功时固件给 -1。"""
++    age = rec["io"]["age"]
++    return 0 <= age <= IO_AGE_MAX_S
++
++
++# ---------------------------------------------------------------- 装载（一切不可用都退 3）
++class InputError(Exception):
++    """参数/文件/记录不可用。一律退出码 3，不做猜测性修补。"""
++
++
++def sha256_file(path):
++    h = hashlib.sha256()
++    with open(path, "rb") as fh:
++        for chunk in iter(lambda: fh.read(65536), b""):
++            h.update(chunk)
++    return h.hexdigest()
++
++
++def load_windows(path):
++    """故障窗口文件：JSON 数组，元素 {"start_s":<秒>,"end_s":<秒>}，相对采集起点。
++
++    窗口**只影响评价，不产生故障**；重叠或 end<=start 是配置错误（退 3），
++    start_s 为负同样没有意义（相对起点不可能为负），一并拒掉。
++    """
++    if not path:
++        return []
++    try:
++        with open(path, "r", encoding="utf-8") as fh:
++            raw = json.load(fh)
++    except (OSError, ValueError) as exc:
++        raise InputError("故障窗口文件读不了或不是 JSON：%s" % type(exc).__name__)
++    if type(raw) is not list:
++        raise InputError("故障窗口文件顶层必须是 JSON 数组")
++    wins = []
++    for i, el in enumerate(raw):
++        if type(el) is not dict or set(el) != {"start_s", "end_s"}:
++            raise InputError("第 %d 个窗口必须是 {\"start_s\":..,\"end_s\":..}" % i)
++        a, b = el["start_s"], el["end_s"]
++        if type(a) not in (int, float) or type(b) not in (int, float):
++            raise InputError("第 %d 个窗口的 start_s/end_s 必须是数字" % i)
++        if b <= a:
++            raise InputError("第 %d 个窗口 end_s <= start_s" % i)
++        if a < 0:
++            raise InputError("第 %d 个窗口 start_s 为负" % i)
++        wins.append((float(a), float(b)))
++    wins.sort()
++    for (_, prev_end), (nxt_start, _) in zip(wins, wins[1:]):
++        if nxt_start < prev_end:
++            raise InputError("故障窗口重叠：%g 落在前一个窗口内" % nxt_start)
++    return wins
++
++
++def load_metrics(path):
++    """读 metrics.jsonl，返回 (samples, meta)。
++
++    容错边界只有一条：**文件最后一行残缺**是允许的——采集进程被 Ctrl-C/kill 时正在写的那一行
++    本来就写不完，把它当"整份证据不可读"是错的，记 malformed 计数、让"缺结束标记"去判 INCOMPLETE。
++    中间任何位置破损、或记录本身不合契约（缺键/多键/类型错）一律 InputError：
++    证据文件被改过就不能装作没看见，未知键也可能夹带令牌，绝不能静默放过。
++    meta 另外记下接收时间戳回退——主机时钟被 NTP 回拨会同时污染相邻间隔和趋势时间轴。
++    """
++    meta = {"lines": 0, "malformed_tail": 0, "out_of_order": 0, "max_back_step_s": 0.0}
++    try:
++        with open(path, "r", encoding="utf-8") as fh:
++            raw = fh.read().split("\n")
++    except OSError as exc:
++        raise InputError("打不开 metrics：%s" % type(exc).__name__)
++    while raw and not raw[-1].strip():
++        raw.pop()                                   # 文件以 \n 收尾时 split 出的空尾巴
++    samples = []
++    prev_t = None
++    for j, text in enumerate(raw):
++        if not text.strip():
++            continue
++        meta["lines"] += 1
++        try:
++            obj = json.loads(text)
++        except ValueError:
++            obj = None
++        if obj is None or type(obj) is not dict or set(obj) != {"t", "rec"}:
++            if j == len(raw) - 1:
++                meta["malformed_tail"] += 1
++                break
++            raise InputError("第 %d 行破损（不是 {\"t\":..,\"rec\":..} 的完整 JSON）" % (j + 1))
++        t = obj["t"]
++        if type(t) not in (int, float) or type(t) is bool or not math.isfinite(t):
++            raise InputError("第 %d 行的 t 不是有限数字" % (j + 1))
++        rec = sanitize(obj["rec"])
++        if rec is None:
++            raise InputError("第 %d 行的记录不符合诊断契约（缺字段/类型不对/多出未知键）" % (j + 1))
++        if prev_t is not None and float(t) < prev_t:
++            meta["out_of_order"] += 1
++            meta["max_back_step_s"] = max(meta["max_back_step_s"], prev_t - float(t))
++        prev_t = float(t)
++        samples.append({"t": float(t), "rec": rec})
++    # 刻意**不排序**：采集是单线程顺序 append 的，文件顺序就是接收顺序。按 t 重排会把
++    # 时钟抖动变成"计数器回退"，把一次 NTP 校正误判成设备复位；顺序类判据只看文件顺序，
++    # 时间轴由 evaluate 用"单调化"后的 el 表示。
++    return samples, meta
++
++
++def load_capture(path):
++    """capture.json：缺文件返回 None（= 缺结束标记）；文件破损退 3。"""
++    if not os.path.exists(path):
++        return None
++    try:
++        with open(path, "r", encoding="utf-8") as fh:
++            data = json.load(fh)
++    except (OSError, ValueError) as exc:
++        raise InputError("capture.json 读不了或破损：%s" % type(exc).__name__)
++    if type(data) is not dict:
++        raise InputError("capture.json 顶层必须是对象")
++    return data
++
++
++# ---------------------------------------------------------------- 评价
++def _pick(rec, path):
++    for key in path:
++        rec = rec[key]
++    return rec
++
++
++def _slope(xs, ys):
++    """最小二乘斜率（xs 已换算成小时）。"""
++    n = len(xs)
++    mx = sum(xs) / n
++    my = sum(ys) / n
++    var = sum((x - mx) ** 2 for x in xs)
++    if var <= 0:
++        return 0.0
++    return sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / var
++
++
++def _result(checks, notes, hours, elf_sha, sample_count, extra=None):
++    """FAIL 优先于 INCOMPLETE：能证明违反的不因为"另外还缺证据"降级成没结论。"""
++    failures = ["%s: %s" % (c["name"], c["detail"]) for c in checks if c["state"] == "fail"]
++    missing = ["%s: %s" % (c["name"], c["detail"]) for c in checks if c["state"] == "incomplete"]
++    verdict = "FAIL" if failures else ("INCOMPLETE" if missing else "PASS")
++    out = {"tool": "soak72 analyze", "verdict": verdict, "hours": hours, "elf_sha256": elf_sha,
++           "sample_count": sample_count, "checks": checks, "failures": failures,
++           "incomplete_reasons": missing, "notes": notes}
++    out.update(extra or {})
++    return out
++
++
++def _notes():
++    return [
++        "mem.d*（DMA）与 mem.i*（内部 RAM）可能覆盖同一段堆：本报告只做逐项底线判定，两者不得相加。",
++        "故障窗口只豁免「正常联网」类判据（net_health / source_progress）：窗口内以及窗口结束后 "
++        "%ds 的恢复期内不评价；复位、心跳、UI、栈、堆底线在窗口内仍然严格判定。" % int(FAULT_RECOVER_S),
++        "趋势区间从采集起点后 %dh 起算（预热期不参与趋势），首尾各取 %dh 的中位数，"
++        "回归用 %d 分钟中位数序列。" % (int(WARMUP_S // 3600), int(TREND_WINDOW_S // 3600),
++                                    int(TREND_BUCKET_S // 60)),
++        "故障窗口的 start_s/end_s 是相对第一条样本接收时刻的秒数；窗口重叠或 end_s<=start_s 会退 3。",
++        "在线/新鲜样本 = 0 <= io.age <= %ds；io.age = -1 表示板端「从未成功接收」，判为不在线。"
++        % int(IO_AGE_MAX_S),
++        "stk.* 为 0 表示该任务没起来/测不到，按 INCOMPLETE 处理，不当成「栈只剩 0 字节」。",
++        "「测不到」与「测得差」分开：stk.*=0、正常窗口内 io.age/io.src 全程 -1（板端从未成功接收）"
++        "属证据不可用 → INCOMPLETE；部分失败、变旧、旧帧冒充在线 → FAIL。",
++    ]
++
++
++def evaluate(samples, capture, hours, elf_sha, windows, load_meta=None):
++    """全部判据的落点。samples=[{"t":float,"rec":dict}]，windows=[(start_s,end_s)]。"""
++    wins = list(windows or [])
++    notes = _notes()
++    checks = []
++
++    def add(name, state, detail, measured=None):
++        checks.append({"name": name, "pass": state == "pass", "state": state,
++                       "detail": detail, "measured": measured or {}})
++
++    n = len(samples)
++    want_s = hours * 3600.0
++    if n < 2:
++        add("evidence", "incomplete", "有效样本 %d 条，凑不齐起止心跳" % n, {"samples": n})
++        return _result(checks, notes, hours, elf_sha, n, {"metrics_load": load_meta or None})
++    meta = load_meta or {}
++    if meta.get("max_back_step_s", 0.0) > CLOCK_STEP_MAX_S:
++        # 主机时钟被回拨过：排序能让曲线连起来，但 up/计数器的先后关系已经不可信，
++        # 再往下算只会把「证据不可用」算成「设备复位」（假 FAIL）。不能判就是不能判 → INCOMPLETE。
++        add("evidence", "incomplete",
++            "主机时间轴不可信：接收时间戳回退 %.0fs（%d 处）/ 容忍 %.0fs，"
++            "排序后 uptime 与计数器会表现为回退，属证据不可用，本次不做 PASS/FAIL 判定"
++            % (meta["max_back_step_s"], meta.get("out_of_order", 0), CLOCK_STEP_MAX_S),
++            {"max_back_step_s": meta["max_back_step_s"], "out_of_order": meta.get("out_of_order", 0)})
++        return _result(checks, notes, hours, elf_sha, n, {"metrics_load": meta})
++
++    ts = [s["t"] for s in samples]
++    recs = [s["rec"] for s in samples]
++    t0 = ts[0]
++    # 单调化时间轴：主机时钟小幅回拨时让时间"原地踏步"，而不是把记录重排（重排会让
++    # up/计数器看起来在回退）。回拨超过容忍值时上面已经判 INCOMPLETE，走不到这里。
++    el = []
++    for t in ts:
++        step = t - t0
++        el.append(step if not el or step >= el[-1] else el[-1])
++    board_span = (recs[-1]["up"] - recs[0]["up"]) / 1000.0
++
++    # capture.json 提供的采集侧证据
++    cap = capture if isinstance(capture, dict) else None
++    cap_complete = bool(cap and cap.get("complete") is True)
++    cap_span = None
++    if cap and cap.get("started_at") and cap.get("ended_at"):
++        try:
++            a = datetime.datetime.fromisoformat(str(cap["started_at"]))
++            b = datetime.datetime.fromisoformat(str(cap["ended_at"]))
++            cap_span = (b - a).total_seconds()
++        except ValueError:
++            cap_span = None
++
++    def exempt(e):
++        """窗口内 + 结束后恢复期：正常联网类判据不评价（其恢复情况由 fault_recovery 判）。"""
++        for a, b in wins:
++            if a <= e < b + FAULT_RECOVER_S:
++                return True
++        return False
++
++    normal = [i for i in range(n) if el[i] >= WARMUP_S and not exempt(el[i])]
++    nset = set(normal)
++
++    # a1 捕获跨度：不足 = 证据不足（不是"跑得不好"）
++    if cap_span is None:
++        add("duration_capture", "incomplete", "capture.json 缺 started_at/ended_at，无法算捕获跨度",
++            {"capture_span_s": None})
++    else:
++        add("duration_capture", "pass" if cap_span >= want_s else "incomplete",
++            "捕获跨度 %.0fs / 要求 %.0fs" % (cap_span, want_s), {"capture_span_s": cap_span})
++
++    # a2 板端记录跨度
++    board_ok = board_span >= want_s - DURATION_SLACK_S
++    add("duration_board", "pass" if board_ok else "incomplete",
++        "板端 up 跨度 %.1fs / 要求 %.1fs（含 %gs 余量）" % (board_span, want_s, DURATION_SLACK_S),
++        {"board_span_s": board_span})
++
++    # a3 固件一致性：跑的不是本地 ELF 的这次构建，后面所有判据都不算数
++    mismatch = [i for i in range(n) if recs[i]["fw"] != elf_sha]
++    add("firmware_match", "fail" if mismatch else "pass",
++        "fw 与本地 ELF 不一致的样本 %d 条（首条 idx=%s）" % (len(mismatch), mismatch[0] if mismatch else None)
++        if mismatch else "全部 %d 条样本的 fw 均等于本地 ELF 的 SHA-256" % n,
++        {"mismatch": len(mismatch), "first_mismatch_t": ts[mismatch[0]] if mismatch else None})
++
++    # b1 心跳覆盖率（以 10s 标称计）
++    if board_span <= 0:
++        add("heartbeat_coverage", "incomplete", "板端跨度非正（%.1fs），算不出覆盖率" % board_span,
++            {"board_span_s": board_span})
++    else:
++        cov = n / (board_span / HEARTBEAT_NOMINAL_S)
++        add("heartbeat_coverage", "pass" if cov >= COVERAGE_MIN else "fail",
++            "覆盖率 %.4f（%d 条 / 标称 %.1f 条）/ 要求 >= %.3f"
++            % (cov, n, board_span / HEARTBEAT_NOMINAL_S, COVERAGE_MIN),
++            {"coverage": cov, "samples": n})
++
++    # b2 相邻接收间隔
++    gaps = [(el[i] - el[i - 1], i) for i in range(1, n)]
++    max_gap, gap_at = max(gaps) if gaps else (0.0, 0)
++    gap_detail = "最大相邻接收间隔 %.1fs / 上限 %.1fs" % (max_gap, RX_GAP_MAX_S)
++    if max_gap > HEARTBEAT_LOST_S:
++        gap_detail += "（> %.0fs，心跳中断）" % HEARTBEAT_LOST_S
++    add("heartbeat_gap", "pass" if max_gap <= RX_GAP_MAX_S else "fail", gap_detail,
++        {"max_gap_s": max_gap, "at_s": el[gap_at]})
++
++    # c 复位 / 异常 / 计数回退
++    up_roll = [i for i in range(1, n) if recs[i]["up"] < recs[i - 1]["up"]]
++    ok_roll = [i for i in range(1, n) if recs[i]["io"]["ok"] < recs[i - 1]["io"]["ok"]]
++    fail_roll = [i for i in range(1, n) if recs[i]["io"]["fail"] < recs[i - 1]["io"]["fail"]]
++    rst_bad = [i for i in range(n) if recs[i]["rst"] in ANOMALOUS_RESET]
++    ev_bad = [i for i in range(n) if recs[i]["ev"]]
++    baseline_rst = recs[0]["rst"]
++    rst_switched = [i for i in range(1, n) if recs[i]["rst"] != baseline_rst]
++    bad = bool(up_roll or ok_roll or fail_roll or rst_bad or ev_bad or rst_switched)
++    add("reset_anomaly", "fail" if bad else "pass",
++        "非计划复位 %d（up 回退 %d、rst 与基线 %d 不同 %d）｜异常 rst %d 条｜ev 非空 %d 条"
++        "｜io.ok 回退 %d、io.fail 回退 %d"
++        % (len(up_roll) + len(rst_switched), len(up_roll), baseline_rst, len(rst_switched),
++           len(rst_bad), len(ev_bad), len(ok_roll), len(fail_roll)),
++        {"unplanned_resets": len(up_roll) + len(rst_switched), "up_rollbacks": len(up_roll),
++         "rst_switched": len(rst_switched), "anomalous_rst": len(rst_bad),
++         "ev_nonempty": len(ev_bad), "ok_rollbacks": len(ok_roll), "fail_rollbacks": len(fail_roll),
++         "baseline_rst": baseline_rst})
++
++    # d LVGL 存活
++    ui_max = max(r["ui"]["age"] for r in recs)
++    add("lvgl_alive", "pass" if ui_max <= UI_AGE_MAX_S else "fail",
++        "ui.age 最大 %.1fs / 上限 %.1fs" % (ui_max, UI_AGE_MAX_S), {"max_ui_age_s": ui_max})
++
++    # e 栈高水位：0 = 任务没起来（测不到），不是"栈只剩 0 字节"
++    stk_min = {k: min(r["stk"][k] for r in recs) for k in ("lvgl", "poll", "pair")}
++    unmeasured = [k for k, v in stk_min.items() if v == 0]
++    blew = [k for k, v in stk_min.items() if v != 0 and v < STACK_MIN_BYTES]
++    stk_txt = "、".join("%s=%d" % (k, stk_min[k]) for k in ("lvgl", "poll", "pair"))
++    if blew:
++        add("stack_floor", "fail", "栈余量低于 %d 字节：%s（全程最小值 %s）"
++            % (STACK_MIN_BYTES, "/".join(blew), stk_txt), dict(stk_min))
++    elif unmeasured:
++        add("stack_floor", "incomplete", "任务 %s 全程报 0（未启动/测不到），栈判据缺证据"
++            % "/".join(unmeasured), dict(stk_min))
++    else:
++        add("stack_floor", "pass", "全程最小值 %s，均 >= %d 字节" % (stk_txt, STACK_MIN_BYTES),
++            dict(stk_min))
++
++    # f 堆底线（逐项，不相加）
++    mem_min = {
++        "imin": min(r["mem"]["imin"] for r in recs),
++        "imax": min(r["mem"]["imax"] for r in recs),
++        "dmin": min(r["mem"]["dmin"] for r in recs),
++        "pfree": min(r["mem"]["pfree"] for r in recs),
++    }
++    floors = {"imin": IMIN_MIN_BYTES, "imax": IMAX_MIN_BYTES, "dmin": DMIN_MIN_BYTES,
++              "pfree": PFREE_MIN_BYTES}
++    under = [k for k in ("imin", "imax", "dmin", "pfree") if mem_min[k] < floors[k]]
++    add("heap_floor", "fail" if under else "pass",
++        ("击穿：" if under else "全程最小值 ") +
++        "、".join("%s=%d(>=%d)" % (k, mem_min[k], floors[k]) for k in ("imin", "imax", "dmin", "pfree")),
++        dict(mem_min))
++
++    # g 预热与趋势
++    trend = [i for i in range(n) if el[i] >= WARMUP_S]
++    head = [i for i in trend if el[i] < WARMUP_S + TREND_WINDOW_S]
++    tail = [i for i in trend if el[i] >= el[trend[-1]] - TREND_WINDOW_S] if trend else []
++    if not head or not tail:
++        add("trend_median", "incomplete", "预热期之后没有足够的首尾窗口（head=%d/tail=%d）"
++            % (len(head), len(tail)), {"head": len(head), "tail": len(tail)})
++    else:
++        med = {}
++        for key, path in (("ifree", ("mem", "ifree")), ("imax", ("mem", "imax")),
++                          ("pfree", ("mem", "pfree"))):
++            h = statistics.median([_pick(recs[i], path) for i in head])
++            t = statistics.median([_pick(recs[i], path) for i in tail])
++            med[key] = {"head_median": h, "tail_median": t, "loss": h - t}
++        over = [k for k in ("ifree", "imax") if med[k]["loss"] > IFREE_LOSS_MAX]
++        over += [k for k in ("pfree",) if med[k]["loss"] > PFREE_LOSS_MAX]
++        add("trend_median", "fail" if over else "pass",
++            "首尾 1h 中位数损失：" + "、".join(
++                "%s %.0f→%.0f（-%.0f，上限 %s）" % (k, med[k]["head_median"], med[k]["tail_median"],
++                                                   med[k]["loss"],
++                                                   IFREE_LOSS_MAX if k != "pfree" else PFREE_LOSS_MAX)
++                for k in ("ifree", "imax", "pfree")), med)
++
++    if not trend:
++        add("trend_regress", "incomplete", "预热期之后没有样本，回归无输入", {})
++    else:
++        buckets = {}
++        for i in trend:
++            buckets.setdefault(int((el[i] - WARMUP_S) // TREND_BUCKET_S), []).append(recs[i])
++        if len(buckets) < TREND_MIN_BUCKETS:
++            add("trend_regress", "incomplete", "预热后只有 %d 个 10 分钟窗口，不足 %d 个"
++                % (len(buckets), TREND_MIN_BUCKETS), {"buckets": len(buckets)})
++        else:
++            ks = sorted(buckets)
++            xs = [k * TREND_BUCKET_S / 3600.0 for k in ks]
++            lim = {"ifree": IFREE_SLOPE_MIN, "imax": IMAX_SLOPE_MIN, "pfree": PFREE_SLOPE_MIN}
++            slopes = {}
++            for key, path in (("ifree", ("mem", "ifree")), ("imax", ("mem", "imax")),
++                              ("pfree", ("mem", "pfree"))):
++                ys = [statistics.median([_pick(r, path) for r in buckets[k]]) for k in ks]
++                slopes[key] = _slope(xs, ys)
++            over = [k for k in slopes if slopes[k] < lim[k]]
++            add("trend_regress", "fail" if over else "pass",
++                "%d 个窗口，" % len(ks) + "、".join(
++                    "%s %.2f B/h(>=%.0f)" % (k, slopes[k], lim[k]) for k in ("ifree", "imax", "pfree")),
++                slopes)
++
++    # h 正常联网（预热期与故障窗口之外）
++    # "测不到"和"测得差"必须分开：io.age 全程 -1 表示板端从未成功接收过一帧，
++    # 此时联网判据没有可评价的对象（NAS 全程不可达 ≠ 固件有问题）→ INCOMPLETE，
++    # 只有"部分失败/变旧"才是能判的 FAIL。同理全 0 的成功率分母也是 0。
++    connected = [i for i in normal if recs[i]["io"]["age"] >= 0]
++    if not normal:
++        add("net_health", "incomplete", "预热期与故障窗口之外没有样本，联网判据缺证据",
++            {"normal_samples": 0})
++    elif not connected:
++        add("net_health", "incomplete",
++            "正常窗口内 %d 条样本的 io.age 全为 -1（板端从未成功接收），联网判据无证据，"
++            "不能当成 PASS 也不能当成 FAIL" % len(normal),
++            {"normal_samples": len(normal), "connected_samples": 0})
++    else:
++        d_ok = sum(max(0, recs[i]["io"]["ok"] - recs[i - 1]["io"]["ok"])
++                   for i in normal if i - 1 in nset)
++        d_fail = sum(max(0, recs[i]["io"]["fail"] - recs[i - 1]["io"]["fail"])
++                     for i in normal if i - 1 in nset)
++        rate = d_ok / (d_ok + d_fail) if (d_ok + d_fail) else 0.0
++        fr = sum(1 for i in normal if fresh(recs[i])) / len(normal)
++        age_max = max(recs[i]["io"]["age"] for i in normal)
++        p95_max = max(recs[i]["io"]["p95"] for i in normal)
++        bad = []
++        if rate < POLL_OK_RATE_MIN:
++            bad.append("成功率 %.4f < %.3f" % (rate, POLL_OK_RATE_MIN))
++        if fr < FRESH_RATIO_MIN:
++            bad.append("新鲜比例 %.4f < %.3f" % (fr, FRESH_RATIO_MIN))
++        if age_max > IO_AGE_MAX_S:
++            bad.append("io.age 最大 %.1fs > %.1fs" % (age_max, IO_AGE_MAX_S))
++        if p95_max > P95_MAX_MS:
++            bad.append("io.p95 最大 %dms > %dms" % (p95_max, P95_MAX_MS))
++        add("net_health", "fail" if bad else "pass",
++            ("；".join(bad) if bad else "正常窗口内 %d 条样本：成功率 %.4f、新鲜比例 %.4f、"
++             "io.age 最大 %.1fs、io.p95 最大 %dms" % (len(normal), rate, fr, age_max, p95_max)),
++            {"normal_samples": len(normal), "poll_ok": d_ok, "poll_fail": d_fail,
++             "success_rate": rate, "fresh_ratio": fr, "max_io_age_s": age_max, "max_p95_ms": p95_max})
++
++    # i 来源采样推进（防止 200 秒前的旧帧被当成在线）
++    missing_src = 0
++    frozen_max = 0.0
++    run_start = None
++    prev = None
++    for i in normal:
++        src = recs[i]["io"]["src"]
++        if src < 0:
++            missing_src += 1
++            run_start = prev = None
++            continue
++        if prev is not None and i == prev + 1 and src == recs[prev]["io"]["src"]:
++            frozen_max = max(frozen_max, el[i] - el[run_start])
++        else:
++            run_start = i
++        prev = i
++    src_bad = bool(missing_src) or frozen_max > SRC_STALL_MAX_S
++    if src_bad and not connected:
++        # 一帧都没成功过：没有"旧帧冒充在线"这回事，属证据不可用（与 net_health 同一根因）。
++        add("source_progress", "incomplete",
++            "正常窗口内 io.src 全为 -1（从未收到成功帧），来源推进无法评价",
++            {"missing_src": missing_src, "max_frozen_s": frozen_max})
++    else:
++        add("source_progress", "fail" if src_bad else "pass",
++            "io.src 缺失 %d 条；同一值最长持续 %.1fs / 上限 %.1fs"
++            % (missing_src, frozen_max, SRC_STALL_MAX_S),
++            {"missing_src": missing_src, "max_frozen_s": frozen_max})
++
++    # j 故障恢复
++    if not wins:
++        add("fault_recovery", "pass", "无登记故障窗口", {"windows": 0})
++    else:
++        unrec = []
++        took = []
++        base_missing = 0
++        for a, b in wins:
++            base = None
++            for i in range(n):
++                if el[i] <= b:
++                    base = i
++                else:
++                    break
++            if base is None:
++                base_missing += 1
++                took.append(None)
++                continue
++            b_ok = recs[base]["io"]["ok"]
++            b_src = recs[base]["io"]["src"]
++            found = None
++            for i in range(n):
++                # 恢复证据必须**严格晚于**窗口 end：落在窗口内的样本不算恢复，
++                # 否则"窗口一直烂到最后一秒"也会因为末尾那条样本被判成已恢复。
++                if el[i] <= b:
++                    continue
++                if el[i] > b + FAULT_RECOVER_S:
++                    break
++                src_adv = recs[i]["io"]["src"] >= 0 and (b_src < 0 or recs[i]["io"]["src"] > b_src)
++                if recs[i]["io"]["ok"] > b_ok or src_adv:
++                    found = el[i] - b
++                    break
++            took.append(found)
++            if found is None:
++                unrec.append([a, b])
++        if unrec:
++            add("fault_recovery", "fail",
++                "窗口结束后 %.0fs 内没有新成功计数/推进的 io.src：%s"
++                % (FAULT_RECOVER_S, unrec), {"unrecovered": unrec, "recover_s": took})
++        elif base_missing:
++            add("fault_recovery", "incomplete",
++                "%d 个窗口在首条样本之前就结束了，没有基线可比" % base_missing,
++                {"recover_s": took})
++        else:
++            add("fault_recovery", "pass",
++                "%d 个窗口均在 %.0fs 内恢复（耗时 %s）"
++                % (len(wins), FAULT_RECOVER_S, ["%.0fs" % x for x in took]),
++                {"recover_s": took})
++
++    # k 证据
++    missing_bits = []
++    if not cap_complete:
++        missing_bits.append("缺结束标记（capture.json 缺失或 complete != true）")
++    if cap_span is None:
++        missing_bits.append("capture.json 缺 started_at/ended_at")
++    floor_n = int(want_s / HEARTBEAT_NOMINAL_S * MIN_SAMPLE_RATIO)
++    if n < floor_n:
++        missing_bits.append("有效样本 %d < 下限 %d" % (n, floor_n))
++    if not trend:
++        missing_bits.append("预热期（%ds）之后没有样本，无内存证据" % int(WARMUP_S))
++    if cap and type(cap.get("sample_count")) is int and cap["sample_count"] != n:
++        missing_bits.append("capture.json 记的样本数 %d 与实际 %d 不一致" % (cap["sample_count"], n))
++    meta = load_meta or {}
++    if meta.get("malformed_tail"):
++        missing_bits.append("metrics.jsonl 末尾有 %d 行残缺记录（采集被强杀？），未计入证据"
++                            % meta["malformed_tail"])
++    add("evidence", "incomplete" if missing_bits else "pass",
++        "；".join(missing_bits) if missing_bits
++        else "结束标记、起止心跳、样本量（%d）、预热后证据齐备" % n,
++        {"samples": n, "min_samples": floor_n, "complete": cap_complete})
++
++    extra = {
++        "first_t": t0, "last_t": ts[-1], "board_span_s": board_span,
++        "capture_span_s": cap_span, "fault_windows": [list(w) for w in wins],
++        "metrics_load": meta or None,
++        "capture": {"complete": cap_complete,
++                    "parse_drop": cap.get("parse_drop") if cap else None,
++                    "parse_drop_run_max": cap.get("parse_drop_run_max") if cap else None,
++                    "sample_count": cap.get("sample_count") if cap else None},
++    }
++    return _result(checks, notes, hours, elf_sha, n, extra)
++
++
++# ---------------------------------------------------------------- capture
++def _now_iso():
++    return datetime.datetime.now().astimezone().isoformat(timespec="milliseconds")
++
++
++def _write_json(path, obj):
++    with open(path, "w", encoding="utf-8") as fh:
++        json.dump(obj, fh, ensure_ascii=False, indent=2, sort_keys=True)
++        fh.write("\n")
++
++
++_SECRET_FLAGS = {"--port": "<port>", "--elf": "<elf>", "--output": "<output>",
++                 "--input": "<input>", "--fault-windows": "<windows>"}
++
++
++def sanitized_argv(argv):
++    """argv 脱敏：路径/设备名换成占位符，产物里不留家目录、串口路径、主机名。"""
++    out = []
++    expect = None
++    for a in argv:
++        if expect is not None:
++            out.append(expect)
++            expect = None
++            continue
++        flag, eq, _ = a.partition("=")
++        if flag in _SECRET_FLAGS:
++            if eq:
++                out.append(flag + "=" + _SECRET_FLAGS[flag])
++            else:
++                out.append(a)
++                expect = _SECRET_FLAGS[flag]
++            continue
++        out.append(os.path.basename(a) if os.sep in a else a)
++    return out
++
++
++def open_readonly(port_name, baud=BAUDRATE):
++    """只读打开串口：DTR/RTS 在 open() **之前**就置 false，且此后不再碰任何控制线。
++
++    pyserial 默认 dtr=True/rts=True，而 ESP32-P4 的 USB-Serial-JTAG 把 DTR/RTS 当 BOOT/EN：
++    打开端口的瞬间拉高就把板子复位（甚至停在下载模式），长测会在开始的第一秒被打断，
++    看上去却像"板子自己重启"。pyserial 的 open() 会按打开前的 _dtr_state/_rts_state 初始化
++    （前提是 dsrdtr/rtscts 都为 False），所以必须先 setattr 再 open。
++    """
++    import serial                      # 只有 capture 路径需要 pyserial；analyze/测试不依赖它
++
++    port = serial.Serial()
++    port.port = port_name
++    port.baudrate = baud
++    port.timeout = 1.0
++    port.rtscts = False
++    port.dsrdtr = False
++    port.dtr = False
++    port.rts = False
++    port.open()
++    return port
++
++
++def capture_main(args, argv):
++    port_name = args.port or os.environ.get(ENV_PORT)
++    if not port_name:
++        sys.stderr.write(
++            "用法: soak72.py capture --hours 72 --elf build/fnos_monitor.elf --output <目录> "
++            "--port <串口>\n"
++            "  端口也可以放在环境变量 %s 里（本进程没读到）。\n" % ENV_PORT)
++        return EXIT_INPUT_ERROR
++    if not os.path.isfile(args.elf):
++        sys.stderr.write("--elf 不存在或不是文件：%s\n" % os.path.basename(args.elf))
++        return EXIT_INPUT_ERROR
++    try:
++        windows = load_windows(args.fault_windows)
++        elf_sha = sha256_file(args.elf)
++    except InputError as exc:
++        sys.stderr.write("输入错误：%s\n" % exc)
++        return EXIT_INPUT_ERROR
++    except OSError as exc:
++        sys.stderr.write("读不了 --elf：%s\n" % type(exc).__name__)
++        return EXIT_INPUT_ERROR
++
++    # 先确保产物目录可写，再去碰串口：否则会因为"目录写不了"白开一次串口，
++    # 而开串口本身对板子就是有副作用的一次电气动作。
++    try:
++        os.makedirs(args.output, exist_ok=True)
++    except OSError as exc:
++        sys.stderr.write("创建输出目录失败：%s\n" % type(exc).__name__)
++        return EXIT_INPUT_ERROR
++    try:
++        port = open_readonly(port_name, BAUDRATE)
++    except Exception as exc:                                  # noqa: BLE001
++        sys.stderr.write("打不开串口：%s（不重试、不降级）\n" % exc)
++        return EXIT_INPUT_ERROR
++
++    metrics_path = os.path.join(args.output, "metrics.jsonl")
++    capture_path = os.path.join(args.output, "capture.json")
++    started_at = _now_iso()
++    ended_at = None
++    state = {"complete": False, "sample_count": 0, "parse_drop": 0, "parse_drop_run_max": 0}
++    errors = []
++    drop_run = 0
++    next_report = time.monotonic() + 3600.0
++
++    def write_capture():
++        _write_json(capture_path, {
++            "tool": "soak72 capture",
++            "complete": state["complete"],
++            "hours": args.hours,
++            "baudrate": BAUDRATE,
++            "port": "serial",              # 匿名化：产物里不留设备路径
++            "elf_sha256": elf_sha,
++            "started_at": started_at,
++            "ended_at": ended_at,
++            "sample_count": state["sample_count"],
++            "parse_drop": state["parse_drop"],
++            "parse_drop_run_max": state["parse_drop_run_max"],
++            "fault_windows": {"file": os.path.basename(args.fault_windows) if args.fault_windows else None,
++                              "count": len(windows)},
++            "argv": sanitized_argv(argv),
++            "errors": errors,
++        })
++
++    # 先落一份 complete=false：进程被 kill 也不会留下"看起来跑完了"的证据
++    write_capture()
++    print("采集 %s：%s（%gh）→ %s" % (port_name, MARK, args.hours, os.path.basename(metrics_path)),
++          flush=True)
++
++    try:
++        with open(metrics_path, "w", encoding="utf-8") as fh:
++            deadline = time.monotonic() + args.hours * 3600.0
++            buf = b""
++            while time.monotonic() < deadline:
++                chunk = port.read(4096)
++                if not chunk:
++                    continue
++                buf += chunk
++                while b"\n" in buf:
++                    raw, _, buf = buf.partition(b"\n")
++                    rec = parse_line(raw.decode("utf-8", "replace").rstrip("\r"))
++                    if rec is None:
++                        # 文本行/截断行：丢弃并计数。截断是环形缓冲溢出的正常后果，
++                        # 不能让它把整份采集搞崩，也不能写进证据文件。
++                        state["parse_drop"] += 1
++                        drop_run += 1
++                        state["parse_drop_run_max"] = max(state["parse_drop_run_max"], drop_run)
++                        continue
++                    drop_run = 0
++                    fh.write(json.dumps({"t": round(time.time(), 3), "rec": rec},
++                                        ensure_ascii=False, separators=(",", ":")) + "\n")
++                    fh.flush()
++                    state["sample_count"] += 1
++                if time.monotonic() >= next_report:
++                    next_report += 3600.0
++                    print("  已采集 %.1fh：样本 %d 条，丢弃 %d 行（最长连续 %d）"
++                          % ((time.monotonic() - (deadline - args.hours * 3600.0)) / 3600.0,
++                             state["sample_count"], state["parse_drop"], state["parse_drop_run_max"]),
++                          flush=True)
++            if buf.strip():
++                # 收工时残在半行缓冲区里：不猜它的后半截
++                state["parse_drop"] += 1
++                state["parse_drop_run_max"] = max(state["parse_drop_run_max"], drop_run + 1)
++            state["complete"] = True
++    except KeyboardInterrupt:
++        errors.append({"at": _now_iso(), "event": "interrupted"})
++    except Exception as exc:                                  # noqa: BLE001
++        # 掉线/读失败：记一条 error 就收工。只记异常类型——pyserial 的消息里带设备路径。
++        errors.append({"at": _now_iso(), "event": "serial_read_failed", "exc": type(exc).__name__})
++        print("串口读失败：%s（不重连，直接收工）" % type(exc).__name__, file=sys.stderr, flush=True)
++    finally:
++        ended_at = _now_iso()
++        try:
++            port.close()
++        except Exception:                                     # noqa: BLE001
++            pass
++        write_capture()
++
++    if state["complete"]:
++        print("完成：样本 %d 条，丢弃 %d 行（最长连续 %d），结束标记 complete=true"
++              % (state["sample_count"], state["parse_drop"], state["parse_drop_run_max"]))
++        return EXIT_PASS
++    print("未完成：样本 %d 条，丢弃 %d 行，complete=false（analyze 会判 INCOMPLETE）"
++          % (state["sample_count"], state["parse_drop"]), file=sys.stderr)
++    return EXIT_FAIL
++
++
++# ---------------------------------------------------------------- analyze
++def _print_report(result, metrics_name):
++    print("=== soak72 复核：%s ===" % metrics_name)
++    cap = result.get("capture") or {}
++    print("样本 %d 条｜板端跨度 %ss｜捕获跨度 %ss｜解析丢弃 %s 行（最长连续 %s）"
++          % (result["sample_count"], _fmt(result.get("board_span_s")),
++             _fmt(result.get("capture_span_s")), cap.get("parse_drop"), cap.get("parse_drop_run_max")))
++    mark = {"pass": "✓", "fail": "✗", "incomplete": "?"}
++    for c in result["checks"]:
++        print("%s %-18s %s" % (mark[c["state"]], c["name"], c["detail"]))
++    why = {"PASS": "全部判据成立", "FAIL": "有判据被证据证伪",
++           "INCOMPLETE": "证据不足，不能判 PASS",
++           "INPUT_ERROR": "输入不可用，没有做出任何评价"}
++    print("结论：%s（%s）" % (result["verdict"], why.get(result["verdict"], "未知")))
++    for f in result["failures"]:
++        print("  失败：%s" % f)
++    for f in result["incomplete_reasons"]:
++        print("  缺证据：%s" % f)
++    for note in result["notes"]:
++        print("  说明：%s" % note)
++
++
++def _fmt(v):
++    return "N/A" if v is None else "%.1f" % v
++
++
++def _write_summary(output, result):
++    """summary.json 是唯一的下游接口：连"输入坏了"也必须落一份，绝不静默不写。"""
++    try:
++        os.makedirs(output, exist_ok=True)
++        _write_json(os.path.join(output, "summary.json"), result)
++        return True
++    except Exception as exc:                                  # noqa: BLE001
++        sys.stderr.write("summary.json 写不进去：%s\n" % type(exc).__name__)
++        return False
++
++
++def analyze_main(args):
++    """读文件 → 评价 → 落 summary。除了四个退出码，不向外抛任何异常。"""
++    reason = None
++    result = None
++    try:
++        if not os.path.isfile(args.elf):
++            raise InputError("--elf 不存在或不是文件")
++        elf_sha = sha256_file(args.elf)
++        windows = load_windows(args.fault_windows)
++        samples, load_meta = load_metrics(args.input)
++        capture = load_capture(os.path.join(os.path.dirname(os.path.abspath(args.input)),
++                                            "capture.json"))
++        result = evaluate(samples, capture, args.hours, elf_sha, windows, load_meta)
++    except InputError as exc:
++        reason = str(exc)
++    except OSError as exc:
++        reason = "输入文件读不了：%s" % type(exc).__name__
++    except Exception as exc:                                  # noqa: BLE001
++        # 判据代码自己出问题也算"这次没结论"，但不能抛栈：长测证据只有一份，
++        # 崩溃会让下游以为"程序没跑"，而 3 明确说的是"输入/参数有问题"。
++        reason = "复核过程出错：%s" % type(exc).__name__
++    if reason is None:
++        _write_summary(args.output, result)
++        _print_report(result, os.path.basename(args.input))
++        print("summary: summary.json")
++        return VERDICT_EXIT[result["verdict"]]
++    result = {"tool": "soak72 analyze", "verdict": "INPUT_ERROR", "hours": args.hours,
++              "elf_sha256": None, "sample_count": 0, "checks": [], "failures": [],
++              "incomplete_reasons": [reason], "notes": _notes(), "input_error": reason}
++    _write_summary(args.output, result)
++    sys.stderr.write("输入错误：%s\n" % reason)
++    return EXIT_INPUT_ERROR
++
++
++# ---------------------------------------------------------------- CLI
++class _Parser(argparse.ArgumentParser):
++    """参数错误统一退 3（INPUT_ERROR），不出现 argparse 默认的 2。"""
++
++    def error(self, message):
++        self.print_usage(sys.stderr)
++        sys.stderr.write("参数错误: %s\n" % message)
++        raise SystemExit(EXIT_INPUT_ERROR)
++
++
++def _build_parser():
++    ap = _Parser(prog="soak72.py", description="72 小时实机长测的只读采集与离线复核")
++    sub = ap.add_subparsers(dest="cmd")
++
++    cap = sub.add_parser("capture", help="只读抓串口，只落数值记录")
++    cap.add_argument("--hours", type=float, required=True, help="采集时长（小时），到点自动收尾")
++    cap.add_argument("--elf", required=True, help="本次烧录的 ELF，用于记录 SHA-256")
++    cap.add_argument("--output", required=True, help="输出目录")
++    cap.add_argument("--port", default=None, help="串口设备；缺省读环境变量 %s" % ENV_PORT)
++    cap.add_argument("--fault-windows", default=None, help="故障窗口 JSON（只登记，不产生故障）")
++
++    ana = sub.add_parser("analyze", help="离线按固定判据评价")
++    ana.add_argument("--input", required=True, help="metrics.jsonl")
++    ana.add_argument("--hours", type=float, required=True, help="要求的采集时长（小时）")
++    ana.add_argument("--elf", required=True, help="本地 ELF，逐条比对 fw")
++    ana.add_argument("--output", required=True, help="输出目录（写 summary.json）")
++    ana.add_argument("--fault-windows", default=None, help="故障窗口 JSON")
++    return ap
++
++
++def main(argv=None):
++    argv = list(sys.argv[1:] if argv is None else argv)
++    args = _build_parser().parse_args(argv)
++    try:
++        if args.cmd == "capture":
++            return capture_main(args, [os.path.basename(sys.argv[0])] + argv)
++        if args.cmd == "analyze":
++            return analyze_main(args)
++    except KeyboardInterrupt:
++        sys.stderr.write("被中断。\n")
++        return EXIT_FAIL
++    except Exception as exc:                                  # noqa: BLE001
++        # 兜底：退出码只有 0/1/2/3 四种含义，未预料到的异常不能变成 traceback+退出码 1
++        # （那会被当成"长测失败"）。这里是输入/环境问题，报 3 并只打类型名。
++        sys.stderr.write("未预料的错误：%s\n" % type(exc).__name__)
++        return EXIT_INPUT_ERROR
++    _build_parser().print_help()
++    return EXIT_INPUT_ERROR
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/tools/audit125/test_diag.py b/tools/audit125/test_diag.py
+new file mode 100644
+index 0000000..4d8518f
+--- /dev/null
++++ b/tools/audit125/test_diag.py
+@@ -0,0 +1,333 @@
++#!/usr/bin/env python3
++"""诊断心跳回归：**抽取 main.cpp 里真实的 diag_timer_cb** 编译到主机上跑。
++
++为什么需要它：72 小时长测的全部结论都来自这一行 `FNOS_DIAG {...}`。如果字段名写错、
++单位写错（毫秒当秒、字节当 KB）或者某个字段在"还没有成功帧"时补了个 0，采集脚本会
++一本正经地给出错误结论——而这种错误在板上完全看不出来（日志长得挺正常）。
++所以这里不复制实现，而是把真实函数体抠出来编译，逐字段对着契约断言。
++
++它证明什么、不证明什么：
++  * 证明：字段集合/类型/单位、派生值（io.age、src=-1、ui.age 间隔）、异常复位标记、
++    mem 的三个容量口径没有串台、栈余量为 0 时如实上报"测不到"、以及回调**不取快照
++    引用**（没有获取/释放要平衡，也就没有那条泄漏面）。
++  * 不证明：板子上 LVGL 任务是否真的每 10 秒跑到（那是实机 72h 的事）、也不测帧耗时
++    与触摸延迟。ESP-IDF/FreeRTOS/LVGL 全部是替身，语义按官方文档对齐（字节、ms、秒）。
++
++用法：
++    python3 tools/audit125/test_diag.py            # 退出码 0 = 全过
++    CXX=g++ python3 tools/audit125/test_diag.py    # 指定主机 C++ 编译器
++"""
++import json
++import os
++import re
++import subprocess
++import sys
++import tempfile
++
++HERE = os.path.dirname(os.path.abspath(__file__))
++REPO = os.path.dirname(os.path.dirname(HERE))
++MAIN_CPP = os.path.join(REPO, "main", "main.cpp")
++FNOS_DATA_H = os.path.join(REPO, "components", "fnos_monitor", "fnos_data.h")
++
++SIG = "static void diag_timer_cb(lv_timer_t *t)"
++
++FAILS = []
++CHECKS = 0
++
++
++def check(cond, what, detail=""):
++    global CHECKS
++    CHECKS += 1
++    if cond:
++        return True
++    FAILS.append(f"{what}{(' — ' + detail) if detail else ''}")
++    print(f"  ✗ {what}" + (f" — {detail}" if detail else ""))
++    return False
++
++
++def extract_callback():
++    """从 main.cpp 抠出 diag_timer_cb 的完整函数体（按大括号配对，不复制实现）。"""
++    src = open(MAIN_CPP, encoding="utf-8").read()
++    start = src.find(SIG)
++    if start < 0:
++        sys.exit(f"main.cpp 里找不到 {SIG}（诊断心跳被删了？）")
++    brace = src.find("{", start)
++    depth, i = 0, brace
++    while i < len(src):
++        if src[i] == "{":
++            depth += 1
++        elif src[i] == "}":
++            depth -= 1
++            if depth == 0:
++                break
++        i += 1
++    body = src[start:i + 1]
++    if "FNOS_DIAG" not in body:
++        sys.exit("抠出来的函数里没有 FNOS_DIAG，抽取锚点错了")
++    if "#if" in body:
++        sys.exit("函数体里出现预处理指令，抽取不可靠")
++    return body
++
++
++HARNESS = r"""
++// 主机替身：只实现 diag_timer_cb 用到的接口，语义按 ESP-IDF 官方文档对齐。
++// fnos_data_diag_t 用**真实头文件**，字段布局不会因为替身而走样。
++#include <stdio.h>
++#include <string.h>
++#include <stdint.h>
++#include <stdbool.h>
++#include <stdlib.h>
++
++typedef struct lv_timer_t lv_timer_t;
++
++// 真实头文件先 include：fnos_data_diag_t 的字段布局必须来自生产代码，不能靠替身复制。
++#include "sdkconfig.h"
++#include "fnos_data.h"
++
++// 复位原因枚举替身：取值与 ESP-IDF esp_system.h 的 ESP_RST_* 一致。
++#define ESP_RST_UNKNOWN    0
++#define ESP_RST_POWERON    1
++#define ESP_RST_EXT        2
++#define ESP_RST_SW         3
++#define ESP_RST_PANIC      4
++#define ESP_RST_INT_WDT    5
++#define ESP_RST_TASK_WDT   6
++#define ESP_RST_WDT        7
++#define ESP_RST_DEEPSLEEP  8
++#define ESP_RST_BROWNOUT   9
++#define ESP_RST_SDIO      10
++#define ESP_RST_USB       11
++#define ESP_RST_JTAG      12
++#define ESP_RST_EFUSE     13
++#define ESP_RST_PWR_GLITCH 14
++#define ESP_RST_CPU_LOCKUP 15
++
++static int64_t g_now_us;
++static int     g_reset;
++static unsigned g_cap[3];       // [0]=INTERNAL [1]=DMA [2]=SPIRAM
++static unsigned g_imin, g_imax, g_dmin, g_pmin;
++static unsigned g_stk_lvgl, g_stk_poll, g_stk_pair;
++static uint32_t g_ok, g_fail; static int64_t g_recv_ms, g_src_ts; static int g_p95;
++
++#define MALLOC_CAP_INTERNAL 1u
++#define MALLOC_CAP_DMA      2u
++#define MALLOC_CAP_SPIRAM   4u
++
++static const char *TAG = "main";
++#define ESP_LOGI(tag, fmt, ...) do { printf("I (0) %s: ", (tag)); printf(fmt, ##__VA_ARGS__); printf("\n"); } while (0)
++
++static int64_t esp_timer_get_time(void) { return g_now_us; }
++static int esp_reset_reason(void) { return g_reset; }
++static int esp_app_get_elf_sha256(char *dst, size_t size)
++{
++    static const char *HEX = "0123456789abcdef";
++    char sha[64];
++    for (int i = 0; i < 64; i++) sha[i] = HEX[(i * 7) % 16];
++    size_t n = (size < 65) ? size : 65;
++    if (n < 2) return 0;
++    memcpy(dst, sha, n - 1);
++    dst[n - 1] = 0;
++    return (int)n;
++}
++static size_t heap_caps_get_free_size(unsigned c) { return g_cap[c == 1u ? 0 : (c == 2u ? 1 : 2)]; }
++static size_t heap_caps_get_minimum_free_size(unsigned c) { return (c == 1u) ? g_imin : ((c == 2u) ? g_dmin : g_pmin); }
++static size_t heap_caps_get_largest_free_block(unsigned c) { return (void)c, g_imax; }
++static unsigned uxTaskGetStackHighWaterMark(void *t) { return (void)t, g_stk_lvgl; }
++// 这三个是 fnos_data.h 里声明的生产接口，替身定义不能加 static（否则与头文件声明冲突）。
++void fnos_data_diag(fnos_data_diag_t *o)
++{
++    o->ok_count = g_ok; o->fail_count = g_fail; o->recv_ms = g_recv_ms; o->source_ts = g_src_ts;
++    o->http_ms = 0; o->p95_ms = g_p95; o->uptime_s = 1234; o->online = g_recv_ms != 0;
++}
++uint32_t fnos_data_stack_min_free(void) { return g_stk_poll; }
++static uint32_t fnos_pair_stack_min_free(void) { return g_stk_pair; }
++
++__CBODY__
++
++int main(int argc, char **argv)
++{
++    const char *cs = (argc > 1) ? argv[1] : "fresh";
++    g_cap[0] = 100000; g_cap[1] = 90000; g_cap[2] = 3000000;
++    g_imin = 80000; g_imax = 65536; g_dmin = 70000; g_pmin = 2500000;
++    g_stk_lvgl = 3000; g_stk_poll = 2100; g_stk_pair = 1800;
++    g_reset = 1;                     // ESP_RST_POWERON
++    g_now_us = 5000000;              // 开机 5 秒
++
++    if (!strcmp(cs, "fresh")) {
++        diag_timer_cb(NULL);
++    } else if (!strcmp(cs, "steady")) {
++        g_now_us = 100 * 1000000;    // 100 秒：recv_ms 是毫秒，97 秒前收到过帧
++        g_ok = 4200; g_fail = 1; g_recv_ms = 97000; g_src_ts = 1697000000; g_p95 = 180;
++        diag_timer_cb(NULL);
++        g_recv_ms += 12 * 1000;      // 健康设备一直在收帧：最新成功接收也前进 12 秒
++        g_now_us += 12 * 1000000;    // 心跳晚到 12 秒：ui.age 要如实变成 12
++        diag_timer_cb(NULL);
++    } else if (!strcmp(cs, "stall")) {
++        g_now_us = 100 * 1000000;
++        g_recv_ms = 97000;
++        diag_timer_cb(NULL);
++        g_now_us += 20 * 1000000;
++        diag_timer_cb(NULL);
++    } else if (!strcmp(cs, "panic")) {
++        g_reset = 4;                 // ESP_RST_PANIC
++        diag_timer_cb(NULL);
++    } else if (!strcmp(cs, "taskwdt")) {
++        g_reset = 6;                 // ESP_RST_TASK_WDT
++        diag_timer_cb(NULL);
++    } else if (!strcmp(cs, "stacks_absent")) {
++        g_stk_poll = 0; g_stk_pair = 0;   // 任务还没起来：如实报"测不到"
++        diag_timer_cb(NULL);
++    } else {
++        fprintf(stderr, "unknown case %s\n", cs);
++        return 2;
++    }
++    return 0;
++}
++"""
++
++# 契约：字段名与层级完全固定，多一个少一个都算失败（采集脚本按它取值）。
++TOP = {"n", "up", "hz", "fw", "rst", "ev", "io", "ui", "mem", "stk"}
++SUB = {
++    "io": {"ok", "fail", "age", "p95", "src"},
++    "ui": {"age"},
++    "mem": {"ifree", "imin", "imax", "dfree", "dmin", "pfree", "pmin"},
++    "stk": {"lvgl", "poll", "pair"},
++}
++HEX64 = re.compile(r"^[0-9a-f]{64}$")
++
++
++def compile_harness(tmp, body):
++    with open(os.path.join(tmp, "sdkconfig.h"), "w", encoding="utf-8") as f:
++        f.write("/* 主机替身：诊断回调只看 CONFIG_FNOS_* 之外的东西，留空即可 */\n")
++    src = HARNESS.replace("__CBODY__", body)
++    path = os.path.join(tmp, "diag_host.cpp")
++    with open(path, "w", encoding="utf-8") as f:
++        f.write(src)
++    cxx = os.environ.get("CXX") or os.environ.get("CC") or "c++"
++    exe = os.path.join(tmp, "diag_host")
++    cmd = [cxx, "-std=c++17", "-Wall", "-Wextra", "-Wno-unused-parameter",
++           "-I", tmp, "-I", os.path.dirname(FNOS_DATA_H), path, "-o", exe]
++    p = subprocess.run(cmd, capture_output=True, text=True)
++    if p.returncode != 0:
++        sys.exit(f"编译失败（{cxx}）：\n{p.stdout}\n{p.stderr}")
++    return exe, cxx
++
++
++def run_case(exe, case):
++    p = subprocess.run([exe, case], capture_output=True, text=True)
++    if p.returncode != 0:
++        sys.exit(f"用例 {case} 退出码 {p.returncode}：{p.stderr}")
++    lines = [ln for ln in p.stdout.splitlines() if "FNOS_DIAG" in ln]
++    out = []
++    for ln in lines:
++        blob = ln[ln.index("FNOS_DIAG") + len("FNOS_DIAG"):].strip()
++        out.append(json.loads(blob))       # 与采集脚本同样的"先定位标记再解析"
++    return out
++
++
++def check_schema(rec, case):
++    check(set(rec) == TOP, f"[{case}] 顶层字段集合",
++          f"多={sorted(set(rec) - TOP)} 少={sorted(TOP - set(rec))}")
++    for k, want in SUB.items():
++        got = rec.get(k)
++        check(isinstance(got, dict) and set(got) == want, f"[{case}] {k} 子字段集合",
++              f"实际={sorted(got) if isinstance(got, dict) else got}")
++    check(isinstance(rec.get("n"), int) and rec["n"] >= 1, f"[{case}] n 是正整数")
++    check(isinstance(rec.get("up"), int) and rec["up"] >= 0, f"[{case}] up 是毫秒整数")
++    check(rec.get("hz") == 10, f"[{case}] hz==10", f"实际={rec.get('hz')}")
++    check(bool(HEX64.match(str(rec.get("fw", "")))), f"[{case}] fw 是 64 位小写 hex",
++          f"实际={rec.get('fw')}")
++    check(isinstance(rec.get("rst"), int), f"[{case}] rst 是整数")
++    check(isinstance(rec.get("ev"), list) and all(isinstance(x, str) for x in rec["ev"]),
++          f"[{case}] ev 是字符串数组")
++    for k in SUB["io"] | SUB["ui"] | SUB["mem"] | SUB["stk"]:
++        rec_k = rec["io"] if k in SUB["io"] else (rec["ui"] if k in SUB["ui"]
++                                                 else (rec["mem"] if k in SUB["mem"] else rec["stk"]))
++        check(isinstance(rec_k[k], int), f"[{case}] {k} 是整数", f"实际={rec_k[k]!r}")
++
++
++def main():
++    body = extract_callback()
++    print(f"抽取 main/main.cpp 的真实回调：{len(body.splitlines())} 行\n")
++
++    # 不取快照引用 = 没有获取/释放要平衡（源码级检查；运行时用 POD 复制）。
++    for bad in ("fnos_data_get(", "fnos_status_copy(", "fnos_status_release("):
++        check(bad not in body, f"回调不调用 {bad}", "诊断路径不该碰快照所有权")
++    for bad in (r"\bfree\s*\(", r"\bmalloc\s*\(", r"\bcalloc\s*\(", r"\brealloc\s*\("):
++        # 词边界是必要的：fnos_data_stack_min_free() / heap_caps_get_free_size() 不是堆释放。
++        check(re.search(bad, body) is None, f"回调不调用 {bad}", "诊断路径不该自己管内存")
++
++    tmp = tempfile.mkdtemp(prefix="fnos-diag-")
++    exe, cxx = compile_harness(tmp, body)
++    print(f"主机 C++ 编译器：{cxx}\n")
++
++    print("① fresh：还没有成功帧")
++    fresh = run_case(exe, "fresh")
++    check(len(fresh) == 1, "[fresh] 一次调用一行")
++    r = fresh[0]
++    check_schema(r, "fresh")
++    check(r["n"] == 1, "[fresh] n 从 1 开始", f"实际={r['n']}")
++    check(r["up"] == 5000, "[fresh] up 是毫秒（5e6 us → 5000）", f"实际={r['up']}")
++    check(r["io"]["age"] == -1, "[fresh] 没有成功帧时 io.age=-1（不是 0）", f"实际={r['io']['age']}")
++    check(r["io"]["src"] == -1, "[fresh] 没有成功帧时 io.src=-1（不是 0）", f"实际={r['io']['src']}")
++    check(r["io"]["ok"] == 0 and r["io"]["fail"] == 0, "[fresh] 计数从 0 开始")
++    check(r["ui"]["age"] == 0, "[fresh] 第一条 ui.age=0（还没有上一次心跳）")
++    check(r["rst"] == 1 and r["ev"] == [], "[fresh] 计划内复位不报异常",
++          f"rst={r['rst']} ev={r['ev']}")
++    check(r["mem"] == {"ifree": 100000, "imin": 80000, "imax": 65536, "dfree": 90000,
++                       "dmin": 70000, "pfree": 3000000, "pmin": 2500000},
++          "[fresh] mem 七个口径各就各位、单位是字节（没有除 1024）", f"实际={r['mem']}")
++    check(r["stk"] == {"lvgl": 3000, "poll": 2100, "pair": 1800},
++          "[fresh] 三个任务栈余量分别落到 lvgl/poll/pair", f"实际={r['stk']}")
++
++    print("\n② steady：有成功帧 + 心跳晚到 12 秒")
++    steady = run_case(exe, "steady")
++    check(len(steady) == 2, "[steady] 两次调用两行")
++    a, b = steady
++    check_schema(a, "steady1")
++    check_schema(b, "steady2")
++    for rec in steady:
++        check(rec["io"]["age"] == 3, "[steady] io.age=3 秒（97s 收帧、100s 打点）",
++              f"实际={rec['io']['age']}")
++        check(rec["io"]["src"] == 1697000000, "[steady] io.src 原样透传 epoch 秒")
++        check(rec["io"]["p95"] == 180, "[steady] p95 原样透传毫秒")
++        check(rec["io"]["ok"] == 4200 and rec["io"]["fail"] == 1, "[steady] 成功/失败计数")
++    check(a["ui"]["age"] == 0 and b["ui"]["age"] == 12,
++          "[steady] ui.age 是两次心跳的间隔秒数（第一条 0，第二条 12）",
++          f"实际={a['ui']['age']}/{b['ui']['age']}")
++    check(b["n"] == 2 and b["up"] == 112000, "[steady] n/up 随心跳推进",
++          f"n={b['n']} up={b['up']}")
++
++    print("\n③ stall：心跳停了 20 秒")
++    stall = run_case(exe, "stall")
++    check(len(stall) == 2 and stall[1]["ui"]["age"] == 20,
++          "[stall] 20 秒的停顿如实报成 ui.age=20（>15s 由采集端判负）",
++          f"实际={stall[1]['ui']['age'] if len(stall) > 1 else None}")
++
++    print("\n④ panic / task_wdt：异常复位必须在 ev 里点名")
++    panic = run_case(exe, "panic")[0]
++    check(panic["rst"] == 4 and panic["ev"] == ["panic"],
++          "[panic] rst=4 且 ev=[panic]", f"rst={panic['rst']} ev={panic['ev']}")
++    twdt = run_case(exe, "taskwdt")[0]
++    check(twdt["rst"] == 6 and twdt["ev"] == ["task_wdt"],
++          "[taskwdt] rst=6 且 ev=[task_wdt]", f"rst={twdt['rst']} ev={twdt['ev']}")
++
++    print("\n⑤ stacks_absent：任务没起来时如实报 0（采集端按 INCOMPLETE，不当成栈耗尽）")
++    sa = run_case(exe, "stacks_absent")[0]
++    check_schema(sa, "stacks_absent")
++    check(sa["stk"]["poll"] == 0 and sa["stk"]["pair"] == 0 and sa["stk"]["lvgl"] == 3000,
++          "[stacks_absent] 缺任务的栈余量是 0 而不是缺失字段", f"实际={sa['stk']}")
++
++    print()
++    if FAILS:
++        print(f"FAIL：{len(FAILS)}/{CHECKS} 项不通过")
++        for f in FAILS:
++            print(f"  - {f}")
++        return 1
++    print(f"PASS {CHECKS} 项：真实回调的字段/单位/派生值/异常标记全部符合契约"
++          f"（替身只替换 ESP-IDF 接口，板端行为仍需实机 72h）")
++    return 0
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/tools/audit125/test_pair_nvs.py b/tools/audit125/test_pair_nvs.py
+new file mode 100644
+index 0000000..dc67236
+--- /dev/null
++++ b/tools/audit125/test_pair_nvs.py
+@@ -0,0 +1,760 @@
++#!/usr/bin/env python3
++# -*- coding: utf-8 -*-
++"""tools/audit125/test_pair_nvs.py —— 配对 NVS 保存/擦除 + 配对响应判定的主机单元测试。
++
++为什么是"真实函数提取"而不是"再抄一份实现"：抄一份的话生产改了、测试还在测旧副本，
++审计 N1（明文配对残留旧证书）/ N2（wipe 失败谎报已清除）/ N3（非 200 且带 token 也当成功、
++超长 token 截断）的回归会静默失效。本脚本按函数名从
++components/fnos_monitor/fnos_pair.c 里切出**真实函数体**（字符串/注释感知的括号配平），
++拼进临时翻译单元，用内存 NVS 替身 + 命名故障点驱动，再用 CC 编译运行。
++
++真实抽取：has_cert / nvs_save / nvs_wipe / pair_response_accept + do_fetch 的 tls 判定片段。
++替身：NVS（内存 KV，commit 为持久化边界）、ESP_LOG、ESP_OK/ESP_ERR_NVS_NOT_FOUND、KEY_* 宏
++（宏也从生产文件抽取，避免键名漂移）。tls 类型判定用**真实 cJSON 库**（managed_components）
++解析真实 JSON 后驱动抽取到的生产片段。
++
++退出码：0 全过 / 1 有用例失败 / 2 抽取失败 / 3 环境问题（没有编译器、缺文件）。
++"""
++import os
++import pathlib
++import re
++import shutil
++import subprocess
++import sys
++import tempfile
++import textwrap
++
++REPO = pathlib.Path(__file__).resolve().parents[2]
++SRC = REPO / "components" / "fnos_monitor" / "fnos_pair.c"
++HDR_DIR = REPO / "components" / "fnos_monitor"
++CJSON_DIR = REPO / "managed_components" / "espressif__cjson" / "cJSON"
++
++EXIT_TEST_FAIL = 1
++EXIT_EXTRACT = 2
++EXIT_INPUT = 3
++
++
++class ExtractError(Exception):
++    pass
++
++
++# ────────────────────────────── 抽取
++
++def match_brace(text, i):
++    """从 text[i] == '{' 开始做括号配平；跳过注释、字符串、字符常量。"""
++    depth = 0
++    n = len(text)
++    while i < n:
++        c = text[i]
++        if c == '"' or c == "'":
++            q = c
++            i += 1
++            while i < n and text[i] != q:
++                if text[i] == "\\":
++                    i += 1
++                i += 1
++        elif c == "/" and i + 1 < n and text[i + 1] == "/":
++            nl = text.find("\n", i)
++            if nl < 0:
++                break
++            i = nl
++        elif c == "/" and i + 1 < n and text[i + 1] == "*":
++            end = text.find("*/", i + 2)
++            if end < 0:
++                raise ExtractError("注释没有收尾（/* 无 */）")
++            i = end + 1
++        elif c == "{":
++            depth += 1
++        elif c == "}":
++            depth -= 1
++            if depth == 0:
++                return i
++        i += 1
++    raise ExtractError("括号没有配平")
++
++
++def line_of(text, pos):
++    return text.count("\n", 0, pos) + 1
++
++
++def extract_function(text, name):
++    """切出 `static <type> name(...)  { ... }` 的完整定义（含签名），返回 (代码, 起始行, 结束行)。"""
++    pat = re.compile(
++        r"^[ \t]*static[ \t]+[\w \t\*]*\b" + re.escape(name) + r"[ \t]*\(", re.M
++    )
++    m = pat.search(text)
++    if not m:
++        raise ExtractError("%s：在 %s 里找不到 `static ... %s(` 定义" % (name, SRC, name))
++    brace = text.find("{", m.end())
++    if brace < 0:
++        raise ExtractError("%s：签名后找不到函数体 '{'" % name)
++    end = match_brace(text, brace)
++    return text[m.start():end + 1], line_of(text, m.start()), line_of(text, end)
++
++
++def extract_fragment(text, start_marker, end_marker):
++    """从 start_marker 所在整行切到 end_marker 所在整行（含），逐字保留。"""
++    i = text.find(start_marker)
++    if i < 0:
++        raise ExtractError("片段起点找不到：%s" % start_marker)
++    j = text.find(end_marker, i)
++    if j < 0:
++        raise ExtractError("片段终点找不到：%s" % end_marker)
++    start = text.rfind("\n", 0, i) + 1
++    end = text.find("\n", j)
++    if end < 0:
++        end = len(text)
++    return text[start:end], line_of(text, start), line_of(text, end)
++
++
++def extract_macro(text, name):
++    m = re.search(r"^#define[ \t]+" + re.escape(name) + r"[ \t]+(\S+)[ \t]*$", text, re.M)
++    if not m:
++        raise ExtractError("宏 %s 在 %s 里找不到" % (name, SRC))
++    return m.group(1)
++
++
++# ────────────────────────────── C 翻译单元模板
++
++C_TEMPLATE = textwrap.dedent(r'''
++    /* 生成文件：由 tools/audit125/test_pair_nvs.py 拼装。
++       "抽取"标记之间的函数体/片段逐字取自 components/fnos_monitor/fnos_pair.c，
++       生产改一行这里就测那一行。不要手工编辑。 */
++    #include <stdarg.h>
++    #include <stdbool.h>
++    #include <stddef.h>
++    #include <stdint.h>
++    #include <stdio.h>
++    #include <string.h>
++
++    #include "fnos_pair.h"   /* 真实头文件（-I components/fnos_monitor） */
++    #include "cJSON.h"       /* 真实 cJSON 库（managed_components） */
++
++    /* ───── ESP-IDF / NVS 替身：内存 KV + 命名故障点 ───── */
++    typedef int esp_err_t;
++    #define ESP_OK 0
++    #define ESP_FAIL -1
++    #define ESP_ERR_NVS_NOT_FOUND 0x1102   /* 真实值 = ESP_ERR_NVS_BASE(0x1100) + 0x02 */
++
++    typedef uint32_t nvs_handle_t;
++    enum { NVS_READONLY = 0, NVS_READWRITE = 1 };
++
++    #define TAG "stub"
++    #define ESP_LOGE(tag, ...) do { (void)(tag); fprintf(stderr, "  [ESP_LOGE] " __VA_ARGS__); fputc('\n', stderr); } while (0)
++
++    /* 生产宏：也从 fnos_pair.c 抽取，测试里不另写一份键名 */
++    #define NVS_NS @NVS_NS@
++    #define KEY_HOST @KEY_HOST@
++    #define KEY_PORT @KEY_PORT@
++    #define KEY_TOKEN @KEY_TOKEN@
++    #define KEY_CERT @KEY_CERT@
++    #define KEY_FP @KEY_FP@
++
++    #define KV_MAX 8
++    #define KV_VAL_MAX (FNOS_PAIR_PEM_MAX + 256)
++
++    typedef struct { char key[16]; char val[KV_VAL_MAX]; bool used; } kv_t;
++    typedef struct { kv_t kv[KV_MAX]; int32_t port; bool port_set; } store_t;
++
++    static store_t g_live;          /* 已提交（掉电后还在）*/
++    static store_t g_stage;         /* 打开句柄后的暂存 */
++    static const char *g_fail_at;   /* 命名故障点，NULL = 不注入 */
++
++    static bool fail_at(const char *point) { return g_fail_at && strcmp(g_fail_at, point) == 0; }
++
++    static kv_t *kv_find(store_t *s, const char *key)
++    {
++        for (int i = 0; i < KV_MAX; i++) {
++            if (s->kv[i].used && strcmp(s->kv[i].key, key) == 0) {
++                return &s->kv[i];
++            }
++        }
++        return NULL;
++    }
++
++    static const char *set_point(const char *key)
++    {
++        if (strcmp(key, KEY_HOST) == 0)  return "SET_HOST";
++        if (strcmp(key, KEY_PORT) == 0)  return "SET_PORT";
++        if (strcmp(key, KEY_TOKEN) == 0) return "SET_TOKEN";
++        if (strcmp(key, KEY_CERT) == 0)  return "SET_CERT";
++        if (strcmp(key, KEY_FP) == 0)    return "SET_FP";
++        return "SET_UNKNOWN";
++    }
++
++    static const char *erase_point(const char *key)
++    {
++        if (strcmp(key, KEY_CERT) == 0) return "ERASE_CERT";
++        if (strcmp(key, KEY_FP) == 0)   return "ERASE_FP";
++        return "ERASE_UNKNOWN";
++    }
++
++    static esp_err_t nvs_open(const char *ns, int mode, nvs_handle_t *out)
++    {
++        (void)ns; (void)mode;
++        if (fail_at("OPEN")) {
++            return ESP_FAIL;
++        }
++        g_stage = g_live;
++        *out = 1;
++        return ESP_OK;
++    }
++
++    static void nvs_close(nvs_handle_t h) { (void)h; }
++
++    static esp_err_t nvs_set_str(nvs_handle_t h, const char *key, const char *val)
++    {
++        (void)h;
++        if (fail_at(set_point(key))) {
++            return ESP_FAIL;
++        }
++        kv_t *e = kv_find(&g_stage, key);
++        if (!e) {
++            for (int i = 0; i < KV_MAX; i++) {
++                if (!g_stage.kv[i].used) { e = &g_stage.kv[i]; break; }
++            }
++        }
++        if (!e) {
++            return ESP_FAIL;
++        }
++        snprintf(e->key, sizeof e->key, "%s", key);
++        snprintf(e->val, sizeof e->val, "%s", val);
++        e->used = true;
++        return ESP_OK;
++    }
++
++    static esp_err_t nvs_set_i32(nvs_handle_t h, const char *key, int32_t val)
++    {
++        (void)h;
++        if (fail_at(set_point(key))) {
++            return ESP_FAIL;
++        }
++        g_stage.port = val;
++        g_stage.port_set = true;
++        return ESP_OK;
++    }
++
++    static esp_err_t nvs_get_str(nvs_handle_t h, const char *key, char *out, size_t *len)
++    {
++        (void)h;
++        const kv_t *e = kv_find(&g_stage, key);
++        if (!e) {
++            return ESP_ERR_NVS_NOT_FOUND;
++        }
++        size_t need = strlen(e->val) + 1;
++        if (!out) { *len = need; return ESP_OK; }
++        if (*len < need) { *len = need; return ESP_FAIL; }
++        memcpy(out, e->val, need);
++        *len = need;
++        return ESP_OK;
++    }
++
++    static esp_err_t nvs_get_i32(nvs_handle_t h, const char *key, int32_t *out)
++    {
++        (void)h; (void)key;
++        if (!g_stage.port_set) {
++            return ESP_ERR_NVS_NOT_FOUND;
++        }
++        *out = g_stage.port;
++        return ESP_OK;
++    }
++
++    static esp_err_t nvs_erase_key(nvs_handle_t h, const char *key)
++    {
++        (void)h;
++        if (fail_at(erase_point(key))) {
++            return ESP_FAIL;
++        }
++        kv_t *e = kv_find(&g_stage, key);
++        if (!e) {
++            return ESP_ERR_NVS_NOT_FOUND;   /* 真实语义：键不存在 */
++        }
++        memset(e, 0, sizeof *e);
++        return ESP_OK;
++    }
++
++    static esp_err_t nvs_erase_all(nvs_handle_t h)
++    {
++        (void)h;
++        if (fail_at("ERASE_ALL")) {
++            return ESP_FAIL;
++        }
++        memset(&g_stage, 0, sizeof g_stage);
++        return ESP_OK;
++    }
++
++    /* 替身模型：commit 是持久化边界，失败即丢弃暂存（真实 NVS 的未提交改动重启后不可见） */
++    static esp_err_t nvs_commit(nvs_handle_t h)
++    {
++        (void)h;
++        if (fail_at("COMMIT")) {
++            return ESP_FAIL;
++        }
++        g_live = g_stage;
++        return ESP_OK;
++    }
++
++    /* ───── 真实抽取 1：has_cert（fnos_pair.c:@L_HAS_CERT@） ───── */
++    /* >>> 抽取开始 has_cert >>> */
++    @HAS_CERT@
++    /* <<< 抽取结束 has_cert <<< */
++
++    /* ───── 真实抽取 2：nvs_save（fnos_pair.c:@L_NVS_SAVE@） ───── */
++    /* >>> 抽取开始 nvs_save >>> */
++    @NVS_SAVE@
++    /* <<< 抽取结束 nvs_save <<< */
++
++    /* ───── 真实抽取 3：nvs_wipe（fnos_pair.c:@L_NVS_WIPE@） ───── */
++    /* >>> 抽取开始 nvs_wipe >>> */
++    @NVS_WIPE@
++    /* <<< 抽取结束 nvs_wipe <<< */
++
++    /* ───── 真实抽取 4：pair_response_accept（fnos_pair.c:@L_PAIR_RESP@） ───── */
++    /* >>> 抽取开始 pair_response_accept >>> */
++    @PAIR_RESP@
++    /* <<< 抽取结束 pair_response_accept <<< */
++
++    /* ───── 真实抽取 5：do_fetch 的 tls 类型判定片段（fnos_pair.c:@L_TLS@） ─────
++       生产片段原样贴进 tls_gate()：set_view 替身记录"走了失败分支"，片段正常走完则把
++       真实变量 tls 记下来。JSON 由真实 cJSON 库解析。 */
++    static char g_view_msg[160];
++    static int  g_tls_rejected;   /* 1 = 生产片段调了 set_view（类型不对） */
++    static int  g_tls_value;      /* 生产片段算出的真实 tls 布尔；-1 = 没走到 */
++
++    static void set_view(fnos_pair_state_t state, const char *msg)
++    {
++        (void)state;
++        snprintf(g_view_msg, sizeof g_view_msg, "%s", msg);
++        g_tls_rejected = 1;
++    }
++
++    static void tls_gate(cJSON *root)
++    {
++        g_view_msg[0] = 0;
++        g_tls_rejected = 0;
++        g_tls_value = -1;
++    /* >>> 抽取开始 tls 片段 >>> */
++    @TLS_FRAGMENT@
++    /* <<< 抽取结束 tls 片段 <<< */
++        (void)jpem;   /* 片段后面的代码才用到它，这里只为避免 -Wunused */
++        g_tls_value = tls ? 1 : 0;
++    }
++
++    /* ───── 断言 ───── */
++    static int g_pass, g_fail;
++
++    static void check(const char *name, bool cond, const char *fmt, ...)
++    {
++        if (cond) {
++            printf("PASS %s\n", name);
++            g_pass++;
++            return;
++        }
++        printf("FAIL %s ", name);
++        va_list ap;
++        va_start(ap, fmt);
++        vprintf(fmt, ap);
++        va_end(ap);
++        putchar('\n');
++        g_fail++;
++    }
++
++    /* ───── 存储观察（走同一套 NVS 替身 API，不绕过） ───── */
++    static char g_read[KV_VAL_MAX];
++    static char g_rb[4][KV_VAL_MAX];
++    static int  g_rbi;
++
++    static bool store_read(const char *key, char *out, size_t cap)
++    {
++        nvs_handle_t h;
++        if (nvs_open(NVS_NS, NVS_READONLY, &h) != ESP_OK) {
++            return false;
++        }
++        size_t n = cap;
++        esp_err_t e = nvs_get_str(h, key, out, &n);
++        nvs_close(h);
++        return e == ESP_OK;
++    }
++
++    static bool store_has(const char *key) { return store_read(key, g_read, sizeof g_read); }
++
++    static const char *store_str(const char *key)
++    {
++        g_rbi = (g_rbi + 1) % 4;
++        return store_read(key, g_rb[g_rbi], sizeof g_rb[0]) ? g_rb[g_rbi] : "(无)";
++    }
++
++    static int store_port(void)
++    {
++        nvs_handle_t h;
++        int32_t p = -1;
++        if (nvs_open(NVS_NS, NVS_READONLY, &h) != ESP_OK) {
++            return -1;
++        }
++        if (nvs_get_i32(h, KEY_PORT, &p) != ESP_OK) {
++            p = -1;
++        }
++        nvs_close(h);
++        return (int)p;
++    }
++
++    static void kv_put(store_t *s, const char *key, const char *val)
++    {
++        for (int i = 0; i < KV_MAX; i++) {
++            if (!s->kv[i].used) {
++                snprintf(s->kv[i].key, sizeof s->kv[i].key, "%s", key);
++                snprintf(s->kv[i].val, sizeof s->kv[i].val, "%s", val);
++                s->kv[i].used = true;
++                return;
++            }
++        }
++    }
++
++    static void store_reset(void)
++    {
++        memset(&g_live, 0, sizeof g_live);
++        memset(&g_stage, 0, sizeof g_stage);
++        g_fail_at = NULL;
++    }
++
++    static void seed_plain(void)
++    {
++        store_reset();
++        kv_put(&g_live, KEY_HOST, "oldnas.local");
++        g_live.port = 8798;
++        g_live.port_set = true;
++        kv_put(&g_live, KEY_TOKEN, "oldTokA");
++    }
++
++    static void seed_tls_a(void)
++    {
++        seed_plain();
++        kv_put(&g_live, KEY_CERT, PEM_A);
++        kv_put(&g_live, KEY_FP, FP_A);
++    }
++
++    /* ───── 真正的"生效参数"构造（走真实结构体） ───── */
++    static fnos_pair_cfg_t cfg_plain(const char *host, int port, const char *tok)
++    {
++        fnos_pair_cfg_t c;
++        memset(&c, 0, sizeof c);
++        snprintf(c.host, sizeof c.host, "%s", host);
++        c.port = port;
++        c.tls = false;
++        snprintf(c.token, sizeof c.token, "%s", tok);
++        return c;
++    }
++
++    static fnos_pair_cfg_t cfg_tls(const char *host, int port, const char *tok, const char *pem,
++                                   const char *fp)
++    {
++        fnos_pair_cfg_t c = cfg_plain(host, port, tok);
++        c.tls = true;
++        snprintf(c.cert_pem, sizeof c.cert_pem, "%s", pem);
++        snprintf(c.fingerprint, sizeof c.fingerprint, "%s", fp);
++        return c;
++    }
++
++    /* ───── 注入点：明文保存（基线 = TLS A）失败后旧配对必须原样还在 ───── */
++    static void inject_plain_against_tls_a(const char *name, const char *point)
++    {
++        seed_tls_a();
++        fnos_pair_cfg_t c = cfg_plain("newnas.local", 9000, "newTok");
++        g_fail_at = point;
++        bool r = nvs_save(&c);
++        g_fail_at = NULL;
++        bool kept = strcmp(store_str(KEY_HOST), "oldnas.local") == 0 && store_port() == 8798 &&
++                    strcmp(store_str(KEY_TOKEN), "oldTokA") == 0 && store_has(KEY_CERT) &&
++                    store_has(KEY_FP);
++        check(name, !r && kept,
++              "nvs_save=%d(期望 0) 旧配对仍在=%d host=%s port=%d token=%s cert=%d fp=%d",
++              (int)r, (int)kept, store_str(KEY_HOST), store_port(), store_str(KEY_TOKEN),
++              (int)store_has(KEY_CERT), (int)store_has(KEY_FP));
++    }
++
++    /* ───── 注入点：TLS 保存（基线 = 明文）失败后不得留下 cert/fp，也不得改旧参数 ───── */
++    static void inject_tls_against_plain(const char *name, const char *point)
++    {
++        seed_plain();
++        fnos_pair_cfg_t c = cfg_tls("newnas.local", 9000, "newTok", PEM_B, FP_B);
++        g_fail_at = point;
++        bool r = nvs_save(&c);
++        g_fail_at = NULL;
++        bool kept = strcmp(store_str(KEY_HOST), "oldnas.local") == 0 && store_port() == 8798 &&
++                    strcmp(store_str(KEY_TOKEN), "oldTokA") == 0 && !store_has(KEY_CERT) &&
++                    !store_has(KEY_FP);
++        check(name, !r && kept,
++              "nvs_save=%d(期望 0) 旧明文仍在且没有 cert/fp=%d host=%s token=%s cert=%d fp=%d",
++              (int)r, (int)kept, store_str(KEY_HOST), store_str(KEY_TOKEN),
++              (int)store_has(KEY_CERT), (int)store_has(KEY_FP));
++    }
++
++    static void tls_case(const char *name, const char *json, int want_rejected, int want_tls,
++                         const char *msg_sub)
++    {
++        cJSON *root = cJSON_Parse(json);
++        if (!root) {
++            check(name, false, "真实 cJSON 解析失败：%s", json);
++            return;
++        }
++        tls_gate(root);
++        bool okc = (g_tls_rejected == want_rejected) && (g_tls_value == want_tls) &&
++                   (!msg_sub || strstr(g_view_msg, msg_sub) != NULL);
++        check(name, okc, "rejected=%d(期望 %d) tls=%d(期望 %d) msg=\"%s\"", g_tls_rejected,
++              want_rejected, g_tls_value, want_tls, g_view_msg);
++        if (!want_rejected) {
++            cJSON_Delete(root);   /* 拒绝路径由生产片段自己 Delete */
++        }
++    }
++
++    int main(void)
++    {
++        /* ── 1. 明文正常路径 ── */
++        {
++            store_reset();
++            fnos_pair_cfg_t c = cfg_plain("newnas.local", 8798, "tok-plain-1");
++            bool r = nvs_save(&c);
++            check("plain_first_save_ok", r, "nvs_save=%d(期望 1)", (int)r);
++            check("plain_first_save_contents",
++                  strcmp(store_str(KEY_HOST), "newnas.local") == 0 && store_port() == 8798 &&
++                      strcmp(store_str(KEY_TOKEN), "tok-plain-1") == 0 && !store_has(KEY_CERT) &&
++                      !store_has(KEY_FP),
++                  "host=%s port=%d token=%s cert=%d fp=%d", store_str(KEY_HOST), store_port(),
++                  store_str(KEY_TOKEN), (int)store_has(KEY_CERT), (int)store_has(KEY_FP));
++
++            bool r2 = nvs_save(&c);
++            check("plain_repeat_save_ok_not_found_is_idempotent", r2,
++                  "第二次 nvs_save=%d（cert/fp 不存在时 erase 返回 NOT_FOUND 必须当成功）", (int)r2);
++        }
++
++        /* ── 2. 往返 1（审计 N1）：TLS A → 明文，必须擦掉 cert/fp ── */
++        {
++            store_reset();
++            fnos_pair_cfg_t a = cfg_tls("nas.local", 8798, "tokA", PEM_A, FP_A);
++            bool r1 = nvs_save(&a);
++            bool seeded = store_has(KEY_CERT) && store_has(KEY_FP);
++            fnos_pair_cfg_t p = cfg_plain("nas.local", 8798, "tokB");
++            bool r2 = nvs_save(&p);
++            check("roundtrip1_tls_then_plain_clears_cert_fp",
++                  r1 && seeded && r2 && !store_has(KEY_CERT) && !store_has(KEY_FP) &&
++                      strcmp(store_str(KEY_TOKEN), "tokB") == 0,
++                  "saveTLS=%d 存入cert/fp=%d savePlain=%d cert=%d fp=%d token=%s", (int)r1,
++                  (int)seeded, (int)r2, (int)store_has(KEY_CERT), (int)store_has(KEY_FP),
++                  store_str(KEY_TOKEN));
++        }
++
++        /* ── 3. 往返 2：明文 → TLS B，cert/fp 必须是 B，旧 A 不在 ── */
++        {
++            store_reset();
++            fnos_pair_cfg_t p = cfg_plain("nas.local", 8798, "tokP");
++            bool r1 = nvs_save(&p);
++            fnos_pair_cfg_t b = cfg_tls("nas.local", 8798, "tokB", PEM_B, FP_B);
++            bool r2 = nvs_save(&b);
++            check("roundtrip2_plain_then_tls_stores_B",
++                  r1 && r2 && strcmp(store_str(KEY_CERT), PEM_B) == 0 &&
++                      strcmp(store_str(KEY_FP), FP_B) == 0 && strcmp(store_str(KEY_TOKEN), "tokB") == 0,
++                  "savePlain=%d saveTLS=%d cert是B=%d fp=%s token=%s", (int)r1, (int)r2,
++                  (int)(strcmp(store_str(KEY_CERT), PEM_B) == 0), store_str(KEY_FP),
++                  store_str(KEY_TOKEN));
++        }
++
++        /* ── 4. 命名故障点注入：nvs_save 必须失败且不得让新参数生效 ── */
++        inject_plain_against_tls_a("inject_open_fail", "OPEN");
++        inject_plain_against_tls_a("inject_set_host_fail", "SET_HOST");
++        inject_plain_against_tls_a("inject_set_port_fail", "SET_PORT");
++        inject_plain_against_tls_a("inject_set_token_fail", "SET_TOKEN");
++        inject_plain_against_tls_a("inject_erase_cert_fail", "ERASE_CERT");
++        inject_plain_against_tls_a("inject_erase_fp_fail", "ERASE_FP");
++        inject_plain_against_tls_a("inject_commit_fail", "COMMIT");
++        inject_tls_against_plain("inject_set_cert_fail", "SET_CERT");
++        inject_tls_against_plain("inject_set_fp_fail", "SET_FP");
++
++        /* ── 5. nvs_wipe（审计 N2）：任一步失败都必须 false 且旧配对还在 ── */
++        {
++            const char *points[3] = { "OPEN", "ERASE_ALL", "COMMIT" };
++            const char *names[3] = { "wipe_open_fail_keeps_pairing",
++                                     "wipe_erase_all_fail_keeps_pairing",
++                                     "wipe_commit_fail_keeps_pairing" };
++            for (int i = 0; i < 3; i++) {
++                seed_tls_a();
++                g_fail_at = points[i];
++                bool r = nvs_wipe();
++                g_fail_at = NULL;
++                bool kept = store_has(KEY_HOST) && store_has(KEY_CERT) && store_port() == 8798;
++                check(names[i], !r && kept, "nvs_wipe=%d(期望 0) 旧配对仍在=%d host=%s port=%d",
++                      (int)r, (int)kept, store_str(KEY_HOST), store_port());
++            }
++            seed_tls_a();
++            bool r = nvs_wipe();
++            check("wipe_ok_clears_store",
++                  r && !store_has(KEY_HOST) && !store_has(KEY_CERT) && !store_has(KEY_FP) &&
++                      store_port() == -1,
++                  "nvs_wipe=%d(期望 1) host=%d cert=%d fp=%d port=%d", (int)r,
++                  (int)store_has(KEY_HOST), (int)store_has(KEY_CERT), (int)store_has(KEY_FP),
++                  store_port());
++        }
++
++        /* ── 6. pair_response_accept（真实判定函数；cap 与 do_pair 传的 sizeof(s_next.token) 同源） ── */
++        {
++            char tok79[80], tok80[81];
++            memset(tok79, 'x', 79);
++            tok79[79] = 0;
++            memset(tok80, 'x', 80);
++            tok80[80] = 0;
++            const size_t cap = sizeof(((fnos_pair_cfg_t *)0)->token);   /* fnos_pair.h: token[80] */
++            check("token_field_is_80_bytes", cap == 80, "sizeof(token)=%d(期望 80)", (int)cap);
++            check("resp_transport_fail_rejected", !pair_response_accept(false, 0, "tok", cap),
++                  "transport_ok=false status=0 token 非空也必须拒绝");
++            check("resp_ok_true_status_403_rejected", !pair_response_accept(true, 403, "tok", cap),
++                  "ok=true status=403 且响应体带 token（审计 N3）也必须拒绝");
++            check("resp_status_0_rejected", !pair_response_accept(true, 0, "tok", cap),
++                  "ok=true status=0 必须拒绝");
++            check("resp_token_missing_rejected", !pair_response_accept(true, 200, NULL, cap),
++                  "status=200 但 token 缺失必须拒绝");
++            check("resp_token_empty_rejected", !pair_response_accept(true, 200, "", cap),
++                  "status=200 但 token 为空必须拒绝");
++            check("resp_token_79_accepted", pair_response_accept(true, 200, tok79, cap),
++                  "len=79 cap=%d 必须接受", (int)cap);
++            check("resp_token_80_rejected_not_truncated", !pair_response_accept(true, 200, tok80, cap),
++                  "len=80 cap=%d 必须拒绝，不得截断后接受", (int)cap);
++            check("resp_cap_boundary", pair_response_accept(true, 200, "tok", 4) &&
++                                           !pair_response_accept(true, 200, "tok", 3),
++                  "len<cap 才接受（cap 边界）");
++        }
++
++        /* ── 7. do_fetch 的 tls 类型判定：真实 cJSON 解析 + 真实生产片段（审计 N3） ── */
++        tls_case("tls_json_bool_true_accepted", "{\"tls\":true,\"cert_pem\":\"PEM\"}", 0, 1, NULL);
++        tls_case("tls_json_bool_false_plain_accepted", "{\"tls\":false}", 0, 0, NULL);
++        tls_case("tls_json_string_rejected", "{\"tls\":\"false\"}", 1, -1, "tls");
++        tls_case("tls_json_number_rejected", "{\"tls\":0}", 1, -1, "tls");
++        tls_case("tls_json_missing_rejected", "{\"cert_pem\":\"PEM\"}", 1, -1, "tls");
++        tls_case("tls_json_null_rejected", "{\"tls\":null}", 1, -1, "tls");
++
++        /* ── 8. has_cert（真实抽取，nvs_save 的 TLS 分支就靠它） ── */
++        check("has_cert_pem_true", has_cert(PEM_A), "含 BEGIN CERTIFICATE 的 PEM");
++        check("has_cert_empty_false", !has_cert(""), "空串");
++        check("has_cert_null_false", !has_cert(NULL), "NULL");
++        check("has_cert_garbage_false", !has_cert("not a certificate"), "非证书文本");
++
++        printf("PASS %d 项：真实 NVS 函数（nvs_save/nvs_wipe/has_cert）+ 响应判定"
++               "（pair_response_accept/do_fetch tls 片段）\n", g_pass);
++        if (g_fail) {
++            printf("FAIL %d 项\n", g_fail);
++            return 1;
++        }
++        return 0;
++    }
++''')
++
++PEM_A = "-----BEGIN CERTIFICATE-----\\nTUlJQmZha2VBQ0F3RVFF\\n-----END CERTIFICATE-----\\n"
++PEM_B = "-----BEGIN CERTIFICATE-----\\nTUlJQmZha2VCQ0F3RVFF\\n-----END CERTIFICATE-----\\n"
++FP_A = "AA:AA:AA:AA"
++FP_B = "BB:BB:BB:BB"
++
++PEM_DEFS = (
++    'static const char *const PEM_A = "%s";\n'
++    'static const char *const PEM_B = "%s";\n'
++    'static const char *const FP_A  = "%s";\n'
++    'static const char *const FP_B  = "%s";\n'
++) % (PEM_A, PEM_B, FP_A, FP_B)
++
++MACRO_NAMES = ["NVS_NS", "KEY_HOST", "KEY_PORT", "KEY_TOKEN", "KEY_CERT", "KEY_FP"]
++
++TLS_FRAG_START = 'const cJSON *jtls = cJSON_GetObjectItemCaseSensitive(root, "tls");'
++TLS_FRAG_END = "bool tls = cJSON_IsTrue(jtls);"
++
++
++def build_unit(src_text):
++    funcs = {}
++    provenance = []
++    for name in ("has_cert", "nvs_save", "nvs_wipe", "pair_response_accept"):
++        code, first, last = extract_function(src_text, name)
++        funcs[name] = code
++        provenance.append((name, first, last, len(code.splitlines())))
++
++    frag, ffirst, flast = extract_fragment(src_text, TLS_FRAG_START, TLS_FRAG_END)
++    provenance.append(("tls 判定片段(do_fetch)", ffirst, flast, len(frag.splitlines())))
++
++    tie = "fnos_pair.c:%d-%d" % (ffirst, flast)
++    out = C_TEMPLATE
++    replacements = {
++        "@HAS_CERT@": funcs["has_cert"],
++        "@NVS_SAVE@": funcs["nvs_save"],
++        "@NVS_WIPE@": funcs["nvs_wipe"],
++        "@PAIR_RESP@": funcs["pair_response_accept"],
++        "@TLS_FRAGMENT@": frag,
++        "@L_HAS_CERT@": "fnos_pair.c:%d-%d" % (provenance[0][1], provenance[0][2]),
++        "@L_NVS_SAVE@": "fnos_pair.c:%d-%d" % (provenance[1][1], provenance[1][2]),
++        "@L_NVS_WIPE@": "fnos_pair.c:%d-%d" % (provenance[2][1], provenance[2][2]),
++        "@L_PAIR_RESP@": "fnos_pair.c:%d-%d" % (provenance[3][1], provenance[3][2]),
++        "@L_TLS@": tie,
++    }
++    for name in MACRO_NAMES:
++        replacements["@%s@" % name] = extract_macro(src_text, name)
++    for key, val in replacements.items():
++        out = out.replace(key, val)
++
++    leftover = re.findall(r"@[A-Z_]+@", out)
++    if leftover:
++        raise ExtractError("模板占位符没替换完：%s" % ", ".join(sorted(set(leftover))))
++
++    # 测试数据定义放在抽取函数之前（nvs_save 的 TLS 分支只认 has_cert 的真实语义）
++    out = out.replace("/* ───── 真实抽取 1", PEM_DEFS + "\n/* ───── 真实抽取 1", 1)
++
++    for name in ("has_cert", "nvs_save", "nvs_wipe", "pair_response_accept"):
++        if funcs[name] not in out:
++            raise ExtractError("%s 没能拼进翻译单元" % name)
++    if frag not in out:
++        raise ExtractError("tls 判定片段没能拼进翻译单元")
++    return out, provenance
++
++
++def main():
++    if not SRC.is_file():
++        print("找不到生产文件：%s" % SRC, file=sys.stderr)
++        return EXIT_INPUT
++    if not (CJSON_DIR / "cJSON.c").is_file():
++        print("找不到真实 cJSON 库：%s" % CJSON_DIR, file=sys.stderr)
++        return EXIT_INPUT
++
++    cc = os.environ.get("CC", "cc")
++    if shutil.which(cc) is None:
++        print("找不到 C 编译器（CC=%s）：装 Xcode 命令行工具或设 CC=<clang 路径>" % cc, file=sys.stderr)
++        return EXIT_INPUT
++
++    src_text = SRC.read_text(encoding="utf-8")
++    try:
++        unit, provenance = build_unit(src_text)
++    except ExtractError as exc:
++        print("抽取失败：%s" % exc, file=sys.stderr)
++        return EXIT_EXTRACT
++
++    for name, first, last, lines in provenance:
++        print("[extract] %-24s components/fnos_monitor/fnos_pair.c:%d-%d（%d 行，逐字）"
++              % (name, first, last, lines))
++
++    tmp = pathlib.Path(tempfile.mkdtemp(prefix="fnos_pair_nvs_"))
++    gen = tmp / "test_pair_nvs_gen.c"
++    gen.write_text(unit, encoding="utf-8")
++
++    flags = ["-std=c11", "-Wall", "-Werror", "-I", str(HDR_DIR), "-I", str(CJSON_DIR)]
++    cmd = [cc] + flags + ["-o", str(tmp / "t"), str(gen), str(CJSON_DIR / "cJSON.c")]
++    proc = subprocess.run(cmd, capture_output=True, text=True)
++    if proc.returncode != 0:
++        print("编译失败（%s）：\n%s%s" % (" ".join(cmd), proc.stdout, proc.stderr), file=sys.stderr)
++        print("生成的翻译单元保留在：%s" % gen, file=sys.stderr)
++        return EXIT_EXTRACT
++
++    run = subprocess.run([str(tmp / "t")], capture_output=True, text=True)
++    sys.stdout.write(run.stdout)
++    sys.stderr.write(run.stderr)
++
++    if run.returncode not in (0, 1):
++        print("测试程序异常退出（%d），翻译单元保留在：%s" % (run.returncode, gen), file=sys.stderr)
++        return EXIT_TEST_FAIL
++    shutil.rmtree(tmp, ignore_errors=True)
++    return run.returncode
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/tools/audit125/test_raid.py b/tools/audit125/test_raid.py
+new file mode 100644
+index 0000000..196353c
+--- /dev/null
++++ b/tools/audit125/test_raid.py
+@@ -0,0 +1,209 @@
++#!/usr/bin/env python3
++"""RAID 采集回归：把审计 R1–R5 钉成可执行的断言（本机可复现）。
++
++为什么需要它：这几条问题的共同点是"代码看上去对、跑起来也不报错，只是结论反了"。
++比如读不到 /proc/mdstat 时返回空数组，板子上就显示"未发现阵列"——比报错更糟，
++因为错误看起来像事实。这类东西只能拿真实 mdstat 形态的 fixture 断言输出。
++
++审计报告自述的"RAID 20 项回归"在仓库里并不存在（见
++docs/review-v1.2.5-audit-2026-10-10.md §0），这份是本机可复现的对应物。
++
++用法：
++    python3 tools/audit125/test_raid.py          # 退出码 0 = 全过
++"""
++import importlib.util
++import os
++import sys
++
++HERE = os.path.dirname(os.path.abspath(__file__))
++REPO = os.path.dirname(os.path.dirname(HERE))
++COLLECTOR = os.path.join(REPO, "nas", "fpk", "nasscreencompanion", "app", "server",
++                         "fnos_collector.py")
++
++
++def _load_collector():
++    spec = importlib.util.spec_from_file_location("fnos_collector", COLLECTOR)
++    mod = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(mod)
++    return mod
++
++
++MOD = _load_collector()
++
++# ---------------------------------------------------------------- fixture
++# 全部按内核 mdstat 的真实排版：首行是阵列头，后面的行缩进且属于上一个阵列。
++HEALTHY_RAID1 = """\
++Personalities : [raid1] [raid6] [raid5] [raid4]
++md0 : active raid1 sda1[0] sdb1[1]
++      1953382464 blocks super 1.2 [2/2] [UU]
++
++unused devices: <none>
++"""
++
++# 审计 R1 的现场：降级（[2/1] [U_]）且正在 recovery
++DEGRADED_RECOVERING = """\
++md0 : active raid1 sda1[0]
++      1953382464 blocks super 1.2 [2/1] [U_]
++      [>....................]  recovery = 20.5% (200000000/976691200) finish=120.0min speed=100000K/sec
++"""
++
++DEGRADED_IDLE = """\
++md0 : active raid1 sda1[0]
++      1953382464 blocks super 1.2 [2/1] [U_]
++"""
++
++# 审计 R3：inactive 里含 "active" 子串
++INACTIVE = """\
++md127 : inactive sdb1[1](S)
++      1953382464 blocks super 1.2
++"""
++
++# 审计 R5：RAID0/linear 没有冗余，内核不打 [n/m] [UU] 汇总行
++RAID0 = """\
++md1 : active raid0 sdc1[0] sdd1[1]
++      3906764928 blocks super 1.2 512k chunks
++"""
++
++LINEAR = """\
++md2 : active linear sde1[0]
++      3906764928 blocks super 1.2
++"""
++
++# 冗余阵列缺汇总行：不能当成健康，也不能当成降级
++RAID5_NO_SUMMARY = """\
++md3 : active raid5 sdf1[0] sdg1[1] sdh1[2]
++      3906764928 blocks super 1.2 level 5, 512k chunk
++"""
++
++CONTAINER = """\
++md127 : active container imsm 00000000:00000000
++"""
++
++READONLY = """\
++md0 : active (read-only) raid1 sda1[0] sdb1[1]
++      1953382464 blocks super 1.2 [2/2] [UU]
++"""
++
++NO_ARRAY = """\
++Personalities : [raid1]
++unused devices: <none>
++"""
++
++BAD_PCT = """\
++md0 : active raid1 sda1[0] sdb1[1]
++      1953382464 blocks super 1.2 [2/2] [UU]
++      [====>...............]  check = 120.0% (1/2) finish=1.0min speed=1K/sec
++"""
++
++
++def collector(mdstat=None, exc=None, limits=None):
++    """一个只接 fixture 的采集器：read_text_strict 是 _raid 唯一的读取入口。"""
++    c = MOD.CompanionCollector(limits=limits)
++    c._totals = {}
++
++    def fake_read(path):
++        if exc is not None:
++            raise exc
++        return mdstat
++
++    MOD.read_text_strict = fake_read
++    return c
++
++
++def raid(mdstat, **kw):
++    rows = collector(mdstat, **kw)._raid()
++    return rows
++
++
++def one(mdstat, **kw):
++    rows = raid(mdstat, **kw)
++    assert len(rows) == 1, "期望 1 个阵列，得到 %d 个" % len(rows)
++    return rows[0]
++
++
++def alerts(mdstat=None, snap_extra=None, limits=None, **kw):
++    c = collector(mdstat, limits=limits, **kw)
++    snap = {"raid": c._raid() if mdstat is not None else None}
++    snap.update(snap_extra or {})
++    return c._alerts(snap)
++
++
++# ---------------------------------------------------------------- 断言
++FAILED = []
++COUNT = 0
++
++
++def check(name, got, want):
++    global COUNT
++    COUNT += 1
++    if got != want:
++        FAILED.append("%s\n     实际: %r\n     期望: %r" % (name, got, want))
++
++
++def lv(alerts_):
++    return [a["lv"] for a in alerts_]
++
++
++# R3 + 基本分类
++check("健康 raid1 → health=ok", one(HEALTHY_RAID1)["health"], "ok")
++check("健康 raid1 → ok=True", one(HEALTHY_RAID1)["ok"], True)
++check("健康 raid1 → 无告警", alerts(HEALTHY_RAID1), [])
++
++# R3：inactive 不能被 "active" 子串命中
++check("inactive → health=inactive", one(INACTIVE)["health"], "inactive")
++check("inactive → ok=False", one(INACTIVE)["ok"], False)
++check("inactive → crit", lv(alerts(INACTIVE)), ["crit"])
++
++# R1：降级 + 正在 recovery 仍然是 crit，且把进度写在同一条里
++r1 = alerts(DEGRADED_RECOVERING)
++check("降级恢复中 → crit（不是 info）", lv(r1), ["crit"])
++check("降级恢复中 → 进度不丢", "20.5%" in r1[0]["m"], True)
++check("降级恢复中 → health=degraded", one(DEGRADED_RECOVERING)["health"], "degraded")
++check("降级无进度 → crit", lv(alerts(DEGRADED_IDLE)), ["crit"])
++
++# R5：没有冗余的阵列不打汇总行，这是正常形态
++check("raid0 无汇总行 → ok", one(RAID0)["ok"], True)
++check("raid0 → 无告警", alerts(RAID0), [])
++check("linear 无汇总行 → ok", one(LINEAR)["ok"], True)
++check("raid5 缺汇总行 → unknown（不猜）", one(RAID5_NO_SUMMARY)["health"], "unknown")
++check("raid5 缺汇总行 → info（不是 crit）", lv(alerts(RAID5_NO_SUMMARY)), ["info"])
++check("container → info", lv(alerts(CONTAINER)), ["info"])
++check("read-only → warn", lv(alerts(READONLY)), ["warn"])
++
++# 进度范围检查
++check("进度 120% → 不采信", one(BAD_PCT)["sync_pct"], -1.0)
++
++# R2：读不到就抛，不能退化成"没有阵列"
++try:
++    raid(None, exc=PermissionError(13, "Permission denied"))
++    check("mdstat 无权限 → 必须抛", "没抛", "PermissionError")
++except PermissionError:
++    check("mdstat 无权限 → 抛 PermissionError", True, True)
++except Exception as exc:                                   # noqa: BLE001
++    check("mdstat 无权限 → 抛", type(exc).__name__, "PermissionError")
++
++# 真的没有阵列时，空列表是正常结果（不能因为"空"就抛）
++check("无阵列 → 空列表不报错", raid(NO_ARRAY), [])
++
++# R4：段为 None 时整张告警表不能消失
++check("段全为 None → 空告警，不抛", alerts(None, snap_extra={"cpu": None, "mem": None,
++                                                             "vols": None, "docker": None}), [])
++r4 = alerts(DEGRADED_IDLE, snap_extra={"cpu": None, "mem": None, "vols": None})
++check("cpu/mem 为 None 时阵列告警仍在", lv(r4), ["crit"])
++
++# R1 的顺序：按严重度排序后再套 limits，截断不能先砍掉 crit
++many = alerts(DEGRADED_IDLE,
++              snap_extra={"vols": [{"mnt": "/", "pct": 85}], "mem": {"pct": 95}},
++              limits={"alerts": 1})
++check("alerts 限 1 条 → 留下 crit", lv(many), ["crit"])
++ordered = alerts(DEGRADED_IDLE, snap_extra={"vols": [{"mnt": "/", "pct": 85}],
++                                            "mem": {"pct": 95}})
++check("告警按严重度排序", lv(ordered), ["crit", "warn", "warn"])
++
++# ---------------------------------------------------------------- 汇总
++if FAILED:
++    print("FAIL %d/%d" % (len(FAILED), COUNT))
++    for f in FAILED:
++        print("  ✗ " + f)
++    sys.exit(1)
++print("PASS %d 项 RAID 回归全部通过" % COUNT)
+diff --git a/tools/audit125/test_soak72.py b/tools/audit125/test_soak72.py
+new file mode 100644
+index 0000000..5b338b0
+--- /dev/null
++++ b/tools/audit125/test_soak72.py
+@@ -0,0 +1,677 @@
++#!/usr/bin/env python3
++"""soak72 判据的自测：判据必须能被合成的坏数据证伪，否则它只是装饰。
++
++长测只有一次机会（72 小时），判据写错就得重跑三天；而真机上很难复现的坏事（panic 重启、
++栈击穿、200 秒旧帧假在线、故障窗口后不恢复）必须在这里先证明"它真的会被抓住"。
++所以本文件不碰硬件、不 import serial：只用合成 metrics.jsonl 调 soak72 的纯函数与
++analyze/capture 入口，并覆盖阈值两侧（恰好等于阈值必须 PASS，越过一档必须 FAIL）。
++"""
++import argparse
++import contextlib
++import datetime
++import importlib.util
++import io
++import json
++import os
++import shutil
++import sys
++import tempfile
++
++HERE = os.path.dirname(os.path.abspath(__file__))
++_spec = importlib.util.spec_from_file_location("soak72", os.path.join(HERE, "soak72.py"))
++soak72 = importlib.util.module_from_spec(_spec)
++_spec.loader.exec_module(soak72)
++
++TMP = tempfile.mkdtemp(prefix="soak72-selftest-")
++ELF = os.path.join(TMP, "fake-fnos_monitor.elf")
++with open(ELF, "wb") as _fh:
++    _fh.write(b"\x7fELF" + bytes(range(256)) * 64)
++ELF_SHA = soak72.sha256_file(ELF)
++BAD_SHA = "ab" * 32
++SRC0 = 1697000000
++WINDOW_A, WINDOW_B = 24 * 3600.0, 25 * 3600.0     # 故障窗口测试用：24h~25h
++
++COUNT = 0
++FAILED = []
++
++
++def check(name, ok, detail=""):
++    """一条用例 = 一个判据方向。失败时把实测值带上，免得回头再猜。"""
++    global COUNT
++    COUNT += 1
++    print(("PASS %s" % name) if ok else ("FAIL %s  — %s" % (name, detail)))
++    if not ok:
++        FAILED.append((name, detail))
++    return ok
++
++
++# ---------------------------------------------------------------- 合成数据
++def build(hours=72.0, *, fw=None, dt=10.0, drift=(-20.0, -1000.0), mutate=None, drop=()):
++    """合成一段"常态健康"的心跳序列，mutate(i, el, rec) 负责注入异常。
++
++    常态刻意选成缓慢漂移（内部 -20 B/h、PSRAM -1000 B/h）：这样才能验证趋势判据不会
++    把正常的长测误判成泄漏——只造"完全平坦"的数据是测不出趋势判据的松紧的。
++    """
++    fw = fw or ELF_SHA
++    total = int(round(hours * 3600.0 / dt))
++    out = []
++    for i in range(total + 1):
++        el = i * dt
++        rec = {
++            "n": i + 1, "up": i * 10000, "hz": 10, "fw": fw, "rst": 1, "ev": [],
++            "io": {"ok": i, "fail": 0, "age": 0, "p95": 200, "src": SRC0 + i * 10},
++            "ui": {"age": 1},
++            "mem": {"ifree": int(300000 + drift[0] * el / 3600.0), "imin": 200000, "imax": 40000,
++                    "dfree": 60000, "dmin": 20000,
++                    "pfree": int(3000000 + drift[1] * el / 3600.0), "pmin": 2500000},
++            "stk": {"lvgl": 3000, "poll": 2100, "pair": 1800},
++        }
++        if mutate is not None:
++            mutate(i, el, rec)
++        if i in drop:
++            continue
++        out.append({"t": el, "rec": rec})
++    return out
++
++
++def write_metrics(path, samples):
++    with open(path, "w", encoding="utf-8") as fh:
++        for s in samples:
++            fh.write(json.dumps(s, ensure_ascii=False, separators=(",", ":")) + "\n")
++
++
++def write_capture(path, samples, hours, *, span=None, complete=True, sample_count=None,
++                  parse_drop=0, parse_drop_run_max=0):
++    start = datetime.datetime(2026, 1, 1, 12, 0, 0)
++    span = hours * 3600.0 + 5.0 if span is None else span
++    end = start + datetime.timedelta(seconds=span)
++    obj = {"tool": "soak72 capture", "complete": bool(complete), "hours": hours, "baudrate": 115200,
++           "port": "serial", "elf_sha256": ELF_SHA,
++           "started_at": start.isoformat(timespec="milliseconds"),
++           "ended_at": end.isoformat(timespec="milliseconds"),
++           "sample_count": len(samples) if sample_count is None else sample_count,
++           "parse_drop": parse_drop, "parse_drop_run_max": parse_drop_run_max,
++           "fault_windows": {"file": None, "count": 0}, "argv": ["soak72.py"], "errors": []}
++    with open(path, "w", encoding="utf-8") as fh:
++        json.dump(obj, fh, ensure_ascii=False, indent=2)
++
++
++def run_case(name, samples, hours=4.0, *, windows=None, complete=True, capture=True, span=None,
++             elf=None, raw_metrics=None, capture_extra=None):
++    """把一个合成数据集喂给 analyze 入口（走真实的读文件/退码/写 summary 路径）。"""
++    d = os.path.join(TMP, name)
++    os.makedirs(d, exist_ok=True)
++    metrics = os.path.join(d, "metrics.jsonl")
++    if raw_metrics is None:
++        write_metrics(metrics, samples)
++    else:
++        with open(metrics, "w", encoding="utf-8") as fh:
++            fh.write(raw_metrics)
++    if capture:
++        write_capture(os.path.join(d, "capture.json"), samples, hours, span=span, complete=complete,
++                      **(capture_extra or {}))
++    wpath = None
++    if windows is not None:
++        wpath = os.path.join(d, "windows.json")
++        with open(wpath, "w", encoding="utf-8") as fh:
++            json.dump(windows, fh)
++    out = os.path.join(d, "review")
++    args = argparse.Namespace(**{"input": metrics, "hours": hours, "elf": elf or ELF,
++                                 "output": out, "fault_windows": wpath})
++    with contextlib.redirect_stdout(io.StringIO()):
++        code = soak72.analyze_main(args)
++    spath = os.path.join(out, "summary.json")
++    if os.path.exists(spath):
++        with open(spath, encoding="utf-8") as fh:
++            summary = json.load(fh)
++    else:
++        # 退 3 的用例本来就不该产出 summary；给个空壳，让 check 打印实测的退出码
++        summary = {"verdict": None, "checks": [], "failures": [], "notes": []}
++    return code, summary
++
++
++def state_of(summary, name):
++    for c in summary["checks"]:
++        if c["name"] == name:
++            return c["state"]
++    return "missing"
++
++
++def detail_of(summary, name):
++    for c in summary["checks"]:
++        if c["name"] == name:
++            return c["detail"]
++    return "缺这条检查"
++
++
++def sample_lines():
++    """两行合法诊断（带 IDF 前缀）+ 两行坏行（截断 / 纯文本）。"""
++    good = ('I (123456) main: FNOS_DIAG {"n":1,"up":10000,"hz":10,"fw":"%s","rst":1,"ev":[],'
++            '"io":{"ok":1,"fail":0,"age":0,"p95":180,"src":1697000000},'
++            '"ui":{"age":0},'
++            '"mem":{"ifree":300000,"imin":200000,"imax":40000,"dfree":60000,"dmin":20000,'
++            '"pfree":3000000,"pmin":2500000},'
++            '"stk":{"lvgl":3000,"poll":2100,"pair":1800}}' % ELF_SHA)
++    good2 = good.replace('"n":1', '"n":2').replace('"up":10000', '"up":20000')
++    return [good, good2]
++
++
++# ---------------------------------------------------------------- 采集侧纯函数
++class FakePort:
++    """假串口：证明采集侧"只读、不重连、只落数值"三条契约。"""
++
++    def __init__(self, chunks, raise_after=None):
++        self.chunks = list(chunks)
++        self.raise_after = raise_after
++        self.reads = 0
++        self.closed = False
++
++    def read(self, size=4096):
++        if self.raise_after is not None and self.reads >= self.raise_after:
++            raise OSError("device reports readiness to read but returned no data: /dev/cu.usbmodem1101")
++        self.reads += 1
++        return self.chunks.pop(0) if self.chunks else b""
++
++    def write(self, data):
++        raise AssertionError("采集侧禁止向串口写字节")
++
++    def close(self):
++        self.closed = True
++
++
++def capture_case(name, chunks, *, port="/dev/cu.usbmodem1101", hours=0.0001, raise_after=None,
++                 elf=None, windows=None):
++    """跑一次真实 capture 入口（只把串口换成 FakePort），返回 (退出码, capture.json, 目录, 开端口次数)。"""
++    d = os.path.join(TMP, name)
++    os.makedirs(d, exist_ok=True)
++    orig = soak72.open_readonly
++    fake = FakePort(chunks, raise_after=raise_after)
++    opened = []
++
++    def fake_open(p, baud=115200):
++        opened.append(p)
++        return fake
++
++    soak72.open_readonly = fake_open
++    args = argparse.Namespace(port=port, elf=elf or ELF, output=d, hours=hours,
++                              fault_windows=windows)
++    try:
++        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
++            code = soak72.capture_main(args, ["soak72.py", "capture", "--port", port,
++                                              "--elf", ELF, "--output", d])
++    finally:
++        soak72.open_readonly = orig
++    cpath = os.path.join(d, "capture.json")
++    cap = None
++    if os.path.exists(cpath):
++        with open(cpath, encoding="utf-8") as fh:
++            cap = json.load(fh)
++    return code, cap, d, len(opened)
++
++
++def privacy_scan(path):
++    """产物里不得出现的原始信息。"""
++    with open(path, encoding="utf-8", errors="replace") as fh:
++        text = fh.read()
++    bad = [needle for needle in ("/dev/", "usbmodem", "/Users/", "COM3", "FNOS_DIAG")
++           if needle in text]
++    return bad
++
++
++# ---------------------------------------------------------------- 用例
++def main():
++    # --- 1. 正常 72h：必须 PASS，不能因为判据过敏把好数据判死
++    code, s = run_case("normal72", build(72.0), hours=72.0)
++    check("normal_72h_pass", code == 0 and s["verdict"] == "PASS",
++          "code=%s verdict=%s failures=%s" % (code, s["verdict"], s["failures"]))
++
++    # --- 2. 阈值两侧：恰好等于阈值要 PASS（不然判据会把"卡线"误判成故障）
++    def at_threshold(i, el, rec):
++        # 单位是秒/字节的整数字段，卡在阈值上必须 PASS（阈值比较不做隐式取整）
++        rec["ui"]["age"] = int(soak72.UI_AGE_MAX_S)
++        rec["io"]["age"] = int(soak72.IO_AGE_MAX_S)
++        rec["io"]["p95"] = soak72.P95_MAX_MS
++        rec["stk"] = {"lvgl": soak72.STACK_MIN_BYTES, "poll": soak72.STACK_MIN_BYTES,
++                      "pair": soak72.STACK_MIN_BYTES}
++        rec["mem"].update({"ifree": 300000, "imin": soak72.IMIN_MIN_BYTES,
++                           "imax": soak72.IMAX_MIN_BYTES, "dfree": 60000,
++                           "dmin": soak72.DMIN_MIN_BYTES, "pfree": soak72.PFREE_MIN_BYTES,
++                           "pmin": soak72.PFREE_MIN_BYTES})
++
++    code, s = run_case("threshold_ok", build(4.0, drift=(0.0, 0.0), mutate=at_threshold), hours=4.0)
++    check("thresholds_exact_pass", code == 0 and s["verdict"] == "PASS",
++          "code=%s verdict=%s failures=%s" % (code, s["verdict"], s["failures"]))
++
++    # --- 3. 时长不足 → INCOMPLETE（不是 PASS，也不是 FAIL）
++    code, s = run_case("short", build(6.0), hours=72.0, span=6.0 * 3600.0 + 5.0)
++    check("short_duration_incomplete", code == 2 and s["verdict"] == "INCOMPLETE",
++          "code=%s verdict=%s" % (code, s["verdict"]))
++    check("short_duration_checks", state_of(s, "duration_capture") == "incomplete"
++          and state_of(s, "duration_board") == "incomplete",
++          "%s / %s" % (detail_of(s, "duration_capture"), detail_of(s, "duration_board")))
++
++    # --- 4. 缺结束标记 → INCOMPLETE（缺证据一律不许换 PASS）
++    code, s = run_case("nocomplete", build(4.0), hours=4.0, complete=False)
++    check("missing_endmarker_incomplete",
++          code == 2 and s["verdict"] == "INCOMPLETE" and state_of(s, "evidence") == "incomplete",
++          "code=%s verdict=%s evidence=%s" % (code, s["verdict"], detail_of(s, "evidence")))
++
++    # --- 5. up 回退 = 非计划复位 → FAIL
++    def rollback(i, el, rec):
++        if i >= 400:
++            rec["up"] = (i - 400) * 10000
++
++    code, s = run_case("uproll", build(4.0, mutate=rollback), hours=4.0)
++    check("uptime_rollback_fail", code == 1 and state_of(s, "reset_anomaly") == "fail",
++          "code=%s %s" % (code, detail_of(s, "reset_anomaly")))
++
++    # --- 6. rst 与基线不同 = 非计划复位 → FAIL
++    def rst_shift(i, el, rec):
++        if i >= 400:
++            rec["rst"] = 3
++
++    code, s = run_case("rstshift", build(4.0, mutate=rst_shift), hours=4.0)
++    check("rst_switch_fail", code == 1 and state_of(s, "reset_anomaly") == "fail",
++          "code=%s %s" % (code, detail_of(s, "reset_anomaly")))
++
++    # --- 7. rst=4 panic → FAIL，包括第一条样本（板子刚崩过就该判负）
++    def panic_all(i, el, rec):
++        rec["rst"] = 4
++
++    code, s = run_case("panic", build(4.0, mutate=panic_all), hours=4.0)
++    check("rst_panic_fail", code == 1 and state_of(s, "reset_anomaly") == "fail",
++          "code=%s %s" % (code, detail_of(s, "reset_anomaly")))
++
++    # --- 8. ev 非空 → FAIL
++    def ev_at(i, el, rec):
++        if i == 500:
++            rec["ev"] = ["panic"]
++
++    code, s = run_case("ev", build(4.0, mutate=ev_at), hours=4.0)
++    check("ev_nonempty_fail", code == 1 and state_of(s, "reset_anomaly") == "fail",
++          "code=%s %s" % (code, detail_of(s, "reset_anomaly")))
++
++    # --- 9. io.ok 回退 → FAIL
++    def ok_roll(i, el, rec):
++        if i >= 400:
++            rec["io"]["ok"] = i - 400
++
++    code, s = run_case("okroll", build(4.0, mutate=ok_roll), hours=4.0)
++    check("poll_counter_rollback_fail", code == 1 and state_of(s, "reset_anomaly") == "fail",
++          "code=%s %s" % (code, detail_of(s, "reset_anomaly")))
++
++    # --- 10. 相邻接收间隔 40s → FAIL（>30s）
++    code, s = run_case("gap", build(4.0, drop=range(400, 404)), hours=4.0)
++    check("rx_gap_fail", code == 1 and state_of(s, "heartbeat_gap") == "fail",
++          "code=%s %s" % (code, detail_of(s, "heartbeat_gap")))
++
++    # --- 11. 心跳中断 >60s → FAIL，且覆盖率随之下滑
++    code, s = run_case("lost", build(4.0, drop=range(400, 415)), hours=4.0)
++    check("heartbeat_lost_fail", code == 1 and state_of(s, "heartbeat_gap") == "fail",
++          "code=%s %s" % (code, detail_of(s, "heartbeat_gap")))
++
++    # --- 12. ui.age 超时 → FAIL（LVGL 卡死）
++    def ui_stuck(i, el, rec):
++        if i >= 300:
++            rec["ui"]["age"] = int(soak72.UI_AGE_MAX_S) + 1
++
++    code, s = run_case("ui", build(4.0, mutate=ui_stuck), hours=4.0)
++    check("lvgl_stuck_fail", code == 1 and state_of(s, "lvgl_alive") == "fail",
++          "code=%s %s" % (code, detail_of(s, "lvgl_alive")))
++
++    # --- 13. 栈余量击穿 → FAIL
++    def stack_low(i, el, rec):
++        if i >= 300:
++            rec["stk"]["poll"] = soak72.STACK_MIN_BYTES - 1
++
++    code, s = run_case("stacklow", build(4.0, mutate=stack_low), hours=4.0)
++    check("stack_floor_fail", code == 1 and state_of(s, "stack_floor") == "fail",
++          "code=%s %s" % (code, detail_of(s, "stack_floor")))
++
++    # --- 14. 栈报 0 = 任务没起来/测不到 → INCOMPLETE（不是"只剩 0 字节"的 FAIL）
++    def stack_zero(i, el, rec):
++        rec["stk"]["pair"] = 0
++
++    code, s = run_case("stackzero", build(72.0, mutate=stack_zero), hours=72.0)
++    check("stack_unmeasured_incomplete",
++          code == 2 and s["verdict"] == "INCOMPLETE" and state_of(s, "stack_floor") == "incomplete",
++          "code=%s verdict=%s %s" % (code, s["verdict"], detail_of(s, "stack_floor")))
++
++    # --- 15. 堆底线击穿（内部历史最小空闲）→ FAIL
++    def heap_low(i, el, rec):
++        if i >= 300:
++            rec["mem"]["imin"] = soak72.IMIN_MIN_BYTES - 1
++
++    code, s = run_case("heaplow", build(4.0, mutate=heap_low), hours=4.0)
++    check("heap_floor_fail", code == 1 and state_of(s, "heap_floor") == "fail",
++          "code=%s %s" % (code, detail_of(s, "heap_floor")))
++
++    # --- 16. PSRAM 空闲底线击穿 → FAIL
++    def psram_low(i, el, rec):
++        rec["mem"]["pfree"] = soak72.PFREE_MIN_BYTES - 1
++
++    code, s = run_case("psramlow", build(4.0, mutate=psram_low), hours=4.0)
++    check("psram_floor_fail", code == 1 and state_of(s, "heap_floor") == "fail",
++          "code=%s %s" % (code, detail_of(s, "heap_floor")))
++
++    # --- 17. 趋势泄漏：内部空闲 1KiB/h 稳定下滑 → FAIL
++    code, s = run_case("leak", build(4.0, drift=(-1024.0, -1000.0)), hours=4.0)
++    check("trend_regress_fail", code == 1 and state_of(s, "trend_regress") == "fail",
++          "code=%s %s" % (code, detail_of(s, "trend_regress")))
++
++    # --- 18. io.p95 超 1000ms → FAIL（尖峰放在预热期之外，否则被趋势窗口豁免）
++    def p95_high(i, el, rec):
++        if i == 1000:
++            rec["io"]["p95"] = soak72.P95_MAX_MS + 1
++
++    code, s = run_case("p95", build(4.0, mutate=p95_high), hours=4.0)
++    check("p95_fail", code == 1 and state_of(s, "net_health") == "fail",
++          "code=%s %s" % (code, detail_of(s, "net_health")))
++
++    # --- 19. 200 秒旧帧被当成在线：io.src 冻结 → FAIL（假在线）
++    def src_freeze(i, el, rec):
++        if i >= 300:
++            rec["io"]["src"] = SRC0 + 300 * 10
++
++    code, s = run_case("srcfreeze", build(4.0, mutate=src_freeze), hours=4.0)
++    check("source_frozen_fail", code == 1 and state_of(s, "source_progress") == "fail",
++          "code=%s %s" % (code, detail_of(s, "source_progress")))
++
++    # --- 20. io.src 缺失（-1）→ FAIL
++    def src_missing(i, el, rec):
++        if i >= 300:
++            rec["io"]["src"] = -1
++
++    code, s = run_case("srcmissing", build(4.0, mutate=src_missing), hours=4.0)
++    check("source_missing_fail", code == 1 and state_of(s, "source_progress") == "fail",
++          "code=%s %s" % (code, detail_of(s, "source_progress")))
++
++    # --- 21. io.age 长时间不新鲜 → FAIL
++    def stale(i, el, rec):
++        if i >= 300:
++            rec["io"]["age"] = int(soak72.IO_AGE_MAX_S) + 1
++
++    code, s = run_case("stale", build(4.0, mutate=stale), hours=4.0)
++    check("io_age_fail", code == 1 and state_of(s, "net_health") == "fail",
++          "code=%s %s" % (code, detail_of(s, "net_health")))
++
++    # --- 21b. 全程从未成功接收（io.age/io.src 恒 -1）→ 「测不到」，判 INCOMPLETE 而不是 FAIL
++    def no_link(i, el, rec):
++        rec["io"].update({"age": -1, "src": -1, "ok": 0})
++
++    code, s = run_case("nolink", build(4.0, mutate=no_link), hours=4.0)
++    check("never_connected_incomplete",
++          code == 2 and s["verdict"] == "INCOMPLETE"
++          and state_of(s, "net_health") == "incomplete"
++          and state_of(s, "source_progress") == "incomplete",
++          "code=%s verdict=%s net=%s src=%s" % (code, s["verdict"],
++                                                state_of(s, "net_health"),
++                                                state_of(s, "source_progress")))
++
++    # --- 21c. 同一根因的另一侧：只是"部分变旧"（能判）就要 FAIL，不能被 INCOMPLETE 吞掉
++    # 注意必须落在预热期（7200s / i=720）之后，否则这条样本根本不参与联网判据。
++    def briefly_stale(i, el, rec):
++        if 900 <= i < 921:
++            rec["io"]["age"] = -1
++
++    code, s = run_case("partstale", build(4.0, mutate=briefly_stale), hours=4.0)
++    check("partial_stale_fail", code == 1 and state_of(s, "net_health") == "fail",
++          "code=%s %s" % (code, detail_of(s, "net_health")))
++
++    # --- 22. 故障窗口：窗口内联网指标豁免，窗口结束后 10s 就恢复 → PASS
++    frozen_ok = int(WINDOW_A / 10.0)
++    frozen_src = SRC0 + int(WINDOW_A / 10.0) * 10
++
++    def in_window(i, el, rec):
++        if WINDOW_A <= el < WINDOW_B:
++            rec["io"].update({"age": 999, "p95": 9000, "ok": frozen_ok, "src": frozen_src})
++
++    code, s = run_case("winok", build(72.0, mutate=in_window), hours=72.0,
++                       windows=[{"start_s": WINDOW_A, "end_s": WINDOW_B}])
++    check("fault_window_exempt_pass",
++          code == 0 and s["verdict"] == "PASS" and state_of(s, "fault_recovery") == "pass",
++          "code=%s verdict=%s recovery=%s net=%s" % (code, s["verdict"],
++                                                     detail_of(s, "fault_recovery"),
++                                                     detail_of(s, "net_health")))
++
++    # --- 23. 故障窗口结束后 60s 内没有任何推进 → FAIL
++    W3A, W3B = 3 * 3600.0, 3 * 3600.0 + 60.0
++    w3_ok, w3_src = int(W3A / 10.0), SRC0 + int(W3A / 10.0) * 10
++
++    def never_recovers(i, el, rec):
++        if el >= W3A:
++            rec["io"].update({"ok": w3_ok, "src": w3_src})
++
++    code, s = run_case("winbad", build(4.0, mutate=never_recovers), hours=4.0,
++                       windows=[{"start_s": W3A, "end_s": W3B}])
++    check("fault_not_recovered_fail", code == 1 and state_of(s, "fault_recovery") == "fail",
++          "code=%s %s" % (code, detail_of(s, "fault_recovery")))
++
++    # --- 24. 窗口内不豁免硬判据：窗口里栈击穿照样 FAIL
++    W4A, W4B = 3000.0, 3600.0
++
++    def stack_in_window(i, el, rec):
++        if W4A <= el < W4B:
++            rec["stk"]["lvgl"] = soak72.STACK_MIN_BYTES - 1
++
++    code, s = run_case("winstack", build(4.0, mutate=stack_in_window), hours=4.0,
++                       windows=[{"start_s": W4A, "end_s": W4B}])
++    check("window_does_not_hide_stack", code == 1 and state_of(s, "stack_floor") == "fail",
++          "code=%s %s" % (code, detail_of(s, "stack_floor")))
++
++    # --- 25. 故障窗口文件非法 → 退出码 3（三种非法形态）
++    codes = []
++    for bad in ([{"start_s": 100, "end_s": 50}],
++                [{"start_s": 0, "end_s": 100}, {"start_s": 50, "end_s": 200}],
++                {"start_s": 0, "end_s": 100}):
++        d = os.path.join(TMP, "badwin%d" % len(codes))
++        os.makedirs(d, exist_ok=True)
++        write_metrics(os.path.join(d, "metrics.jsonl"), build(1.0))
++        wp = os.path.join(d, "w.json")
++        with open(wp, "w", encoding="utf-8") as fh:
++            json.dump(bad, fh)
++        args = argparse.Namespace(**{"input": os.path.join(d, "metrics.jsonl"), "hours": 1.0,
++                                     "elf": ELF, "output": os.path.join(d, "rev"),
++                                     "fault_windows": wp})
++        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
++            codes.append(soak72.analyze_main(args))
++    check("invalid_fault_windows_exit3", codes == [3, 3, 3], "退出码 %s" % codes)
++
++    # --- 26. fw 与本地 ELF 不一致 → FAIL（跑的不是这次构建）
++    code, s = run_case("fwbad", build(4.0, fw=BAD_SHA), hours=4.0)
++    check("firmware_mismatch_fail", code == 1 and state_of(s, "firmware_match") == "fail",
++          "code=%s %s" % (code, detail_of(s, "firmware_match")))
++
++    # --- 27. metrics.jsonl 破损 → 退出码 3，但仍然要落一份 summary.json
++    code, s = run_case("brokenjson", build(1.0), hours=1.0,
++                       raw_metrics='{"t": 1.0, "rec": {"n": 1}}\n{"t": 2.0, "rec":\n')
++    check("broken_metrics_exit3", code == 3 and s["verdict"] == "INPUT_ERROR",
++          "code=%s verdict=%s" % (code, s.get("verdict")))
++
++    # --- 28. 记录里混进未知键（令牌之类）→ 退出码 3，且令牌不得出现在 summary 里
++    secret = "SECRET-TOKEN-1f4a"
++
++    def token_line():
++        samples = build(1.0)
++        samples[5]["rec"]["token"] = secret
++        return json.dumps(samples[5]) + "\n"
++
++    code, s = run_case("privacyrec", [], hours=1.0, raw_metrics=token_line())
++    with open(os.path.join(TMP, "privacyrec", "review", "summary.json"), encoding="utf-8") as fh:
++        summary_text = fh.read()
++    check("privacy_extra_key_exit3", code == 3 and secret not in summary_text,
++          "code=%s 令牌泄漏=%s" % (code, secret in summary_text))
++
++    # --- 28b. 脏输入：空文件 / 只有半行 → 必须落 summary 并判 INCOMPLETE，不能抛栈
++    code, s = run_case("emptyfile", [], hours=4.0, raw_metrics="")
++    check("empty_metrics_incomplete", code == 2 and s["verdict"] == "INCOMPLETE",
++          "code=%s verdict=%s" % (code, s.get("verdict")))
++    code, s = run_case("halfline", [], hours=4.0,
++                       raw_metrics='{"t": 1.0, "rec": {"n": 1, "u')
++    check("truncated_tail_incomplete",
++          code == 2 and s["verdict"] == "INCOMPLETE"
++          and (s.get("metrics_load") or {}).get("malformed_tail") == 1,
++          "code=%s verdict=%s load=%s" % (code, s.get("verdict"), s.get("metrics_load")))
++
++    # --- 28c. 时间戳乱序：小幅调换仍可评价（容忍），大幅回退 = 主机时钟被回拨 → INCOMPLETE
++    swapped = build(4.0)
++    swapped[500]["t"], swapped[501]["t"] = swapped[501]["t"], swapped[500]["t"]
++    code, s = run_case("swap", swapped, hours=4.0)
++    check("timestamp_swap_tolerated",
++          code == 0 and (s.get("metrics_load") or {}).get("out_of_order") == 1,
++          "code=%s load=%s" % (code, s.get("metrics_load")))
++
++    rolled = build(4.0)
++    for i in range(401, len(rolled)):
++        rolled[i]["t"] -= 7200.0
++    code, s = run_case("clockroll", rolled, hours=4.0)
++    check("clock_rollback_incomplete",
++          code == 2 and s["verdict"] == "INCOMPLETE" and state_of(s, "evidence") == "incomplete",
++          "code=%s verdict=%s %s" % (code, s.get("verdict"), detail_of(s, "evidence")))
++
++    # --- 29. 解析纯函数：IDF 前缀 / 截断 / 纯文本 / 缺字段 / 类型不对
++    good = sample_lines()[0]
++    parsed = soak72.parse_line(good)
++    bad_lines = [
++        'I (1) main: FNOS_DIAG {"n":1,"up":10000,"hz":10,"fw":"%s","rst":1,"ev":[]' % ELF_SHA,
++        "I (2) main: HTTP client: connected",
++        'I (3) boot: FNOS_DIAG not-json',
++        "",
++    ]
++    check("parse_line_marker_in_prefix",
++          parsed is not None and parsed["n"] == 1 and parsed["io"]["src"] == SRC0,
++          "解析结果 %s" % (parsed,))
++    check("parse_line_rejects_malformed",
++          all(soak72.parse_line(x) is None for x in bad_lines),
++          "这些行必须全部返回 None：%s" % [soak72.parse_line(x) for x in bad_lines])
++
++    # --- 30. 清洗函数拒绝越界记录（多键/类型错/缺键），接受合法记录
++    ok_rec = soak72.parse_line(good)
++    mutations = []
++    extra = json.loads(json.dumps(ok_rec))
++    extra["ssid"] = "home-wifi"
++    mutations.append(extra)
++    extra2 = json.loads(json.dumps(ok_rec))
++    extra2["io"]["token"] = "SECRET-TOKEN"
++    mutations.append(extra2)
++    wrong_type = json.loads(json.dumps(ok_rec))
++    wrong_type["n"] = "1"
++    mutations.append(wrong_type)
++    float_up = json.loads(json.dumps(ok_rec))
++    float_up["up"] = 10000.0
++    mutations.append(float_up)
++    bool_rst = json.loads(json.dumps(ok_rec))
++    bool_rst["rst"] = True
++    mutations.append(bool_rst)
++    missing = json.loads(json.dumps(ok_rec))
++    del missing["rst"]
++    mutations.append(missing)
++    wrong_ev = json.loads(json.dumps(ok_rec))
++    wrong_ev["ev"] = [1]
++    mutations.append(wrong_ev)
++    check("sanitize_accepts_valid", soak72.sanitize(ok_rec) == ok_rec, "合法记录被改动或拒绝")
++    rejected = [soak72.sanitize(m) for m in mutations]
++    check("sanitize_rejects_foreign_keys", all(r is None for r in rejected),
++          "应被拒绝的 %d 条里放过了 %d 条" % (len(rejected), sum(1 for r in rejected if r is not None)))
++
++    # --- 31. argv 脱敏：产物里不留家目录/串口路径
++    argv = soak72.sanitized_argv(["soak72.py", "capture", "--port=/dev/cu.usbmodem1101",
++                                  "--input", "/Users/someone/secret/metrics.jsonl",
++                                  "--hours", "72"])
++    flattened = " ".join(argv)
++    check("argv_anonymized",
++          "/Users" not in flattened and "usbmodem" not in flattened and "<port>" in flattened
++          and "<input>" in flattened, "脱敏后 %s" % argv)
++
++    # --- 32. 采集：只读、只落数值、结束标记 complete=true、退出码 0
++    chunks = [(sample_lines()[0] + "\n" + 'I (2) main: FNOS_DIAG {"n":2,"up":200' + "\n"
++               + "I (3) main: some plain log line\n" + sample_lines()[1] + "\n").encode()]
++    code, cap, d, opens = capture_case("capok", chunks)
++    metrics_path = os.path.join(d, "metrics.jsonl")
++    with open(metrics_path, encoding="utf-8") as fh:
++        lines = [json.loads(x) for x in fh if x.strip()]
++    check("capture_exit0_complete",
++          code == 0 and cap["complete"] is True and cap["sample_count"] == 2,
++          "code=%s cap=%s" % (code, {k: cap.get(k) for k in ("complete", "sample_count", "parse_drop")}))
++    check("capture_counts_malformed",
++          cap["parse_drop"] == 2 and cap["parse_drop_run_max"] == 2,
++          "parse_drop=%s run_max=%s" % (cap["parse_drop"], cap["parse_drop_run_max"]))
++    check("capture_numeric_only",
++          len(lines) == 2 and all(set(x) == {"t", "rec"} and x["rec"]["fw"] == ELF_SHA for x in lines),
++          "metrics.jsonl 里有 %d 行，首行键 %s" % (len(lines), sorted(lines[0]) if lines else None))
++    with open(metrics_path, encoding="utf-8") as fh:
++        raw_metrics_text = fh.read()
++    check("capture_drops_raw_text",
++          "plain log line" not in raw_metrics_text and "FNOS_DIAG" not in raw_metrics_text
++          and "I (2) main" not in raw_metrics_text,
++          "metrics.jsonl 里混进了原始串口文本")
++    check("capture_port_anonymized",
++          cap["port"] == "serial" and cap["elf_sha256"] == ELF_SHA
++          and not privacy_scan(os.path.join(d, "capture.json")),
++          "port=%s 残留=%s" % (cap["port"], privacy_scan(os.path.join(d, "capture.json"))))
++    check("capture_argv_anonymized",
++          any("<port>" in a for a in cap["argv"]) and "<elf>" in cap["argv"],
++          "argv=%s" % cap["argv"])
++
++    # --- 33. 掉线：记一条 error 就收工，不重开串口、不留 complete=true、不泄漏设备路径
++    code, cap, d, opens = capture_case("capfail", [(sample_lines()[0] + "\n").encode()], raise_after=1)
++    errs = cap.get("errors") or []
++    check("capture_disconnect_no_retry",
++          code == 1 and cap["complete"] is False and errs and opens == 1
++          and errs[0]["event"] == "serial_read_failed" and errs[0]["exc"] == "OSError",
++          "code=%s complete=%s 开端口次数=%d errors=%s" % (code, cap["complete"], opens, errs))
++    check("capture_fail_no_path_leak", not privacy_scan(os.path.join(d, "capture.json")),
++          "残留=%s" % privacy_scan(os.path.join(d, "capture.json")))
++
++    # --- 34. 缺端口 / ELF 不存在 → 退出码 3（不猜、不降级）
++    saved = os.environ.pop(soak72.ENV_PORT, None)
++    try:
++        d = os.path.join(TMP, "noport")
++        args = argparse.Namespace(port=None, elf=ELF, output=d, hours=1.0, fault_windows=None)
++        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
++            no_port = soak72.capture_main(args, ["soak72.py", "capture"])
++            args2 = argparse.Namespace(port="/dev/cu.usbmodem1101",
++                                       elf=os.path.join(TMP, " missing.elf"), output=d,
++                                       hours=1.0, fault_windows=None)
++            no_elf = soak72.capture_main(args2, ["soak72.py", "capture"])
++    finally:
++        if saved is not None:
++            os.environ[soak72.ENV_PORT] = saved
++    check("capture_input_errors_exit3", no_port == 3 and no_elf == 3,
++          "缺端口=%s 缺 ELF=%s" % (no_port, no_elf))
++
++    # --- 35. analyze 缺输入文件 / 缺 ELF → 退出码 3
++    d = os.path.join(TMP, "noinput")
++    os.makedirs(d, exist_ok=True)
++    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
++        c1 = soak72.analyze_main(argparse.Namespace(**{"input": os.path.join(d, "nope.jsonl"),
++                                                       "hours": 1.0, "elf": ELF,
++                                                       "output": d, "fault_windows": None}))
++        c2 = soak72.analyze_main(argparse.Namespace(**{"input": os.path.join(d, "nope.jsonl"),
++                                                       "hours": 1.0,
++                                                       "elf": os.path.join(d, "nope.elf"),
++                                                       "output": d, "fault_windows": None}))
++    check("analyze_input_errors_exit3", c1 == 3 and c2 == 3, "缺 metrics=%s 缺 ELF=%s" % (c1, c2))
++
++    # --- 36. summary.json 必须写明"不得相加"的语义与逐条实测数值
++    _, s = run_case("report", build(4.0), hours=4.0)
++    notes = "".join(s["notes"])
++    check("summary_notes_and_measurements",
++          "不得相加" in notes and all("measured" in c for c in s["checks"])
++          and any(c["name"] == "heap_floor" and "pfree" in c["measured"] for c in s["checks"]),
++          "notes=%d 条，checks=%d 条" % (len(s["notes"]), len(s["checks"])))
++
++
++if __name__ == "__main__":
++    try:
++        main()
++    finally:
++        shutil.rmtree(TMP, ignore_errors=True)
++    print()
++    if FAILED:
++        print("FAIL %d/%d 项（下面的用例没抓住它该抓的东西）" % (len(FAILED), COUNT))
++        for name, detail in FAILED:
++            print("  ✗ %s  %s" % (name, detail))
++        sys.exit(1)
++    print("PASS %d 项 soak72 判据回归全部通过" % COUNT)
++    sys.exit(0)
+diff --git a/tools/stack_check.py b/tools/stack_check.py
+index 1a0cfe2..b0b19e7 100644
+--- a/tools/stack_check.py
++++ b/tools/stack_check.py
+@@ -52,7 +52,40 @@ ROOTS = {
+ # 作为对应入口的 indirect 项的上限参考。
+ CALLBACK_TARGETS = ["ui_tick", "pair_btn_cb", "pair_pad_cb", "pair_ok_cb",
+                     "pair_cancel_cb", "pair_forget_cb", "diagnostics_cb",
+-                    "temp_toggle_cb", "wifi_result_cb", "wifi_connect_cb"]
++                    "temp_toggle_cb", "wifi_result_cb", "wifi_connect_cb",
++                    "diag_timer_cb"]
++
++
++_SIMPLE_ITANIUM = re.compile(r"^_Z(?:L)?(\d+)(.+)$")
++_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
++
++
++def add_cpp_aliases(frames, calls):
++    """给"静态 C++ 回调"补一个可查的别名，否则它们在预算里等于不存在。
++
++    main.cpp 的诊断心跳是 `static void diag_timer_cb(...)`，符号名是 Itanium 形式的
++    `_ZL13diag_timer_cbP11_lv_timer_t`；按 `diag_timer_cb` 去查会查不到，于是
++    `worst()` 返回 None、静默跳过——"已纳入间接调用预算"就成了空话（C 写的事件回调
++    没有这个问题，所以以前从没暴露）。Itanium 的名字带长度前缀：只取前 N 个字符当
++    名字（后面是参数类型编码），嵌套名（_ZN…）与其它形式不猜，宁可查不到也不认错。
++    """
++    alias = {}
++    for name in list(frames) + list(calls):
++        m = _SIMPLE_ITANIUM.match(name)
++        if not m:
++            continue
++        n, rest = int(m.group(1)), m.group(2)
++        if n < 1 or len(rest) < n:
++            continue
++        base = rest[:n]
++        if not _IDENT.match(base):
++            continue
++        if base not in frames and base not in calls:
++            alias.setdefault(name, base)
++    for mangled, base in alias.items():
++        frames[base] = frames.get(mangled, 0)
++        calls[base] = set(calls.get(mangled, ()))
++    return alias
+ 
+ 
+ def load(elf, objdump):
+@@ -73,6 +106,7 @@ def load(elf, objdump):
+         m = re.search(r"\b(jal|call)\s+[0-9a-f]+ <([^>+]+)", line)
+         if m and m.group(2) != cur:
+             calls[cur].add(m.group(2))
++    add_cpp_aliases(frames, calls)
+     return frames, calls
+ 
+ 

@@ -630,6 +630,21 @@ static void do_fetch(const char *code)
     set_view(FNOS_PAIR_CONFIRM, "请把屏幕上的指纹与 NAS 管理页逐段比对");
 }
 
+/* 配对响应判定：只有"传输成功 + HTTP 200 + 非空且装得下的令牌"才算配对成功。
+   非 200 的响应体里也可能带 token 字段，照收就会把一次失败写进 NVS 变成"配对完成"
+   （审计 N3）。抽成纯函数，主机测试（tools/audit125/test_pair_nvs.py）直接抽取本函数
+   断言，判定逻辑只有这一份。 */
+static bool pair_response_accept(bool transport_ok, int status, const char *token, size_t token_cap)
+{
+    if (!transport_ok || status != 200) {
+        return false;
+    }
+    if (!token || !token[0]) {
+        return false;
+    }
+    return strlen(token) < token_cap;
+}
+
 static void do_pair(void)
 {
     char url[128];
@@ -665,8 +680,10 @@ static void do_pair(void)
     cJSON *root = (ok || len > 0) ? cJSON_Parse(rx) : NULL;
     const cJSON *jtok = root ? cJSON_GetObjectItemCaseSensitive(root, "token") : NULL;
     const char *token = (jtok && cJSON_IsString(jtok) && jtok->valuestring) ? jtok->valuestring : NULL;
+    /* 判定只有一份：pair_response_accept。下面三档只是"为什么失败"的文案分派。 */
+    const bool accept = pair_response_accept(ok, status, token, sizeof(s_next.token));
 
-    if (!token || !token[0]) {
+    if (!accept && (!token || !token[0])) {
         const cJSON *jerr = root ? cJSON_GetObjectItemCaseSensitive(root, "error") : NULL;
         const char *err = (jerr && cJSON_IsString(jerr)) ? jerr->valuestring : NULL;
         char msg[112];
@@ -690,7 +707,7 @@ static void do_pair(void)
     /* 真的配对成功只可能是 200 + token（nas_companion_server.py 的 /api/v1/pair：
        成功 200/ok:true，失败 403/ok:false/error）。非 200 的响应体里也带 token 字段时
        照收，就会把一次失败写进 NVS 变成"配对完成"（审计 N3）。 */
-    if (!ok || status != 200) {
+    if (!accept && (!ok || status != 200)) {
         const cJSON *jerr = root ? cJSON_GetObjectItemCaseSensitive(root, "error") : NULL;
         const char *err = (jerr && cJSON_IsString(jerr)) ? jerr->valuestring : NULL;
         char msg[112];
@@ -712,8 +729,8 @@ static void do_pair(void)
     }
 
     /* 令牌超长必须报错而不是截断：截断的令牌写进 NVS，症状是"配对成功但一直 401"，
-       用户完全无从排查（审计 N3；token[80] 见 fnos_pair.h）。 */
-    if (strlen(token) >= sizeof(s_next.token)) {
+       用户完全无从排查（审计 N3；token[80] 见 fnos_pair.h）。走到这里只剩"超长"一种。 */
+    if (!accept) {
         cJSON_Delete(root);
         free(rx);
         set_view(FNOS_PAIR_FAILED, "配对失败：NAS 发的令牌超出本机长度上限");
@@ -927,4 +944,11 @@ void fnos_pair_confirm(bool accept)
 void fnos_pair_forget(void)
 {
     post_action(ACT_FORGET);
+}
+
+uint32_t fnos_pair_stack_min_free(void)
+{
+    // 单位是字节（本工程用 IDF 自带 FreeRTOS，没开 CONFIG_FREERTOS_SMP）。
+    // 任务句柄只在 fnos_pair_init 里赋值、之后不再改，这里读它不需要加锁。
+    return s_task ? (uint32_t)uxTaskGetStackHighWaterMark(s_task) : 0;
 }
