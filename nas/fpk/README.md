@@ -216,7 +216,7 @@ python3 nas/fpk/board_sim.py --host nas.example.test --port 8798 --pair-code "$F
 
 它测试证书获取、固定证书后的 TLS、错误证书拒绝、配对及带令牌的状态请求。**会消费配对码并创建测试设备记录**，完成后可在管理页撤销该测试设备。自动固定读取到的证书不能独立验证 NAS 身份，运行前仍需通过可信管理页人工核对证书指纹。
 
-字段清单以 `board_fields.json` 与 `contract_check.py` 为准，1.2.4 基线为 60 个字段。模拟器核对真实 NAS 响应，不用 macOS 的源码回退冒充 Linux 采集结果；来源状态仍需结合能力矩阵查看。
+字段清单以 `board_fields.json` 与 `contract_check.py` 为准，1.2.5 为 62 个字段（v1.2.5 起阵列行多了 `health`/`what` 两个键）。模拟器核对真实 NAS 响应，不用 macOS 的源码回退冒充 Linux 采集结果；来源状态仍需结合能力矩阵查看。
 
 ## 开源协议
 

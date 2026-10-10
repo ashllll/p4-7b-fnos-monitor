@@ -5,7 +5,8 @@
 # 板子**能不能解析满载的那一帧**。而这一层是固件里跑得最勤的一段代码（每秒一次），
 # 却从来没在设备之外执行过——主机预览把 fnos_data 整个换成了替身。
 #
-# 做法与 certcheck 一致：从 fnos_data.c 里**原样抠出**那五个函数编译到主机
+# 做法与 certcheck 一致：从 fnos_data.c / fnos_snapshot.c 里**原样抠出**解析那一串
+# 函数（解析层 1.2.5 起搬到了 fnos_snapshot.c，两个文件都要看）编译到主机
 # （不手抄，抄了就等于测手抄的那份），cJSON 用工程里那一份。
 set -u
 export DEVELOPER_DIR=/Library/Developer/CommandLineTools
@@ -13,14 +14,8 @@ cd "$(cd "$(dirname "$0")/../.." && pwd)"
 
 OUT=$(mktemp -d); trap 'rm -rf "$OUT"' EXIT
 python3 tools/parsecheck/extract.py components/fnos_monitor/fnos_data.c "$OUT/ps.c" || exit 1
-# 满载样本由 python 生成（各段都到上限），见 make_payload.py 头部说明
-python3 tools/parsecheck/make_payload.py > "$OUT/full.json" || exit 1
-python3 - "$OUT/full.json" <<'PY'
-import json, sys
-d = json.load(open(sys.argv[1]))
-print("满载 payload：%d 字节（各段都到上限）" % len(json.dumps(d, ensure_ascii=False,
-                                                          separators=(",", ":")).encode()))
-PY
+# 满载样本由 python 生成（各段都到上限），见 make_payload.py 头部说明；
+# 用多大的样本由下面的容量探针挑，这里先不生成。
 
 CJ=managed_components/espressif__cjson/cJSON
 cc -I build/config -I "$CJ" -I components/fnos_monitor -o "$OUT/ps" \
@@ -48,8 +43,40 @@ open(sys.argv[2] + ".want2", "w").write("%d %.2f %.2f" % (
 print("历史样本：900 行（超过环形缓冲 600），间隔各 1 s")
 PY
 
-"$OUT/ps" "$OUT/full.json" "$OUT/hist.json" $(cat "$OUT/hist.json.want") \
-  $(cat "$OUT/hist.json.want2") \
-  || { echo "✗ parse_status() 或 parse_history() 失败"; exit 1; }
-SIZE=$(wc -c < "$OUT/full.json" | tr -d ' ')
-echo "✓ 满载帧（${SIZE} 字节）能被 parse_status() 解析"
+# 期望值按**空格分开**读进来再逐个数传参：`"$(cat want)"` 会把 "899 10" 当成
+# 一个 argv，主程序只看到 argc=4 ⇒ gap 期望变 -1 ⇒ 每一档都判 BADHIST。
+# 这个引号陷阱让探针对**所有**填充度都判失败，看着像"板子连 62 KB 都吃不下"。
+read -r WANT_SPAN WANT_GAP < "$OUT/hist.json.want"
+read -r WANT_N WANT_CPU0 WANT_RX0 < "$OUT/hist.json.want2"
+run_ps() { "$OUT/ps" "$OUT/full.json" "$OUT/hist.json" \
+             "$WANT_SPAN" "$WANT_GAP" "$WANT_N" "$WANT_CPU0" "$WANT_RX0"; }
+
+# 容量探针：从高到低试几档填充度，量出"板子能解析的最大帧"。
+# 为什么探而不是写死一档：payload 字节与 arena 不是 1:1 —— arena 还要装结构体
+# 向量和每串的账头，所以 1 MiB 的预算装不下 1 MiB 的 payload（实测 0.80 档、
+# 995 KB 的帧就是 "data capacity"）。写死一档要么红得没道理，要么松得测不出回归。
+FLOOR=131072                     # 至少要能吃下 128 KB 的帧（历史上出事的那帧只有 8.3 KB）
+CEIL=""; CEILSZ=0; FIRSTFAIL=""
+for F in 0.80 0.70 0.60 0.50 0.45 0.40 0.35 0.30 0.25 0.20 0.15 0.10 0.05; do
+  PARSE_FILL=$F python3 tools/parsecheck/make_payload.py > "$OUT/full.json" 2>/dev/null || exit 1
+  if run_ps >/dev/null 2>&1; then
+    CEIL=$F; CEILSZ=$(wc -c < "$OUT/full.json" | tr -d ' '); break
+  fi
+  [ -n "$FIRSTFAIL" ] || FIRSTFAIL=$F
+done
+if [ -z "$CEIL" ]; then
+  echo "✗ 容量探针：连 arena 预算 5% 的帧都解析不了 —— 这是解析回归，不是样本太大"
+  PARSE_FILL=0.80 python3 tools/parsecheck/make_payload.py > "$OUT/full.json" || exit 1
+  run_ps
+  exit 1
+fi
+[ "$CEILSZ" -ge "$FLOOR" ] || {
+  echo "✗ 容量探针：板子只吃下 ${CEILSZ} 字节，低于下限 ${FLOOR}"
+  PARSE_FILL=$CEIL python3 tools/parsecheck/make_payload.py > "$OUT/full.json" || exit 1
+  run_ps
+  exit 1
+}
+PARSE_FILL=$CEIL python3 tools/parsecheck/make_payload.py > "$OUT/full.json"   # 重放一次，口径走 stderr
+run_ps || { echo "✗ parse_status() 或 parse_history() 失败"; exit 1; }
+echo "✓ 满载帧（${CEILSZ} 字节 = arena 预算的 ${CEIL} 档）能被 parse_status() 解析"
+[ -z "$FIRSTFAIL" ] || echo "  （${FIRSTFAIL} 档解析不了：payload 字节与 arena 预算不是 1:1 —— arena 还要装结构体向量和每串账头；NAS 侧 DEFAULT_LIMITS={} 不截断，真机把帧撑到这个量级就会在板端解析失败。）"
