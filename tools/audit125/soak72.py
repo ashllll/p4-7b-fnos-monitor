@@ -382,12 +382,26 @@ def evaluate(samples, capture, hours, elf_sha, windows, load_meta=None):
         "板端 up 跨度 %.1fs / 要求 %.1fs（含 %gs 余量）" % (board_span, want_s, DURATION_SLACK_S),
         {"board_span_s": board_span})
 
-    # a3 固件一致性：跑的不是本地 ELF 的这次构建，后面所有判据都不算数
-    mismatch = [i for i in range(n) if recs[i]["fw"] != elf_sha]
-    add("firmware_match", "fail" if mismatch else "pass",
-        "fw 与本地 ELF 不一致的样本 %d 条（首条 idx=%s）" % (len(mismatch), mismatch[0] if mismatch else None)
-        if mismatch else "全部 %d 条样本的 fw 均等于本地 ELF 的 SHA-256" % n,
-        {"mismatch": len(mismatch), "first_mismatch_t": ts[mismatch[0]] if mismatch else None})
+    # a3 固件一致性：跑的不是本地 ELF 的这次构建，后面所有判据都不算数。
+    # 板子打的是 esp_app_get_elf_sha256() 的结果，长度由 CONFIG_APP_RETRIEVE_LEN_ELF_SHA
+    # 决定（本工程是 9）⇒ 它天生只是 ELF SHA-256 的**前缀**。真机第一次跑就撞在这上面：
+    # 60 条全判"不一致"，而前缀明明和本地构建对得上。所以按前缀比（大小写不敏感）；
+    # 空的 fw 是"证据不可用"，不是"跑错了固件"。
+    blank_fw = [i for i in range(n) if not recs[i].get("fw")]
+    if blank_fw:
+        add("firmware_match", "incomplete",
+            "有 %d 条样本没带 fw（首条 idx=%s），核对不了跑的是不是本地构建"
+            % (len(blank_fw), blank_fw[0]), {"missing": len(blank_fw)})
+    else:
+        mismatch = [i for i in range(n) if not elf_sha.startswith(recs[i]["fw"].strip().lower())]
+        add("firmware_match", "fail" if mismatch else "pass",
+            "fw 与本地 ELF 不一致的样本 %d 条（首条 idx=%s；板端 %s / 本地 ELF %s）"
+            % (len(mismatch), mismatch[0], recs[mismatch[0]]["fw"], elf_sha[:16] + "…")
+            if mismatch else
+            "全部 %d 条样本的 fw（%s）都是本地 ELF SHA-256 %s 的前缀"
+            % (n, recs[0]["fw"], elf_sha[:16] + "…"),
+            {"mismatch": len(mismatch), "first_mismatch_t": ts[mismatch[0]] if mismatch else None,
+             "board_fw": recs[0]["fw"], "elf_sha256": elf_sha})
 
     # b1 心跳覆盖率（以 10s 标称计）
     if board_span <= 0:

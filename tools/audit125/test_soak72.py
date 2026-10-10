@@ -482,6 +482,20 @@ def main():
     check("firmware_mismatch_fail", code == 1 and state_of(s, "firmware_match") == "fail",
           "code=%s %s" % (code, detail_of(s, "firmware_match")))
 
+    # --- 26b. 板子只打 fw 前缀（CONFIG_APP_RETRIEVE_LEN_ELF_SHA=9）不能误判成"跑错固件"
+    #      真机第一次跑就是 60 条全"不一致"，而前缀和本地构建对得上。
+    code, s = run_case("fwprefix", build(4.0, fw=ELF_SHA[:9]), hours=4.0)
+    check("firmware_prefix_pass", state_of(s, "firmware_match") == "pass",
+          "code=%s %s" % (code, detail_of(s, "firmware_match")))
+
+    # --- 26c. 板子没带 fw → 证据不可用，既不是"跑对了"也不是"跑错了"
+    blank = build(4.0)
+    for item in blank:
+        item["rec"]["fw"] = ""
+    code, s = run_case("fwblank", blank, hours=4.0)
+    check("firmware_blank_incomplete", state_of(s, "firmware_match") == "incomplete",
+          "code=%s %s" % (code, detail_of(s, "firmware_match")))
+
     # --- 27. metrics.jsonl 破损 → 退出码 3，但仍然要落一份 summary.json
     code, s = run_case("brokenjson", build(1.0), hours=1.0,
                        raw_metrics='{"t": 1.0, "rec": {"n": 1}}\n{"t": 2.0, "rec":\n')
