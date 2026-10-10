@@ -1000,6 +1000,17 @@ class CompanionCollector(Collector):
                     state = ST_DENIED if isinstance(exc, PermissionError) else (ST_MISSING if isinstance(exc, FileNotFoundError) else ST_ERROR)
                     meta[key] = {"status": state, "ts": 0, "error": detail}
 
+        # 契约面：键的类型不能因为采集失败而变。板子（含老固件）是**按类型**解析 payload 的，
+        # 而上面"首帧就失败"的分支会写 None —— 那不是"不谎报空"，那是把类型也搞坏
+        # （nas/fpk/test_lifecycle.sh 7b 抓到的就是 raid 变 null）。失败只反映在
+        # modules[key].status / errors / caps 里：读不到 ≠ 这台机器没有阵列。
+        for k in ("vols", "raid", "disks", "temps", "docker", "zfs"):
+            if not isinstance(snap.get(k), list):
+                snap[k] = []
+        for k in ("cpu", "mem", "net"):
+            if not isinstance(snap.get(k), dict):
+                snap[k] = {}
+
         try:
             snap["uptime_s"] = int(float(read_text("/proc/uptime", "0").split()[0] or 0))
         except (ValueError, IndexError):

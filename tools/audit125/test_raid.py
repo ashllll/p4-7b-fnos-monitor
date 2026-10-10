@@ -200,6 +200,19 @@ ordered = alerts(DEGRADED_IDLE, snap_extra={"vols": [{"mnt": "/", "pct": 85}],
                                             "mem": {"pct": 95}})
 check("告警按严重度排序", lv(ordered), ["crit", "warn", "warn"])
 
+# R2 的"形状"面：采集失败也不能把 payload 的类型改坏。板子是按类型解析的，
+# 首帧失败时曾经写出 "raid": null —— 包生命周期测试 7b 抓到的就是这个。
+c0 = collector(None, exc=FileNotFoundError(2, "No such file or directory"))
+snap0 = c0.sample()
+check("首帧 mdstat 失败 → raid 仍是数组", isinstance(snap0.get("raid"), list), True)
+check("首帧 mdstat 失败 → modules.raid 不是 ok",
+      snap0["modules"]["raid"]["status"] != MOD.ST_OK, True)
+check("首帧 mdstat 失败 → errors 点名 raid", "raid" in (snap0.get("errors") or []), True)
+check("首帧失败 → 其它段形状不变",
+      (isinstance(snap0.get("vols"), list), isinstance(snap0.get("cpu"), dict)), (True, True))
+check("首帧失败 → 仍然 ready（失败如实写在 modules，不伪装成没数据）",
+      snap0.get("ready"), True)
+
 # ---------------------------------------------------------------- 汇总
 if FAILED:
     print("FAIL %d/%d" % (len(FAILED), COUNT))

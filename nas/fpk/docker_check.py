@@ -37,7 +37,11 @@ def main():
     with patch.object(api, 'containers', side_effect=PermissionError(13, 'test denied')), patch.object(c, '_mem', return_value={'pct': 95}):
         failed = publish(c)
         assert failed['modules']['docker']['status'] == 'denied'
-        assert failed['docker'] is None
+        # 值必须是数组：板子按类型解析 payload（v1 契约，test_lifecycle.sh 7b 盯着这点）。
+        # "查不到"与"没有容器"的区别写在 modules.docker.status=denied 与 errors 里，
+        # 不靠把类型写成 None —— 那会让老固件的解析直接退化成"没有容器"，还破坏类型保证。
+        assert failed['docker'] == []
+        assert 'docker' in (failed.get('errors') or [])
         assert any(a['m'] == 'MEM used 95%' for a in failed['alerts'])
         assert collector.probe_capabilities(True)['modules']['docker'] == 'denied'
     count = 257  # Cross the previous fixed inventory limit using anonymous data.
