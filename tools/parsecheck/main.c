@@ -13,6 +13,9 @@ int fnos_data_hist_read(int64_t since_seq, fnos_sample_t *out, int max, int64_t 
 /* 抠出来的代码里那两个文件级静态（见 extract.py 的替身段） */
 extern fnos_status_t s_status;
 extern int64_t s_seq;
+/* parse_status() 把解析失败的原因写在这儿（只写不读）；打出来才分得清
+   "容量不够"、"JSON 坏了"还是别的，否则只看得到一个 FAIL。 */
+extern char s_conn_err[24];
 
 /* 简易 UTF-8 校验：拒绝孤立续接字节、截断的序列、以及 5/6 字节的非法前导。 */
 static bool utf8_ok(const char *s)
@@ -42,8 +45,17 @@ int main(int argc, char **argv)
     }
     FILE *f = fopen(argv[1], "rb");
     if (!f) { perror(argv[1]); return 2; }
-    static char buf[64 * 1024];
-    size_t n = fread(buf, 1, sizeof buf - 1, f);
+    /* 输入缓冲按文件大小来 —— 早先写死 64 KB，而"满载"的定义后来变成
+       "各段之和逼近板子的 arena 预算（默认 1 MiB）"，帧比 64 KB 大得多：
+       写死的话只会读到前 64 KB，JSON 半截，报出来的错是"解析失败"，
+       看着像解析器坏了，其实是这里读短了。 */
+    if (fseek(f, 0, SEEK_END) != 0) { perror("fseek"); return 2; }
+    long fsz = ftell(f);
+    if (fsz < 0) { perror("ftell"); return 2; }
+    rewind(f);
+    char *buf = malloc((size_t)fsz + 1);
+    if (!buf) { fprintf(stderr, "内存不够：%ld 字节的样本\n", fsz); return 2; }
+    size_t n = fread(buf, 1, (size_t)fsz, f);
     fclose(f);
     buf[n] = 0;
 
@@ -51,7 +63,11 @@ int main(int argc, char **argv)
     memset(&st, 0, sizeof st);
     bool ok = parse_status(buf, &st);
     printf("parse=%s bytes=%zu\n", ok ? "ok" : "FAIL", n);
-    if (!ok) return 1;
+    if (!ok) {
+        fprintf(stderr, "parse_status 失败原因：%s\n",
+                s_conn_err[0] ? s_conn_err : "(没写原因)");
+        return 1;
+    }
 
     printf("host=%s uptime=%u proto=%d\n", st.host, (unsigned)st.uptime_s, st.proto);
     printf("cpu=%.1f cores=%d load1=%.2f runq=%d temp=%.1f procs=%d\n",
@@ -62,8 +78,9 @@ int main(int argc, char **argv)
     printf("counts vols=%d raid=%d disks=%d temps=%d docker=%d alerts=%d mods=%d\n",
            st.nvols, st.nraid, st.ndisks, st.ntemps, st.ndocker, st.nalerts, st.nmods);
     if (st.nvols)    printf("vol0=%s pct=%.1f\n", st.vols[0].mnt, st.vols[0].pct);
-    if (st.nraid)    printf("raid0=%s state=%s have=%d/%d\n", st.raid[0].dev, st.raid[0].state,
-                            st.raid[0].have, st.raid[0].want);
+    if (st.nraid)    printf("raid0=%s state=%s have=%d/%d health=%s what=%s\n", st.raid[0].dev,
+                            st.raid[0].state, st.raid[0].have, st.raid[0].want,
+                            st.raid[0].health, st.raid[0].what);
     if (st.ndisks)   printf("disk0=%s rd=%.1f\n", st.disks[0].dev, st.disks[0].rd_kbs);
     if (st.ntemps)   printf("temp0=%s · %s c=%.1f dn=[%s]\n",
                             st.temps[0].dev, st.temps[0].ch, st.temps[0].c, st.temps[0].dn);

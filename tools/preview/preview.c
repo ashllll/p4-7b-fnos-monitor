@@ -40,7 +40,7 @@ int64_t esp_timer_get_time(void)
 size_t heap_caps_get_free_size(int caps) { (void)caps; return 214 * 1024; }
 size_t esp_get_free_heap_size(void)      { return 214 * 1024; }
 
-const char *fnos_net_ip(void)  { return "192.168.0.42"; }
+const char *fnos_net_ip(void)  { return "192.0.2.42"; }
 int8_t      fnos_net_rssi(void){ return -54; }   /* 0 = 未知 */
 
 /* ── Wi-Fi 替身 ────────────────────────────────────────────────────────
@@ -101,7 +101,7 @@ const char *fnos_net_state_str(void)
 {
     static char b[160];
     if (!s_wifi_cfg)          snprintf(b, sizeof b, "未配置 Wi-Fi");
-    else if (s_wifi_on)       snprintf(b, sizeof b, "已连接 %s（192.168.0.42）", s_wifi_ssid_stub);
+    else if (s_wifi_on)       snprintf(b, sizeof b, "已连接 %s（192.0.2.42）", s_wifi_ssid_stub);
     else if (s_wifi_reason[0])snprintf(b, sizeof b, "连不上 %s：%s（第 2 次重试）",
                                        s_wifi_ssid_stub, s_wifi_reason);
     else                      snprintf(b, sizeof b, "正在连接 %s…", s_wifi_ssid_stub);
@@ -211,17 +211,22 @@ static void fill_live(fnos_status_t *s)
         s->vols[i].pct      = 100.0f * v[i].used / v[i].tot;
     }
 
-    struct { const char *dev, *lvl, *st; bool ok; int have, want; float sync; } r[] = {
-        { "md0", "raid5", "clean",  true,  4, 4, 100.0f },
-        { "md1", "raid1", "resync", false, 2, 2,  47.3f },
-        { "md2", "raid0", "clean",  true,  2, 2, 100.0f },
-        { "md3", "raid6", "degraded", false, 5, 6, 100.0f },
+    /* state 用 mdstat 的真实首词（active/clean），结构健康度在 health、维护动作在 what ——
+       这是采集端 v1.2.5 之后的形状。旧 fixture 把 "resync"/"degraded" 塞进 state，
+       正是板端那段永远不成立的分支的来由（审计 §8.2）：真实数据里 state 只有首词。 */
+    struct { const char *dev, *lvl, *st, *health, *what; bool ok; int have, want; float sync; } r[] = {
+        { "md0", "raid5", "active", "ok",       "",         true,  4, 4, 100.0f },
+        { "md1", "raid1", "active", "degraded", "recovery", false, 2, 2,  47.3f },
+        { "md2", "raid0", "active", "ok",       "",         true,  2, 2, 100.0f },
+        { "md3", "raid6", "active", "degraded", "",         false, 5, 6, 100.0f },
     };
     s->nraid = 4;
     for (int i = 0; i < s->nraid; i++) {
         fnos_status_text(s, &s->raid[i].dev, "%s", r[i].dev);
         fnos_status_text(s, &s->raid[i].lvl, "%s", r[i].lvl);
         fnos_status_text(s, &s->raid[i].state, "%s", r[i].st);
+        fnos_status_text(s, &s->raid[i].health, "%s", r[i].health);
+        fnos_status_text(s, &s->raid[i].what, "%s", r[i].what);
         s->raid[i].ok = r[i].ok; s->raid[i].have = r[i].have; s->raid[i].want = r[i].want;
         s->raid[i].sync_pct = r[i].sync;
     }
@@ -335,7 +340,7 @@ uint32_t fnos_pair_generation(void) { return s_pair_gen; }
 void fnos_pair_active(fnos_pair_cfg_t *out)
 {
     memset(out, 0, sizeof *out);
-    snprintf(out->host, sizeof out->host, "%s", "192.168.0.119");
+    snprintf(out->host, sizeof out->host, "%s", "<NAS_IP>");
     out->port = 8798;
 }
 void fnos_pair_view(fnos_pair_view_t *out)
@@ -343,7 +348,7 @@ void fnos_pair_view(fnos_pair_view_t *out)
     memset(out, 0, sizeof *out);
     out->state = s_pair_state;
     out->port = 8798;
-    snprintf(out->host, sizeof out->host, "%s", "192.168.0.119");
+    snprintf(out->host, sizeof out->host, "%s", "<NAS_IP>");
     /* 没配过对时，真机 fnos_pair_init() 会把 msg 写成"未配对：用编译期默认地址"。
        预览这里以前固定为空串 —— 于是"左栏状态说明"在预览里永远不出现，
        它和"三步完成配对"抢同一块地方这个 bug 就只能在真机照片上看见。
@@ -401,7 +406,11 @@ bool fnos_data_get(fnos_status_t *out)
             out->raid[i].ok = true;
             out->raid[i].have = out->raid[i].want;
             out->raid[i].sync_pct = 100;
-            fnos_status_text(out, &out->raid[i].state, "%s", "clean");
+            fnos_status_text(out, &out->raid[i].state, "%s", "active");
+            /* health/what 也要跟着复位：卡片现在按 health 上色，只改 ok 会让"健康"
+               快照里仍显示 fixture 的 degraded（审计 §8.2 之后的配色来源）。 */
+            fnos_status_text(out, &out->raid[i].health, "%s", "ok");
+            fnos_status_text(out, &out->raid[i].what, "%s", "");
         }
     }
     if (s_state == ST_LIMITS) {
@@ -2420,7 +2429,7 @@ static void verify_wifi(void)
     vtick_advance(500); lv_timer_handler();
     assert(visible_text(lv_screen_active(), "连接成功"));
     assert(visible_text(lv_screen_active(),
-           "已连接 llll（192.168.0.42） · 信号 -54 dBm\n"
+           "已连接 llll（192.0.2.42） · 信号 -54 dBm\n"
            "板子已经记住这个网络，下次开机自动连。"));
     snapshot("10-wifi-linked");
     verify_wifi_footer("关闭");
@@ -2585,7 +2594,7 @@ static void verify_pairing(void)
 
     click_text("接受并配对");
     assert(visible_text(lv_screen_active(), "已配对"));
-    assert(visible_text(lv_screen_active(), "192.168.0.119:8798 · HTTPS · CN=fnos-nas.local"));
+    assert(visible_text(lv_screen_active(), "<NAS_IP>:8798 · HTTPS · CN=fnos-nas.local"));
     assert(visible_text(lv_screen_active(), "解除配对"));
     snapshot("07-pair-done");
 

@@ -2,9 +2,9 @@
 
 把飞牛 NAS 的运行状态（CPU / 内存 / 网络 / 存储 / 阵列 / 温度）以**只读**方式提供给局域网内的屏幕设备。管理界面在飞牛桌面里打开。
 
-当前应用名为 **飞牛监控**，包名 `nasscreencompanion`，版本 **1.2.4**。面向 x86，最低 fnOS **1.2.0701**，依赖应用 `python312`。当前通过应用中心手动安装，尚未提交官方应用库。
+当前应用名为 **飞牛监控**，包名 `nasscreencompanion`，版本 **1.2.5**。面向 x86，最低 fnOS **1.2.0701**，依赖应用 `python312`。当前通过应用中心手动安装，尚未提交官方应用库。
 
-从仓库根目录获取 [nasscreencompanion.fpk](nasscreencompanion.fpk)；大小与 SHA-256 见 [1.2.4 发布记录](../../docs/release-1.2.4.md)。固件构建、Wi-Fi 与端点配置见 [项目 README](../../README.md)，独立 SSH/systemd 采集器见 [nas/README.md](../README.md)。本应用默认 HTTPS 8798，独立采集器默认 HTTP 8799；`nas/install.sh` 不用于安装本 FPK。
+从仓库根目录获取 [nasscreencompanion.fpk](nasscreencompanion.fpk)（`bash nas/fpk/build.sh` 产出）；上一版的大小与 SHA-256 见 [1.2.4 发布记录](../../docs/release-1.2.4.md)。固件构建、Wi-Fi 与端点配置见 [项目 README](../../README.md)，独立 SSH/systemd 采集器见 [nas/README.md](../README.md)。本应用默认 HTTPS 8798，独立采集器默认 HTTP 8799；`nas/install.sh` 不用于安装本 FPK。
 
 管理服务使用普通包用户。1.2.0 起，生命周期由系统以 root 启动一个受限容器读取进程；随后立即降权运行管理服务。日常管理通过飞牛桌面完成。
 
@@ -216,7 +216,7 @@ python3 nas/fpk/board_sim.py --host nas.example.test --port 8798 --pair-code "$F
 
 它测试证书获取、固定证书后的 TLS、错误证书拒绝、配对及带令牌的状态请求。**会消费配对码并创建测试设备记录**，完成后可在管理页撤销该测试设备。自动固定读取到的证书不能独立验证 NAS 身份，运行前仍需通过可信管理页人工核对证书指纹。
 
-字段清单以 `board_fields.json` 与 `contract_check.py` 为准，1.2.4 基线为 60 个字段。模拟器核对真实 NAS 响应，不用 macOS 的源码回退冒充 Linux 采集结果；来源状态仍需结合能力矩阵查看。
+字段清单以 `board_fields.json` 与 `contract_check.py` 为准，1.2.5 为 62 个字段（v1.2.5 起阵列行多了 `health`/`what` 两个键）。模拟器核对真实 NAS 响应，不用 macOS 的源码回退冒充 Linux 采集结果；来源状态仍需结合能力矩阵查看。
 
 ## 开源协议
 

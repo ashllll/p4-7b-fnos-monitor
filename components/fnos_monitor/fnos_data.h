@@ -28,7 +28,14 @@ extern "C" {
 typedef struct { const char *ifname; float rx_kbs, tx_kbs, rx_total_gb, tx_total_gb;
                  const char *state; int speed_mbps; bool physical; } fnos_netif_t;
 typedef struct { const char *mnt, *fs; float total_gb, used_gb, free_gb, pct; } fnos_vol_t;
-typedef struct { const char *dev, *lvl, *state; bool ok; int have, want; float sync_pct; } fnos_raid_t;
+/* health = 采集端给的**结构**健康度（ok/degraded/inactive/readonly/container/unknown），
+   what = 阵列正在做的维护动作（resync/recovery/check/repair…）。
+   两者都是追加字段：老采集端不给就是空串，界面当"未知"处理。
+   以前界面是在 state 里 strstr "sync"/"recover"/"reshape" 判断进度——而动作词在
+   what 里、state 只有首词（"active"），那个分支对真实数据**永远为假**，
+   于是降级阵列的进度百分比从来没显示过（审计 §8.2）。 */
+typedef struct { const char *dev, *lvl, *state, *health, *what; bool ok;
+                 int have, want; float sync_pct; } fnos_raid_t;
 typedef struct { const char *dev; float rd_kbs, wr_kbs; } fnos_disk_t;
 /* 温度：一条 = 一个**传感器通道**（不是一个设备）。
    dev/ch = 内核短名与通道名（enp1s0 / PHY、nvme2n1 / Composite…），保证"同一路永远
@@ -103,6 +110,28 @@ bool fnos_data_get(fnos_status_t *out);
 int  fnos_data_hist_read(int64_t since_seq, fnos_sample_t *out, int max, int64_t *next_seq);
 // 当前已产生的样本总数（用于判断有无新数据）。
 int64_t fnos_data_hist_seq(void);
+
+/* ── 只读诊断（72h 长测采集用）──────────────────────────────────────────
+   这几个接口只读、不加锁以外的工作、不改轮询节奏，也不参与任何控制路径：
+   打开 CONFIG_FNOS_SOAK_DIAG 后由 LVGL 事件循环每 10 秒抄一份打到串口。
+   时间戳单位是 esp_timer 毫秒（不是 epoch）；source_ts 是 NAS 那侧的采集时间
+   （epoch 秒，0 = 还没有成功帧）。p95_ms 是最近 64 次请求耗时的 P95——
+   失败也计入，因为"连不上"同样属于用户看到的延迟。 */
+typedef struct {
+    uint32_t ok_count, fail_count;
+    int64_t  recv_ms;      // 最近一次成功接收的时刻（0 = 从未成功）
+    int64_t  source_ts;    // 最近成功帧里 NAS 的采集时间戳
+    int      http_ms;      // 最近一次请求耗时
+    int      p95_ms;       // 最近 64 次请求耗时的 P95（样本不足时取已有个数）
+    uint32_t uptime_s;     // NAS 上报的开机时长
+    bool     online;
+} fnos_data_diag_t;
+
+// 复制一份诊断快照（线程安全）。任何字段缺失都是 0/false，不返回错误。
+void fnos_data_diag(fnos_data_diag_t *out);
+// 轮询任务栈的剩余高水位（字节，ESP-IDF 该 API 的单位就是字节）。
+// 0 = 任务还没起来 ⇒ 调用方要按"测不到"处理，不能当成 0 字节可用栈。
+uint32_t fnos_data_stack_min_free(void);
 
 #ifdef __cplusplus
 }

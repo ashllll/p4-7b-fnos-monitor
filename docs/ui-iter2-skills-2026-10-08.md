@@ -25,7 +25,7 @@
 - 栈深：`python3 tools/stack_check.py --elf build/fnos_monitor.elf --objdump $HOME/.platformio/packages/toolchain-riscv32-esp/bin/riscv32-esp-elf-objdump` —— 3526 个函数，lvgl_worker 2672+4400=7072/12288=58% ✓、app_main 4640/16384=28% ✓、poll_task 41% ✓、pair_task 43% ✓。
 - 构建：`./idf.sh build` 退出码 0，fnos_monitor.bin 0x6bb0e0 字节（app 分区 0x900000，余 25%）。
 - 烧录：`./idf.sh -p /dev/tty.usbmodem5CF71088571 -b 230400 flash` —— 7 057 632 字节写入 0x10000，hash verified，RTS 复位，退出码 0。
-- 串口 35 s：无 panic/assert；Wi-Fi 拿到 192.168.0.214；"history backfilled: 300 samples"。
+- 串口 35 s：无 panic/assert；Wi-Fi 拿到 <BOARD_IP>；"history backfilled: 300 samples"。
 - 实机取景（`tools/page_shot.py --page N`，手机相机截图，图在 ~/Documents/ChatGPT/board-camera/）：五页逐页看过——顶栏两个幽灵按钮 + 状态胶囊层级成立；总览网络卡注释完整出现在图表上方；存储三卡每行完整；系统页告警卡收成一条、容器服务/硬件温度两卡拿回高度；温度页 3 列设备网格正常。
 
 ## 3. 本轮改动文件与哈希

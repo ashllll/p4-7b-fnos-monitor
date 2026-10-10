@@ -50,10 +50,45 @@ ROOTS = {
 
 # 这些函数是通过函数指针被调用的，静态图看不到调用者，单独算它们的子树深度，
 # 作为对应入口的 indirect 项的上限参考。
+# diag_timer_cb 只在 CONFIG_FNOS_SOAK_DIAG=y 的构建里存在（72h 长测心跳，跑在 LVGL
+# 任务里）；默认构建里它不在 ELF 里，worst() 会直接跳过，不影响结论。
 CALLBACK_TARGETS = ["ui_tick", "pair_btn_cb", "pair_pad_cb", "pair_ok_cb",
                     "pair_cancel_cb", "pair_forget_cb", "diagnostics_cb",
                     "temp_toggle_cb", "wifi_result_cb", "wifi_connect_cb",
-                    "number_event", "number_step", "number_destroy"]
+                    "number_event", "number_step", "number_destroy",
+                    "diag_timer_cb"]
+
+
+_SIMPLE_ITANIUM = re.compile(r"^_Z(?:L)?(\d+)(.+)$")
+_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def add_cpp_aliases(frames, calls):
+    """给"静态 C++ 回调"补一个可查的别名，否则它们在预算里等于不存在。
+
+    main.cpp 的诊断心跳是 `static void diag_timer_cb(...)`，符号名是 Itanium 形式的
+    `_ZL13diag_timer_cbP11_lv_timer_t`；按 `diag_timer_cb` 去查会查不到，于是
+    `worst()` 返回 None、静默跳过——"已纳入间接调用预算"就成了空话（C 写的事件回调
+    没有这个问题，所以以前从没暴露）。Itanium 的名字带长度前缀：只取前 N 个字符当
+    名字（后面是参数类型编码），嵌套名（_ZN…）与其它形式不猜，宁可查不到也不认错。
+    """
+    alias = {}
+    for name in list(frames) + list(calls):
+        m = _SIMPLE_ITANIUM.match(name)
+        if not m:
+            continue
+        n, rest = int(m.group(1)), m.group(2)
+        if n < 1 or len(rest) < n:
+            continue
+        base = rest[:n]
+        if not _IDENT.match(base):
+            continue
+        if base not in frames and base not in calls:
+            alias.setdefault(name, base)
+    for mangled, base in alias.items():
+        frames[base] = frames.get(mangled, 0)
+        calls[base] = set(calls.get(mangled, ()))
+    return alias
 
 
 def load(elf, objdump):
@@ -74,6 +109,7 @@ def load(elf, objdump):
         m = re.search(r"\b(jal|call)\s+[0-9a-f]+ <([^>+]+)", line)
         if m and m.group(2) != cur:
             calls[cur].add(m.group(2))
+    add_cpp_aliases(frames, calls)
     return frames, calls
 
 

@@ -598,7 +598,7 @@ function renderPair(f) {
       <div class="card">
         <div class="card-head"><span class="card-title">现在要做的事</span></div>
         <div class="card-body" style="gap:var(--s3)">
-          <div class="summary-line"><span>目标 NAS</span><b style="margin-left:auto;font-size:var(--t-sub)">192.168.0.119:8799</b></div>
+          <div class="summary-line"><span>目标 NAS</span><b style="margin-left:auto;font-size:var(--t-sub)"><NAS_IP>:8799</b></div>
           <div class="summary-line"><span>伴侣服务</span><b style="margin-left:auto;color:var(--led-ok)">已发现 · 8798</b></div>
           <div class="summary-line"><span>采集链路</span><b style="margin-left:auto">轮询 ${esc(poll.interval || "1s")} · 成功 ${poll.ok ?? 0} / 失败 ${poll.fail ?? 0}</b></div>
           <div style="height:1rem;background:var(--etch)"></div>

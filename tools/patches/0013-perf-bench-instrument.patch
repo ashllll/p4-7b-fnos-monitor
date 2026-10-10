@@ -1,0 +1,904 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ashllll <ashllll@users.noreply.github.com>
+Date: Sat, 10 Oct 2026 01:06:00 +0800
+Subject: [PATCH 13/23] =?UTF-8?q?perf:=20=E8=A7=A6=E6=8E=A7/=E6=B8=B2?=
+ =?UTF-8?q?=E6=9F=93=E5=8F=B0=E6=9E=B6=E4=BB=AA=E8=A1=A8=EF=BC=88bench=20?=
+ =?UTF-8?q?=E4=B8=B2=E5=8F=A3=E5=91=BD=E4=BB=A4=20+=20=E9=80=90=E5=B8=A7?=
+ =?UTF-8?q?=E8=AE=A1=E6=95=B0=E5=99=A8=EF=BC=8C=E9=BB=98=E8=AE=A4=E5=85=B3?=
+ =?UTF-8?q?=EF=BC=89?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+根因：要判断"触控与性能提升 30%"必须有实机计数器。既有 motion 统计只在手势
+活跃时出数，既不能区分"按下→首帧"与"帧间隔"，也无法跨构建比较。
+
+改动：
+- fnos_perf.c/h：合成指针状态机（按下/保持/拖动/松手，8ms lv_timer 在 LVGL
+  任务里推进；串口任务只置请求，由 100ms 轮询定时器接手）。保留真实面板读取：
+  先调保存的 read_cb（adapter 记账不变），再覆盖 data->point/state；运行结束
+  立刻换回。采样：按下→首帧、松手→首帧、相邻帧间隔、ui_tick 耗时（各 256
+  上限，出 p50/p95/max），CPU 用 uxTaskGetSystemState 前后快照按任务名求 delta。
+- 命令：bench tap <page> [cycles] / bench swipe <page> [px] [cycles] /
+  bench idle <page> [seconds] / bench help；结束打印一行 [bench] kind=… 。
+- Kconfig FNOS_UI_PERF_BENCH（default n）：关掉时全部空实现，生产固件零成本。
+- fnos_ui.c：ui_tick 顶部记时、末尾上报；只读探针 fnos_ui_nav_center /
+  fnos_ui_swipe_point 给合成手势定位（声明在 fnos_ui.h）。
+- tools/perf_bench.py：串口驱动 + CSV/中位数表（tap:页[:轮] / swipe:页[:px:轮] /
+  idle:页[:秒]）。开端口会复位板子、且第一次写会带一个杂散字节，脚本先冲空行。
+- fnos_perf.c 显式 include sdkconfig.h：本仓库不强制 -include sdkconfig.h，
+  缺了会静默编成空实现（实测踩过）。
+
+验证：a563000 + 本仪表（本地 sdkconfig 打开 FNOS_UI_PERF_BENCH /
+FNOS_UI_MOTION_STATS / ESP_LVGL_ADAPTER_ENABLE_FPS_STATS）实机烧录，三类用例
+均出数：tap 按下→首帧 p50 11.4~17.7ms、swipe 帧间隔 p50 38.5ms / p95 50.0ms、
+idle ui_tick p50 75ms。tools/stack_check.py 全入口在预算内（lvgl worker 7952/12288）。
+
+边界：仪表只存在于带 FNOS_UI_PERF_BENCH 的固件；生产 sdkconfig 保持 n。
+---
+ components/fnos_monitor/CMakeLists.txt  |   3 +
+ components/fnos_monitor/Kconfig         |  11 +
+ components/fnos_monitor/fnos_perf.c     | 456 ++++++++++++++++++++++++
+ components/fnos_monitor/fnos_perf.h     |  17 +
+ components/fnos_monitor/fnos_ui.c       |  28 ++
+ components/fnos_monitor/fnos_ui.h       |   8 +
+ components/fnos_monitor/fnos_wifi_cli.c |   4 +
+ tools/perf_bench.py                     | 186 ++++++++++
+ tools/preview/CMakeLists.txt            |   4 +
+ 9 files changed, 717 insertions(+)
+ create mode 100644 components/fnos_monitor/fnos_perf.c
+ create mode 100644 components/fnos_monitor/fnos_perf.h
+ create mode 100644 tools/perf_bench.py
+
+diff --git a/components/fnos_monitor/CMakeLists.txt b/components/fnos_monitor/CMakeLists.txt
+index 90c52ac..164a896 100644
+--- a/components/fnos_monitor/CMakeLists.txt
++++ b/components/fnos_monitor/CMakeLists.txt
+@@ -9,6 +9,9 @@ set(PROJ_SRCS
+     "fnos_snapshot.c"
+     "fnos_pair.c"
+     "fnos_ui.c"
++    # 触控/渲染台架（串口 `bench`）：CONFIG_FNOS_UI_PERF_BENCH=n 时整个文件退化成空实现。
++    # 放在这里而不是 main/，是为了能直接量 ui_tick / motion 这条 LVGL 路径。
++    "fnos_perf.c"
+     "ui_kit/uk.c"
+     "ui_kit/uk_number.c"
+     "ui_kit/uk_theme.c"
+diff --git a/components/fnos_monitor/Kconfig b/components/fnos_monitor/Kconfig
+index fbab68c..47fe2a1 100644
+--- a/components/fnos_monitor/Kconfig
++++ b/components/fnos_monitor/Kconfig
+@@ -100,6 +100,17 @@ menu "fnOS monitor"
+                 Print aggregate timing for page transitions, without telemetry
+                 or endpoint details. Enable locally when profiling the display.
+ 
++        config FNOS_UI_PERF_BENCH
++            bool "Touch/render benchmark console (bench command)"
++            default n
++            help
++                Add the serial `bench` command: while a run is active it
++                substitutes a scripted pointer sequence for the panel reading,
++                then prints press-to-frame latency, drag frame intervals,
++                refresh cost and per-task CPU. Nothing is compiled or called
++                when this is off, and the real touch callback is restored as
++                soon as a run ends. Bench devices only.
++
+         config FNOS_UI_USAGE_WARM
+             int "Usage attention reference (%)"
+             range 1 99
+diff --git a/components/fnos_monitor/fnos_perf.c b/components/fnos_monitor/fnos_perf.c
+new file mode 100644
+index 0000000..49d9399
+--- /dev/null
++++ b/components/fnos_monitor/fnos_perf.c
+@@ -0,0 +1,456 @@
++#include "fnos_perf.h"
++
++#include "sdkconfig.h"   /* 本仓库不强制 -include sdkconfig.h；这个编译单元没有别的头带它进来 */
++
++#ifdef CONFIG_FNOS_UI_PERF_BENCH
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++#include "esp_timer.h"
++#include "esp_log.h"
++#include "freertos/FreeRTOS.h"
++#include "freertos/task.h"
++#include "lvgl.h"
++
++#include "fnos_ui.h"
++
++static const char *TAG = "perf";
++
++#define PF_SAMPLES        256     /* 每种样本的上限；满了丢新样本（报里的 n 让人看得见） */
++#define PF_STEP_MS        8       /* 脚本推进节奏 = UK_GESTURE_POLL_MS */
++#define PF_SETTLE_MS      800     /* 换页请求由 ui_tick(500ms) 落地，留一跳余量 */
++#define PF_TAP_HOLD_MS    60      /* 按住时长：短于读周期就可能一次都没报按下 */
++#define PF_ARM_TIMEOUT_MS 300     /* 置了按下却等不到 indev 上报，判 miss */
++#define PF_RELEASE_MS     80      /* 松开后等 indev 把 RELEASED 读走 */
++#define PF_TAIL_MS        500     /* 松手后收尾：吸附动画 + 一帧静止 */
++#define PF_DRAG_STEPS     15      /* 15 步 × 8ms ≈ 120ms 的横滑 */
++#define PF_MAX_INDEVS     4
++#define PF_TASKS          24
++#define PF_REQ_POLL_MS    100
++
++typedef enum { PF_NONE = 0, PF_TAP, PF_SWIPE, PF_IDLE } pf_kind_t;
++typedef enum { PH_IDLE = 0, PH_SETTLE, PH_HOLD, PH_DRAG, PH_RELEASE, PH_TAIL } pf_phase_t;
++
++/* 串口任务写、LVGL 任务读：只有 valid 一个字的交接，够用且不用锁
++   （写完参数才置 valid；读方见 valid 先清再取参数）。 */
++static struct {
++    volatile bool valid;
++    pf_kind_t kind;
++    int page, px, cycles, seconds;
++} s_req;
++
++static struct {
++    bool active;
++    pf_kind_t kind;
++    int page, px, cycles, done, misses, idle_ms;
++    pf_phase_t phase;
++    int64_t phase_us, run_us;
++    int32_t x0, y0, x, y, span;
++    int step, steps, dir;
++    bool pressed, press_seen, rel_seen;
++    bool wait_first, wait_rel, frame_arm;
++    int64_t press_us, release_us;
++    uint32_t frames;
++} s_run;
++
++static uint32_t s_p2f[PF_SAMPLES];   /* 按下 → 首帧：有没有触控反馈、反馈多快 */
++static uint32_t s_r2f[PF_SAMPLES];   /* 松手 → 首帧：点一下多久有反应（换页那一帧） */
++static uint32_t s_iv[PF_SAMPLES];    /* 相邻帧间隔：拖动跟手 / 稳态帧率 */
++static uint32_t s_tick[PF_SAMPLES];  /* ui_tick 总耗时（数据刷新 + 图表 + 行重建） */
++static int s_np2f, s_nr2f, s_niv, s_ntick;
++
++static int64_t s_last_frame_us;
++
++/* ---------------------------------------------------------------- 统计 */
++
++static int pf_cmp(const void *a, const void *b)
++{
++    uint32_t x = *(const uint32_t *)a, y = *(const uint32_t *)b;
++    return (x > y) - (x < y);
++}
++
++static uint32_t pf_pct(const uint32_t *src, int n, int pct)
++{
++    if (n <= 0) return 0;
++    static uint32_t tmp[PF_SAMPLES];
++    memcpy(tmp, src, (size_t)n * sizeof tmp[0]);
++    qsort(tmp, (size_t)n, sizeof tmp[0], pf_cmp);
++    return tmp[(int)((int64_t)(n - 1) * pct / 100)];
++}
++
++static uint32_t pf_max(const uint32_t *src, int n)
++{
++    uint32_t m = 0;
++    for (int i = 0; i < n; i++) if (src[i] > m) m = src[i];
++    return m;
++}
++
++static void pf_push(uint32_t *buf, int *n, uint32_t v)
++{
++    if (*n < PF_SAMPLES) buf[(*n)++] = v;
++}
++
++/* ------------------------------------------------------- 各任务 CPU 占比 */
++
++typedef struct {
++    char name[configMAX_TASK_NAME_LEN];
++    uint32_t run;
++} pf_task_t;
++
++static pf_task_t s_cpu0[PF_TASKS], s_cpu1[PF_TASKS];
++static int s_ncpu0, s_ncpu1;
++
++static int pf_snap_tasks(pf_task_t *out)
++{
++    static TaskStatus_t st[PF_TASKS];
++    UBaseType_t n = uxTaskGetSystemState(st, PF_TASKS, NULL);
++    int k = (int)n;
++    if (k > PF_TASKS) k = PF_TASKS;
++    for (int i = 0; i < k; i++) {
++        snprintf(out[i].name, sizeof out[i].name, "%s", st[i].pcTaskName);
++        out[i].run = (uint32_t)st[i].ulRunTimeCounter;
++    }
++    return k;
++}
++
++/* 双核：把「各任务 delta 之和」当 100%，于是 lvgl/idle 的占比可以跨核比较。 */
++static void pf_cpu_delta(uint32_t *total, uint32_t *lvgl, uint32_t *idle)
++{
++    uint32_t t = 0, l = 0, i2 = 0;
++    for (int i = 0; i < s_ncpu1; i++) {
++        for (int j = 0; j < s_ncpu0; j++) {
++            if (strcmp(s_cpu0[j].name, s_cpu1[i].name) != 0) continue;
++            uint32_t d = s_cpu1[i].run - s_cpu0[j].run;   /* 计数器回绕概率可忽略 */
++            t += d;
++            if (strcmp(s_cpu1[i].name, "lvgl") == 0) l += d;
++            if (strncmp(s_cpu1[i].name, "IDLE", 4) == 0) i2 += d;
++            break;
++        }
++    }
++    *total = t; *lvgl = l; *idle = i2;
++}
++
++/* ------------------------------------------------------------ 合成指针 */
++
++static struct {
++    lv_indev_t *indev;
++    lv_indev_read_cb_t cb;
++} s_real[PF_MAX_INDEVS];
++static int s_nreal;
++
++static void pf_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
++{
++    /* 先照常问真实面板：adapter 靠这次调用做触摸握手与记账，跳过它就改变了被测对象。 */
++    for (int i = 0; i < s_nreal; i++) {
++        if (s_real[i].indev == indev && s_real[i].cb) { s_real[i].cb(indev, data); break; }
++    }
++    if (!s_run.active || s_run.kind == PF_IDLE) return;
++
++    data->point.x = s_run.x;
++    data->point.y = s_run.y;
++    data->state   = s_run.pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
++
++    if (s_run.pressed && !s_run.press_seen) {
++        /* P1 的 t0 必须记在"LVGL 真的看到按下"这一刻，不能记在脚本置位那刻 ——
++           否则 15ms 的 indev 采样周期会被算进 UI 的账。 */
++        s_run.press_seen = true;
++        s_run.press_us   = esp_timer_get_time();
++        s_run.wait_first = true;
++        s_run.frame_arm  = true;
++    } else if (!s_run.pressed && s_run.press_seen && !s_run.rel_seen) {
++        s_run.rel_seen   = true;
++        s_run.release_us = esp_timer_get_time();
++        s_run.wait_rel   = true;
++    }
++}
++
++static void pf_detach(void)
++{
++    for (int i = 0; i < s_nreal; i++) {
++        if (s_real[i].indev) lv_indev_set_read_cb(s_real[i].indev, s_real[i].cb);
++    }
++    s_nreal = 0;
++}
++
++/* ---------------------------------------------------------------- 帧事件 */
++
++static void pf_render_cb(lv_event_t *e)
++{
++    if (lv_event_get_code(e) != LV_EVENT_RENDER_READY) return;
++    int64_t now = esp_timer_get_time();
++    if (!s_run.active) { s_last_frame_us = now; return; }
++
++    s_run.frames++;
++    if (s_run.wait_first) { s_run.wait_first = false; pf_push(s_p2f, &s_np2f, (uint32_t)(now - s_run.press_us)); }
++    if (s_run.wait_rel)   { s_run.wait_rel   = false; pf_push(s_r2f, &s_nr2f, (uint32_t)(now - s_run.release_us)); }
++    if (s_run.frame_arm && s_last_frame_us) pf_push(s_iv, &s_niv, (uint32_t)(now - s_last_frame_us));
++    s_last_frame_us = now;
++}
++
++/* ---------------------------------------------------------------- 报告 */
++
++static void pf_report(void)
++{
++    uint32_t wall_ms = (uint32_t)((esp_timer_get_time() - s_run.run_us) / 1000);
++    s_ncpu1 = pf_snap_tasks(s_cpu1);
++    uint32_t total = 0, lvgl = 0, idle = 0;
++    pf_cpu_delta(&total, &lvgl, &idle);
++    uint32_t iv50 = pf_pct(s_iv, s_niv, 50);
++
++    printf("[bench] kind=%s page=%d cycles=%d misses=%d p2f_n=%d p2f_p50_us=%u p2f_p95_us=%u p2f_max_us=%u"
++           " r2f_n=%d r2f_p50_us=%u r2f_p95_us=%u r2f_max_us=%u"
++           " iv_n=%d iv_p50_us=%u iv_p95_us=%u iv_max_us=%u frames=%u wall_ms=%u fps_avg=%.1f fps_p50=%.1f"
++           " tick_n=%d tick_p50_us=%u tick_p95_us=%u tick_max_us=%u cpu_lvgl=%.1f cpu_idle=%.1f\n",
++           s_run.kind == PF_TAP ? "tap" : (s_run.kind == PF_SWIPE ? "swipe" : "idle"),
++           s_run.page, s_run.cycles, s_run.misses,
++           s_np2f, pf_pct(s_p2f, s_np2f, 50), pf_pct(s_p2f, s_np2f, 95), pf_max(s_p2f, s_np2f),
++           s_nr2f, pf_pct(s_r2f, s_nr2f, 50), pf_pct(s_r2f, s_nr2f, 95), pf_max(s_r2f, s_nr2f),
++           s_niv, iv50, pf_pct(s_iv, s_niv, 95), pf_max(s_iv, s_niv),
++           s_run.frames, wall_ms, wall_ms ? 1000.0 * s_run.frames / wall_ms : 0.0,
++           iv50 ? 1000000.0 / iv50 : 0.0,
++           s_ntick, pf_pct(s_tick, s_ntick, 50), pf_pct(s_tick, s_ntick, 95), pf_max(s_tick, s_ntick),
++           total ? 100.0 * lvgl / total : 0.0, total ? 100.0 * idle / total : 0.0);
++    fflush(stdout);
++}
++
++static lv_timer_t *s_script_timer;
++
++static void pf_stop(void)
++{
++    s_run.active = false;
++    pf_detach();
++    if (s_script_timer) lv_timer_pause(s_script_timer);
++}
++
++/* ------------------------------------------------------------ 脚本状态机 */
++
++static void pf_arm(int64_t now)
++{
++    if (s_run.kind == PF_SWIPE) {
++        /* 左右交替，免得连着同方向滑把页面滑到边上。 */
++        if (!fnos_ui_swipe_point(s_run.dir, &s_run.x0, &s_run.y0)) { s_run.misses++; pf_stop(); return; }
++        if (s_run.px <= 0) {
++            lv_display_t *d = lv_display_get_default();
++            s_run.px = d ? lv_display_get_horizontal_resolution(d) / 2 : 512;
++        }
++        s_run.span  = s_run.px;
++        s_run.steps = PF_DRAG_STEPS;
++        s_run.x = s_run.x0;
++        s_run.y = s_run.y0;
++    } else {
++        /* 点按导航键中心：按下有反馈、松手换页，两个时延都在同一次手势里量到。 */
++        if (!fnos_ui_nav_center(s_run.page, &s_run.x0, &s_run.y0)) { s_run.misses++; pf_stop(); return; }
++        s_run.x = s_run.x0;
++        s_run.y = s_run.y0;
++        s_run.steps = 0;
++    }
++    s_run.pressed = true;
++    s_run.phase = (s_run.kind == PF_SWIPE) ? PH_DRAG : PH_HOLD;
++    s_run.phase_us = now;
++}
++
++static void pf_next_cycle(int64_t now)
++{
++    s_run.done++;
++    if (s_run.done >= s_run.cycles) { pf_report(); pf_stop(); return; }
++
++    /* 点按必须先把页面切走：只点当前页的导航键，页面没变化 → 首帧可能提前出现，
++       "按下→首帧"就退化成 indev 采样周期，数字虚好。每轮先落到别页再点回目标页，
++       于是每轮都带一次真实的整页重建 + 进页动画。 */
++    if (s_run.kind == PF_TAP) {
++        int alt = (s_run.page + 1 + s_run.done) % FNOS_UI_PAGE_COUNT;
++        if (alt == s_run.page) alt = (alt + 1) % FNOS_UI_PAGE_COUNT;
++        fnos_ui_set_page(alt);
++    } else if (s_run.kind == PF_SWIPE) {
++        fnos_ui_set_page(s_run.page);   /* 滑完停在别页：先回到目标页，起点一致 */
++        s_run.dir = -s_run.dir;
++    }
++    s_run.phase = PH_SETTLE;
++    s_run.phase_us = now;
++}
++
++static void pf_script_tick(lv_timer_t *t)
++{
++    (void)t;
++    if (!s_run.active) return;
++    int64_t now = esp_timer_get_time();
++    uint32_t el = (uint32_t)((now - s_run.phase_us) / 1000);
++
++    switch (s_run.phase) {
++    case PH_SETTLE:
++        if (s_run.kind == PF_IDLE) {
++            if (el >= (uint32_t)s_run.idle_ms) { pf_report(); pf_stop(); }
++        } else if (el >= PF_SETTLE_MS) {
++            pf_arm(now);
++        }
++        break;
++
++    case PH_HOLD:
++        if (!s_run.press_seen) {                       /* 等 indev 上报按下 */
++            if (el > PF_ARM_TIMEOUT_MS) { s_run.misses++; s_run.pressed = false; pf_next_cycle(now); }
++            break;
++        }
++        if (el >= PF_TAP_HOLD_MS) { s_run.pressed = false; s_run.phase = PH_RELEASE; s_run.phase_us = now; }
++        break;
++
++    case PH_DRAG:
++        if (!s_run.press_seen && el > PF_ARM_TIMEOUT_MS) {
++            s_run.misses++;
++            s_run.pressed = false;
++            pf_next_cycle(now);
++            break;
++        }
++        if (s_run.press_seen) {
++            s_run.step++;
++            s_run.x = s_run.x0 + (int32_t)((int64_t)s_run.dir * s_run.span * s_run.step / s_run.steps);
++            if (s_run.step >= s_run.steps) { s_run.pressed = false; s_run.phase = PH_RELEASE; s_run.phase_us = now; }
++        }
++        break;
++
++    case PH_RELEASE:
++        if (el >= PF_RELEASE_MS) { s_run.frame_arm = false; s_run.phase = PH_TAIL; s_run.phase_us = now; }
++        break;
++
++    case PH_TAIL:
++        if (el >= PF_TAIL_MS) pf_next_cycle(now);
++        break;
++
++    default:
++        break;
++    }
++}
++
++static void pf_start(void)
++{
++    memset(s_p2f, 0, sizeof s_p2f);
++    memset(s_r2f, 0, sizeof s_r2f);
++    memset(s_iv, 0, sizeof s_iv);
++    memset(s_tick, 0, sizeof s_tick);
++    s_np2f = s_nr2f = s_niv = s_ntick = 0;
++    s_last_frame_us = 0;
++
++    pf_detach();   /* 上一轮留下的挂载先摘干净，否则会把 pf_read_cb 当成"真实回调"套娃 */
++    s_nreal = 0;
++    for (lv_indev_t *i = lv_indev_get_next(NULL); i && s_nreal < PF_MAX_INDEVS; i = lv_indev_get_next(i)) {
++        if (lv_indev_get_type(i) != LV_INDEV_TYPE_POINTER) continue;
++        s_real[s_nreal].indev = i;
++        s_real[s_nreal].cb    = lv_indev_get_read_cb(i);
++        lv_indev_set_read_cb(i, pf_read_cb);
++        s_nreal++;
++    }
++    if (s_nreal == 0) { printf("[bench] err=no-pointer-indev\n"); fflush(stdout); return; }
++
++    int64_t now = esp_timer_get_time();
++    pf_kind_t kind = s_req.kind;
++    memset(&s_run, 0, sizeof s_run);
++    s_run.active = true;
++    s_run.kind   = kind;
++    s_run.page   = s_req.page;
++    s_run.px     = s_req.px;
++    s_run.dir    = -1;
++    s_run.cycles = kind == PF_IDLE ? 1 : (s_req.cycles > 0 ? s_req.cycles : 3);
++    s_run.idle_ms = (s_req.seconds > 0 ? s_req.seconds : 5) * 1000;
++    s_run.run_us = now;
++    s_ncpu0 = pf_snap_tasks(s_cpu0);
++
++    if (s_run.kind == PF_IDLE) {
++        /* 稳态：停在目标页不动，只收帧间隔 / ui_tick / CPU。 */
++        fnos_ui_set_page(s_run.page);
++        s_run.phase = PH_SETTLE;
++        s_run.phase_us = now;
++    } else {
++        s_run.phase = PH_SETTLE;
++        s_run.phase_us = now;
++        /* 点按要有一页可切：先落到目标页，第一轮再由 pf_next_cycle 切走。 */
++        fnos_ui_set_page(s_run.page);
++    }
++    if (s_script_timer) lv_timer_resume(s_script_timer);
++    ESP_LOGI(TAG, "bench start kind=%d page=%d cycles=%d idle_ms=%d", (int)kind, s_run.page, s_run.cycles, s_run.idle_ms);
++}
++
++/* 串口任务只置请求：lv_timer 只能在 LVGL 任务里建/改，所以由本定时器接手。 */
++static void pf_req_poll(lv_timer_t *t)
++{
++    (void)t;
++    if (!s_req.valid) return;
++    pf_kind_t kind = s_req.kind;
++    int page = s_req.page, px = s_req.px, cycles = s_req.cycles, sec = s_req.seconds;
++    s_req.valid = false;
++    if (s_run.active) pf_stop();          /* 新命令顶掉旧运行 */
++    s_req.kind = kind; s_req.page = page; s_req.px = px; s_req.cycles = cycles; s_req.seconds = sec;
++    pf_start();
++}
++
++/* ---------------------------------------------------------------- 公开 API */
++
++void fnos_perf_note_tick(uint32_t us)
++{
++    if (s_run.active) pf_push(s_tick, &s_ntick, us);
++}
++
++static int pf_int(const char *s, int def)
++{
++    if (!s || !*s) return def;
++    int v = atoi(s);
++    return v >= 0 ? v : def;
++}
++
++bool fnos_perf_cli(char *line)
++{
++    char *cmd = strtok(line, " \t");
++    if (!cmd || strcmp(cmd, "bench") != 0) return false;
++
++    char *a1 = strtok(NULL, " \t");
++    char *a2 = strtok(NULL, " \t");
++    char *a3 = strtok(NULL, " \t");
++    char *a4 = strtok(NULL, " \t");
++    if (!a1 || strcmp(a1, "help") == 0) {
++        printf("bench tap <page 0-5> [cycles]            按下→首帧 / 松手→首帧（合成点按导航键）\n"
++               "bench swipe <page 0-5> [px] [cycles]     拖动期帧间隔（合成横滑，左右交替；px 0 = 半个显示宽）\n"
++               "bench idle <page 0-5> [seconds]          稳态帧间隔 / ui_tick / 各任务 CPU\n"
++               "结束打印一行 [bench] kind=… 供 tools/perf_bench.py 解析\n");
++        return true;
++    }
++    if (strcmp(a1, "tap") == 0)        s_req.kind = PF_TAP;
++    else if (strcmp(a1, "swipe") == 0) s_req.kind = PF_SWIPE;
++    else if (strcmp(a1, "idle") == 0)  s_req.kind = PF_IDLE;
++    else { printf("bench: 认不出 '%s'（试 bench help）\n", a1); return true; }
++
++    int page = pf_int(a2, 0);
++    if (page >= FNOS_UI_PAGE_COUNT) page = 0;
++    s_req.page = page;
++    s_req.px = 0;
++    s_req.cycles = 0;
++    s_req.seconds = 0;
++    if (s_req.kind == PF_SWIPE)    { s_req.px = pf_int(a3, 0); s_req.cycles = pf_int(a4, 3); }
++    else if (s_req.kind == PF_TAP) s_req.cycles = pf_int(a3, 3);
++    else                           s_req.seconds = pf_int(a3, 5);
++    s_req.valid = true;
++    printf("bench: 已排队 %s page=%d px=%d cycles=%d seconds=%d\n",
++           a1, s_req.page, s_req.px, s_req.cycles, s_req.seconds);
++    return true;
++}
++
++void fnos_perf_init(void)
++{
++    static bool done;
++    if (done) return;
++    done = true;
++
++    lv_display_t *disp = lv_display_get_default();
++    if (disp) lv_display_add_event_cb(disp, pf_render_cb, LV_EVENT_RENDER_READY, NULL);
++    s_script_timer = lv_timer_create(pf_script_tick, PF_STEP_MS, NULL);
++    lv_timer_pause(s_script_timer);
++    lv_timer_create(pf_req_poll, PF_REQ_POLL_MS, NULL);
++    ESP_LOGI(TAG, "bench 就绪：串口 `bench help`");
++}
++
++#else  /* !CONFIG_FNOS_UI_PERF_BENCH */
++
++void fnos_perf_init(void) {}
++void fnos_perf_note_tick(uint32_t us) { (void)us; }
++bool fnos_perf_cli(char *line) { (void)line; return false; }
++
++#endif
+diff --git a/components/fnos_monitor/fnos_perf.h b/components/fnos_monitor/fnos_perf.h
+new file mode 100644
+index 0000000..0d2bd8d
+--- /dev/null
++++ b/components/fnos_monitor/fnos_perf.h
+@@ -0,0 +1,17 @@
++#pragma once
++#include <stdbool.h>
++#include <stdint.h>
++
++// 触控/渲染台架（CONFIG_FNOS_UI_PERF_BENCH）。
++//
++// 为什么要有它：屏幕"跟不跟手、点一下多久有反应"此前只能靠肉眼描述，而宿主的
++// 32ms/180ms 预算是**虚拟时间**（docs 明确写了不能当设备帧率证据）。这里把两件事
++// 变成可复现的数字：按下→首帧（P1）与拖动期帧间隔（P2），外加 ui_tick 耗时与各任务
++// CPU 占比，命令只有串口 `bench` 一条（见 fnos_perf.c）。
++//
++// 关掉配置时下面三个函数都是空实现：生产固件里不建定时器、不注册回调、不读计数器 ——
++// 仪表必须能证明自己没改变被测对象。
++
++void fnos_perf_init(void);                 // 幂等；在 LVGL 任务里、持有显示锁时调
++void fnos_perf_note_tick(uint32_t us);     // ui_tick 一次的总耗时
++bool fnos_perf_cli(char *line);            // 串口命令 hook；没认出来返回 false
+diff --git a/components/fnos_monitor/fnos_ui.c b/components/fnos_monitor/fnos_ui.c
+index 5fc19ec..1a4d4f9 100644
+--- a/components/fnos_monitor/fnos_ui.c
++++ b/components/fnos_monitor/fnos_ui.c
+@@ -30,6 +30,7 @@
+ #include "fnos_fonts.h"
+ #include "fnos_net.h"
+ #include "fnos_pair.h"
++#include "fnos_perf.h"         /* 台架：只上报 ui_tick 耗时，关配置时是空函数 */
+ #include "fnos_wifi_store.h"   /* 开机"有没有凭据"要问存储本身，别问网络层的标志 */
+ #include "ui_kit/uk.h"   /* 新自适应层：LVGL 原生 flex，几何不写死 */
+ 
+@@ -4394,6 +4395,7 @@ static void refresh(void)
+ static void ui_tick(lv_timer_t *t)
+ {
+     (void)t;
++    int64_t t_bench = esp_timer_get_time();   /* 台架：这一次 tick 的总耗时（关配置时零成本） */
+     uk_alloc_reset();
+     if (s_night_req != s_night) {
+         s_night = s_night_req;
+@@ -4499,6 +4501,7 @@ static void ui_tick(lv_timer_t *t)
+     pair_refresh();
+     pages_warm();
+     inventory_notice();
++    fnos_perf_note_tick((uint32_t)(esp_timer_get_time() - t_bench));
+ }
+ 
+ static lv_obj_t *build_page(lv_obj_t *content, int idx)
+@@ -4555,9 +4558,34 @@ void fnos_ui_create(void)
+ 
+     lv_timer_create(ui_tick, 500, NULL);
+     motion_init();
++    fnos_perf_init();   /* 台架：CONFIG_FNOS_UI_PERF_BENCH=n 时是空函数 */
+     ESP_LOGI(TAG, "ui created (pages=%d)", FNOS_UI_PAGE_COUNT);
+ }
+ 
++/* 测量台架用的只读几何探针（见 fnos_ui.h）。特意不返回 lv_obj_t：
++   台架只需要一个能按下去的点，拿到对象就会有人在那里改 UI。 */
++bool fnos_ui_nav_center(int idx, int32_t *x, int32_t *y)
++{
++    if (idx < 0 || idx >= FNOS_UI_PAGE_COUNT || !s_ui.nav[idx]) return false;
++    lv_area_t a;
++    lv_obj_get_coords(s_ui.nav[idx], &a);
++    *x = (a.x1 + a.x2) / 2;
++    *y = (a.y1 + a.y2) / 2;
++    return true;
++}
++
++bool fnos_ui_swipe_point(int dir, int32_t *x, int32_t *y)
++{
++    if (!s_ui.viewport) return false;
++    lv_area_t a;
++    lv_obj_get_coords(s_ui.viewport, &a);
++    int32_t w = a.x2 - a.x1 + 1, h = a.y2 - a.y1 + 1;
++    /* 左滑从右侧 72% 起、右滑从左侧 28% 起：留出够滑的行程，又不会一出屏就撞边。 */
++    *x = a.x1 + (dir < 0 ? w * 72 / 100 : w * 28 / 100);
++    *y = a.y1 + h / 2;
++    return true;
++}
++
+ /* 自描述：把已建好的卡片几何按行吐给主机工具。看门狗（tools/preview/scroll_gap.js）
+    的卡片表以前是手抄的，抄错一次就报 15 处假不合格 —— 现在几何只有这一处来源。
+    p=0 对页面没意义（建树时四页都建），看门狗是按尺寸与自己的表对上号的。 */
+diff --git a/components/fnos_monitor/fnos_ui.h b/components/fnos_monitor/fnos_ui.h
+index dea5671..772f442 100644
+--- a/components/fnos_monitor/fnos_ui.h
++++ b/components/fnos_monitor/fnos_ui.h
+@@ -1,5 +1,6 @@
+ #pragma once
+ #include <stdbool.h>
++#include <stdint.h>
+ #include "fnos_data.h"     /* fnos_status_t：fnos_ui_link_reason() 要按值看它的 last_err */
+ 
+ // UIManager（KK_UI 生命周期层）：
+@@ -38,6 +39,13 @@ void fnos_ui_request_page(int idx);
+    加它是因为"展开态"必须先点一下才看得到，而实机验收时人不在板子跟前。 */
+ void fnos_ui_request_temp_expand(int idx);
+ 
++/* 测量台架（fnos_perf.c 的合成手势）专用：**只读**几何探针，屏幕坐标。
++   加它们是因为"按下→首帧"必须打在真实控件上，而坐标只有 UI 自己知道；
++   要点的导航按钮、要滑的显示区都随分辨率/布局变，脚本里写死坐标等于在测别的东西。
++   对象还没建或索引越界时返回 false。生产代码不调。 */
++bool fnos_ui_nav_center(int idx, int32_t *x, int32_t *y);
++bool fnos_ui_swipe_point(int dir, int32_t *x, int32_t *y);
++
+ /* 把采集端写在 last_err 里的失败标签翻成用户能照着处理的一句话；不认识的标签返回 NULL。
+    它是 refresh() 里那行"为什么连不上"的唯一来源，**公开出来是为了能被断言**：
+    主机预览逐个标签核对"翻得出话、且每句都不一样"，否则某个失败场景下那行字会
+diff --git a/components/fnos_monitor/fnos_wifi_cli.c b/components/fnos_monitor/fnos_wifi_cli.c
+index 327cbdf..c3db6f6 100644
+--- a/components/fnos_monitor/fnos_wifi_cli.c
++++ b/components/fnos_monitor/fnos_wifi_cli.c
+@@ -8,6 +8,7 @@
+ // 口令只写不读：`wifi show` 只报"有没有凭据、SSID 是什么、连到哪了"，永不回显口令。
+ #include "fnos_net.h"
+ #include "fnos_pair.h"
++#include "fnos_perf.h"
+ #include "fnos_wifi_store.h"
+ #include "fnos_ui.h"
+ 
+@@ -29,6 +30,7 @@ static void usage(void)
+            "  page <0-5>                    切页：总览/存储/网络/系统/温度/告警（实机验收用）\n"
+            "  temp <n>                      切到温度页并展开第 n 台设备（0 起）的通道网格\n"
+            "  tls                           HTTPS 自检：明文取证书 + 用证书探一次 /health\n"
++           "  bench help                    触控/渲染台架（合成手势 + 计数器；仅带台架的固件有）\n"
+            "  help                          显示这段说明\n\n");
+ }
+ 
+@@ -110,6 +112,8 @@ static void handle(char *line)
+         usage();
+         return;
+     }
++    /* 台架命令放在最后兜底之前：它自成一套（bench …），认不出来会返回 false 交给下面报错。 */
++    if (fnos_perf_cli(line)) return;
+     printf("不认识的命令：%s（输入 help 看用法）\n", line);
+ }
+ 
+diff --git a/tools/perf_bench.py b/tools/perf_bench.py
+new file mode 100644
+index 0000000..864ef06
+--- /dev/null
++++ b/tools/perf_bench.py
+@@ -0,0 +1,186 @@
++#!/usr/bin/env python3
++"""实机触控/渲染台架采集：串口发 `bench …` → 解析 `[bench]` 行 → CSV。
++
++用法:
++  python3 tools/perf_bench.py --label base --repeat 20 --out /tmp/perf-base.csv
++  python3 tools/perf_bench.py --label perf --cases tap:3,swipe:3,idle:3 --boot 25
++
++为什么需要它：屏幕"跟不跟手、点一下多久有反应"以前只能靠肉眼描述，而宿主的
++32ms/180ms 预算是虚拟时间（docs 声明过不能当设备帧率证据）。固件里的台架
++（CONFIG_FNOS_UI_PERF_BENCH，串口 `bench`）负责合成手势并打印计数器，本脚本负责
++重复 N 次、把每次的 p50/p95 收成表 —— 单次采样在 60fps 的屏上噪声太大。
++
++端口规矩与 tools/page_shot.py 完全一样（同一个坑）：pyserial 打开端口会拉 DTR/RTS，
++**关端口就让板子复位**，所以全程握着端口；复位后的半行杂散先发空行冲掉。
++"""
++import argparse
++import csv
++import os
++import re
++import statistics as st
++import sys
++import time
++
++import serial
++
++FIELDS = ["kind", "page", "cycles", "misses",
++          "p2f_n", "p2f_p50_us", "p2f_p95_us", "p2f_max_us",
++          "r2f_n", "r2f_p50_us", "r2f_p95_us", "r2f_max_us",
++          "iv_n", "iv_p50_us", "iv_p95_us", "iv_max_us",
++          "frames", "wall_ms", "fps_avg", "fps_p50",
++          "tick_n", "tick_p50_us", "tick_p95_us", "tick_max_us",
++          "cpu_lvgl", "cpu_idle"]
++INT_FIELDS = {f for f in FIELDS if not f.startswith("fps") and not f.startswith("cpu") and f != "kind"}
++KV = re.compile(r"([a-z0-9_]+)=([^\s]+)")
++
++
++def parse_bench(line):
++    if not line.startswith("[bench]"):
++        return None
++    row = {}
++    for k, v in KV.findall(line):
++        if k in FIELDS:
++            if k == "kind":
++                row[k] = v
++            elif k in INT_FIELDS:
++                row[k] = int(float(v))
++            else:
++                row[k] = float(v)
++    return row if "kind" in row else None
++
++
++def case_to_cmd(case):
++    """`tap:3:2` → `bench tap 3 2`（固件收的是空格分隔的参数，别把冒号发过去）。"""
++    p = case.split(":")
++    kind = p[0]
++    if kind == "tap":
++        return "bench tap %s %s" % (p[1] if len(p) > 1 else 3, p[2] if len(p) > 2 else 3)
++    if kind == "swipe":
++        return "bench swipe %s %s %s" % (p[1] if len(p) > 1 else 3,
++                                         p[2] if len(p) > 2 else 0,
++                                         p[3] if len(p) > 3 else 3)
++    if kind == "idle":
++        return "bench idle %s %s" % (p[1] if len(p) > 1 else 3, p[2] if len(p) > 2 else 5)
++    raise SystemExit("认不出的用例 '%s'（tap:页[:轮] / swipe:页[:px:轮] / idle:页[:秒]）" % case)
++
++
++def drain(ser, quiet=0.25, cap=4.0):
++    """读到串口安静为止（boot 日志尾巴 + 冷启动杂散字节）。"""
++    t0 = time.time()
++    last = time.time()
++    buf = ""
++    while time.time() - t0 < cap and time.time() - last < quiet:
++        chunk = ser.read(4096)
++        if chunk:
++            buf += chunk.decode("utf-8", "replace")
++            last = time.time()
++    return buf
++
++
++def flush_console(ser):
++    """开端口会让板子复位，且**第一次写会带一个杂散字节**（实测 "不认识的命令：\\ufffd"）：
++    先发两行空行把脏字节冲成两条空命令，再把回显读光。"""
++    for _ in range(2):
++        ser.write(b"\n")
++        ser.flush()
++        time.sleep(0.3)
++        drain(ser, quiet=0.15, cap=0.8)
++
++
++def run_case(ser, case, timeout):
++    cmd = case_to_cmd(case)
++    drain(ser, quiet=0.2, cap=1.0)
++    ser.write((cmd + "\n").encode())
++    ser.flush()
++    t0 = time.time()
++    buf = ""
++    first = cmd.split()[0]
++    while time.time() - t0 < timeout:
++        chunk = ser.read(4096).decode("utf-8", "replace")
++        if chunk:
++            buf += chunk
++            for line in buf.splitlines():
++                line = line.strip()
++                if line.startswith("[bench]"):
++                    return parse_bench(line), buf
++                # 只把"针对本命令"的报错当失败；冷启动那条杂散字节的报错不算
++                bad = ("认不出" in line and first in line) or ("bench" in line and "认不出" in line) \
++                      or (first in line and "不认识的命令" in line and len(line) > 12)
++                if bad:
++                    raise RuntimeError("设备拒绝了 %r：%s" % (cmd, line))
++        else:
++            time.sleep(0.02)
++    raise TimeoutError("等 [bench] 行超时（%.0fs）cmd=%r；串口尾部：%s" % (timeout, cmd, buf[-400:]))
++
++
++def main():
++    ap = argparse.ArgumentParser()
++    ap.add_argument("--port", default=os.environ.get("FNOS_SERIAL_PORT"))
++    ap.add_argument("--label", default="run", help="写进 CSV 的固件标签（base / perf / c1 …）")
++    ap.add_argument("--cases", default="tap:3,swipe:3,idle:3",
++                    help="逗号分隔；tap:页[:轮数] / swipe:页[:px:轮数] / idle:页[:秒]")
++    ap.add_argument("--repeat", type=int, default=20)
++    ap.add_argument("--warmup", type=int, default=1, help="每个用例先丢掉几次（开机抖动）")
++    ap.add_argument("--boot", type=float, default=25.0, help="复位后等首次采集的秒数")
++    ap.add_argument("--timeout", type=float, default=180.0, help="单个用例等待上限")
++    ap.add_argument("--out", default="/tmp/perf.csv")
++    args = ap.parse_args()
++    if not args.port:
++        ap.error("set --port or FNOS_SERIAL_PORT to the board serial port")
++
++    ser = serial.Serial(args.port, 115200, timeout=0.3)
++    ser.dtr = False
++    ser.rts = False
++    rows = []
++    try:
++        print("等待开机 + 首次采集（%.0fs）…" % args.boot, flush=True)
++        time.sleep(args.boot)
++        flush_console(ser)
++        for case in args.cases.split(","):
++            case = case.strip()
++            if not case:
++                continue
++            for i in range(args.repeat + args.warmup):
++                row, _ = run_case(ser, case, args.timeout)
++                if i < args.warmup:
++                    print("  [warmup] %-14s kind=%s p2f_p50=%s" % (case, row["kind"], row.get("p2f_p50_us")), flush=True)
++                    continue
++                row = dict(row)
++                row["label"] = args.label
++                row["case"] = case
++                row["repeat"] = i - args.warmup
++                rows.append(row)
++                print("  %-14s #%02d p2f_p50=%5s p2f_p95=%5s r2f_p50=%5s iv_p95=%5s tick_p50=%5s cpu_lvgl=%4s"
++                      % (case, i - args.warmup, row.get("p2f_p50_us"), row.get("p2f_p95_us"),
++                         row.get("r2f_p50_us"), row.get("iv_p95_us"), row.get("tick_p50_us"), row.get("cpu_lvgl")),
++                      flush=True)
++    finally:
++        ser.close()   # 关端口 = 板子复位：本脚本的已知副作用（与 page_shot.py 同）
++
++    if not rows:
++        print("没有任何样本", file=sys.stderr)
++        return 2
++
++    cols = ["label", "case", "repeat"] + FIELDS
++    with open(args.out, "w", newline="") as f:
++        w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
++        w.writeheader()
++        for r in rows:
++            w.writerow(r)
++
++    print("\n== %s ==" % args.label)
++    for case in dict.fromkeys(r["case"] for r in rows):
++        sub = [r for r in rows if r["case"] == case]
++        def med(f, only_pos=True):
++            v = [r[f] for r in sub if f in r and (not only_pos or r[f] > 0)]
++            return st.median(v) if v else 0
++        print("%-12s n=%2d p2f(p50/p95)=%6.0f/%6.0f  r2f=%6.0f/%6.0f  iv(p50/p95)=%6.0f/%6.0f  fps=%5.1f  tick(p50/p95)=%5.0f/%5.0f  cpu_lvgl=%4.1f%%  misses=%d"
++              % (case, len(sub), med("p2f_p50_us"), med("p2f_p95_us"), med("r2f_p50_us"), med("r2f_p95_us"),
++                 med("iv_p50_us"), med("iv_p95_us"), med("fps_avg"), med("tick_p50_us"), med("tick_p95_us"),
++                 med("cpu_lvgl"), int(med("misses", only_pos=False))))
++    print("CSV → %s（%d 行）" % (args.out, len(rows)))
++    return 0
++
++
++if __name__ == "__main__":
++    sys.exit(main())
+diff --git a/tools/preview/CMakeLists.txt b/tools/preview/CMakeLists.txt
+index 3fe19d4..e0e7c11 100644
+--- a/tools/preview/CMakeLists.txt
++++ b/tools/preview/CMakeLists.txt
+@@ -13,6 +13,9 @@ set(COMP "${REPO}/components/fnos_monitor")
+ set(UI_DEVICE_CONFIG "${REPO}/build/config/sdkconfig.h")
+ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${UI_DEVICE_CONFIG}")
+ file(STRINGS "${UI_DEVICE_CONFIG}" UI_CONFIG REGEX "^#define CONFIG_FNOS_(UI_|CHART_WINDOW )")
++# 台架命令只在真机上编：它读触摸 indev、量任务 CPU，宿主没有这两样（也缺 freertos 桩）。
++# 关掉它不影响被审计的东西——按页刷新等优化都不在台架开关里面。
++list(FILTER UI_CONFIG EXCLUDE REGEX "CONFIG_FNOS_UI_PERF_BENCH")
+ string(REPLACE ";" "\n" UI_CONFIG "${UI_CONFIG}")
+ file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/ui_config_host.h" "${UI_CONFIG}\n")
+ 
+@@ -41,6 +44,7 @@ add_executable(preview
+   "${COMP}/fnos_snapshot.c"
+   "${REPO}/managed_components/espressif__cjson/cJSON/cJSON.c"
+   "${COMP}/fnos_ui.c"
++  "${COMP}/fnos_perf.c"
+   "${COMP}/ui_kit/uk.c"
+     "${COMP}/ui_kit/uk_number.c"
+   "${COMP}/ui_kit/uk_theme.c"

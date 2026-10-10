@@ -482,6 +482,18 @@ static bool nvs_save(const fnos_pair_cfg_t *c)
     if (ok && has_cert(c->cert_pem)) {
         ok = nvs_set_str(h, KEY_CERT, c->cert_pem) == ESP_OK &&
              nvs_set_str(h, KEY_FP, c->fingerprint) == ESP_OK;
+    } else if (ok) {
+        /* 明文配对：必须把上一次 HTTPS 留下的证书和指纹擦掉。留着它们的后果是
+           重启后 nvs_load 看见证书就把 tls 又打开，而 NAS 早就关掉了 HTTPS——
+           板子从此连不上，用户只会觉得"配对忽然坏了"（审计 N1）。
+           擦除失败也要让本次保存失败，否则"保存成功"是假的。 */
+        esp_err_t ec = nvs_erase_key(h, KEY_CERT);
+        esp_err_t ef = nvs_erase_key(h, KEY_FP);
+        ok = (ec == ESP_OK || ec == ESP_ERR_NVS_NOT_FOUND) &&
+             (ef == ESP_OK || ef == ESP_ERR_NVS_NOT_FOUND);
+        if (!ok) {
+            ESP_LOGE(TAG, "清除旧证书失败：cert=%d fp=%d", (int)ec, (int)ef);
+        }
     }
     if (ok) {
         ok = nvs_commit(h) == ESP_OK;
@@ -490,15 +502,22 @@ static bool nvs_save(const fnos_pair_cfg_t *c)
     return ok;
 }
 
-static void nvs_wipe(void)
+static bool nvs_wipe(void)
 {
     nvs_handle_t h;
     if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) {
-        return;
+        return false;
     }
-    nvs_erase_all(h);
-    nvs_commit(h);
+    /* 以前两个返回值都丢掉、函数还是 void：擦除/提交失败时 do_forget 照样告诉用户
+       "已清除"，重启后旧配对原样回来（审计 N2）。失败必须一路传上去。 */
+    esp_err_t e1 = nvs_erase_all(h);
+    esp_err_t e2 = nvs_commit(h);
     nvs_close(h);
+    if (e1 != ESP_OK || e2 != ESP_OK) {
+        ESP_LOGE(TAG, "清除配对失败：erase=%d commit=%d", (int)e1, (int)e2);
+        return false;
+    }
+    return true;
 }
 
 // ────────────────────────────── 配对流程（跑在配对任务里）
@@ -560,6 +579,14 @@ static void do_fetch(const char *code)
 
     const cJSON *jtls = cJSON_GetObjectItemCaseSensitive(root, "tls");
     const cJSON *jpem = cJSON_GetObjectItemCaseSensitive(root, "cert_pem");
+    /* tls 必须是 JSON 布尔。以前字段缺失、或类型不对（字符串 "false"、数字 0）都会
+       cJSON_IsTrue 成 false ⇒ 明明 NAS 开着 HTTPS，板子却按明文去连，屏幕只报"证书问题"
+       （审计 N3）。类型不对就明确失败，不猜。 */
+    if (!cJSON_IsBool(jtls)) {
+        cJSON_Delete(root);
+        set_view(FNOS_PAIR_FAILED, "NAS 返回的 tls 字段格式不对（应为 true/false）");
+        return;
+    }
     bool tls = cJSON_IsTrue(jtls);
     const char *pem = (cJSON_IsString(jpem) && jpem->valuestring) ? jpem->valuestring : "";
 
@@ -603,6 +630,21 @@ static void do_fetch(const char *code)
     set_view(FNOS_PAIR_CONFIRM, "请把屏幕上的指纹与 NAS 管理页逐段比对");
 }
 
+/* 配对响应判定：只有"传输成功 + HTTP 200 + 非空且装得下的令牌"才算配对成功。
+   非 200 的响应体里也可能带 token 字段，照收就会把一次失败写进 NVS 变成"配对完成"
+   （审计 N3）。抽成纯函数，主机测试（tools/audit125/test_pair_nvs.py）直接抽取本函数
+   断言，判定逻辑只有这一份。 */
+static bool pair_response_accept(bool transport_ok, int status, const char *token, size_t token_cap)
+{
+    if (!transport_ok || status != 200) {
+        return false;
+    }
+    if (!token || !token[0]) {
+        return false;
+    }
+    return strlen(token) < token_cap;
+}
+
 static void do_pair(void)
 {
     char url[128];
@@ -638,8 +680,10 @@ static void do_pair(void)
     cJSON *root = (ok || len > 0) ? cJSON_Parse(rx) : NULL;
     const cJSON *jtok = root ? cJSON_GetObjectItemCaseSensitive(root, "token") : NULL;
     const char *token = (jtok && cJSON_IsString(jtok) && jtok->valuestring) ? jtok->valuestring : NULL;
+    /* 判定只有一份：pair_response_accept。下面三档只是"为什么失败"的文案分派。 */
+    const bool accept = pair_response_accept(ok, status, token, sizeof(s_next.token));
 
-    if (!token || !token[0]) {
+    if (!accept && (!token || !token[0])) {
         const cJSON *jerr = root ? cJSON_GetObjectItemCaseSensitive(root, "error") : NULL;
         const char *err = (jerr && cJSON_IsString(jerr)) ? jerr->valuestring : NULL;
         char msg[112];
@@ -657,6 +701,39 @@ static void do_pair(void)
         }
         free(rx);
         set_view(FNOS_PAIR_FAILED, msg);
+        return;
+    }
+
+    /* 真的配对成功只可能是 200 + token（nas_companion_server.py 的 /api/v1/pair：
+       成功 200/ok:true，失败 403/ok:false/error）。非 200 的响应体里也带 token 字段时
+       照收，就会把一次失败写进 NVS 变成"配对完成"（审计 N3）。 */
+    if (!accept && (!ok || status != 200)) {
+        const cJSON *jerr = root ? cJSON_GetObjectItemCaseSensitive(root, "error") : NULL;
+        const char *err = (jerr && cJSON_IsString(jerr)) ? jerr->valuestring : NULL;
+        char msg[112];
+        if (err) {
+            snprintf(msg, sizeof(msg), "配对失败：%s", err);
+        } else if (status == 0) {
+            snprintf(msg, sizeof(msg), "配对请求没连上：%s",
+                     s_http_diag[0] ? s_http_diag : "原因未知");
+        } else {
+            snprintf(msg, sizeof(msg), "配对失败：HTTP %d", status);
+        }
+        ESP_LOGW(TAG, "pair rejected: status=%d err=%s", status, err ? err : "-");
+        if (root) {
+            cJSON_Delete(root);
+        }
+        free(rx);
+        set_view(FNOS_PAIR_FAILED, msg);
+        return;
+    }
+
+    /* 令牌超长必须报错而不是截断：截断的令牌写进 NVS，症状是"配对成功但一直 401"，
+       用户完全无从排查（审计 N3；token[80] 见 fnos_pair.h）。走到这里只剩"超长"一种。 */
+    if (!accept) {
+        cJSON_Delete(root);
+        free(rx);
+        set_view(FNOS_PAIR_FAILED, "配对失败：NAS 发的令牌超出本机长度上限");
         return;
     }
 
@@ -692,7 +769,12 @@ static void do_pair(void)
 
 static void do_forget(void)
 {
-    nvs_wipe();
+    /* 擦除/提交失败就不能说"已清除"：用户会以为 NAS 上的设备记录也一并失效了，
+       而重启后旧配对原样回来（审计 N2）。保持内存态不动，让界面如实显示失败。 */
+    if (!nvs_wipe()) {
+        set_view(FNOS_PAIR_FAILED, "清除配对失败（NVS 写入错误），请重试");
+        return;
+    }
     if (xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
         memset(&s_cfg, 0, sizeof(s_cfg));
         snprintf(s_cfg.host, sizeof(s_cfg.host), "%s", FNOS_HOST);
@@ -862,4 +944,11 @@ void fnos_pair_confirm(bool accept)
 void fnos_pair_forget(void)
 {
     post_action(ACT_FORGET);
+}
+
+uint32_t fnos_pair_stack_min_free(void)
+{
+    // 单位是字节（本工程用 IDF 自带 FreeRTOS，没开 CONFIG_FREERTOS_SMP）。
+    // 任务句柄只在 fnos_pair_init 里赋值、之后不再改，这里读它不需要加锁。
+    return s_task ? (uint32_t)uxTaskGetStackHighWaterMark(s_task) : 0;
 }

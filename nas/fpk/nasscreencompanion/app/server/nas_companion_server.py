@@ -58,7 +58,7 @@ from fnos_collector import (                       # noqa: E402
 )
 
 APPNAME = "nasscreencompanion"
-APPVER = os.environ.get("TRIM_APPVER") or "1.2.3"   # manifest 里的 version 由应用中心经 TRIM_APPVER 注入；这个默认值给开发模式兜底
+APPVER = os.environ.get("TRIM_APPVER") or "1.2.5"   # manifest 里的 version 由应用中心经 TRIM_APPVER 注入；这个默认值给开发模式兜底
 GATEWAY_PREFIX = "/app/" + APPNAME
 SOCKET_NAME = "app.sock"                 # 必须位于 target 目录（网关要求）
 LOG_TAIL = 400                           # 内存里保留的日志行数（供管理页看）

@@ -1,0 +1,1321 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ashllll <ashllll@users.noreply.github.com>
+Date: Fri, 9 Oct 2026 20:45:14 +0800
+Subject: [PATCH 06/23] =?UTF-8?q?UI=20=E6=95=B0=E5=AD=97=E8=BF=87=E6=B8=A1?=
+ =?UTF-8?q?=E5=8A=A8=E6=95=88=EF=BC=9A=E8=AF=BB=E6=95=B0=E5=8F=98=E5=8C=96?=
+ =?UTF-8?q?=E6=97=B6=E9=80=90=E5=AD=97=E7=AC=A6=E6=BB=91=E5=8A=A8/?=
+ =?UTF-8?q?=E6=9F=94=E5=8C=96=EF=BC=8C=E5=85=A8=E9=A1=B5=E6=8E=A5=E5=85=A5?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- 新增 uk_number 数字标签：继承 lv_label，布局/字体/颜色沿用原生，只替换文字绘制；
+  变化字符按行高做纵向位移、五点加权字形柔化与透明度过渡，曲线取 Apple easeOut
+  cubic-bezier(0,0,.58,1)（先解 x 再取 y）。
+- 语义变化立即静态显示：单位/状态/身份变化、多行、溢出、字体切换、隐藏对象及字符数
+  减少（无法保留原字形）时回退原生文本；label 文本始终是最新读数，不做数值插值。
+- Kconfig 暴露时长/交错/上限/行程/柔化与临时字形预算（默认 250/50/100 ms、25%、6%、
+  128 KiB）；预算耗尽或内存不足回退最新静态读数，不限制遥测与设备清单。
+- fnos_ui 各页读数改走 set_num（离线/旧快照/不可读仍静态）；uk_row / uk_kpi 以
+  "读数结构是否相同"决定是否动效，网络行改为身份或链路变化才重建，普通刷新保留已呈现速率。
+- 预览/审计随类继承调整：label 判定改用 lv_obj_has_class（数字标签是 lv_label 子类），
+  stack_check 回调表加入 number_event / number_step / number_destroy。
+---
+ components/fnos_monitor/CMakeLists.txt     |   1 +
+ components/fnos_monitor/Kconfig            |  35 ++-
+ components/fnos_monitor/fnos_ui.c          | 181 +++++++-----
+ components/fnos_monitor/ui_kit/uk.c        |  15 +-
+ components/fnos_monitor/ui_kit/uk.h        |   8 +
+ components/fnos_monitor/ui_kit/uk_number.c | 328 +++++++++++++++++++++
+ components/fnos_monitor/ui_kit/uk_theme.h  |  23 ++
+ tools/preview/CMakeLists.txt               |   1 +
+ tools/preview/preview.c                    | 152 +++++++---
+ tools/stack_check.py                       |   3 +-
+ 10 files changed, 626 insertions(+), 121 deletions(-)
+ create mode 100644 components/fnos_monitor/ui_kit/uk_number.c
+
+diff --git a/components/fnos_monitor/CMakeLists.txt b/components/fnos_monitor/CMakeLists.txt
+index 6537bbb..90c52ac 100644
+--- a/components/fnos_monitor/CMakeLists.txt
++++ b/components/fnos_monitor/CMakeLists.txt
+@@ -10,6 +10,7 @@ set(PROJ_SRCS
+     "fnos_pair.c"
+     "fnos_ui.c"
+     "ui_kit/uk.c"
++    "ui_kit/uk_number.c"
+     "ui_kit/uk_theme.c"
+     "fonts/ui_font_cjk_12.c"
+     "fonts/ui_font_cjk_16.c"
+diff --git a/components/fnos_monitor/Kconfig b/components/fnos_monitor/Kconfig
+index 61d1ee2..fbab68c 100644
+--- a/components/fnos_monitor/Kconfig
++++ b/components/fnos_monitor/Kconfig
+@@ -57,9 +57,42 @@ menu "fnOS monitor"
+             bool "Use gentler page transitions"
+             default n
+             help
+-                Keep finger tracking and navigation, but settle directly on
++                Show numeric updates immediately. Keep finger tracking and navigation, but settle directly on
+                 release. Content and selection feedback remain visible.
+ 
++        config FNOS_UI_NUMBER_BUDGET_BYTES
++            int "Transient numeric glyph layer budget (bytes)"
++            range 1024 524288
++            default 131072
++            help
++                Optional animation falls back to the latest static reading on
++                budget exhaustion. This never limits telemetry or inventory.
++
++        config FNOS_UI_NUMBER_MS
++            int "Numeric transition duration (ms; 0 disables motion)"
++            range 0 500
++            default 250
++
++        config FNOS_UI_NUMBER_STAGGER_MS
++            int "Numeric changed-position stagger (ms)"
++            range 0 100
++            default 50
++
++        config FNOS_UI_NUMBER_MAX_STAGGER_MS
++            int "Maximum total numeric stagger (ms)"
++            range 0 200
++            default 100
++
++        config FNOS_UI_NUMBER_TRAVEL_PCT
++            int "Numeric travel (% of font line height)"
++            range 0 50
++            default 25
++
++        config FNOS_UI_NUMBER_BLUR_PCT
++            int "Numeric sampled blur (% of font line height; 0 disables)"
++            range 0 10
++            default 6
++
+         config FNOS_UI_MOTION_STATS
+             bool "Log page preparation and render timing"
+             default n
+diff --git a/components/fnos_monitor/fnos_ui.c b/components/fnos_monitor/fnos_ui.c
+index 9fba87a..f453629 100644
+--- a/components/fnos_monitor/fnos_ui.c
++++ b/components/fnos_monitor/fnos_ui.c
+@@ -306,20 +306,28 @@ static lv_obj_t *flex_btn(lv_obj_t *parent, const char *txt, int kind,
+    序列中间**，画出来是乱码或豆腐块，而且不报错。配对卡片那段"接受之后…"的说明
+    有 200 多字节，就是这么被切断的（预览的字形审计报 U+0000 才暴露出来）。
+    384 字节够放 120 多个汉字；再长就该直接用 lv_label_set_text 而不是走格式化。 */
+-static void set_txt(lv_obj_t *label, const char *fmt, ...)
++static void set_text_v(lv_obj_t *label, bool animate, const char *fmt, va_list ap)
+ {
+     if (!label) return;
+-    va_list ap, measure;
+-    va_start(ap,fmt); va_copy(measure,ap);
++    va_list measure;
++    va_copy(measure,ap);
+     int n=vsnprintf(NULL,0,fmt,measure);
+     va_end(measure);
+     char *text=n>=0 ? uk_alloc((size_t)n+1) : NULL;
+     if (text) {
+         vsnprintf(text,(size_t)n+1,fmt,ap);
+-        if (strcmp(lv_label_get_text(label),text)) lv_label_set_text(label,text);
++        uk_number_set_text(label,text,animate);
+         lv_free(text);
+     }
+-    va_end(ap);
++}
++
++static void set_txt(lv_obj_t *label, const char *fmt, ...)
++{
++    va_list ap; va_start(ap,fmt); set_text_v(label,false,fmt,ap); va_end(ap);
++}
++static void set_num(lv_obj_t *label, const char *fmt, ...)
++{
++    va_list ap; va_start(ap,fmt); set_text_v(label,true,fmt,ap); va_end(ap);
+ }
+ 
+ 
+@@ -1398,7 +1406,7 @@ static void network_layout(void)
+             lv_obj_t *child = lv_obj_get_child(box, j);
+             if (lv_obj_has_flag(child, LV_OBJ_FLAG_HIDDEN)) continue;
+             int32_t child_h = lv_obj_get_height(child);
+-            if (lv_obj_check_type(child, &lv_label_class)) {
++            if (lv_obj_has_class(child, &lv_label_class)) {
+                 lv_point_t size;
+                 lv_text_get_size(&size, lv_label_get_text(child), lv_obj_get_style_text_font(child, 0),
+                                  lv_obj_get_style_text_letter_space(child, 0), lv_obj_get_style_text_line_space(child, 0),
+@@ -3318,7 +3326,7 @@ static void temp_blk_fill(int i)
+     if (strcmp(lv_label_get_text(b->name), g->name)) s_p4_n = -1;
+     set_txt(b->name, "%s", g->name);
+     lv_obj_set_style_text_color(b->name, uk_c(on ? UK_T1 : UK_T3), 0);
+-    set_txt(b->vmax, "%.1f", g->max_c);
++    set_num(b->vmax, "%.1f", g->max_c);
+     lv_obj_set_style_text_color(b->vmax, uk_c(color), 0);
+     lv_obj_set_style_bg_color(b->led, uk_c(color), 0);
+     dot_glow(b->led, color, on ? UK_GLOW_OPA : 0);
+@@ -3334,7 +3342,7 @@ static void temp_blk_fill(int i)
+         if (k >= b->made) temp_ch_build(b, k);
+         temp_ch_t *ch = &b->channels[k];
+         set_txt(ch->name, "%s", t->ch[0] ? t->ch : "温度");
+-        set_txt(ch->val, "%.1f", t->c);
++        set_num(ch->val, "%.1f", t->c);
+         lv_obj_set_style_text_color(ch->val, uk_c(on ? uk_temp_color(t->c) : UK_T3), 0);
+         show(ch->line, true);
+     }
+@@ -3344,7 +3352,7 @@ static void temp_blk_fill(int i)
+     b->shown_lines = count;
+     if (g->count > 1) {
+         /* Always reserve the same summary line: numeric refresh cannot change block height. */
+-        set_txt(b->more, "%d 路 · %.1f-%.1f°C · %s", g->count,
++        set_num(b->more, "%d 路 · %.1f-%.1f°C · %s", g->count,
+                 g->min_c, g->max_c, b->collapsed ? "展开" : "收起");
+         show(b->more, true);
+         lv_obj_move_to_index(b->more, -1);
+@@ -3486,6 +3494,37 @@ static const char *docker_module_note(const fnos_status_t *st)
+     return mod_status_cn(state); /* Includes stale/partial and future status words. */
+ }
+ 
++static void overview_layout(void)
++{
++    /* 英雄卡自己量一遍高度：时钟字号、副行文案、采样脚注都随视口和数据变，
++       写死常数会算漏。右列现在只有内存卡，所以 resources 的 min 就是
++       「英雄卡 / 内存卡」取大 —— 这两个数决定首页会不会被页底裁掉。 */
++    lv_obj_t *hero = s_ui.overview_resource[0].card;
++    if (hero && lv_obj_get_width(hero) > 0) {
++        lv_obj_t *hero_body = uk_card_body(hero);
++        lv_obj_update_layout(hero);
++        int32_t hero_min = lv_obj_get_height(lv_obj_get_child(hero, 0)) +
++            lv_obj_get_style_pad_top(hero, 0) + lv_obj_get_style_pad_bottom(hero, 0) +
++            2 * lv_obj_get_style_border_width(hero, 0) + lv_obj_get_style_pad_row(hero, 0);
++        int visible = 0;
++        for (int i = 0; i < (int)lv_obj_get_child_count(hero_body); i++) {
++            lv_obj_t *child = lv_obj_get_child(hero_body, i);
++            if (lv_obj_has_flag(child, LV_OBJ_FLAG_HIDDEN)) continue;
++            hero_min += lv_obj_get_style_flex_grow(child, 0) ?
++                        lv_obj_get_style_min_height(child, 0) : lv_obj_get_height(child);
++            visible++;
++        }
++        if (visible > 1) hero_min += (visible - 1) * lv_obj_get_style_pad_row(hero_body, 0);
++        lv_obj_set_style_min_height(hero, hero_min, 0);
++        int32_t minimum = LV_MAX(hero_min,
++            lv_obj_get_style_min_height(s_ui.overview_resource[1].card, 0));
++        lv_obj_t *resources = lv_obj_get_parent(hero);
++        lv_obj_set_style_min_height(resources, minimum, 0);
++        lv_obj_set_style_min_height(lv_obj_get_parent(resources), minimum, 0);
++    }
++
++}
++
+ static void overview_refresh(const fnos_status_t *st)
+ {
+     static const char *const modules[] = { "cpu", "mem" };
+@@ -3496,59 +3535,34 @@ static void overview_refresh(const fnos_status_t *st)
+         bool readable = overview_readable(st, modules[i]);
+         bool live = readable && overview_live(st, modules[i]);
+         float pct = i == 0 ? st->cpu.pct : st->mem.pct;
+-        set_txt(r->value, readable ? "%.0f" : "--", pct);
++        (live ? set_num : set_txt)(r->value, readable ? "%.0f" : "--", pct);
+         set_txt(r->unit, "%s", readable ? "%" : "");
+-        if (!readable) set_txt(r->meta, "%s", st->ever_ok && state ? mod_status_cn(state) : "等待数据");
+-        else if (i == 0) set_txt(r->meta, "%d 核 · 负载 %.2f · 队列 %d", st->cpu.cores, st->cpu.load1, st->cpu.runq);
+-        else set_txt(r->meta, "%.1f / %.1f GB · 交换 %.1fG", st->mem.used_mb / 1024.f, st->mem.total_mb / 1024.f, st->mem.swap_used_mb / 1024.f);
++        if (!readable) (live ? set_num : set_txt)(r->meta, "%s", st->ever_ok && state ? mod_status_cn(state) : "等待数据");
++        else if (i == 0) (live ? set_num : set_txt)(r->meta, "%d 核 · 负载 %.2f · 队列 %d", st->cpu.cores, st->cpu.load1, st->cpu.runq);
++        else (live ? set_num : set_txt)(r->meta, "%.1f / %.1f GB · 交换 %.1fG", st->mem.used_mb / 1024.f, st->mem.total_mb / 1024.f, st->mem.swap_used_mb / 1024.f);
+         lv_obj_set_style_text_color(r->value, uk_c(live ? UK_T1 : UK_T3), 0);
+ 
+         show(r->chart, readable);
+         lv_obj_set_style_opa(r->chart, live ? LV_OPA_COVER : LV_OPA_40, 0);
+-        if (!readable) set_txt(r->context, "无有效读数");
+-        else if (!chart_sample_count(r->chart)) set_txt(r->context, "等待历史采样");
+-        else set_txt(r->context, "%s%d 次采集 · 峰 %d%%", live ? "" : "旧历史 · ", chart_sample_count(r->chart), chart_peak(r->chart, 0));
++        if (!readable) (live ? set_num : set_txt)(r->context, "无有效读数");
++        else if (!chart_sample_count(r->chart)) (live ? set_num : set_txt)(r->context, "等待历史采样");
++        else (live ? set_num : set_txt)(r->context, "%s%d 次采集 · 峰 %d%%", live ? "" : "旧历史 · ", chart_sample_count(r->chart), chart_peak(r->chart, 0));
+     }
+ 
+     const bool system_live = overview_live(st, "cpu");
+     if (overview_readable(st, "cpu")) {
+         const uint32_t hours = st->uptime_s / 3600u;
+-        set_txt(s_ui.overview_clock, "%02u:%02u", (unsigned)(hours % 24u),
++        (system_live ? set_num : set_txt)(s_ui.overview_clock, "%02u:%02u", (unsigned)(hours % 24u),
+                 (unsigned)(st->uptime_s / 60u % 60u));
+         set_txt(s_ui.overview_clock_note, "%s运行 %s", system_live ? "" : "旧快照 · ",
+                 fmt_uptime(b, sizeof b, st->uptime_s));
+     } else {
+-        set_txt(s_ui.overview_clock, "--:--");
++        set_num(s_ui.overview_clock, "--:--");
+         set_txt(s_ui.overview_clock_note, "运行时长不可用");
+     }
+     lv_obj_set_style_text_color(s_ui.overview_clock, uk_c(system_live ? UK_T1 : UK_T3), 0);
+ 
+-    /* 英雄卡自己量一遍高度：时钟字号、副行文案、采样脚注都随视口和数据变，
+-       写死常数会算漏。右列现在只有内存卡，所以 resources 的 min 就是
+-       「英雄卡 / 内存卡」取大 —— 这两个数决定首页会不会被页底裁掉。 */
+-    lv_obj_t *hero = s_ui.overview_resource[0].card;
+-    if (hero && lv_obj_get_width(hero) > 0) {
+-        lv_obj_t *hero_body = uk_card_body(hero);
+-        lv_obj_update_layout(hero);
+-        int32_t hero_min = lv_obj_get_height(lv_obj_get_child(hero, 0)) +
+-            lv_obj_get_style_pad_top(hero, 0) + lv_obj_get_style_pad_bottom(hero, 0) +
+-            2 * lv_obj_get_style_border_width(hero, 0) + lv_obj_get_style_pad_row(hero, 0);
+-        int visible = 0;
+-        for (int i = 0; i < (int)lv_obj_get_child_count(hero_body); i++) {
+-            lv_obj_t *child = lv_obj_get_child(hero_body, i);
+-            if (lv_obj_has_flag(child, LV_OBJ_FLAG_HIDDEN)) continue;
+-            hero_min += lv_obj_get_style_flex_grow(child, 0) ?
+-                        lv_obj_get_style_min_height(child, 0) : lv_obj_get_height(child);
+-            visible++;
+-        }
+-        if (visible > 1) hero_min += (visible - 1) * lv_obj_get_style_pad_row(hero_body, 0);
+-        lv_obj_set_style_min_height(hero, hero_min, 0);
+-        int32_t minimum = LV_MAX(hero_min,
+-            lv_obj_get_style_min_height(s_ui.overview_resource[1].card, 0));
+-        lv_obj_t *resources = lv_obj_get_parent(hero);
+-        lv_obj_set_style_min_height(resources, minimum, 0);
+-        lv_obj_set_style_min_height(lv_obj_get_parent(resources), minimum, 0);
+-    }
++    overview_layout();
+ 
+     bool net_readable = overview_readable(st, "net");
+     bool net_live = net_readable && overview_live(st, "net");
+@@ -3556,7 +3570,7 @@ static void overview_refresh(const fnos_status_t *st)
+         const char *v, *unit;
+         snprintf(b, sizeof b, "%s", fmt_rate(c1, sizeof c1, i == 0 ? st->net.rx_kbs : st->net.tx_kbs));
+         rate_split(b, &v, &unit);
+-        set_txt(s_ui.overview_rate[i], "%s", net_readable ? v : "--");
++        (net_live ? set_num : set_txt)(s_ui.overview_rate[i], "%s", net_readable ? v : "--");
+         set_txt(s_ui.overview_unit[i], "%s", net_readable ? unit : "");
+         lv_obj_set_style_text_color(s_ui.overview_rate[i], uk_c(net_live ? UK_T1 : UK_T3), 0);
+     }
+@@ -3564,7 +3578,7 @@ static void overview_refresh(const fnos_status_t *st)
+     lv_obj_set_style_opa(s_ui.overview_net, net_live ? LV_OPA_COVER : LV_OPA_40, 0);
+     if (!net_readable) {
+         const char *state = overview_module_state(st, "net");
+-        set_txt(s_ui.overview_net_context, "%s", st->ever_ok && state ? mod_status_cn(state) : "等待网络数据");
++        set_num(s_ui.overview_net_context, "%s", st->ever_ok && state ? mod_status_cn(state) : "等待网络数据");
+     } else {
+         float top = chart_peak(s_ui.overview_net, 0);
+         if (top < chart_peak(s_ui.overview_net, 1)) top = chart_peak(s_ui.overview_net, 1);
+@@ -3574,9 +3588,9 @@ static void overview_refresh(const fnos_status_t *st)
+         int32_t ymax = (int32_t)top;
+         if ((float)ymax < top) ymax++;
+         uk_trend_set_range(s_ui.overview_net, 0, ymax);
+-        if (!net_live) set_txt(s_ui.overview_net_context, "旧历史 · 暂停更新");
+-        else if (!chart_sample_count(s_ui.overview_net)) set_txt(s_ui.overview_net_context, "等待历史采样");
+-        else set_txt(s_ui.overview_net_context, "%d 次采集 · 0-%s", chart_sample_count(s_ui.overview_net), fmt_rate(b, sizeof b, ymax));
++        if (!net_live) set_num(s_ui.overview_net_context, "旧历史 · 暂停更新");
++        else if (!chart_sample_count(s_ui.overview_net)) set_num(s_ui.overview_net_context, "等待历史采样");
++        else set_num(s_ui.overview_net_context, "%d 次采集 · 0-%s", chart_sample_count(s_ui.overview_net), fmt_rate(b, sizeof b, ymax));
+     }
+ 
+     float used = 0, total = 0, free_gb = 0;
+@@ -3587,10 +3601,10 @@ static void overview_refresh(const fnos_status_t *st)
+     for (int i = 0; i < st->nraid; i++) if (st->raid[i].ok) healthy_raid++;
+     bool storage = overview_readable(st, "vols") && st->nvols > 0 && total > 0;
+     bool storage_live = storage && overview_live(st, "vols");
+-    set_txt(s_ui.capacity, "%s", storage ? fmt_cap(b, sizeof b, used) : "--");
++    (storage_live ? set_num : set_txt)(s_ui.capacity, "%s", storage ? fmt_cap(b, sizeof b, used) : "--");
+     lv_obj_set_style_text_color(s_ui.capacity, uk_c(storage_live ? UK_T1 : UK_T3), 0);
+-    if (storage) set_txt(s_ui.capacity_detail, "已用 / 总计 %s · 可用 %s", fmt_cap(c1, sizeof c1, total), fmt_cap(c2, sizeof c2, free_gb));
+-    else set_txt(s_ui.capacity_detail, "%s", st->ever_ok ? "没有可用容量数据" : "等待存储数据");
++    if (storage) set_num(s_ui.capacity_detail, "已用 / 总计 %s · 可用 %s", fmt_cap(c1, sizeof c1, total), fmt_cap(c2, sizeof c2, free_gb));
++    else set_num(s_ui.capacity_detail, "%s", st->ever_ok ? "没有可用容量数据" : "等待存储数据");
+     show(s_ui.capacity_bar, storage);
+     uk_bar_set(s_ui.capacity_bar, total > 0 ? (int32_t)(used / total * 100) : 0);
+     lv_obj_set_style_bg_color(s_ui.capacity_bar, uk_c(storage_live ? UK_S_CPU : UK_OFF), LV_PART_INDICATOR);
+@@ -3619,7 +3633,7 @@ static void overview_refresh(const fnos_status_t *st)
+         }
+         const fnos_vol_t *vol = &st->vols[i];
+         set_txt(row->name, "%s", vol->mnt);
+-        set_txt(row->value, vol->total_gb > 0 ? "%.0f%%" : "--", vol->pct);
++        (storage_live ? set_num : set_txt)(row->value, vol->total_gb > 0 ? "%.0f%%" : "--", vol->pct);
+         show(row->bar, vol->total_gb > 0);
+         uk_bar_set(row->bar, (int32_t)vol->pct);
+         lv_obj_set_style_bg_color(row->bar, uk_c(storage_live ? UK_S_CPU : UK_OFF), LV_PART_INDICATOR);
+@@ -3755,6 +3769,8 @@ static void refresh(void)
+     const fnos_status_t *st = &s_st;
+     char b[160], c1[32], c2[32];
+ 
++    uk_number_motion_enable(st->online);
++
+     /* 顶栏：主机 / 端点 / 状态胶囊 / 信号 */
+     set_txt(s_ui.h_host, "%s", st->host[0] ? st->host : "fnos");
+     header_refresh();
+@@ -3766,7 +3782,7 @@ static void refresh(void)
+     /* 底栏：左边是轮询统计，右边是"最严重的一条告警"。底栏只说**一件事**：
+        现在要不要动手；全量告警在系统页那一列里。 */
+     if (s_ui.foot_poll)
+-        set_txt(s_ui.foot_poll, "轮询 1s · ok %u · fail %u",
++        set_num(s_ui.foot_poll, "轮询 1s · ok %u · fail %u",
+                 (unsigned)st->ok_count, (unsigned)st->fail_count);
+     if (s_ui.foot_txt && s_ui.foot_dot) {
+         uint32_t band = UK_OK;
+@@ -3850,7 +3866,7 @@ static void refresh(void)
+     }
+     float capacities[] = { used, total, free_gb };
+     for (int i = 0; i < 3; i++)
+-        set_txt(s_ui.storage_value[i], "%s", st->ever_ok && st->nvols ? fmt_cap(b, sizeof b, capacities[i]) : "-");
++        set_num(s_ui.storage_value[i], "%s", st->ever_ok && st->nvols ? fmt_cap(b, sizeof b, capacities[i]) : "-");
+     /* P1 的容量条与上面的三栏数字同源：一眼看出"还剩多少"。 */
+     if (s_ui.storage_bar) {
+         int32_t pct = (st->ever_ok && st->nvols && total > 0) ? (int32_t)(used / total * 100.0f + 0.5f) : 0;
+@@ -3859,7 +3875,7 @@ static void refresh(void)
+     }
+     if (!st->online) {
+         set_txt(s_ui.overview_note, "%s", why ? why : "离线，显示最后一次采集快照");
+-        set_txt(s_ui.home_temp_value, "--");
++        set_num(s_ui.home_temp_value, "--");
+         set_txt(s_ui.home_temp_unit, "");
+         set_txt(s_ui.home_temp_name, "%s", "离线 · 显示上次快照");
+         lv_obj_set_style_bg_color(s_ui.home_temp_dot, uk_c(UK_T3), 0);
+@@ -3886,13 +3902,13 @@ static void refresh(void)
+         else set_txt(s_ui.overview_note, "温度不可用 · %s · 运行 %s", containers, fmt_uptime(b, sizeof b, st->uptime_s));
+         /* 首页"最热温度"磁贴：与上面同一次扫描，值按温度上色，点进去看全部通道。 */
+         if (have) {
+-            set_txt(s_ui.home_temp_value, "%.0f", hottest);
++            (old_temp ? set_txt : set_num)(s_ui.home_temp_value, "%.0f", hottest);
+             set_txt(s_ui.home_temp_unit, "°C");
+             set_txt(s_ui.home_temp_name, "%s", sensor);
+             lv_obj_set_style_text_color(s_ui.home_temp_value, uk_c(old_temp ? UK_T3 : UK_T1), 0);
+             lv_obj_set_style_bg_color(s_ui.home_temp_dot, uk_c(uk_temp_color(hottest)), 0);
+         } else {
+-            set_txt(s_ui.home_temp_value, "--");
++            set_num(s_ui.home_temp_value, "--");
+             set_txt(s_ui.home_temp_unit, "");
+             set_txt(s_ui.home_temp_name, "%s", containers);
+             lv_obj_set_style_bg_color(s_ui.home_temp_dot, uk_c(UK_T3), 0);
+@@ -4003,10 +4019,10 @@ static void refresh(void)
+         if (top < st->net.tx_kbs * 1.2f) top = st->net.tx_kbs * 1.2f;
+         if (top < 20) top = 20;
+         uk_trend_set_range(s_ui.tr_net, 0, (int32_t)top);
+-        set_txt(s_ui.net_axis, "量程 0 - %s", fmt_rate(b, sizeof b, top));
+-        set_txt(s_ui.tr_tx_lbl, "%s · 峰 %s",
++        set_num(s_ui.net_axis, "量程 0 - %s", fmt_rate(b, sizeof b, top));
++        set_num(s_ui.tr_tx_lbl, "%s · 峰 %s",
+                 fmt_rate(c1, sizeof c1, st->net.tx_kbs), fmt_rate(c2, sizeof c2, peak_tx));
+-        set_txt(s_ui.tr_rx_lbl, "%s · 峰 %s",
++        set_num(s_ui.tr_rx_lbl, "%s · 峰 %s",
+                 fmt_rate(c1, sizeof c1, st->net.rx_kbs), fmt_rate(c2, sizeof c2, peak_rx));
+     }
+ 
+@@ -4019,15 +4035,19 @@ static void refresh(void)
+     for (int i = 0; i < nnets; i++) {
+         const fnos_netif_t *net = st->nnets ? &st->nets[i] : &st->net;
+         uk_row_t *row = s_ui.net_rows[i];
+-        uk_row_set(row, net->ifname, "", "", "", -1,
+-                   net_live && (!net->state[0] || !strcmp(net->state,"up")) ? UK_OK : UK_T3);
+-        set_txt(row->name2, "%s下行 %s · 上行 %s", net_live ? "" : "上次 · ", fmt_rate(c1,sizeof c1,net->rx_kbs),
++        if (net->state[0] && net->speed_mbps>0)
++            snprintf(b,sizeof b,"%s · %s · %d Mbps",net->ifname,net->state,net->speed_mbps);
++        else if (net->state[0]) snprintf(b,sizeof b,"%s · %s",net->ifname,net->state);
++        else snprintf(b,sizeof b,"%s",net->ifname);
++        uint32_t led = net_live && (!net->state[0] || !strcmp(net->state,"up")) ? UK_OK : UK_T3;
++        /* Reset on identity/link changes; retain the presented rate on ordinary refresh. */
++        if (strcmp(lv_label_get_text(row->name1),b))
++            uk_row_set(row,b,"","","",-1,led);
++        else if (row->led) lv_obj_set_style_bg_color(row->led,uk_c(led),0);
++        (net_live ? set_num : set_txt)(row->name2, "%s下行 %s · 上行 %s", net_live ? "" : "上次 · ", fmt_rate(c1,sizeof c1,net->rx_kbs),
+                                                   fmt_rate(c2,sizeof c2,net->tx_kbs));
+         show(lv_obj_get_parent(row->name2),true);
+         lv_obj_set_style_text_color(row->name2,uk_c(net_live ? UK_T2 : UK_T3),0);
+-        if (net->state[0] && net->speed_mbps>0)
+-            set_txt(row->name1,"%s · %s · %d Mbps",net->ifname,net->state,net->speed_mbps);
+-        else if (net->state[0]) set_txt(row->name1,"%s · %s",net->ifname,net->state);
+     }
+     show(s_ui.net_card, nnets>0);
+     uk_pool_relayout(s_ui.net_pool, UK_LIST_MIN_WIDTH, false, NULL);
+@@ -4054,7 +4074,7 @@ static void refresh(void)
+     /* 文案长度受盒宽约束（892px，cjk_12）：40 个中文字 ≈ 890px 就到顶。
+        "0.1 / 2.0 GB" 写成 "0.1/2.0G" 省 60px，否则会折行、第二行被卡片裁掉
+        （audit_bounds 报 `child out of parent`）。 */
+-    set_txt(s_ui.system_note2, "负载 %.2f/%.2f/%.2f · 进程 %d · 交换 %.1f/%.1fG · 运行 %s",
++    set_num(s_ui.system_note2, "负载 %.2f/%.2f/%.2f · 进程 %d · 交换 %.1f/%.1fG · 运行 %s",
+             st->cpu.load1, st->cpu.load5, st->cpu.load15, st->cpu.procs,
+             st->mem.swap_used_mb / 1024.f, st->mem.swap_total_mb / 1024.f,
+             fmt_uptime(c2, sizeof c2, st->uptime_s));
+@@ -4067,13 +4087,13 @@ static void refresh(void)
+     show(s_ui.temp_empty, st->ntemps == 0); show(s_ui.p3_temp_pool, st->ntemps > 0);
+     if (!st->ever_ok) {
+         for (int i = 0; i < 4; i++) uk_kpi_set(s_ui.kpi2[i], "-", "", "等待数据", -1);
+-        set_txt(s_ui.tr_tx_lbl, "等待数据");
+-        set_txt(s_ui.tr_rx_lbl, "等待数据");
+-        set_txt(s_ui.net_axis, "无数据");
++        set_num(s_ui.tr_tx_lbl, "等待数据");
++        set_num(s_ui.tr_rx_lbl, "等待数据");
++        set_num(s_ui.net_axis, "无数据");
+         /* 从没采到过数据：把图清空，不留上一轮的残影 */
+         chart_clear(s_ui.tr_net, 2);
+         set_txt(s_ui.system_note, "等待采集，尚无有效快照");
+-        set_txt(s_ui.system_note2, "");
++        set_num(s_ui.system_note2, "");
+     }
+     /* ── P3：容器 / 温度 ───────────────────────────────────────────────
+        两张清单都是自适应池：行按需建、多出来的行销毁（不是隐藏 —— 池的条目收集
+@@ -4167,14 +4187,14 @@ static void refresh(void)
+     } /* A failed grouping keeps copied labels and owned device IDs for retry. */
+     /* Visual reference counts are separate from collector health alerts. */
+     if (!st->ever_ok) {
+-        set_txt(s_ui.temp_hero, "--");
++        set_num(s_ui.temp_hero, "--");
+         set_txt(s_ui.temp_hero_unit, "");
+         set_txt(s_ui.temp_note, "等待数据");
+         set_txt(s_ui.temp_note2, "");
+         lv_obj_set_style_bg_color(s_ui.temp_hero_dot, uk_c(UK_T3), 0);
+         dot_glow(s_ui.temp_hero_dot, UK_T3, 0);
+     } else if (st->ntemps == 0) {
+-        set_txt(s_ui.temp_hero, "--");
++        set_num(s_ui.temp_hero, "--");
+         set_txt(s_ui.temp_hero_unit, "°C");
+         set_txt(s_ui.temp_note, "采集端没有上报温度通道");
+         set_txt(s_ui.temp_note2, "看「设置」页的采集段一行：temps 可能是 denied / missing");
+@@ -4196,7 +4216,7 @@ static void refresh(void)
+         /* 大字沿用桃色卡自带的墨色（夜间由 theme_apply 改成 UK_T2），严重度只由
+            左侧信号点承载：彩色数字压在暖底上对比度不够（01-warming-p4 曾掉到 1.13:1）。 */
+         const uint32_t hc = st->online ? uk_temp_color(h->c) : UK_T3;
+-        set_txt(s_ui.temp_hero, "%.1f", h->c);
++        set_num(s_ui.temp_hero, "%.1f", h->c);
+         set_txt(s_ui.temp_hero_unit, "°C");
+         lv_obj_set_style_bg_color(s_ui.temp_hero_dot, uk_c(hc), 0);
+         dot_glow(s_ui.temp_hero_dot, hc, st->online ? UK_GLOW_OPA : 0);
+@@ -4208,14 +4228,14 @@ static void refresh(void)
+ 
+     set_txt(s_ui.agent_detail[0], "%s", st->host[0] ? st->host : "-");
+     set_txt(s_ui.agent_detail[1], "%s:%d", FNOS_HOST, FNOS_PORT);
+-    set_txt(s_ui.agent_detail[2], "%d ms (状态 %d)", st->http_ms, st->last_status);
+-    set_txt(s_ui.agent_detail[3], "%u / %u", (unsigned)st->ok_count, (unsigned)st->fail_count);
++    set_num(s_ui.agent_detail[2], "%d ms (状态 %d)", st->http_ms, st->last_status);
++    set_num(s_ui.agent_detail[3], "%u / %u", (unsigned)st->ok_count, (unsigned)st->fail_count);
+     set_txt(s_ui.agent_detail[4], "%s", st->last_err[0] ? st->last_err : "无");
+-    set_txt(s_ui.agent_detail[5], "%s", fmt_age(c1, sizeof c1, data_age_ms(st)));
+-    set_txt(s_ui.agent_detail[6], "%u KB",
++    set_num(s_ui.agent_detail[5], "%s", fmt_age(c1, sizeof c1, data_age_ms(st)));
++    set_num(s_ui.agent_detail[6], "%u KB",
+             (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024));
+ 
+-    set_txt(s_ui.agent_detail[7], st->has_zfs ? "%.1f GB · 命中 %.1f%%" : "未采集到 ZFS 数据", st->zfs_arc_gb, st->zfs_hit_pct);
++    set_num(s_ui.agent_detail[7], st->has_zfs ? "%.1f GB · 命中 %.1f%%" : "未采集到 ZFS 数据", st->zfs_arc_gb, st->zfs_hit_pct);
+ 
+     /* 协议：只在真比本机新时说清楚"哪些东西看不到"，不然用户会以为界面漏了数据。 */
+     if (st->proto <= 0)        set_txt(s_ui.agent_detail[8], "未上报（旧版应用，按 v1 读）");
+@@ -4482,6 +4502,7 @@ void fnos_ui_create(void)
+     s_created = true;
+     s_page = -1;
+     fnos_ui_set_page(0);
++    overview_layout(); /* Measure placeholder content before the first data tick. */
+     night_apply();
+ 
+     lv_timer_create(ui_tick, 500, NULL);
+diff --git a/components/fnos_monitor/ui_kit/uk.c b/components/fnos_monitor/ui_kit/uk.c
+index 74bec99..1d758d0 100644
+--- a/components/fnos_monitor/ui_kit/uk.c
++++ b/components/fnos_monitor/ui_kit/uk.c
+@@ -65,7 +65,7 @@ static void style_card_edge(lv_obj_t *o)
+ 
+ static lv_obj_t *mk_label_raw(lv_obj_t *parent, const lv_font_t *font, uint32_t hex)
+ {
+-    lv_obj_t *l = lv_label_create(parent);
++    lv_obj_t *l = uk_number_label_create(parent);
+     lv_obj_set_style_text_font(l, font, 0);
+     lv_obj_set_style_text_color(l, uk_c(hex), 0);
+     lv_label_set_long_mode(l, LV_LABEL_LONG_MODE_DOTS);
+@@ -289,7 +289,7 @@ void uk_set_text(lv_obj_t *label, const char *fmt, ...)
+     char *b=n>=0 ? uk_alloc((size_t)n+1) : NULL;
+     if (b) {
+         vsnprintf(b,(size_t)n+1,fmt,ap);
+-        if (strcmp(lv_label_get_text(label),b)) lv_label_set_text(label,b);
++        uk_number_set_text(label,b,false);
+         lv_free(b);
+     }
+     va_end(ap);
+@@ -448,10 +448,13 @@ void uk_row_set(uk_row_t *r, const char *l1, const char *l2,
+ {
+     if (!r) return;
+     const bool two = (l2 && l2[0]);
++    const bool same_reading = !strcmp(lv_label_get_text(r->unit), unit ? unit : "") &&
++        !strcmp(lv_label_get_text(r->name1), l1 ? l1 : "") &&
++        !strcmp(lv_label_get_text(r->name2), two ? l2 : "");
+ 
+     uk_set_text(r->name1, "%s", l1 ? l1 : "");
+     uk_set_text(r->name2, "%s", two ? l2 : "");
+-    uk_set_text(r->val, "%s", val ? val : "");
++    uk_number_set_text(r->val,val ? val : "",same_reading);
+     uk_set_text(r->unit, "%s", unit ? unit : "");
+ 
+     /* 数值的位置跟着数据形态走：有通道名 → 第二行右侧；没有 → 回到第一行右侧 */
+@@ -738,9 +741,10 @@ uk_kpi_t *uk_kpi_create(lv_obj_t *parent, const char *label)
+ void uk_kpi_set(uk_kpi_t *k, const char *val, const char *unit, const char *sub, int32_t pct)
+ {
+     if (!k) return;
+-    uk_set_text(k->val, "%s", val ? val : "");
++    const bool same_unit = !strcmp(lv_label_get_text(k->unit),unit ? unit : "");
++    uk_number_set_text(k->val,val ? val : "",same_unit);
+     uk_set_text(k->unit, "%s", unit ? unit : "");
+-    uk_set_text(k->sub, "%s", sub ? sub : "");
++    uk_number_set_text(k->sub,sub ? sub : "",same_unit);
+     if (k->bar) {
+         if (pct < 0) lv_obj_add_flag(k->bar, LV_OBJ_FLAG_HIDDEN);
+         else {
+@@ -954,6 +958,7 @@ void uk_anim_settle(lv_obj_t *root)
+         lv_anim_delete(root, opa_anim_cb);
+         lv_obj_set_style_opa(root, LV_OPA_COVER, 0);
+     }
++    uk_number_settle(root);
+     uk_anim_reveal_settle(root);
+     uint32_t n = lv_obj_get_child_count(root);
+     for (uint32_t i = 0; i < n; i++) uk_anim_settle(lv_obj_get_child(root, i));
+diff --git a/components/fnos_monitor/ui_kit/uk.h b/components/fnos_monitor/ui_kit/uk.h
+index d9b0218..7996abb 100644
+--- a/components/fnos_monitor/ui_kit/uk.h
++++ b/components/fnos_monitor/ui_kit/uk.h
+@@ -84,6 +84,14 @@ void uk_card_flex(lv_obj_t *card, int32_t grow);
+ /* 常用组合：主文本 / 次文本 / 行标签 / 轴标签 / 数字。 */
+ lv_obj_t *uk_label(lv_obj_t *parent, const lv_font_t *font, uint32_t hex, const char *txt);
+ void uk_set_text(lv_obj_t *label, const char *fmt, ...);   /* printf 风格，自动 lv_label_set_text */
++/* Numeric labels retain the lv_label API. Explicit opt-in prevents animating IDs/input. */
++lv_obj_t *uk_number_label_create(lv_obj_t *parent);
++void uk_number_set_text(lv_obj_t *label, const char *text, bool animate);
++void uk_number_settle(lv_obj_t *label);
++void uk_number_motion_enable(bool enabled);
++#ifdef FNOS_UI_TESTING
++void uk_number_selfcheck(lv_obj_t *parent);
++#endif
+ void uk_label_ellipsis(lv_obj_t *label);                   /* 超宽省略号（默认不换行） */
+ lv_obj_t *uk_hairline(lv_obj_t *parent);                   /* 1px 分隔线，撑满宽 */
+ lv_obj_t *uk_dot(lv_obj_t *parent, uint32_t hex, int32_t d);  /* 状态点（圆形） */
+diff --git a/components/fnos_monitor/ui_kit/uk_number.c b/components/fnos_monitor/ui_kit/uk_number.c
+new file mode 100644
+index 0000000..e63046d
+--- /dev/null
++++ b/components/fnos_monitor/ui_kit/uk_number.c
+@@ -0,0 +1,328 @@
++/* Numeric transitions inherit lv_label: native text/layout/audits stay authoritative. */
++#include "uk.h"
++#include "src/widgets/label/lv_label_private.h"
++#include "src/core/lv_obj_class_private.h"
++#include "src/misc/lv_text_private.h"
++#include "src/misc/lv_area_private.h"
++#include <string.h>
++#include <math.h>
++
++typedef struct glyph_layer {
++    struct glyph_layer *next;
++    uint32_t cp, delay;
++    int key;
++    bool presented;
++    float x, y, alpha, from_x, from_y, from_alpha, to_x, to_y, to_alpha;
++} glyph_layer_t;
++typedef struct {
++    lv_label_t label;
++    glyph_layer_t *layers;
++    const lv_font_t *font;
++    uint32_t started, span;
++    bool active;
++} number_label_t;
++static bool motion_enabled = true;
++static size_t layer_bytes;
++static void number_event(const lv_obj_class_t *cls, lv_event_t *e);
++static void number_destroy(const lv_obj_class_t *cls, lv_obj_t *obj);
++static void number_step(void *obj, int32_t elapsed);
++static const lv_obj_class_t number_class = {
++    .base_class=&lv_label_class, .event_cb=number_event, .destructor_cb=number_destroy,
++    .instance_size=sizeof(number_label_t), .width_def=LV_SIZE_CONTENT,
++    .height_def=LV_SIZE_CONTENT, .name="uk_number_label"
++};
++
++/* Invert x(t), then evaluate y(t). Apple easeOut is (0,0,.58,1),
++   not y(progress) and not LVGL's unrelated built-in ease-out polynomial. */
++static float apple_ease(float progress)
++{
++    if (progress<=0) return 0;
++    if (progress>=1) return 1;
++    float lo=0, hi=1, t=0;
++    for (int i=0;i<16;i++) {
++        t=(lo+hi)*.5f;
++        float x=3*(1-t)*t*t*UK_NUMBER_BEZIER_X2+t*t*t;
++        if (x<progress) lo=t; else hi=t;
++    }
++    return 3*(1-t)*t*t+t*t*t;
++}
++static bool has_reading(const char *text)
++{
++    bool digit=false;
++    for (const unsigned char *s=(const unsigned char *)text;*s;s++) {
++        if (*s=='\n' || *s=='\r') return false;
++        if (*s>='0' && *s<='9') digit=true;
++    }
++    return digit;
++}
++/* A unit, sign, device name, or status change is semantic: publish it immediately. */
++static bool same_numeric_structure(const char *a, const char *b)
++{
++    for (;;) {
++        while (*a>='0' && *a<='9') a++;
++        while (*b>='0' && *b<='9') b++;
++        if (*a!=*b) return false;
++        if (!*a) return true;
++        a++; b++;
++    }
++}
++static void clear_layers(lv_obj_t *obj)
++{
++    number_label_t *n=(number_label_t *)obj;
++    lv_anim_delete(obj,number_step);
++    while (n->layers) {
++        glyph_layer_t *next=n->layers->next;
++        layer_bytes-=sizeof *n->layers;
++        lv_free(n->layers); n->layers=next;
++    }
++    n->active=false;
++    lv_obj_invalidate(obj);
++}
++void uk_number_settle(lv_obj_t *obj)
++{
++    if (obj && lv_obj_get_class(obj)==&number_class) clear_layers(obj);
++}
++void uk_number_motion_enable(bool enabled) { motion_enabled=enabled; }
++lv_obj_t *uk_number_label_create(lv_obj_t *parent)
++{
++    lv_obj_t *obj=lv_obj_class_create_obj(&number_class,parent);
++    lv_obj_class_init_obj(obj);
++    return obj;
++}
++static void number_destroy(const lv_obj_class_t *cls, lv_obj_t *obj)
++{
++    (void)cls; clear_layers(obj);
++}
++static void sample_layers(number_label_t *n, uint32_t elapsed)
++{
++    for (glyph_layer_t *g=n->layers;g;g=g->next) {
++        float p=elapsed<=g->delay ? 0 : apple_ease((float)(elapsed-g->delay)/(UK_NUMBER_MS ? UK_NUMBER_MS : 1));
++        g->x=g->from_x+(g->to_x-g->from_x)*p;
++        g->y=g->from_y+(g->to_y-g->from_y)*p;
++        g->alpha=g->from_alpha+(g->to_alpha-g->from_alpha)*p;
++    }
++}
++static void number_step(void *obj, int32_t elapsed)
++{
++    number_label_t *n=obj;
++    sample_layers(n,(uint32_t)elapsed);
++    if ((uint32_t)elapsed>=n->span) clear_layers(obj);
++    else lv_obj_invalidate(obj);
++}
++static int char_count(const char *text)
++{
++    int count=0; uint32_t i=0;
++    while (text[i]) { lv_text_encoded_next(text,&i); count++; }
++    return count;
++}
++static glyph_layer_t *add_layer(number_label_t *n, int key, uint32_t cp, float x, float y, float alpha)
++{
++    if (layer_bytes+sizeof(glyph_layer_t)>UK_NUMBER_BUDGET_BYTES) return NULL;
++    glyph_layer_t *g=uk_alloc(sizeof *g);
++    if (!g) return NULL;
++    layer_bytes+=sizeof *g;
++    *g=(glyph_layer_t){.next=n->layers,.key=key,.cp=cp,
++        .x=x,.y=y,.alpha=alpha,.to_x=x,.to_y=y,.to_alpha=alpha};
++    n->layers=g;
++    return g;
++}
++static bool seed_layers(lv_obj_t *obj, const char *text)
++{
++    number_label_t *n=(number_label_t *)obj;
++    int key=-char_count(text); uint32_t i=0; float x=0;
++    int32_t spacing=lv_obj_get_style_text_letter_space(obj,0);
++    while (text[i]) {
++        uint32_t cp=lv_text_encoded_next(text,&i), j=i;
++        uint32_t next=text[j] ? lv_text_encoded_next(text,&j) : 0;
++        if (!add_layer(n,key++,cp,x,0,1)) return false;
++        x+=lv_font_get_glyph_width(n->font,cp,next)+spacing;
++    }
++    return true;
++}
++void uk_number_set_text(lv_obj_t *obj, const char *text, bool animate)
++{
++    if (!obj) return;
++    if (!text) text="";
++    if (lv_obj_get_class(obj)!=&number_class) { lv_label_set_text(obj,text); return; }
++    number_label_t *n=(number_label_t *)obj;
++    const char *old=lv_label_get_text(obj);
++    const lv_font_t *font=lv_obj_get_style_text_font(obj,0);
++    bool eligible=animate && motion_enabled && !UK_NUMBER_REDUCED && UK_NUMBER_MS>0 &&
++        lv_obj_is_visible(obj) && has_reading(old) && has_reading(text) &&
++        same_numeric_structure(old,text) &&
++        (!n->active || n->font==font);
++    if (!eligible) {
++        clear_layers(obj);
++        if (strcmp(old,text)) lv_label_set_text(obj,text);
++        return;
++    }
++    if (!strcmp(old,text)) return; /* Same target never restarts a running transition. */
++    n->font=font;
++    lv_obj_update_layout(obj);
++    lv_point_t old_size,new_size;
++    int32_t spacing=lv_obj_get_style_text_letter_space(obj,0);
++    lv_text_get_size(&old_size,old,font,spacing,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
++    lv_text_get_size(&new_size,text,font,spacing,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
++    /* Wrapped/ellipsized text and shrinking content-sized masks use native text.
++       A smaller mask cannot retain all outgoing digits without painting over units. */
++    if ((lv_obj_get_style_width(obj,0)==LV_SIZE_CONTENT && char_count(text)<char_count(old)) ||
++        old_size.x>lv_obj_get_content_width(obj) || old_size.y>lv_font_get_line_height(font) ||
++        (lv_obj_get_style_width(obj,0)!=LV_SIZE_CONTENT && !obj->w_layout &&
++         new_size.x>lv_obj_get_content_width(obj))) {
++        clear_layers(obj); lv_label_set_text(obj,text); return;
++    }
++    lv_area_t old_content; lv_obj_get_content_coords(obj,&old_content);
++    lv_text_align_t alignment=lv_obj_get_style_text_align(obj,0);
++    int32_t old_origin=old_content.x1+(alignment==LV_TEXT_ALIGN_RIGHT ?
++        lv_area_get_width(&old_content)-old_size.x : alignment==LV_TEXT_ALIGN_CENTER ?
++        (lv_area_get_width(&old_content)-old_size.x)/2 : 0);
++    if (n->active) sample_layers(n,lv_tick_elaps(n->started));
++    else if (!seed_layers(obj,old)) { clear_layers(obj); lv_label_set_text(obj,text); return; }
++    lv_anim_delete(obj,number_step);
++    glyph_layer_t **slot=&n->layers;
++    while (*slot) {
++        glyph_layer_t *g=*slot;
++        if (g->alpha<=0 && g->to_alpha==0) { *slot=g->next; layer_bytes-=sizeof *g; lv_free(g); }
++        else slot=&g->next;
++    }
++    float distance=(float)lv_font_get_line_height(font)*UK_NUMBER_TRAVEL_PCT/100;
++    /* Preserve every presented layer during retargeting, including a partially
++       faded incoming glyph. No queue of logical values and no restart jump. */
++    for (glyph_layer_t *g=n->layers;g;g=g->next) {
++        g->presented=true;
++        g->from_x=g->x; g->from_y=g->y; g->from_alpha=g->alpha;
++        g->to_x=g->x; g->to_y=distance; g->to_alpha=0; g->delay=0;
++    }
++    uint32_t i=0, changed=0, max_delay=0; int key=-char_count(text); float x=0;
++    while (text[i]) {
++        uint32_t cp=lv_text_encoded_next(text,&i), j=i;
++        uint32_t next=text[j] ? lv_text_encoded_next(text,&j) : 0;
++        glyph_layer_t *found=NULL;
++        for (glyph_layer_t *g=n->layers;g;g=g->next)
++            if (g->key==key && g->cp==cp && (!found || g->alpha>found->alpha)) found=g;
++        bool changing=!found || found->alpha<.999f || fabsf(found->y)>.01f;
++        uint32_t delay=changing ? LV_MIN(changed++*UK_NUMBER_STAGGER_MS,UK_NUMBER_MAX_STAGGER_MS) : 0;
++        if (!found) found=add_layer(n,key,cp,x,-distance,0);
++        if (!found) { clear_layers(obj); lv_label_set_text(obj,text); return; }
++        found->from_x=found->x; found->from_y=found->y; found->from_alpha=found->alpha;
++        found->to_x=x; found->to_y=0; found->to_alpha=1; found->delay=delay;
++        /* Pair the outgoing digit with its incoming digit's delay. */
++        for (glyph_layer_t *g=n->layers;g;g=g->next)
++            if (g->key==key && g!=found) g->delay=delay;
++        max_delay=LV_MAX(max_delay,delay);
++        key++; x+=lv_font_get_glyph_width(font,cp,next)+spacing;
++    }
++    n->span=UK_NUMBER_MS+max_delay; n->started=lv_tick_get(); n->active=true;
++    lv_label_set_text(obj,text); /* Public text is always the actual latest reading. */
++    lv_obj_update_layout(obj);
++    lv_area_t new_content; lv_obj_get_content_coords(obj,&new_content);
++    int32_t new_origin=new_content.x1+(alignment==LV_TEXT_ALIGN_RIGHT ?
++        lv_area_get_width(&new_content)-new_size.x : alignment==LV_TEXT_ALIGN_CENTER ?
++        (lv_area_get_width(&new_content)-new_size.x)/2 : 0);
++    for (glyph_layer_t *g=n->layers;g;g=g->next) if (g->presented) {
++        g->from_x+=old_origin-new_origin;
++        g->x=g->from_x;
++    }
++    lv_anim_t a; lv_anim_init(&a); lv_anim_set_var(&a,obj);
++    lv_anim_set_values(&a,0,(int32_t)n->span); lv_anim_set_duration(&a,n->span);
++    lv_anim_set_exec_cb(&a,number_step); lv_anim_set_path_cb(&a,lv_anim_path_linear);
++    lv_anim_start(&a);
++}
++static void number_draw(lv_event_t *e)
++{
++    lv_obj_t *obj=lv_event_get_current_target(e);
++    number_label_t *n=(number_label_t *)obj;
++    lv_layer_t *layer=lv_event_get_layer(e);
++    lv_area_t content; lv_obj_get_content_coords(obj,&content);
++    lv_area_t saved=layer->_clip_area, clip;
++    if (!lv_area_intersect(&clip,&saved,&content)) return;
++    layer->_clip_area=clip;
++    lv_draw_label_dsc_t label; lv_draw_label_dsc_init(&label);
++    lv_obj_init_draw_label_dsc(obj,0,&label);
++    lv_point_t size;
++    lv_text_get_size(&size,lv_label_get_text(obj),label.font,label.letter_space,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
++    int32_t shift=label.align==LV_TEXT_ALIGN_RIGHT ? lv_area_get_width(&content)-size.x :
++        label.align==LV_TEXT_ALIGN_CENTER ? (lv_area_get_width(&content)-size.x)/2 : 0;
++    float radius=(float)lv_font_get_line_height(label.font)*UK_NUMBER_BLUR_PCT/100;
++    for (glyph_layer_t *g=n->layers;g;g=g->next) {
++        if (g->alpha<=0) continue;
++        lv_draw_label_dsc_t d=label;
++        d.align=LV_TEXT_ALIGN_LEFT;
++        d.opa=(lv_opa_t)(label.opa*LV_MIN(g->alpha,1.f));
++        lv_point_t pos={content.x1+shift+(int32_t)lroundf(g->x),
++                       content.y1+(int32_t)lroundf(g->y)};
++        int32_t blur=(int32_t)lroundf(radius*(1-g->alpha));
++        /* Five weighted glyph samples approximate a tiny blur without offscreen
++           surfaces. All remain clipped to this label, never to adjacent units. */
++        if (blur>0) {
++            lv_opa_t full=d.opa; d.opa=full/8;
++            const lv_point_t taps[]={{-blur,0},{blur,0},{0,-blur},{0,blur}};
++            for (unsigned i=0;i<sizeof taps/sizeof taps[0];i++) {
++                lv_point_t p={pos.x+taps[i].x,pos.y+taps[i].y}; lv_draw_character(layer,&d,&p,g->cp);
++            }
++            d.opa=full/2;
++        }
++        lv_draw_character(layer,&d,&pos,g->cp);
++    }
++    layer->_clip_area=saved;
++}
++static void number_event(const lv_obj_class_t *cls, lv_event_t *e)
++{
++    lv_obj_t *obj=lv_event_get_current_target(e);
++    number_label_t *n=(number_label_t *)obj;
++    if (lv_event_get_code(e)==LV_EVENT_DRAW_MAIN && n->active) {
++        if (n->font==lv_obj_get_style_text_font(obj,0)) {
++            /* Keep the native object background/border; replace only label text. */
++            if (lv_obj_event_base(&lv_label_class,e)!=LV_RESULT_OK) return;
++            number_draw(e); return;
++        }
++        clear_layers(obj);
++    }
++    lv_obj_event_base(cls,e);
++}
++#ifdef FNOS_UI_TESTING
++#include <assert.h>
++void uk_number_selfcheck(lv_obj_t *parent)
++{
++    assert(apple_ease(0)==0 && apple_ease(1)==1);
++    assert(fabsf(apple_ease(.5f)-.6846432f)<.0001f);
++    if (UK_NUMBER_REDUCED || UK_NUMBER_MS==0) return;
++    lv_obj_t *o=uk_number_label_create(parent);
++    lv_obj_set_style_text_font(o,UK_FONT_NUM_32,0);
++    uk_number_set_text(o,"65%",false); lv_obj_update_layout(o);
++    uk_number_set_text(o,"66%",true);
++    number_label_t *n=(number_label_t *)o;
++    assert(n->active);
++    sample_layers(n,UK_NUMBER_MS/3);
++    n->started=lv_tick_get()-UK_NUMBER_MS/3;
++    glyph_layer_t *before=n->layers;
++    float y=before->y,alpha=before->alpha;
++    uk_number_set_text(o,"67%",true);
++    assert(fabsf(before->y-y)<.001f && fabsf(before->alpha-alpha)<.001f);
++    uint32_t began=n->started; uk_number_set_text(o,"67%",true); assert(n->started==began);
++    uk_number_set_text(o,"--",false); assert(!n->active && !n->layers);
++    uk_number_set_text(o,"99",false); lv_obj_update_layout(o);
++    uk_number_set_text(o,"100",true); assert(n->active);
++    uk_number_settle(o); assert(!n->active && !strcmp(lv_label_get_text(o),"100"));
++    uk_number_set_text(o,"99",true); assert(!n->active && !strcmp(lv_label_get_text(o),"99"));
++    uk_number_set_text(o,"100",false);
++    uk_test_alloc_fail_after(0); uk_number_set_text(o,"101",true);
++    assert(uk_test_alloc_was_triggered() && !n->active && !strcmp(lv_label_get_text(o),"101"));
++    uk_test_alloc_fail_after(-1); uk_alloc_reset();
++    uk_number_set_text(o,"102",true); assert(n->active);
++    uk_number_set_text(o,"1 GB",true); assert(!n->active);
++    uk_number_motion_enable(false); uk_number_set_text(o,"2 GB",true); assert(!n->active);
++    uk_number_motion_enable(true); uk_number_set_text(o,"3 GB",true); assert(n->active);
++    size_t used=layer_bytes;
++    lv_obj_delete(o); assert(layer_bytes<used); /* Destructor must remove in-flight callbacks and layers. */
++    uk_kpi_t *k=uk_kpi_create(parent,"rate");
++    lv_obj_set_width(k->box,LV_PCT(100)); lv_obj_set_height(k->box,LV_SIZE_CONTENT);
++    lv_obj_set_flex_grow(k->box,0);
++    uk_kpi_set(k,"9.9","MB/s","",-1); lv_obj_update_layout(parent);
++    uk_kpi_set(k,"10.0","MB/s","",-1);
++    assert(((number_label_t *)k->val)->active);
++    uk_kpi_set(k,"1.0","GB/s","",-1); assert(!((number_label_t *)k->val)->active);
++    lv_obj_delete(k->box); lv_free(k);
++
++}
++#endif
+diff --git a/components/fnos_monitor/ui_kit/uk_theme.h b/components/fnos_monitor/ui_kit/uk_theme.h
+index 865f1f8..055389f 100644
+--- a/components/fnos_monitor/ui_kit/uk_theme.h
++++ b/components/fnos_monitor/ui_kit/uk_theme.h
+@@ -82,6 +82,29 @@
+ #define UK_MOTION_MS     160
+ #define UK_MOTION_MIN_MS 80
+ #define UK_MOTION_DAMPING 10.0f /* critical damping: residual below one logical pixel */
++/* Apple Core Animation easeOut: cubic-bezier(0,0,.58,1). */
++#define UK_NUMBER_BEZIER_X2 .58f
++#ifndef CONFIG_FNOS_UI_NUMBER_MS
++#define CONFIG_FNOS_UI_NUMBER_MS 250
++#define CONFIG_FNOS_UI_NUMBER_STAGGER_MS 50
++#define CONFIG_FNOS_UI_NUMBER_MAX_STAGGER_MS 100
++#define CONFIG_FNOS_UI_NUMBER_TRAVEL_PCT 25
++#define CONFIG_FNOS_UI_NUMBER_BLUR_PCT 6
++#endif
++#ifndef CONFIG_FNOS_UI_NUMBER_BUDGET_BYTES
++#define CONFIG_FNOS_UI_NUMBER_BUDGET_BYTES 131072
++#endif
++#define UK_NUMBER_BUDGET_BYTES CONFIG_FNOS_UI_NUMBER_BUDGET_BYTES
++#define UK_NUMBER_MS CONFIG_FNOS_UI_NUMBER_MS
++#define UK_NUMBER_STAGGER_MS CONFIG_FNOS_UI_NUMBER_STAGGER_MS
++#define UK_NUMBER_MAX_STAGGER_MS CONFIG_FNOS_UI_NUMBER_MAX_STAGGER_MS
++#define UK_NUMBER_TRAVEL_PCT CONFIG_FNOS_UI_NUMBER_TRAVEL_PCT
++#define UK_NUMBER_BLUR_PCT CONFIG_FNOS_UI_NUMBER_BLUR_PCT
++#ifdef CONFIG_FNOS_UI_REDUCED_MOTION
++#define UK_NUMBER_REDUCED 1
++#else
++#define UK_NUMBER_REDUCED 0
++#endif
+ #define UK_GESTURE_POLL_MS 8
+ #define UK_STAGGER_MS    35
+ #define UK_REVEAL_MS     150
+diff --git a/tools/preview/CMakeLists.txt b/tools/preview/CMakeLists.txt
+index ed99e98..3fe19d4 100644
+--- a/tools/preview/CMakeLists.txt
++++ b/tools/preview/CMakeLists.txt
+@@ -42,6 +42,7 @@ add_executable(preview
+   "${REPO}/managed_components/espressif__cjson/cJSON/cJSON.c"
+   "${COMP}/fnos_ui.c"
+   "${COMP}/ui_kit/uk.c"
++    "${COMP}/ui_kit/uk_number.c"
+   "${COMP}/ui_kit/uk_theme.c"
+   ${FONT_SRC}
+ )
+diff --git a/tools/preview/preview.c b/tools/preview/preview.c
+index 55cabcc..2d25fe3 100644
+--- a/tools/preview/preview.c
++++ b/tools/preview/preview.c
+@@ -527,9 +527,9 @@ static void dump_near(lv_obj_t *o, int x, int y, int depth)
+     lv_area_t a;
+     lv_obj_get_coords(o, &a);
+     if (x >= a.x1 - 8 && x <= a.x2 + 8 && y >= a.y1 - 8 && y <= a.y2 + 8) {
+-        const char *txt = lv_obj_check_type(o, &lv_label_class) ? lv_label_get_text(o) : "";
++        const char *txt = lv_obj_has_class(o, &lv_label_class) ? lv_label_get_text(o) : "";
+         fprintf(stderr, "    near: %s [%d,%d %dx%d] %.40s\n",
+-                lv_obj_check_type(o, &lv_label_class) ? "label" :
++                lv_obj_has_class(o, &lv_label_class) ? "label" :
+                 lv_obj_check_type(o, &lv_button_class) ? "button" :
+                 lv_obj_check_type(o, &lv_chart_class) ? "chart" : "panel",
+                 (int)a.x1, (int)a.y1, (int)(a.x2 - a.x1 + 1), (int)(a.y2 - a.y1 + 1), txt);
+@@ -580,19 +580,19 @@ static void audit_bounds(lv_obj_t *o)
+             lv_area_t ca;
+             lv_obj_get_coords(ch, &ca);
+             if (ca.x1 < pa.x1 - 2 || ca.x2 > pa.x2 + 2 || ca.y1 < pa.y1 - 2 || ca.y2 > pa.y2 + 2) {
+-                const char *txt = lv_obj_check_type(ch, &lv_label_class) ? lv_label_get_text(ch) : "?";
++                const char *txt = lv_obj_has_class(ch, &lv_label_class) ? lv_label_get_text(ch) : "?";
+                 {   /* 报坐标不够：把"父亲是谁、孩子是谁"也说出来，否则只能靠猜 */
+-                    const char *pt = lv_obj_check_type(o, &lv_label_class) ? lv_label_get_text(o) : "";
++                    const char *pt = lv_obj_has_class(o, &lv_label_class) ? lv_label_get_text(o) : "";
+                     lv_obj_t *gp = lv_obj_get_parent(o);
+                     fprintf(stderr, "  parent=%s[%d,%d] text=\"%.24s\" gp=%s\n",
+-                            lv_obj_check_type(o, &lv_label_class) ? "label" :
++                            lv_obj_has_class(o, &lv_label_class) ? "label" :
+                             lv_obj_check_type(o, &lv_button_class) ? "button" : "panel",
+                             (int)pa.x1, (int)pa.y1, pt,
+-                            gp ? (lv_obj_check_type(gp, &lv_label_class) ? "label" :
++                            gp ? (lv_obj_has_class(gp, &lv_label_class) ? "label" :
+                                   lv_obj_check_type(gp, &lv_button_class) ? "button" : "panel") : "none");
+                     fprintf(stderr, "  child=%s text=\"%.24s\"\n",
+-                            lv_obj_check_type(ch, &lv_label_class) ? "label" : "panel",
+-                            lv_obj_check_type(ch, &lv_label_class) ? lv_label_get_text(ch) : "");
++                            lv_obj_has_class(ch, &lv_label_class) ? "label" : "panel",
++                            lv_obj_has_class(ch, &lv_label_class) ? lv_label_get_text(ch) : "");
+                 }
+                 dump_near(lv_screen_active(), (ca.x1 + ca.x2) / 2, (ca.y1 + ca.y2) / 2, 0);
+                 fprintf(stderr, "child out of parent: \"%s\" child=[%d,%d]-[%d,%d] parent=[%d,%d]-[%d,%d]\n",
+@@ -649,17 +649,17 @@ static void collect_tappable(lv_obj_t *o)
+ static const char *describe_obj(lv_obj_t *o)
+ {
+     static char buf[768];
+-    int n = snprintf(buf, sizeof buf, "%s", lv_obj_check_type(o, &lv_label_class) ? "label" :
++    int n = snprintf(buf, sizeof buf, "%s", lv_obj_has_class(o, &lv_label_class) ? "label" :
+                      lv_obj_check_type(o, &lv_button_class) ? "button" :
+                      lv_obj_check_type(o, &lv_chart_class) ? "chart" : "panel");
+-    if (lv_obj_check_type(o, &lv_label_class)) {
++    if (lv_obj_has_class(o, &lv_label_class)) {
+         n += snprintf(buf + n, sizeof buf - n, " text=\"%.40s\"", lv_label_get_text(o));
+     }
+     for (lv_obj_t *p = lv_obj_get_parent(o); p && n < (int)sizeof buf - 40; p = lv_obj_get_parent(p)) {
+-        n += snprintf(buf + n, sizeof buf - n, " < %s", lv_obj_check_type(p, &lv_label_class) ? "label" :
++        n += snprintf(buf + n, sizeof buf - n, " < %s", lv_obj_has_class(p, &lv_label_class) ? "label" :
+                       lv_obj_check_type(p, &lv_button_class) ? "button" :
+                       lv_obj_check_type(p, &lv_chart_class) ? "chart" : "panel");
+-        if (lv_obj_check_type(p, &lv_label_class)) {
++        if (lv_obj_has_class(p, &lv_label_class)) {
+             n += snprintf(buf + n, sizeof buf - n, "\"%.24s\"", lv_label_get_text(p));
+         }
+         lv_area_t a; lv_obj_get_coords(p, &a);
+@@ -708,8 +708,8 @@ static void audit_overlap(void)
+                     fprintf(stderr, "  tapB %s %dx%d at %d,%d\n", describe_obj(b),
+                             (int)(bx.x2 - bx.x1 + 1), (int)(bx.y2 - bx.y1 + 1), (int)bx.x1, (int)bx.y1);
+                 }
+-                const char *ta = lv_obj_check_type(a, &lv_label_class) ? lv_label_get_text(a) : "?";
+-                const char *tb = lv_obj_check_type(b, &lv_label_class) ? lv_label_get_text(b) : "?";
++                const char *ta = lv_obj_has_class(a, &lv_label_class) ? lv_label_get_text(a) : "?";
++                const char *tb = lv_obj_has_class(b, &lv_label_class) ? lv_label_get_text(b) : "?";
+                 fprintf(stderr, "tappable overlap: \"%s\"[%d,%d]-[%d,%d] vs \"%s\"[%d,%d]-[%d,%d]\n",
+                         ta, x.x1, x.y1, x.x2, x.y2, tb, y.x1, y.y1, y.x2, y.y2);
+                 abort();
+@@ -762,7 +762,7 @@ static void seen_add(const void *p)
+ static void audit_format_residue(lv_obj_t *o, const char *tag)
+ {
+     if (lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return;
+-    if (lv_obj_check_type(o, &lv_label_class)) {
++    if (lv_obj_has_class(o, &lv_label_class)) {
+         const char *text = lv_label_get_text(o);
+         for (const char *p = text; *p; p++) {
+             if (*p != '%') continue;
+@@ -793,7 +793,7 @@ static void audit_labels(lv_obj_t *o)
+         for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) {
+             lv_obj_t *child = lv_obj_get_child(o, i);
+             if (lv_obj_has_flag(child, LV_OBJ_FLAG_HIDDEN)) continue;
+-            if (!lv_obj_check_type(child, &lv_label_class)) { all_labels = false; break; }
++            if (!lv_obj_has_class(child, &lv_label_class)) { all_labels = false; break; }
+             const lv_font_t *font = lv_obj_get_style_text_font(child, 0);
+             number |= font == UK_FONT_NUM_32;
+             lv_point_t size;
+@@ -812,7 +812,7 @@ static void audit_labels(lv_obj_t *o)
+             }
+         }
+     }
+-    if (lv_obj_check_type(o, &lv_label_class)) {
++    if (lv_obj_has_class(o, &lv_label_class)) {
+         const char *text = lv_label_get_text(o);
+         const lv_font_t *font = lv_obj_get_style_text_font(o, 0);
+         for (uint32_t i = 0; text[i]; ) {
+@@ -841,7 +841,7 @@ static void audit_labels(lv_obj_t *o)
+ static void probe_tree(lv_obj_t *o, int depth)
+ {
+     lv_area_t a;
+-    if (lv_obj_check_type(o, &lv_label_class)) {
++    if (lv_obj_has_class(o, &lv_label_class)) {
+         lv_area_t la;
+         lv_obj_get_coords(o, &la);
+         printf("%*sLBL \"%s\" x=[%d,%d] y=[%d,%d] w=%d align=%d long=%d parent_w=%d\n",
+@@ -853,7 +853,7 @@ static void probe_tree(lv_obj_t *o, int depth)
+     }
+     if (lv_obj_check_type(o, &lv_obj_class)) {
+         lv_obj_get_coords(o, &a);
+-        const char *txt = lv_obj_check_type(o, &lv_label_class) ? lv_label_get_text(o) : NULL;
++        const char *txt = lv_obj_has_class(o, &lv_label_class) ? lv_label_get_text(o) : NULL;
+         char head[96];
+         if (lv_obj_get_scrollbar_mode(o) != LV_SCROLLBAR_MODE_OFF) {
+             snprintf(head, sizeof head, "LIST");
+@@ -911,7 +911,7 @@ static void audit_text_overlap(lv_obj_t *parent)
+         lv_obj_t *a = lv_obj_get_child(parent, i);
+         if (lv_obj_has_flag(a, LV_OBJ_FLAG_HIDDEN)) continue;
+         audit_text_overlap(a);
+-        if (!lv_obj_check_type(a, &lv_label_class) || !lv_label_get_text(a)[0]) continue;
++        if (!lv_obj_has_class(a, &lv_label_class) || !lv_label_get_text(a)[0]) continue;
+         /* 只比"字形真正占的地方"，不是标签盒。v9 之前这里直接用 coords，
+            于是一个 248 宽的副行标签和一个 64 宽的状态标签本来不重叠（字只占左边一半），
+            却因为"盒挨着"被判成 text overlap —— 假阳性会逼着人把版面改坏去迁就测试。 */
+@@ -919,7 +919,7 @@ static void audit_text_overlap(lv_obj_t *parent)
+         text_glyph_area(a, &ra);
+         for (uint32_t j = i + 1; j < n; j++) {
+             lv_obj_t *b = lv_obj_get_child(parent, j);
+-            if (lv_obj_has_flag(b, LV_OBJ_FLAG_HIDDEN) || !lv_obj_check_type(b, &lv_label_class) || !lv_label_get_text(b)[0]) continue;
++            if (lv_obj_has_flag(b, LV_OBJ_FLAG_HIDDEN) || !lv_obj_has_class(b, &lv_label_class) || !lv_label_get_text(b)[0]) continue;
+             lv_area_t rb;
+             text_glyph_area(b, &rb);
+             int ox = LV_MIN(ra.x2, rb.x2) - LV_MAX(ra.x1, rb.x1) + 1;
+@@ -1065,9 +1065,9 @@ static void trace_cards(lv_obj_t *o, int depth)
+ {
+     lv_area_t a;
+     lv_obj_get_coords(o, &a);
+-    const char *txt = lv_obj_check_type(o, &lv_label_class) ? lv_label_get_text(o) : "";
++    const char *txt = lv_obj_has_class(o, &lv_label_class) ? lv_label_get_text(o) : "";
+     fprintf(stderr, "[tree]%*s%s tag=%s [%d,%d]-[%d,%d] %dx%d text=\"%.18s\"\n",
+-            depth * 2, "", lv_obj_check_type(o, &lv_label_class) ? "label" :
++            depth * 2, "", lv_obj_has_class(o, &lv_label_class) ? "label" :
+             lv_obj_check_type(o, &lv_button_class) ? "button" : "panel", card_tag(o),
+             a.x1, a.y1, a.x2, a.y2, a.x2 - a.x1 + 1, a.y2 - a.y1 + 1, txt);
+     for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) trace_cards(lv_obj_get_child(o, i), depth + 1);
+@@ -1099,7 +1099,7 @@ static void probe_geom(lv_obj_t *o, int depth, int maxdepth)
+     lv_area_t a;
+     lv_obj_get_coords(o, &a);
+     printf("%*s%s y=[%d,%d] h=%d minh=%d grow=%d sb=%d ch=%u\n", depth * 2, "",
+-           lv_obj_check_type(o, &lv_label_class) ? "LBL" : "obj",
++           lv_obj_has_class(o, &lv_label_class) ? "LBL" : "obj",
+            (int)a.y1, (int)a.y2, (int)(a.y2 - a.y1 + 1),
+            (int)lv_obj_get_style_min_height(o, 0),
+            (int)lv_obj_get_style_flex_grow(o, 0),
+@@ -1278,7 +1278,7 @@ static void run_state(preview_state_t st, int index)
+ static lv_obj_t *visible_text(lv_obj_t *o, const char *text)
+ {
+     if (lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return NULL;
+-    if (lv_obj_check_type(o, &lv_label_class) && strcmp(lv_label_get_text(o), text) == 0) return o;
++    if (lv_obj_has_class(o, &lv_label_class) && strcmp(lv_label_get_text(o), text) == 0) return o;
+     for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) {
+         lv_obj_t *found = visible_text(lv_obj_get_child(o, i), text);
+         if (found) return found;
+@@ -1461,7 +1461,7 @@ static void verify_transitions(void)
+ static lv_obj_t *visible_text_clickable(lv_obj_t *o, const char *text)
+ {
+     if (lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return NULL;
+-    if (lv_obj_check_type(o, &lv_label_class) && strcmp(lv_label_get_text(o), text) == 0) {
++    if (lv_obj_has_class(o, &lv_label_class) && strcmp(lv_label_get_text(o), text) == 0) {
+         lv_obj_t *p = lv_obj_get_parent(o);
+         if (p && lv_obj_get_event_count(p) > 0) return o;
+     }
+@@ -1504,7 +1504,7 @@ static void click_text(const char *text)
+ static lv_obj_t *visible_text_containing(lv_obj_t *o, const char *needle)
+ {
+     if (lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return NULL;
+-    if (lv_obj_check_type(o, &lv_label_class) && strstr(lv_label_get_text(o), needle)) return o;
++    if (lv_obj_has_class(o, &lv_label_class) && strstr(lv_label_get_text(o), needle)) return o;
+     for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) {
+         lv_obj_t *found = visible_text_containing(lv_obj_get_child(o, i), needle);
+         if (found) return found;
+@@ -1773,7 +1773,7 @@ static int audit_stale_running_labels(lv_obj_t *o)
+ {
+     if (lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return 0;
+     int count = 0;
+-    if (lv_obj_check_type(o, &lv_label_class)) {
++    if (lv_obj_has_class(o, &lv_label_class)) {
+         const char *text = lv_label_get_text(o);
+         if (strstr(text, "运行中")) {
+             assert(strstr(text, "上次") || strstr(text, "旧") || strstr(text, "历史") || strstr(text, "部分可读"));
+@@ -2057,7 +2057,7 @@ static void verify_temperature_protocol_limit(void)
+ static void collect_texts(lv_obj_t *o)
+ {
+     if (lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return;
+-    if (lv_obj_check_type(o, &lv_label_class)) {
++    if (lv_obj_has_class(o, &lv_label_class)) {
+         const char *t = lv_label_get_text(o);
+         if (t && t[0] && s_texts_n < MAX_TEXTS) s_texts[s_texts_n++] = t;
+     }
+@@ -2185,7 +2185,7 @@ static uint32_t s_worst_fg, s_worst_bg;
+ static void audit_contrast(lv_obj_t *o)
+ {
+     if (lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return;
+-    if (lv_obj_check_type(o, &lv_label_class)) {
++    if (lv_obj_has_class(o, &lv_label_class)) {
+         const char *t = lv_label_get_text(o);
+         if (t && t[0]) {
+             lv_opa_t opa = lv_obj_get_style_text_opa(o, 0);
+@@ -2569,12 +2569,12 @@ static int s_never_printed;
+ static void audit_never_visible(lv_obj_t *o)
+ {
+     if (!seen_has(o)) {
+-        bool interesting = lv_obj_check_type(o, &lv_label_class) ||
++        bool interesting = lv_obj_has_class(o, &lv_label_class) ||
+                            lv_obj_get_child_count(o) == 0;
+         if (interesting) {
+             lv_area_t c;
+             lv_obj_get_coords(o, &c);
+-            const char *what = lv_obj_check_type(o, &lv_label_class)
++            const char *what = lv_obj_has_class(o, &lv_label_class)
+                              ? lv_label_get_text(o) : "(叶子容器)";
+             /* 只打前 8 条：全量输出会把真正有用的失败信息淹掉（57 行噪声里找一行错误）。 */
+             if (s_never_printed++ < 8)
+@@ -2612,7 +2612,7 @@ static unsigned motion_ms(const char *name, unsigned fallback, bool allow_zero)
+ 
+ static void motion_prepare(void)
+ {
+-    if (!getenv("PREVIEW_MOTION")) return;
++    if (!getenv("PREVIEW_MOTION") && !getenv("PREVIEW_DATA_MOTION")) return;
+     /* Freeze both clock-dependent telemetry text and the history cursor; advancing
+        native LVGL time must not manufacture new NAS samples or change freshness. */
+     s_motion_clock_us = 1000000000LL;
+@@ -3339,6 +3339,86 @@ static void hardware_inventory(const char *path)
+     puts("PASS: all hardware identities and final entries reachable, channel expansion and inventory shrink");
+ }
+ 
++static FILE *number_timeline(void)
++{
++    char path[512]; snprintf(path,sizeof path,"%s/motion.csv",s_outdir);
++    FILE *f=fopen(path,"w"); if (!f) { perror(path); exit(1); }
++    fputs("file,time_ms,page,phase\n",f); return f;
++}
++static void number_frame(FILE *timeline, const char *name, int page, const char *phase)
++{
++    snapshot(name);
++    fprintf(timeline,"%s.ppm,%u,%d,%s\n",name,vtick_get(),page,phase);
++}
++
++/* Render the actual numeric widget with a deterministic LVGL clock. */
++static void record_numbers(void)
++{
++    FILE *timeline=number_timeline();
++    lv_obj_t *root=lv_screen_active();
++    lv_obj_set_style_bg_color(root,uk_c(UK_BG),0);
++    lv_obj_set_flex_flow(root,LV_FLEX_FLOW_COLUMN);
++    lv_obj_set_flex_align(root,LV_FLEX_ALIGN_CENTER,LV_FLEX_ALIGN_CENTER,LV_FLEX_ALIGN_CENTER);
++    lv_obj_set_style_pad_row(root,UK_S4,0);
++    uk_number_selfcheck(root);
++    const char *initial[]={"65%","69%","99","43.9", "9.9 MB/s", "01:59"};
++    const char *next[]={"66%","70%","100","44.0", "10.0 MB/s", "02:00"};
++    lv_obj_t *labels[sizeof initial/sizeof initial[0]];
++    for (unsigned i=0;i<sizeof labels/sizeof labels[0];i++) {
++        labels[i]=uk_label(root,UK_FONT_NUM_44,UK_T1,initial[i]);
++        lv_obj_remove_flag(labels[i],LV_OBJ_FLAG_CLICKABLE);
++    }
++    lv_obj_update_layout(root);
++    number_frame(timeline,"number-before",0,"before");
++    for (unsigned i=0;i<sizeof labels/sizeof labels[0];i++) uk_number_set_text(labels[i],next[i],true);
++    s_no_settle=true;
++    for (unsigned elapsed=0;elapsed<=UK_NUMBER_MS+UK_NUMBER_MAX_STAGGER_MS+100;elapsed+=25) {
++        char name[64]; snprintf(name,sizeof name,"number-%03u",elapsed);
++        number_frame(timeline,name,0,"transition"); vtick_advance(25); lv_timer_handler();
++    }
++    s_no_settle=false;
++    number_frame(timeline,"number-after",0,"after");
++    for (unsigned i=0;i<sizeof labels/sizeof labels[0];i++) {
++        assert(!strcmp(lv_label_get_text(labels[i]),next[i]));
++        uk_number_set_text(labels[i],"--",false);
++    }
++    number_frame(timeline,"number-unavailable",0,"unavailable");
++    fclose(timeline);
++    puts("checks: Apple curve, carry, retarget continuity, repeat, missing, allocation and deletion PASS");
++}
++
++static void record_data_numbers(void)
++{
++    FILE *timeline=number_timeline();
++    for (int page=0;page<FNOS_UI_PAGE_COUNT;page++) {
++        fnos_ui_set_page(page);
++        vtick_advance(500); lv_timer_handler();
++        fnos_ui_motion_settle(); uk_anim_settle(lv_screen_active());
++        char name[64]; snprintf(name,sizeof name,"data-p%d-before",page); number_frame(timeline,name,page,"before");
++        s_motion_fixture.cpu.pct=page%2 ? 37 : 63;
++        s_motion_fixture.cpu.load1+=.12f;
++        s_motion_fixture.mem.pct=page%2 ? 52 : 67;
++        s_motion_fixture.uptime_s+=60;
++        s_motion_fixture.net.rx_kbs+=1024;
++        s_motion_fixture.net.tx_kbs+=512;
++        for (int i=0;i<s_motion_fixture.ntemps;i++) s_motion_fixture.temps[i].c+=.2f;
++        for (int i=0;i<s_motion_fixture.nvols;i++) {
++            s_motion_fixture.vols[i].used_gb+=1;
++            s_motion_fixture.vols[i].pct+=1;
++        }
++        s_no_settle=true;
++        vtick_advance(500); lv_timer_handler();
++        for (unsigned elapsed=0;elapsed<=UK_NUMBER_MS+UK_NUMBER_MAX_STAGGER_MS;elapsed+=25) {
++            snprintf(name,sizeof name,"data-p%d-%03u",page,elapsed); number_frame(timeline,name,page,"transition");
++            vtick_advance(25); lv_timer_handler();
++        }
++        s_no_settle=false;
++        snprintf(name,sizeof name,"data-p%d-after",page); number_frame(timeline,name,page,"after");
++    }
++    fclose(timeline);
++    puts("checks: six-page numeric transition frames and geometry PASS");
++}
++
+ int main(int argc, char **argv)
+ {
+     if (argc > 1) s_outdir = argv[1];
+@@ -3360,7 +3440,9 @@ int main(int argc, char **argv)
+     lv_display_t *d = lv_display_create(s_scr_w, s_scr_h);
+     static uint16_t buf[SCR_MAX_W * SCR_MAX_H];
+     lv_display_set_color_format(d, LV_COLOR_FORMAT_RGB565);
+-    lv_display_set_buffers(d, buf, NULL, sizeof buf, LV_DISPLAY_RENDER_MODE_FULL);
++    if (getenv("PREVIEW_PARTIAL"))
++        lv_display_set_buffers(d,buf,NULL,(size_t)s_scr_w*50*sizeof(uint16_t),LV_DISPLAY_RENDER_MODE_PARTIAL);
++    else lv_display_set_buffers(d, buf, NULL, sizeof buf, LV_DISPLAY_RENDER_MODE_FULL);
+     lv_display_set_flush_cb(d, flush_cb);
+ 
+     lv_indev_t *touch = lv_indev_create();
+@@ -3378,7 +3460,9 @@ int main(int argc, char **argv)
+        verify_transitions() to set up the Wi-Fi fixture first. */
+     if (getenv("PREVIEW_PAIR_FIRST_ENTRY") || getenv("PREVIEW_HARDWARE_FIXTURE"))
+         wifi_stub(true, true, "PREVIEW-LAN", NULL);
++    if (getenv("PREVIEW_NUMBERS")) { record_numbers(); return 0; }
+     fnos_ui_create();
++    if (getenv("PREVIEW_DATA_MOTION")) { record_data_numbers(); return 0; }
+ 
+     /* 卡片几何的"唯一来源"：把已建好的卡片按真实 coords 吐出来，
+        看门狗（scroll_gap.js）读它。手抄一张卡片表 → 抄错一次就报 15 处假不合格。 */
+diff --git a/tools/stack_check.py b/tools/stack_check.py
+index 1a0cfe2..939d7c6 100644
+--- a/tools/stack_check.py
++++ b/tools/stack_check.py
+@@ -52,7 +52,8 @@ ROOTS = {
+ # 作为对应入口的 indirect 项的上限参考。
+ CALLBACK_TARGETS = ["ui_tick", "pair_btn_cb", "pair_pad_cb", "pair_ok_cb",
+                     "pair_cancel_cb", "pair_forget_cb", "diagnostics_cb",
+-                    "temp_toggle_cb", "wifi_result_cb", "wifi_connect_cb"]
++                    "temp_toggle_cb", "wifi_result_cb", "wifi_connect_cb",
++                    "number_event", "number_step", "number_destroy"]
+ 
+ 
+ def load(elf, objdump):

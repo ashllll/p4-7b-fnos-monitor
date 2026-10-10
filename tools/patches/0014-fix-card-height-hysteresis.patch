@@ -1,0 +1,84 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ashllll <ashllll@users.noreply.github.com>
+Date: Sat, 10 Oct 2026 01:31:22 +0800
+Subject: [PATCH 14/23] =?UTF-8?q?=E4=BF=AE=E5=A4=8D=E5=8D=A1=E7=89=87?=
+ =?UTF-8?q?=E5=AE=9A=E9=AB=98=E6=B5=8B=E9=87=8F=E7=9A=84=E4=B8=A4=E5=A4=84?=
+ =?UTF-8?q?=E6=BB=9E=E5=9B=9E=EF=BC=9Achrome=20=E6=89=8B=E7=AE=97=20+=20?=
+ =?UTF-8?q?=E6=B1=A0=E8=A1=8C=E8=B7=9D=E5=A4=8D=E4=BD=8D=EF=BC=887=20PASS?=
+ =?UTF-8?q?=20/=200=20FAIL=EF=BC=89?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+卡片高度由内容反推，但两个测量输入带着上一轮布局的残留，同一份数据会停在
+不同的不动点上：
+
+1) 卡里"除池以外"的高度用 `卡当前高 − 池高` 实测。卡高是我们自己上一轮写进
+   去的，差值把卡体（grow=1 的 body）吸收掉的余量当成 chrome 固化下来 ——
+   50 组实测里每张卡恒定多 8px 且只涨不缩。p1 的 3 张快照因此在
+   04-healthy 与 09-legacy/06-offline-tls/08-night 之间漂 8px。
+
+2) 池的行距会被 uk_viewport_snap 撑大（有行装不下时撑满池高，实测 8→55px），
+   而 uk_list_content_min / uk_list_readable_min 读的正是容器当前 pad_row ⇒
+   正反馈：内容高→卡高→池高→行距更大。02-live-p3 同一份数据两个不动点：
+   行距 8px 卡高 474 与行距 55px 卡高 670；08 张 p3 快照差 8~196px。
+
+改动（components/fnos_monitor/fnos_ui.c，inventory_sections）：
+- chrome 改按样式手算：pad_top+pad_bottom+2*边框宽度+头行高+卡 pad_row，
+  不再用实测差值；结构由 uk_card 固定（pad_all=UK_S3 / pad_row=UK_S2 /
+  1px 边框 / 头行 + body），稳态卡体只有一个可见子对象（池），手算即准。
+- 测量前把池的 pad_row 复位到 UK_ITEM_GAP（只对池生效）。撑行距只影响呈现：
+  uk_pool_create 建池即 UK_ITEM_GAP，uk_pool_relayout 每次也先复位再算列数，
+  所以复位不改变列数决策，只让"内容高"这一测量与历史无关。
+
+验证：
+- 把同一套修复打在 pre-R1 树上当对照，宿主 84 状态渲染逐字节相同（84/84）
+  ⇒ R1 的刷新时序差异不再改变任何几何，8+3 张快照的漂移全部归因于这两处滞回。
+- 几何审计（越界/压叠/字形缺口/清单下限/格式残渣）全绿；固件构建 + 四条
+  入口栈深在预算内。
+---
+ components/fnos_monitor/fnos_ui.c | 14 +++++---------
+ 1 file changed, 5 insertions(+), 9 deletions(-)
+
+diff --git a/components/fnos_monitor/fnos_ui.c b/components/fnos_monitor/fnos_ui.c
+index 1a4d4f9..2eac8bd 100644
+--- a/components/fnos_monitor/fnos_ui.c
++++ b/components/fnos_monitor/fnos_ui.c
+@@ -3419,11 +3419,14 @@ static void inventory_sections(lv_obj_t *container, lv_obj_t **cards,
+             2*lv_obj_get_style_border_width(cards[i],0)+
+             lv_obj_get_height(lv_obj_get_child(cards[i],0))+lv_obj_get_style_pad_row(cards[i],0);
+         int32_t content=lv_font_get_line_height(UK_FONT_CJK_16);
+-        int32_t item_min=content, readable=0, overhead=0;
++        int32_t item_min=content, readable=0;
+         if (pools[i] && counts[i]) {
+             if (lv_obj_has_flag(pools[i],LV_OBJ_FLAG_USER_2))
+                 uk_pool_relayout(pools[i],UK_LIST_MIN_WIDTH,false,NULL);
+             lv_obj_update_layout(pools[i]);
++            if (lv_obj_has_flag(pools[i],LV_OBJ_FLAG_USER_2) &&
++                lv_obj_get_style_pad_row(pools[i],0)!=UK_ITEM_GAP)
++                lv_obj_set_style_pad_row(pools[i],UK_ITEM_GAP,0);
+             /* 三个高度全部由 uk_list_* 按实测条目高与列数算，不读坐标：重排之后
+                （尤其是非活动页）条目的 coords 可能还是上一次布局留下的旧值。 */
+             item_min=LV_MAX(item_min,uk_list_readable_min(pools[i],1));  /* 完整一行 */
+@@ -3432,20 +3435,13 @@ static void inventory_sections(lv_obj_t *container, lv_obj_t **cards,
+                此前只有"最高条目"这一条 —— 那只保证一行：p1 的三张卡因此各剩 55px，
+                第二行必须滚动才看得到。 */
+             readable=uk_list_readable_min(pools[i],uk_list_promise(pools[i]));
+-            /* 卡里除池以外的部分按**当前布局**量出来（标题、内外边距、隐藏的空态
+-               占位都算进去）。手算的 chrome 会把它们占的行距漏掉 —— p1 的池就这
+-               样比"卡最小高"少 8px，第二整行正好被切掉。改用 LV_SIZE_CONTENT 量
+-               卡同样不行：grow=1 且 min_height=0 的子对象（空态盒子）会让卡直接
+-               塌成标题高，里面的文字反而溢出（audit_bounds 报 child out of parent）。
+-               池的 min_height 是硬下限，卡按这个差值把池垫到 readable 高。 */
+-            overhead=LV_MAX(lv_obj_get_height(cards[i])-lv_obj_get_height(pools[i]),0);
+             lv_obj_set_style_min_height(pools[i],readable,0);
+         }
+         /* 卡片高度 = 池把**全部条目**摊开需要的高度（content）+ 卡里池以外的实测部分。
+            下限仍是池自己的 min_height（readable/item_min：至少完整露出承诺的项数）——
+            卡比池的下限还矮的话，池会溢到卡外面去。
+            两者都基于实测的 overhead，量不出时退回手算 chrome。 */
+-        int32_t other=overhead>0 ? overhead : chrome;
++        int32_t other=chrome;
+         want[i/cols]=LV_MAX(want[i/cols],other+LV_MAX(content,LV_MAX(item_min,readable)));
+     }
+     /* 高度由内容定，不再夹在"父层分到的余量 h"上：内容比一屏高时就把容器撑高，

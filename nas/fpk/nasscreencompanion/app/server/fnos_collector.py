@@ -54,6 +54,17 @@ def read_text(path, default=""):
         return default
 
 
+def read_text_strict(path):
+    """读不到就抛。凡"空内容 != 正常"的来源必须走这里。
+
+    `read_text(default="")` 会把权限不足/IO 错误变成"空内容"，而空的 /proc/mdstat
+    在语义上是"这台机器没有阵列"——采样层于是拿它覆盖上一帧，板子上从"md0 正常"
+    直接跳成"未发现阵列"，全程没有任何一处报错（审计 R2）。
+    """
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        return f.read()
+
+
 def read_int(path, default=0):
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
@@ -90,6 +101,38 @@ SKIP_FSTYPES = {
 # 同一池的多个数据集、同一 NFS 导出的两个挂载点一起吞掉）
 SKIP_MNT_PREFIX = ("/run", "/sys", "/dev", "/proc", "/var/lib/docker", "/var/lib/containerd",
                    "/tmp", "/var/tmp", "/var/lock", "/var/run")
+
+
+# 告警严重度：先按这个排序，再套 limits 截断——否则"限量"会先砍掉新出现的严重项
+SEV = {"crit": 0, "warn": 1, "info": 2}
+
+
+def raid_health(r):
+    """阵列的结构健康度：ok / degraded / inactive / readonly / container / unknown。
+
+    `ok` 原来是"默认 False，等汇总行来翻案"，而 RAID0/linear 本来就没有冗余、
+    内核也不给它们打 `[n/m] [UU]` 行 —— 于是这类阵列永远显示"降级"（审计 R5）。
+    维护进度（resync/check/repair）**不**进这个字段：健康与维护是两件事（审计 R1），
+    降级阵列正在恢复仍然是降级。
+    """
+    state = r.get("state") or ""
+    # 首词精确比较：`"active" in "inactive"` 为真，那是误判的来源（审计 R3）
+    first = (state.split() or [""])[0].lower()
+    lvl = (r.get("lvl") or "").lower()
+    if "read-only" in state.lower() or r.get("ro"):
+        return "readonly"
+    if lvl == "container":
+        return "container"                       # imsm/ddf 外部元数据容器：要在固件里组装
+    if first == "inactive":
+        return "inactive"
+    if first != "active":
+        return "unknown"
+    if r.get("summary"):
+        have, want, flags = int(r.get("have") or 0), int(r.get("want") or 0), r.get("flags") or ""
+        return "ok" if (have == want and "_" not in flags) else "degraded"
+    if lvl in ("raid0", "linear"):
+        return "ok"                              # 没有冗余就没有汇总行，这是正常形态
+    return "unknown"                             # 其余情况缺汇总行就不猜：未知不是健康
 
 
 class Collector:
@@ -303,7 +346,9 @@ class Collector:
         return self._trim("vols", vols)
 
     def _raid(self):
-        txt = read_text("/proc/mdstat")
+        # 严格读：读失败要抛出去，让采样层保留上一帧并标 stale。
+        # 退回空串等于宣布"这台机器没有阵列"，比报错更糟（审计 R2）。
+        txt = read_text_strict("/proc/mdstat")
         out = []
         cur = None
         for line in txt.splitlines():
@@ -315,13 +360,18 @@ class Collector:
             head = re.match(r"^(md\d+)\s*:\s*(\S+)\s*(.*)$", line)
             if head:
                 state, rest = head.group(2), head.group(3)
+                # "(read-only)" 跟级别名平级、在 state 之后（"md0 : active (read-only) raid1 …"），
+                # 只读阵列能照常读写失败才知道，必须在头行就认出来。
+                ro = "(read-only)" in rest
                 m2 = re.match(r"^(raid\d+|linear|multipath|faulty|container)\b\s*(.*)$", rest)
                 lvl, memtxt = (m2.group(1), m2.group(2)) if m2 else ("", rest)
                 cur = {
                     "dev": head.group(1), "state": state, "lvl": lvl,
                     "members": ["%s%s" % (n, "(%s)" % fl if fl else "") for n, _i, fl in
                                 re.findall(r"([a-z0-9]+)\[(\d+)\](?:\(([A-Z])\))?", memtxt)],
-                    "have": 0, "want": 0, "ok": False, "sync_pct": -1.0, "what": "",
+                    "have": 0, "want": 0, "ok": False, "health": "unknown",
+                    "sync_pct": -1.0, "what": "",
+                    "flags": "", "summary": False, "ro": ro,
                 }
                 out.append(cur)
                 continue
@@ -331,18 +381,24 @@ class Collector:
             if m:
                 cur["want"] = int(m.group(1))
                 cur["have"] = int(m.group(2))
-                flags = m.group(3)
-                cur["ok"] = (cur["have"] == cur["want"]) and ("_" not in flags) and \
-                            ("active" in cur["state"])
+                cur["flags"] = m.group(3)
+                cur["summary"] = True
                 continue
             m = re.search(r"\[([=>.]+)\]\s*(\w+)\s*=\s*([\d.]+)%", line)
             if m:
-                # resync/recovery/check/repair 都只是进度。ok 只由 [n/m] 与 [U_] 决定：
-                # 健康阵列每月做 check 的数小时里不该显示成异常。
-                cur["sync_pct"] = float(m.group(3))
+                # resync/recovery/check/repair 都只是进度。结构健康度只由 [n/m] 与 [U_]
+                # 决定：健康阵列每月做 check 的数小时里不该显示成异常。
+                pct = float(m.group(3))
+                cur["sync_pct"] = pct if 0.0 <= pct <= 100.0 else -1.0   # 进度越界就不认
                 cur["what"] = m.group(2)
         # mdstat 的顺序是组装顺序，面板上按设备名排更易读
         out.sort(key=lambda r: r["dev"])
+        for r in out:
+            r["health"] = raid_health(r)
+            r["ok"] = (r["health"] == "ok")         # 未知不是健康
+            r.pop("flags", None)
+            r.pop("summary", None)
+            r.pop("ro", None)
         return self._trim("raid", out)
 
     def _disk_io(self):
@@ -671,30 +727,53 @@ class Collector:
         return {"arc_gb": round(vals["size"] / 1024.0 ** 3, 2), "hit_pct": hit_pct}
 
     def _alerts(self, snap):
+        # 段可能是 None（首次读取失败、或上层清空）——`snap.get("raid", [])` 对 None 依然
+        # 返回 None，紧接着迭代就抛异常，而外层 except 会把**整张告警表**退回上一帧：
+        # 同一帧里新出现的阵列/磁盘问题跟着一起被吞掉（审计 R4）。
         out = []
-        for r in snap.get("raid", []):
-            if not r["ok"]:
-                if r["sync_pct"] >= 0:
-                    out.append({"lv": "info", "m": "%s %s %.1f%%" % (r["dev"], r["what"] or "resync", r["sync_pct"])})
-                else:
-                    out.append({"lv": "crit", "m": "RAID %s degraded (%s)" % (r["dev"], r["state"])})
-        for v in snap.get("vols", []):
-            if v["pct"] >= 90:
-                out.append({"lv": "crit", "m": "%s free %.1f%% left" % (v["mnt"], 100 - v["pct"])})
-            elif v["pct"] >= 80:
-                out.append({"lv": "warn", "m": "%s used %.0f%%" % (v["mnt"], v["pct"])})
-        cpu = snap.get("cpu", {})
+        for r in (snap.get("raid") or []):
+            health = r.get("health") or ("ok" if r.get("ok") else "unknown")
+            dev = r.get("dev", "?")
+            prog = " %s %.1f%%" % (r.get("what") or "resync", r["sync_pct"]) \
+                if r.get("sync_pct", -1) >= 0 else ""
+            if health == "degraded":
+                # 降级就是降级："正在恢复"不改变结构已经缺成员这件事（审计 R1）
+                out.append({"lv": "crit",
+                            "m": "RAID %s degraded (%s)%s" % (dev, r.get("state") or "?", prog)})
+            elif health == "inactive":
+                out.append({"lv": "crit", "m": "RAID %s inactive%s" % (dev, prog)})
+            elif health == "readonly":
+                out.append({"lv": "warn", "m": "RAID %s read-only%s" % (dev, prog)})
+            elif health == "container":
+                out.append({"lv": "info", "m": "RAID %s external container (%s)"
+                            % (dev, r.get("lvl") or "?")})
+            elif health == "unknown":
+                out.append({"lv": "info", "m": "RAID %s state unknown (%s)"
+                            % (dev, r.get("state") or "?")})
+            elif prog:
+                out.append({"lv": "info", "m": "%s%s" % (dev, prog)})
+        for v in (snap.get("vols") or []):
+            pct = v.get("pct") or 0
+            if pct >= 90:
+                out.append({"lv": "crit", "m": "%s free %.1f%% left" % (v["mnt"], 100 - pct)})
+            elif pct >= 80:
+                out.append({"lv": "warn", "m": "%s used %.0f%%" % (v["mnt"], pct)})
+        cpu = snap.get("cpu") or {}
+        mem = snap.get("mem") or {}
         if cpu.get("temp_c") and cpu["temp_c"] >= 80:
             out.append({"lv": "warn", "m": "CPU temp %.0fC" % cpu["temp_c"]})
-        if snap.get("mem", {}).get("pct", 0) >= 90:
-            out.append({"lv": "warn", "m": "MEM used %.0f%%" % snap["mem"]["pct"]})
-        if cpu.get("cores") and cpu.get("load5", 0) > cpu["cores"]:
+        mem_pct = mem.get("pct") or 0
+        if mem_pct >= 90:
+            out.append({"lv": "warn", "m": "MEM used %.0f%%" % mem_pct})
+        cores = cpu.get("cores") or 0
+        if cores and (cpu.get("load5") or 0) > cores:
             out.append({"lv": "warn", "m": "LOAD high %.2f" % cpu["load5"]})
         for c in (snap.get("docker") or []):
             # 只报"本来在跑、现在掉了"的容器；开机就停着的（如已弃用的 exporter）不刷告警
-            if (snap.get("modules", {}).get("docker", {}).get("status", "ok") == "ok"
+            if (((snap.get("modules") or {}).get("docker") or {}).get("status", "ok") == "ok"
                     and not c["up"] and c["n"] in self._docker_seen_up):
                 out.append({"lv": "warn", "m": "container %s down" % c["n"]})
+        out.sort(key=lambda a: SEV.get(a["lv"], 9))    # 先排严重度，再套 limits 截断
         return self._trim("alerts", out)
 
 
@@ -920,6 +999,17 @@ class CompanionCollector(Collector):
                     snap[key] = None
                     state = ST_DENIED if isinstance(exc, PermissionError) else (ST_MISSING if isinstance(exc, FileNotFoundError) else ST_ERROR)
                     meta[key] = {"status": state, "ts": 0, "error": detail}
+
+        # 契约面：键的类型不能因为采集失败而变。板子（含老固件）是**按类型**解析 payload 的，
+        # 而上面"首帧就失败"的分支会写 None —— 那不是"不谎报空"，那是把类型也搞坏
+        # （nas/fpk/test_lifecycle.sh 7b 抓到的就是 raid 变 null）。失败只反映在
+        # modules[key].status / errors / caps 里：读不到 ≠ 这台机器没有阵列。
+        for k in ("vols", "raid", "disks", "temps", "docker", "zfs"):
+            if not isinstance(snap.get(k), list):
+                snap[k] = []
+        for k in ("cpu", "mem", "net"):
+            if not isinstance(snap.get(k), dict):
+                snap[k] = {}
 
         try:
             snap["uptime_s"] = int(float(read_text("/proc/uptime", "0").split()[0] or 0))

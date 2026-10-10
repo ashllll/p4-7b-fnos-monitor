@@ -13,10 +13,38 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lvgl.h"
+#if CONFIG_LV_USE_PROFILER
+/* 配置结构体只定义在私有头里（公开头里是个不完整类型，栈上开不出来）。 */
+#include "src/misc/lv_profiler_builtin_private.h"
+#endif
 
 #include "fnos_ui.h"
 
 static const char *TAG = "perf";
+
+#if CONFIG_LV_USE_PROFILER
+/* ---- LVGL 官方 profiler（只编进台架固件，生产固件没有 CONFIG_LV_USE_PROFILER）----
+   用途：把"每帧绘制 ~12ms 到底花在哪些函数上"用官方工具量出来，而不是靠猜。
+   入口：串口 `prof once <ms>` = 清缓冲 → 开记录 → 等 ms → 关 → 把 FTrace 文本打到串口；
+        `prof on|off|dump` 是手动挡。
+   节奏要点：本函数跑在 wifi_cli 任务里（不是 LVGL 任务），vTaskDelay 不挡渲染，
+        所以采到的就是拖动帧本身——代价是 profiler 自己那点记账开销（只看占比，别当绝对耗时）。 */
+static uint64_t pf_prof_tick(void) { return (uint64_t)esp_timer_get_time(); }   /* µs */
+static void pf_prof_flush(const char *buf) { fputs(buf, stdout); }
+
+static void pf_prof_arm(void)
+{
+    lv_profiler_builtin_config_t cfg;
+    lv_profiler_builtin_config_init(&cfg);
+    cfg.buf_size     = CONFIG_LV_PROFILER_BUILTIN_BUF_SIZE;
+    cfg.tick_per_sec = 1000000;      /* esp_timer_get_time() 给的是微秒 */
+    cfg.tick_get_cb  = pf_prof_tick;
+    cfg.flush_cb     = pf_prof_flush;
+    /* 重新 init = 清空缓冲：官方 flush 只打印、不重置游标，不清就会把上一轮的记录再打一遍。 */
+    lv_profiler_builtin_init(&cfg);
+    lv_profiler_builtin_set_enable(true);
+}
+#endif
 
 #define PF_SAMPLES        256     /* 每种样本的上限；满了丢新样本（报里的 n 让人看得见） */
 #define PF_STEP_MS        8       /* 脚本推进节奏 = UK_GESTURE_POLL_MS */
@@ -50,7 +78,7 @@ static struct {
     int32_t x0, y0, x, y, span;
     int step, steps, dir;
     bool pressed, press_seen, rel_seen;
-    bool wait_first, wait_rel, frame_arm;
+    bool wait_first, wait_rel, frame_arm, wait_p2rs;
     int64_t press_us, release_us;
     uint32_t frames;
 } s_run;
@@ -61,7 +89,16 @@ static uint32_t s_iv[PF_SAMPLES];    /* 相邻帧间隔：拖动跟手 / 稳态�
 static uint32_t s_tick[PF_SAMPLES];  /* ui_tick 总耗时（数据刷新 + 图表 + 行重建） */
 static int s_np2f, s_nr2f, s_niv, s_ntick;
 
+/* 帧的三段分解（按下→首帧 与 拖动帧间隔 都只是一个总数，拆开才知道该优化哪一段）：
+   p2rs = 按下 → RENDER_START（等采样/等刷新周期/等上一次 flush）
+   rs2rr= RENDER_START → RENDER_READY（真正的绘制 + flush 提交）
+   rr2rs= 上一帧 RENDER_READY → 下一帧 RENDER_START（帧间空档：刷新定时器周期 + flush 等待） */
+static uint32_t s_p2rs[PF_SAMPLES], s_rs2rr[PF_SAMPLES], s_rr2rs[PF_SAMPLES];
+static int s_np2rs, s_nrs2rr, s_nrr2rs;
+
 static int64_t s_last_frame_us;
+static int64_t s_frame_start_us, s_last_ready_us;
+static bool s_have_ready;
 
 /* ---------------------------------------------------------------- 统计 */
 
@@ -158,6 +195,7 @@ static void pf_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
         s_run.press_seen = true;
         s_run.press_us   = esp_timer_get_time();
         s_run.wait_first = true;
+        s_run.wait_p2rs  = true;
         s_run.frame_arm  = true;
     } else if (!s_run.pressed && s_run.press_seen && !s_run.rel_seen) {
         s_run.rel_seen   = true;
@@ -176,20 +214,42 @@ static void pf_detach(void)
 
 /* ---------------------------------------------------------------- 帧事件 */
 
+static void pf_start_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_RENDER_START) return;
+    LV_PROFILER_BEGIN_TAG("frame");   /* profiler：一帧的顶，配对在 RENDER_READY */
+    int64_t now = esp_timer_get_time();
+    s_frame_start_us = now;
+    if (!s_run.active) { s_last_ready_us = 0; s_have_ready = false; return; }
+    if (s_run.frame_arm && s_have_ready && s_last_ready_us) {
+        pf_push(s_rr2rs, &s_nrr2rs, (uint32_t)(now - s_last_ready_us));   /* 与 iv 同一批样本 */
+    }
+    if (s_run.wait_p2rs) { s_run.wait_p2rs = false; pf_push(s_p2rs, &s_np2rs, (uint32_t)(now - s_run.press_us)); }
+}
+
 static void pf_render_cb(lv_event_t *e)
 {
     if (lv_event_get_code(e) != LV_EVENT_RENDER_READY) return;
+    LV_PROFILER_END_TAG("frame");
     int64_t now = esp_timer_get_time();
-    if (!s_run.active) { s_last_frame_us = now; return; }
+    if (!s_run.active) { s_last_frame_us = now; s_frame_start_us = 0; return; }
 
     s_run.frames++;
     if (s_run.wait_first) { s_run.wait_first = false; pf_push(s_p2f, &s_np2f, (uint32_t)(now - s_run.press_us)); }
     if (s_run.wait_rel)   { s_run.wait_rel   = false; pf_push(s_r2f, &s_nr2f, (uint32_t)(now - s_run.release_us)); }
     if (s_run.frame_arm && s_last_frame_us) pf_push(s_iv, &s_niv, (uint32_t)(now - s_last_frame_us));
+    if (s_frame_start_us) {
+        if (s_run.frame_arm) pf_push(s_rs2rr, &s_nrs2rr, (uint32_t)(now - s_frame_start_us));
+        s_frame_start_us = 0;
+    }
     s_last_frame_us = now;
+    s_last_ready_us = now;
+    s_have_ready    = true;
 }
 
 /* ---------------------------------------------------------------- 报告 */
+
+static bool s_reported;   /* 本轮是否已经落过 [bench] 行（兜底上报用） */
 
 static void pf_report(void)
 {
@@ -202,6 +262,8 @@ static void pf_report(void)
     printf("[bench] kind=%s page=%d cycles=%d misses=%d p2f_n=%d p2f_p50_us=%u p2f_p95_us=%u p2f_max_us=%u"
            " r2f_n=%d r2f_p50_us=%u r2f_p95_us=%u r2f_max_us=%u"
            " iv_n=%d iv_p50_us=%u iv_p95_us=%u iv_max_us=%u frames=%u wall_ms=%u fps_avg=%.1f fps_p50=%.1f"
+           " p2rs_n=%d p2rs_p50_us=%u rs2rr_n=%d rs2rr_p50_us=%u rs2rr_p95_us=%u"
+           " rr2rs_n=%d rr2rs_p50_us=%u rr2rs_p95_us=%u"
            " tick_n=%d tick_p50_us=%u tick_p95_us=%u tick_max_us=%u cpu_lvgl=%.1f cpu_idle=%.1f\n",
            s_run.kind == PF_TAP ? "tap" : (s_run.kind == PF_SWIPE ? "swipe" : "idle"),
            s_run.page, s_run.cycles, s_run.misses,
@@ -210,15 +272,24 @@ static void pf_report(void)
            s_niv, iv50, pf_pct(s_iv, s_niv, 95), pf_max(s_iv, s_niv),
            s_run.frames, wall_ms, wall_ms ? 1000.0 * s_run.frames / wall_ms : 0.0,
            iv50 ? 1000000.0 / iv50 : 0.0,
+           s_np2rs, pf_pct(s_p2rs, s_np2rs, 50),
+           s_nrs2rr, pf_pct(s_rs2rr, s_nrs2rr, 50), pf_pct(s_rs2rr, s_nrs2rr, 95),
+           s_nrr2rs, pf_pct(s_rr2rs, s_nrr2rs, 50), pf_pct(s_rr2rs, s_nrr2rs, 95),
            s_ntick, pf_pct(s_tick, s_ntick, 50), pf_pct(s_tick, s_ntick, 95), pf_max(s_tick, s_ntick),
            total ? 100.0 * lvgl / total : 0.0, total ? 100.0 * idle / total : 0.0);
     fflush(stdout);
+    s_reported = true;
 }
 
 static lv_timer_t *s_script_timer;
 
 static void pf_stop(void)
 {
+    /* 兜底：任何提前退出（arm 失败、超时、被新命令顶掉）都必须留下一行 [bench]，
+       否则 tools/perf_bench.py 只能干等到 180 s 超时，看不出断在哪一步
+       —— 2026-10-10 复现真基线时踩过：换回旧 fnos_ui.c 后 fnos_perf_init() 没人调用
+       （调用点就在 UI 文件里），定时器从未创建，CLI 只回 "已排队" 就再无输出。 */
+    if (s_run.active && !s_reported) pf_report();
     s_run.active = false;
     pf_detach();
     if (s_script_timer) lv_timer_pause(s_script_timer);
@@ -230,7 +301,11 @@ static void pf_arm(int64_t now)
 {
     if (s_run.kind == PF_SWIPE) {
         /* 左右交替，免得连着同方向滑把页面滑到边上。 */
-        if (!fnos_ui_swipe_point(s_run.dir, &s_run.x0, &s_run.y0)) { s_run.misses++; pf_stop(); return; }
+        if (!fnos_ui_swipe_point(s_run.dir, &s_run.x0, &s_run.y0)) {
+            printf("[bench] arm failed: swipe point unavailable (page=%d dir=%d)\n", s_run.page, s_run.dir);
+            fflush(stdout);
+            s_run.misses++; pf_stop(); return;
+        }
         if (s_run.px <= 0) {
             lv_display_t *d = lv_display_get_default();
             s_run.px = d ? lv_display_get_horizontal_resolution(d) / 2 : 512;
@@ -241,7 +316,11 @@ static void pf_arm(int64_t now)
         s_run.y = s_run.y0;
     } else {
         /* 点按导航键中心：按下有反馈、松手换页，两个时延都在同一次手势里量到。 */
-        if (!fnos_ui_nav_center(s_run.page, &s_run.x0, &s_run.y0)) { s_run.misses++; pf_stop(); return; }
+        if (!fnos_ui_nav_center(s_run.page, &s_run.x0, &s_run.y0)) {
+            printf("[bench] arm failed: nav center unavailable (page=%d)\n", s_run.page);
+            fflush(stdout);
+            s_run.misses++; pf_stop(); return;
+        }
         s_run.x = s_run.x0;
         s_run.y = s_run.y0;
         s_run.steps = 0;
@@ -329,7 +408,12 @@ static void pf_start(void)
     memset(s_iv, 0, sizeof s_iv);
     memset(s_tick, 0, sizeof s_tick);
     s_np2f = s_nr2f = s_niv = s_ntick = 0;
+    s_np2rs = s_nrs2rr = s_nrr2rs = 0;
+    s_frame_start_us = 0;
+    s_last_ready_us = 0;
+    s_have_ready = false;
     s_last_frame_us = 0;
+    s_reported = false;
 
     pf_detach();   /* 上一轮留下的挂载先摘干净，否则会把 pf_read_cb 当成"真实回调"套娃 */
     s_nreal = 0;
@@ -400,6 +484,39 @@ static int pf_int(const char *s, int def)
 bool fnos_perf_cli(char *line)
 {
     char *cmd = strtok(line, " \t");
+    if (cmd && strcmp(cmd, "prof") == 0) {
+#if CONFIG_LV_USE_PROFILER
+        const char *sub = strtok(NULL, " \t");
+        if (!sub || strcmp(sub, "on") == 0) {
+            pf_prof_arm();
+            printf("prof: 已开记录（buf=%d B，item≈%d）\n",
+                   (int)CONFIG_LV_PROFILER_BUILTIN_BUF_SIZE,
+                   (int)(CONFIG_LV_PROFILER_BUILTIN_BUF_SIZE / 24));
+        } else if (strcmp(sub, "off") == 0) {
+            lv_profiler_builtin_set_enable(false);
+            printf("prof: 已停\n");
+        } else if (strcmp(sub, "once") == 0) {
+            int ms = pf_int(strtok(NULL, " \t"), 120);
+            pf_prof_arm();
+            printf("=== PROF BEGIN %dms ===\n", ms);
+            vTaskDelay(pdMS_TO_TICKS(ms));
+            lv_profiler_builtin_set_enable(false);
+            lv_profiler_builtin_flush();
+            printf("=== PROF END ===\n");
+        } else if (strcmp(sub, "dump") == 0) {
+            lv_profiler_builtin_set_enable(false);
+            printf("=== PROF BEGIN dump ===\n");
+            lv_profiler_builtin_flush();
+            printf("=== PROF END ===\n");
+        } else {
+            printf("prof: 认不出 '%s'（on | off | once <ms> | dump）\n", sub);
+        }
+#else
+        printf("prof: 这份固件没编进 LVGL profiler（要 CONFIG_LV_USE_PROFILER=y）\n");
+#endif
+        return true;
+    }
+
     if (!cmd || strcmp(cmd, "bench") != 0) return false;
 
     char *a1 = strtok(NULL, " \t");
@@ -410,6 +527,7 @@ bool fnos_perf_cli(char *line)
         printf("bench tap <page 0-5> [cycles]            按下→首帧 / 松手→首帧（合成点按导航键）\n"
                "bench swipe <page 0-5> [px] [cycles]     拖动期帧间隔（合成横滑，左右交替；px 0 = 半个显示宽）\n"
                "bench idle <page 0-5> [seconds]          稳态帧间隔 / ui_tick / 各任务 CPU\n"
+               "prof once <ms>                           LVGL 官方 profiler：采 ms 毫秒的 FTrace 文本\n"
                "结束打印一行 [bench] kind=… 供 tools/perf_bench.py 解析\n");
         return true;
     }
@@ -440,7 +558,10 @@ void fnos_perf_init(void)
     done = true;
 
     lv_display_t *disp = lv_display_get_default();
-    if (disp) lv_display_add_event_cb(disp, pf_render_cb, LV_EVENT_RENDER_READY, NULL);
+    if (disp) {
+        lv_display_add_event_cb(disp, pf_render_cb, LV_EVENT_RENDER_READY, NULL);
+        lv_display_add_event_cb(disp, pf_start_cb, LV_EVENT_RENDER_START, NULL);
+    }
     s_script_timer = lv_timer_create(pf_script_tick, PF_STEP_MS, NULL);
     lv_timer_pause(s_script_timer);
     lv_timer_create(pf_req_poll, PF_REQ_POLL_MS, NULL);

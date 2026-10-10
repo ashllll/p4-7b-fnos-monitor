@@ -569,7 +569,17 @@ static lv_display_t *bsp_display_lcd_init(const bsp_display_cfg_t *cfg)
             .rotation = cfg->rotation,
             .hor_res = BSP_LCD_H_RES,
             .ver_res = BSP_LCD_V_RES,
-            .buffer_height = 50,
+            /* 50 行时一次全屏重绘要 12 个切片（每片 100 KB），120 行降到 5 片：
+               切片越少，每帧的 flush 次数与"画-送"之间的空转越少。仍走 PSRAM。
+               为什么上限是 120 行（round 2/4 撞到，round 6 查明机制）：TRIPLE_PARTIAL 的
+               partial 缓冲由适配器按**内部 RAM** 分配（display_manager.c:1342
+               `display_manager_alloc_draw_buffer(..., false)`）。120 行 = 1024*120*2 =
+               240 KB 正好是本板内部 RAM 装得下的最大值；300 行要 600 KB，分配失败
+               （boot 日志 `E esp_lvgl:disp: alloc partial draw buffer 614400 bytes failed`）
+               ⇒ 适配器退回普通 partial 模式、丢掉撕裂保护 ⇒ 实测 iv 26.9ms→44.2~44.8ms、
+               rs2rr 22.3ms→39.2~39.7ms（docs/perf-report-2026-10-10.md 第 21 条）。
+               ⇒ 官方 README「提高 buffer_height 提升吞吐」在本板被这条内部 RAM 约束卡死。 */
+            .buffer_height = 120,
             /* 本地补丁（本工程唯一改动）：官方 BSP 把 LVGL 绘制缓冲写死在内部 RAM，
              * partial 模式下每块 1024x50x2 = 100 KB，显示初始化一次就吃掉 ~142 KB
              * 内部 RAM。本板内部 RAM 只有 ~361 KB 可用（还要养 ESP-Hosted/WiFi/

@@ -1,0 +1,154 @@
+v1.2.5 候选交付物 —— 验证记录（verification.txt）
+=================================================
+
+审计报告：docs/review-v1.2.5-audit-2026-10-10.md（本机复核版）
+报告原文：《v1.2.5 候选专项审计与整改》（固定公开 main = d84039f6f8538d47c4eacda80f26e1e8ebe8772c）
+本记录日期：2026-10-10
+
+重要前提：报告 §3 声称的 v1.2.5-candidate.patch 与 tools/audit125/* 在公开仓库、本机
+~/code/esp、~/Downloads、~/Desktop、/tmp 全部取不到（见复核报告 §0）。这里的两份补丁与
+六个脚本是按报告条目**重新做出来**的对应物，不是对报告原件的复原，因此报告 §7 那些
+"已通过"的自述数字（RAID 20 项 / NVS 17 失败点 / soak 14 项 / 诊断 C++ 测试）在本机
+无从复核；下面记录的是本机实际跑出来的数字。
+
+
+1. 两份补丁及其证据归属
+------------------------
+
+| 文件 | 面向 | 内容 | 证据 |
+|---|---|---|---|
+| v1.2.5-candidate.patch | 干净 d84039f（被审计提交） | 审计修复 R1–R5 / N1–N3 + 板端诊断接线 + tools/audit125/* | 可干净 apply；六个主机检查全绿；改动涉及的 C/C++ 单元在该树上编译通过；整树链接**不通**（原因见 §3，属基线自身缺陷） |
+| v1.2.5-candidate-on-perf.patch | a624c17（perf/eval-20261010 末次提交）→ 本机工作树 fix/v125-p1 | 同上 + 已在工作树里的 perf 线改动（UI 等） | **实际构建/栈检查/全部测试证据对应的就是这一份** |
+
+为什么证据归到第二份：被审计基线 d84039f 自身编不过（§3）。报告 §8.2 本来就写明"本次不动
+UI"，所以候选补丁排除了 components/fnos_monitor/fnos_ui.c（文件清单里没有它，该文件在
+补丁树里与 d84039f 逐字节一致），UI 差异属 perf 线工作，不混进本候选。
+
+产物的 SHA-256（本机，2026-10-10 11:25）：
+
+    408970cbd83896a14e7aea82a23605eb46346dd7378d2a686747e307075a90c0  v1.2.5-candidate.patch
+    4b7ebba8d341ed7a0c24a6c30950fd2338819c0adb7b54b01c2b36c68c007c9d  v1.2.5-candidate-on-perf.patch
+
+
+2. 干净树上的应用检查
+---------------------
+
+    git worktree add --detach /tmp/p4-applycheck d84039f
+    cd /tmp/p4-applycheck && git apply --check <repo>/v1.2.5-candidate.patch      → 通过（exit 0）
+    git worktree add --detach /tmp/p4-applycheck-perf a624c17
+    cd /tmp/p4-applycheck-perf && git apply --check <repo>/v1.2.5-candidate-on-perf.patch → 通过（exit 0）
+
+两份补丁的 `git diff --check` 均无空白错误。候选补丁 18 个文件、+3510/−34 行；
+不含 fnos_ui.c、tools/preview/*、tools/parsecheck/*、sdkconfig、build 产物。
+
+
+3. 被审计基线 d84039f 为什么不能整树构建（补丁无关）
+----------------------------------------------------
+
+在 d84039f 树上（候选补丁已应用，fnos_ui.c 未被改动）执行工程入口构建：
+
+    FNOS_IDF_ENV=/Users/llll/code/esp/use-esp-idf-5.5.3.sh ./idf.sh build
+
+    components/fnos_monitor/fnos_ui.c:4299:35: error: array subscript -1 is below array
+      bounds of 'lv_obj_t *[5]' [-Werror=array-bounds=]
+     4299 |     lv_obj_update_layout(s_ui.page[idx]);
+    components/fnos_monitor/fnos_ui.c:104:15: note: while referencing 'page'
+      104 |     lv_obj_t *page[FNOS_UI_PAGE_COUNT];
+    make failed with exit code 2
+
+该文件在补丁树里与 d84039f 逐字节一致（`git diff --stat -- components/fnos_monitor/fnos_ui.c`
+无输出），所以这是基线自带的问题，不是本次改动引入的。追加以 `-D CMAKE_C_FLAGS=-Wno-error=array-bounds`
+重配后错误不变（IDF 的组件级 `-Werror` 在 CMAKE_C_FLAGS 之后生效，覆盖不掉），因此**没有**
+在 d84039f 上得到完整固件。
+
+同一棵树上，本次改动涉及的 C/C++ 单元逐个编译通过（2026-10-10 11:24–11:25）：
+
+    fnos_pair.c.obj / fnos_data.c.obj / fnos_snapshot.c.obj   → 已生成
+    esp-idf/main/CMakeFiles/__idf_main.dir/main.cpp.obj       → 已生成
+
+并且配置阶段正常：该树 sdkconfig 里 `CONFIG_IDF_TARGET="esp32p4"`、
+`CONFIG_SLAVE_IDF_TARGET_ESP32C6=y`、`CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=10` 都在。
+这正是报告 §6 那句提醒的实测依据——直接 `idf.py build` 而不走工程入口时没有导出
+`ESP_IDF_VERSION`，esp_wifi_remote 的 `Kconfig.idf_v$ESP_IDF_VERSION.in` 会消失，
+esp_hosted 随即报 `#error "Unknown Slave Target"`；用 `./idf.sh` 就不会。
+
+
+4. 板端诊断接线与构建（证据在 perf 线工作树）
+---------------------------------------------
+
+    FNOS_IDF_ENV=/Users/llll/code/esp/use-esp-idf-5.5.3.sh ./idf.sh build
+        → EXIT=0，build/fnos_monitor.bin（默认版，诊断关闭）
+    FNOS_IDF_ENV=... ./idf.sh -B build_diag -D SDKCONFIG=$PWD/build_diag/sdkconfig build
+        → EXIT=0，build_diag/fnos_monitor.elf（CONFIG_FNOS_SOAK_DIAG=y，主 sdkconfig 未被污染）
+
+    build/fnos_monitor.elf        27200344 B  sha256 70b37c9149ff464505d95d96727c5f8fb8cbb0e170e2de23b3bcdd78c4002cab
+    build_diag/fnos_monitor.elf   27210564 B  sha256 8dd78dc3994f2da8e27e69dc2d1162b10092e1ce172b4b93c31b619c64c949f6
+
+诊断版符号齐全：`diag_timer_cb`（static C++，符号 `_ZL13diag_timer_cbP11_lv_timer_t`）、
+`fnos_data_diag`、`fnos_data_stack_min_free`、`fnos_pair_stack_min_free`。
+
+构建期间修掉的两个真实缺口（都在补丁里）：
+  * main/CMakeLists.txt 缺 `PRIV_REQUIRES esp_app_format` → IDF 5.5 报
+    "esp_app_format component(s) is not in the requirements list of main"（诊断心跳用
+    esp_app_get_elf_sha256 取固件哈希）。
+  * tools/stack_check.py 按函数原名查回调，静态 C++ 回调的符号是 Itanium 形式
+    （`_ZL13diag_timer_cbP11_lv_timer_t`），查不到就静默跳过——`CALLBACK_TARGETS` 里加了
+    `diag_timer_cb` 也等于没加。补了长度前缀解析的别名（`add_cpp_aliases`），现在能测到
+    2176 B 的真实子树。
+
+静态栈检查（`python3 tools/stack_check.py [--elf …]`，EXIT=0）：
+
+| 入口 | 预算 | 默认版 | 诊断版 |
+|---|---|---|---|
+| app_main | 16384 B | 4096 B（25%）✓ | 4096 B（25%）✓ |
+| lvgl_worker | 12288 B | 3856 B（31%）✓ | 3856 B（31%）✓ |
+| poll_task | 6144 B | 2512 B（41%）✓ | 2512 B（41%）✓ |
+| pair_task | 7168 B | 3088 B（43%）✓ | 3088 B（43%）✓ |
+
+诊断版回调子树：ui_tick 3776 B、pair_btn_cb 3632 B、diagnostics_cb 3568 B、
+**diag_timer_cb 2176 B**（默认版不存在该符号，worst() 按设计跳过）。
+
+
+5. 主机侧检查（两台树都跑过，结果一致）
+---------------------------------------
+
+在纯净 d84039f + 候选补丁的树上：
+
+| 命令 | 结果 |
+|---|---|
+| python3 tools/audit125/test_raid.py | PASS 24 项（exit 0） |
+| python3 tools/audit125/test_pair_nvs.py | PASS 37 项（exit 0） |
+| python3 tools/audit125/test_diag.py | PASS 136 项（exit 0） |
+| python3 tools/audit125/test_soak72.py | PASS 51 项（exit 0） |
+| python3 nas/fpk/collector_check.py | PASS（exit 0） |
+| python3 nas/fpk/contract_check.py | ✓ 判定通过 |
+| git diff --check | 干净 |
+
+在 perf 线工作树（as-built）上逐条复跑结果相同。
+
+脚本规模与覆盖（全部**抽取真实生产代码**，不复制实现）：
+  * test_raid.py（209 行）：只读导入 fnos_collector.py，跑 R1–R5 的 mdstat 形态 fixture。
+  * test_pair_nvs.py（760 行）：按函数名抽出 fnos_pair.c 的 has_cert / nvs_save / nvs_wipe /
+    pair_response_accept 与 do_fetch 的 tls 判定片段，内存 NVS 替身 + 命名故障点注入；
+    token 79/80 边界；退出码 0/1/2/3 = 通过/失败/抽取失败/环境不可用。
+  * test_diag.py（333 行）：抽取 main.cpp 的真实 diag_timer_cb，编译到主机逐字段断言。
+  * soak72.py（966 行）+ test_soak72.py（677 行）：只读串口采集与离线三态评价
+    （0 PASS / 1 FAIL / 2 INCOMPLETE / 3 INPUT_ERROR），评价器自身 51 项回归。
+
+
+6. 未验证 / 不能据此宣称的部分（发布门槛仍在这里）
+--------------------------------------------------
+
+  * **实机 72 小时长测未执行**：没有板子、没有串口日志。§4 的全部数值判据仍是待跑状态，
+    本目录的主机绿灯不能替代。
+  * **真实 NVS / TLS / 配对往返 / 断电未执行**：主机测试里的 NVS 是内存替身，
+    证书与指纹路径是主机编译，Flash 行为、真实握手、重启后加载都必须在板端验收。
+  * **d84039f 上未得到完整固件**：链接被基线自带的 fnos_ui.c -Werror=array-bounds 拦住
+    （§3）。诊断版固件的构建证据来自 perf 线工作树，两份补丁的差异已在此说明。
+  * **mdstat 样本来自 fixture**，不是真实盘阵抓样；没有对真实阵列做拔盘/降级/重建操作
+    （也不应该为了测试去做）。
+  * **心跳 ≠ 画面流畅**：诊断行只证明 LVGL 任务活着（间隔 ≤15 s），不测帧耗时、触摸
+    P95/P99；屏幕与触摸仍需逐页实机检查。诊断日志本身有观察开销，默认关闭。
+  * 报告 §8 的五条保留意见（NVS 多键保存非事务、板端 RAID 卡片消费侧、旧
+    nas/fnos-agent.py 未同步、显式 raid 数量策略、mdstat 不是完整存储健康协议）本次
+    未处理，仍是后续工作。

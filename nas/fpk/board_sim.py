@@ -22,7 +22,7 @@
     python3 nas/fpk/board_sim.py --host 127.0.0.1 --port 8797 --pair-code 123456
 
     # 对着真 NAS（先在管理页「设备配对」生成配对码）
-    python3 nas/fpk/board_sim.py --host 192.168.0.119 --port 8798 --pair-code 123456
+    python3 nas/fpk/board_sim.py --host <NAS_IP> --port 8798 --pair-code 123456
 
     # 配对码也可以让脚本自己去管理面 Socket 取（只在能访问 Socket 的机器上可用）
     python3 nas/fpk/board_sim.py --host 127.0.0.1 --port 8797 --socket /var/apps/nasscreencompanion/target/app.sock

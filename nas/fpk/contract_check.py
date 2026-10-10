@@ -44,6 +44,17 @@ COLLECTOR = os.environ.get(
     "NSC_COLLECTOR",
     os.path.join(HERE, "nasscreencompanion", "app", "server", "fnos_collector.py"))
 
+# 状态帧的最坏情况：各段都到上限时的 payload 有多大。每项的字节数是**量出来的**
+# （见 docs 里那节），不是拍的：满载实测约 8.3 KB，而板子原来只有 8 KB —— 会截断，
+# cJSON 解不出来，板子一直显示「NAS 返回的数据解析不了」，而 NAS 那边一切正常。
+# raid 从 90 提到 130：v1.2.5 起每行多两个键 —— `"health":"degraded"` 与
+# `"what":"recovery"`（板端 RAID 卡与告警分级都靠它们），最长约 34 字节。
+# 放在模块级是因为 tools/parsecheck/make_payload.py 也要读它：满载样本的条数按同一份
+# 每项字节数反算，免得两边各说各话（那边曾经在取不到上限时退化成 10**9，把检查挂死）。
+PER_ENTRY = {"vols": 110, "raid": 130, "disks": 60, "temps": 45,
+             "docker": 95, "alerts": 250}
+OVERHEAD = 1500          # cpu/mem/net/mods/trunc/caps 这些固定段
+
 # 列表段 → 采集端里构造它的方法名（机器核对用；改名时两边一起改）
 DOCKER_TRANSPORT = os.path.join(os.path.dirname(COLLECTOR), "docker_api.py")
 
@@ -370,12 +381,7 @@ def limits_problems():
     # `FNOS_MAX_*` 那一族，抓不到它，得单独取
     mh = re.search(r"#define\s+FNOS_HIST_MAX\s+(\d+)", fw2)
     hist = int(mh.group(1)) if mh else None
-    # 状态帧的最坏情况：各段都到上限时的 payload 有多大。每项的字节数是**量出来的**
-    # （见 docs 里那节），不是拍的：满载实测约 8.3 KB，而板子原来只有 8 KB —— 会截断，
-    # cJSON 解不出来，板子一直显示「NAS 返回的数据解析不了」，而 NAS 那边一切正常。
-    PER_ENTRY = {"vols": 110, "raid": 90, "disks": 60, "temps": 45,
-                 "docker": 95, "alerts": 250}
-    OVERHEAD = 1500          # cpu/mem/net/mods/trunc/caps 这些固定段
+    # 状态帧的最坏情况：各段都到上限时的 payload 有多大（常量在模块级，见文件头）
     if limits:
         worst = OVERHEAD + sum(PER_ENTRY.get(k, 0) * v for k, v in limits.items())
         mb = re.search(r"#define\s+RX_BUF_SIZE\s+\(?\s*(\d+)\s*\*\s*(\d+)\s*\)?", fw2)
