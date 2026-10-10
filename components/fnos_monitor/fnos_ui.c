@@ -4048,14 +4048,28 @@ static void refresh(void)
         uk_row_t *row = s_ui.raid_row[i];
         if (!row) continue;
         const fnos_raid_t *r = &st->raid[i];
-        snprintf(b, sizeof b, "%s · %d/%d · %s", r->lvl, r->have, r->want, r->state);
-        bool syncing = r->sync_pct < 100 && (strstr(r->state, "sync") || strstr(r->state, "recover") || strstr(r->state, "reshape"));
-        uint32_t col = r->ok ? UK_OK : syncing ? UK_WARN : UK_DANGER;
-        const char *vtxt = r->ok ? "正常" : "降级";
+        /* 进度看 what（采集端把 resync/recovery/check 放在这里），不看 state：
+           state 只有首词（"active"/"inactive"），拿它 strstr 找 "recover" 永远找不到，
+           所以降级阵列的百分比从来没显示过（复核 §8.2）。 */
+        bool syncing = r->sync_pct >= 0 && r->sync_pct < 100;
+        const char *what = r->what[0] ? r->what : "resync";
+        snprintf(b, sizeof b, "%s · %d/%d · %s%s%s", r->lvl, r->have, r->want, r->state,
+                 syncing ? " · " : "", syncing ? what : "");
+        /* 颜色/文案跟着 health 走：未知与外部容器不是"降级"，不该报红
+           （老采集端没有 health，只能按 ok 处理）。 */
+        const char *vtxt = "正常";
+        uint32_t col = UK_OK;
+        if (!r->ok) {
+            if      (!strcmp(r->health, "degraded"))  { vtxt = "降级";     col = UK_DANGER; }
+            else if (!strcmp(r->health, "inactive"))  { vtxt = "未启用";   col = UK_DANGER; }
+            else if (!strcmp(r->health, "readonly"))  { vtxt = "只读";     col = UK_WARN;   }
+            else if (!strcmp(r->health, "container")) { vtxt = "外部容器"; col = UK_T3;     }
+            else                                      { vtxt = "状态未知"; col = UK_T3;     }
+        }
         if (syncing) {
             snprintf(c1, sizeof c1, "%.0f%%", r->sync_pct);
             vtxt = c1;
-            col = UK_WARN;
+            col = r->ok ? UK_WARN : UK_DANGER;
         }
         uk_row_set(row,r->dev,b,vtxt,NULL,-1,col);
         /* 右侧那列默认是等宽数字字体；写中文（正常/降级）时必须换回 CJK，

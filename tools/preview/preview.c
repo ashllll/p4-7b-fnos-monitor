@@ -211,17 +211,22 @@ static void fill_live(fnos_status_t *s)
         s->vols[i].pct      = 100.0f * v[i].used / v[i].tot;
     }
 
-    struct { const char *dev, *lvl, *st; bool ok; int have, want; float sync; } r[] = {
-        { "md0", "raid5", "clean",  true,  4, 4, 100.0f },
-        { "md1", "raid1", "resync", false, 2, 2,  47.3f },
-        { "md2", "raid0", "clean",  true,  2, 2, 100.0f },
-        { "md3", "raid6", "degraded", false, 5, 6, 100.0f },
+    /* state 用 mdstat 的真实首词（active/clean），结构健康度在 health、维护动作在 what ——
+       这是采集端 v1.2.5 之后的形状。旧 fixture 把 "resync"/"degraded" 塞进 state，
+       正是板端那段永远不成立的分支的来由（审计 §8.2）：真实数据里 state 只有首词。 */
+    struct { const char *dev, *lvl, *st, *health, *what; bool ok; int have, want; float sync; } r[] = {
+        { "md0", "raid5", "active", "ok",       "",         true,  4, 4, 100.0f },
+        { "md1", "raid1", "active", "degraded", "recovery", false, 2, 2,  47.3f },
+        { "md2", "raid0", "active", "ok",       "",         true,  2, 2, 100.0f },
+        { "md3", "raid6", "active", "degraded", "",         false, 5, 6, 100.0f },
     };
     s->nraid = 4;
     for (int i = 0; i < s->nraid; i++) {
         fnos_status_text(s, &s->raid[i].dev, "%s", r[i].dev);
         fnos_status_text(s, &s->raid[i].lvl, "%s", r[i].lvl);
         fnos_status_text(s, &s->raid[i].state, "%s", r[i].st);
+        fnos_status_text(s, &s->raid[i].health, "%s", r[i].health);
+        fnos_status_text(s, &s->raid[i].what, "%s", r[i].what);
         s->raid[i].ok = r[i].ok; s->raid[i].have = r[i].have; s->raid[i].want = r[i].want;
         s->raid[i].sync_pct = r[i].sync;
     }
@@ -401,7 +406,11 @@ bool fnos_data_get(fnos_status_t *out)
             out->raid[i].ok = true;
             out->raid[i].have = out->raid[i].want;
             out->raid[i].sync_pct = 100;
-            fnos_status_text(out, &out->raid[i].state, "%s", "clean");
+            fnos_status_text(out, &out->raid[i].state, "%s", "active");
+            /* health/what 也要跟着复位：卡片现在按 health 上色，只改 ok 会让"健康"
+               快照里仍显示 fixture 的 degraded（审计 §8.2 之后的配色来源）。 */
+            fnos_status_text(out, &out->raid[i].health, "%s", "ok");
+            fnos_status_text(out, &out->raid[i].what, "%s", "");
         }
     }
     if (s_state == ST_LIMITS) {

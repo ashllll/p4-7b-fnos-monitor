@@ -373,7 +373,9 @@ def limits_problems():
     # 状态帧的最坏情况：各段都到上限时的 payload 有多大。每项的字节数是**量出来的**
     # （见 docs 里那节），不是拍的：满载实测约 8.3 KB，而板子原来只有 8 KB —— 会截断，
     # cJSON 解不出来，板子一直显示「NAS 返回的数据解析不了」，而 NAS 那边一切正常。
-    PER_ENTRY = {"vols": 110, "raid": 90, "disks": 60, "temps": 45,
+    # raid 从 90 提到 130：v1.2.5 起每行多两个键 —— `"health":"degraded"` 与
+    # `"what":"recovery"`（板端 RAID 卡与告警分级都靠它们），最长约 34 字节。
+    PER_ENTRY = {"vols": 110, "raid": 130, "disks": 60, "temps": 45,
                  "docker": 95, "alerts": 250}
     OVERHEAD = 1500          # cpu/mem/net/mods/trunc/caps 这些固定段
     if limits:

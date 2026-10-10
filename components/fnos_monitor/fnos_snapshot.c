@@ -91,7 +91,8 @@ bool fnos_status_create(fnos_status_t *out, const fnos_counts_t *c)
     VECTOR(mods, nmods, mods); VECTOR(nets, nnets, nets);
 #undef VECTOR
     for (int i=0;i<s.nvols;i++) s.vols[i].mnt = s.vols[i].fs = "";
-    for (int i=0;i<s.nraid;i++) s.raid[i].dev = s.raid[i].lvl = s.raid[i].state = "";
+    for (int i=0;i<s.nraid;i++) s.raid[i].dev = s.raid[i].lvl = s.raid[i].state =
+        s.raid[i].health = s.raid[i].what = "";
     for (int i=0;i<s.ndisks;i++) s.disks[i].dev = "";
     for (int i=0;i<s.ntemps;i++) s.temps[i].dev = s.temps[i].ch = s.temps[i].dn = "";
     for (int i=0;i<s.ndocker;i++) s.docker[i].n = s.docker[i].s = "";
@@ -170,6 +171,8 @@ bool fnos_status_parse(const char *json, fnos_status_t *out, const char **reason
     }
     i=0; cJSON_ArrayForEach(v,array(root,"raid")) {
         fnos_raid_t *r=&s.raid[i++]; TEXT(r->dev,v,"dev"); TEXT(r->lvl,v,"lvl"); TEXT(r->state,v,"state");
+        /* 采集端 v1.2.5 起给结构健康度与维护动作；老采集端没有这两个键 ⇒ 空串 ⇒ 界面显示"状态未知"。 */
+        TEXT(r->health,v,"health"); TEXT(r->what,v,"what");
         r->ok=cJSON_IsTrue(item(v,"ok")); r->have=number(v,"have");
         r->want=number(v,"want"); r->sync_pct=number(v,"sync_pct");
     }

@@ -43,8 +43,9 @@ def main():
                 "rx_total_gb": 99999.9, "tx_total_gb": 99999.9},
         "vols": [{"mnt": "/vol%d-longname" % i, "fs": "btrfs", "total_gb": 99999.9,
                   "used_gb": 99999.9, "free_gb": 99999.9, "pct": 100.0} for i in range(n["vols"])],
-        "raid": [{"dev": "md%d" % i, "lvl": "raid10", "state": "resync", "ok": True,
-                  "have": 8, "want": 8, "sync_pct": 100.0} for i in range(n["raid"])],
+        "raid": [{"dev": "md%d" % i, "lvl": "raid10", "state": "active", "health": "degraded",
+                  "what": "recovery", "ok": False, "have": 7, "want": 8,
+                  "sync_pct": 47.3} for i in range(n["raid"])],
         "disks": [{"dev": "nvme%dn1" % i, "rd_kbs": 999999.9, "wr_kbs": 999999.9}
                   for i in range(n["disks"])],
         # 温度：形状照采集端的真实输出 —— 每路一个通道，带 dev/ch（内核短名 + 通道名）

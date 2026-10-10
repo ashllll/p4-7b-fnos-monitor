@@ -62,8 +62,9 @@ int main(int argc, char **argv)
     printf("counts vols=%d raid=%d disks=%d temps=%d docker=%d alerts=%d mods=%d\n",
            st.nvols, st.nraid, st.ndisks, st.ntemps, st.ndocker, st.nalerts, st.nmods);
     if (st.nvols)    printf("vol0=%s pct=%.1f\n", st.vols[0].mnt, st.vols[0].pct);
-    if (st.nraid)    printf("raid0=%s state=%s have=%d/%d\n", st.raid[0].dev, st.raid[0].state,
-                            st.raid[0].have, st.raid[0].want);
+    if (st.nraid)    printf("raid0=%s state=%s have=%d/%d health=%s what=%s\n", st.raid[0].dev,
+                            st.raid[0].state, st.raid[0].have, st.raid[0].want,
+                            st.raid[0].health, st.raid[0].what);
     if (st.ndisks)   printf("disk0=%s rd=%.1f\n", st.disks[0].dev, st.disks[0].rd_kbs);
     if (st.ntemps)   printf("temp0=%s · %s c=%.1f dn=[%s]\n",
                             st.temps[0].dev, st.temps[0].ch, st.temps[0].c, st.temps[0].dn);

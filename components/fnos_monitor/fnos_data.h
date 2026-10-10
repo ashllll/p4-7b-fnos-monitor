@@ -28,7 +28,14 @@ extern "C" {
 typedef struct { const char *ifname; float rx_kbs, tx_kbs, rx_total_gb, tx_total_gb;
                  const char *state; int speed_mbps; bool physical; } fnos_netif_t;
 typedef struct { const char *mnt, *fs; float total_gb, used_gb, free_gb, pct; } fnos_vol_t;
-typedef struct { const char *dev, *lvl, *state; bool ok; int have, want; float sync_pct; } fnos_raid_t;
+/* health = 采集端给的**结构**健康度（ok/degraded/inactive/readonly/container/unknown），
+   what = 阵列正在做的维护动作（resync/recovery/check/repair…）。
+   两者都是追加字段：老采集端不给就是空串，界面当"未知"处理。
+   以前界面是在 state 里 strstr "sync"/"recover"/"reshape" 判断进度——而动作词在
+   what 里、state 只有首词（"active"），那个分支对真实数据**永远为假**，
+   于是降级阵列的进度百分比从来没显示过（审计 §8.2）。 */
+typedef struct { const char *dev, *lvl, *state, *health, *what; bool ok;
+                 int have, want; float sync_pct; } fnos_raid_t;
 typedef struct { const char *dev; float rd_kbs, wr_kbs; } fnos_disk_t;
 /* 温度：一条 = 一个**传感器通道**（不是一个设备）。
    dev/ch = 内核短名与通道名（enp1s0 / PHY、nvme2n1 / Composite…），保证"同一路永远
