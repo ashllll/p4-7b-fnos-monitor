@@ -255,6 +255,39 @@
      烧录并跑 `tools/verify_all.sh --flash` = **10 PASS / 0 FAIL**；为它准备的 `tools/patches/vendor`
      补丁与 apply 脚本一并删除（不为负收益的改动出交付物）。
 
+18. **面板侧 `ROTATE_0` + LVGL 绘制期矩阵旋转 ⇒ 能跑、画面也正确，但更慢（这一枪）**：想法是让适配器
+     不走 `flush_partial_rotate`（省 rot 1.7 + prep 1.2 + 整帧 blit），180° 交给 LVGL 在**绘制时**用矩阵
+     摆正：`CONFIG_LV_USE_MATRIX=y` + `CONFIG_LV_DRAW_TRANSFORM_USE_MATRIX=y`，
+     `lv_display_set_matrix_rotation(disp,true)` + `lv_display_set_rotation(disp,LV_DISPLAY_ROTATION_180)`，
+     触摸补 `mirror_x=mirror_y=1` 抵消 `lv_indev.c:743 lv_display_rotate_point` 的反向变换。
+     两个前提都得先绕：`lv_display_set_matrix_rotation`（`lv_display.c:1013`）直接拒 PARTIAL
+     （本板只能跑 PARTIAL，见 19），临时改掉才测得到；`main.cpp` 的 `bsp_display_lock(0)`（try-lock）
+     在矩阵路径下建 UI 时会失败（LVGL 任务正忙），改成 2 s 超时才起得来。实机（同机同台架）：
+
+     | 配置 | iv p50 (µs) | rs2rr p50 (µs) | rr2rs p50 (µs) | frames | cpu_lvgl |
+     |---|---|---|---|---|---|
+     | 旋转在适配器（对照） | 26,976 / 26,873 / 26,783 | 22,378 / 22,248 / 22,201 | 4,600 / 4,637 / 4,565 | 120 / 119 / 116 | — |
+     | 矩阵旋转（ROTATE_0） | 28,647 / 31,537 / 29,579 | 22,665 / 25,143 / 23,154 | 6,327 / 6,159 / 6,326 | 99 / 107 / 114 | 16~20% |
+
+     ⇒ 省掉 rot+prep 却每帧 **+1.7~4.7 ms**：矩阵变换是**逐像素软件**做的（`tick_p50` 从 ~26 ms 涨到
+     43~45 ms），比 PPA 硬件旋转贵得多。`capture-board` 照片取证：画面完整、朝向与改造前相差 180°
+     （⇒ 矩阵真的生效了、没白测），所以这是纯性能负结果，不是"没接上"。
+19. **FULL / DIRECT 渲染模式在本板起不来（第 18 条的两个变体）**：矩阵旋转要求 `render_mode == FULL ||
+     DIRECT`，于是试了 `TRIPLE_FULL`（想拿 FULL 渲染 + 面板缓冲零拷贝换缓冲）与 `NONE`（想拿最省的
+     按脏区 `draw_bitmap`、没有整帧 blit）：
+     · `TRIPLE_FULL`：首帧 flush 里 LVGL 任务卡住 ⇒ `main` 卡在 `bsp_display_lock`，10 秒后 IDLE0
+       看门狗触发，UI 根本没建出来（启动日志停在 `on_frame_buf_complete unavailable; buffer-switch
+       release and dummy-draw may not function on MIPI DSI`）——与 `DOUBLE_DIRECT` 同族（第 4 条）。
+     · `NONE`：卡死得更早（UI 创建前），连 `bsp_display_lock` 都没走到。
+     ⇒ 本板 MIPI DSI 拿不到 buffer-switch 回调，凡是要"换缓冲"的模式都不可用，能跑的只有 PARTIAL 两兄弟
+     （`DOUBLE_FULL` 依赖同一个 double-switch wait，没再试）。
+20. **面板帧缓冲 3→2 + `DOUBLE_PARTIAL` ⇒ 反向验证了第 17 条的机制，但更慢**：第 17 条说"缓冲越多，
+     绘制目标越陈旧 ⇒ 修补面越大"，那就反过来试 2 个（`CONFIG_BSP_LCD_DPI_BUFFER_NUMS=2` +
+     `DOUBLE_PARTIAL`，配置级、不碰厂商代码）：iv p50 **33,125 / 33,125 / 33,125**、
+     rs2rr **28,517 / 28,488 / 28,288**、rr2rs 4,487 / 4,518 / 4,354、frames 114 / 107 / 95。
+     `rr2rs` 略降（修补确实少了）但帧间隔整体 **+6 ms**：2 个缓冲时 `empty_list` 一个备用都没有，
+     每帧都得等 VSYNC 归还（正是第 17 条开头那段机制），等待成本远大于修补成本。⇒ **3 个缓冲是甜点**。
+
 ## 五、未做（诚实清单）
 
 - 远端 `d84039f` 里这几处未移植：曲线环 `EXT_RAM_BSS_ATTR`、`pool_layout` 布局跳过、
@@ -262,15 +295,18 @@
   已经超过 30%；曲线环要改图表数据结构，收益/风险不对称。
 - 面板时序 / tear-avoid 缓冲策略（第四节 4/5/8 已证明 UI 侧到顶了，剩下的都在这一层：
   DOUBLE_DIRECT 起不来、NONE 不支持旋转、MADCTL 硬件旋转无效（第 11 条），要动得改适配器或面板驱动）。
-- **要再拿回最后 0.8 / 0.4 ms，只剩适配器的"旋转路径"这一件事**，而且这一轮把它的两块都试过了：
+- **要再拿回最后 0.5~0.8 ms，只剩"绕开适配器旋转路径"这一件事**，而这一轮把能在配置层做的三条路都堵死了：
   ① `prep`（每帧**整帧** cache msync 1.2 ms）换成按矩形维护 ⇒ **回归 +1.0~1.5 ms**（第四节 16，已还原）；
-  ② 每帧 4 次 flush 的切片开销想用更高的绘制缓冲抹掉 ⇒ 120 行以上系统起不来（第四节 12）。
-  剩下的只有 `rot` 1.7 ms（PPA 把脏区转着写进中间缓冲）：第 11 条已测出**绕开旋转路径时每帧省 ≈4 ms**
-  （iv 24.2~25.4 ms，对基线 -31~-36%），代价是画面反 180°；本板面板 MADCTL 是 no-op，所以只有两条路：
-  ⓐ 换一块吃 MADCTL 的屏 / 让 BSP 走的 DSI 命令模式；ⓑ 不再整帧 blit 而按脏区直接写当前扫描缓冲
-  并在软件侧转那 180°（＝`NONE` 的行为 + 自带旋转，但 `NONE` 在本板被适配器拒：第 4 条）。
-  这两条都是厂商组件的**结构改动**，需要先在仓库里定交付方式（只在本地留补丁 / 仓库内 patch + apply 脚本 /
-  不动），当前用户尚未拍板。
+  ② 每帧 4 次 flush 的切片开销想用更高的绘制缓冲抹掉 ⇒ 120 行以上系统起不来（第四节 12）；
+  ③ 面板侧不转、180° 交给 LVGL 绘制期矩阵 ⇒ **画面正确但每帧 +1.7~4.7 ms**（第四节 18，已还原）；
+  ④ FULL/DIRECT 渲染模式（矩阵旋转和零拷贝换缓冲的前提）本板**根本起不来**（第四节 19）；
+  ⑤ 帧缓冲 3→2 反向试 ⇒ 每帧 +6 ms（第四节 20）。⇒ **配置层没有剩余空间了。**
+  剩下唯一没试的是**厂商组件的结构改动**：适配器的 PARTIAL flush 不再"先把脏区转进中间缓冲、再整帧 blit"，
+  而是按脏区直接转着写当前扫描缓冲（PPA 按面积算，理论上比现在的整屏 PPA + 整帧 blit 便宜，但
+  "省 ≈4 ms"这个上限来自第 11 条**完全不旋转**的配置，这条路仍要做旋转，实际能省多少**未验证**）。
+  另外两条更重的：ⓐ 换一块吃 MADCTL 的屏 / 让 BSP 走 DSI 命令模式（本板 MADCTL 是 no-op，第 11 条）；
+  ⓑ 改面板驱动的时序/刷新策略。交付方式用户已拍板 **B**（仓库内 patch + 幂等 apply 脚本，见 `tools/patches/`），
+  但**负收益的改动不出交付物**——本轮的 18/19/20 都已还原。
 - 输入采样侧（读回调外层采样、读周期 8→4 ms）本轮已实测为**中性**，而且台架对这条线不可判
   （第四节 14：`pf_read_cb` 会覆写坐标、合成手指每 8 ms 走一步）⇒ 以后不要再用这套台架去调它。
 - P2 的 p95 尾巴（34.9 ms 里偶发的 45 ms+ 帧）只查到"脏区大 + 等 VSYNC"这一步，
