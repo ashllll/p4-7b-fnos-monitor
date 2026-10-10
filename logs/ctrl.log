@@ -1,7 +1,0 @@
-[   7.89] I (23980) main: heap periodic       internal=234KB largest=192KB dma=196KB psram=27471KB
-[   8.12] I (24411) uidbg: unit0 x=42 y=53 w=14 h=16 style_x=42 style_y=53 hidden=0 text='%' par_w=209
-[   8.12] I (24411) uidbg: val0 x=14 y=38 w=20 h=35 text='2'
-[  17.85] I (33980) main: heap periodic       internal=234KB largest=192KB dma=196KB psram=27471KB
-[  18.09] I (34411) uidbg: unit0 x=42 y=53 w=14 h=16 style_x=42 style_y=53 hidden=0 text='%' par_w=209
-[  18.09] I (34411) uidbg: val0 x=14 y=38 w=20 h=35 text='2'
-[  21.88] I (37893) fnos_data: poll ok=30 fail=0 5ms cpu=1.2% mem=48.4% rx=15.2 tx=105.3 KB/s alerts=0 internal=234KB dma=196KB psram=27471KB

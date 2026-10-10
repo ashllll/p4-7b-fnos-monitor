@@ -76,7 +76,7 @@ const CONTAINERS_8 = [
 
 function base() {
   return {
-    host: "fnos 存储塔", endpoint: "192.168.0.119:8799", ip: "192.168.0.119",
+    host: "fnos 存储塔", endpoint: "<NAS_IP>:8799", ip: "<NAS_IP>",
     clock: { hhmm: "21:46", date: "10-06", night: false },
     wifi: { bars: 4, label: "Wi-Fi 6" },
     trust: { state: "live", age: "刚刚", poll: { ok: 1284, fail: 0, interval: "1s" } },

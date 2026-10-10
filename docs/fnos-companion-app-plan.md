@@ -665,7 +665,7 @@ python3 nas/fpk/board_sim.py --host <NAS-IP> --port 8798 --pair-code <六位码>
 
 ## P3 发布候选：本地已经能做的两项
 
-**秘密扫描（已自动化）**。`test_lifecycle.sh` 的第 `0b` 阶段不只查清单，还做秘密扫描：包是可公开分发的，里面不能出现这台机器或这台 NAS 的任何标识（LAN 地址、Wi-Fi 口令宏、真实用户名、本地配置头文件名）。固件侧对应的是 `bash tools/release_check.sh`：它把本地的 `components/fnos_monitor/fnos_config.h` 暂时挪开，另建 `build-release/` 编一版，确认 ① **不含个人配置的通用构建确实编得出来**、② 产物里搜不到本机配置里的 SSID/口令/令牌/NAS 地址。跑完一定会把配置放回去（`trap`），只动 `build-release/`，不碰 `build/`。这条检查抓出过两个真问题：`fnos_ui.c` 原来写的是 `#include <fnos_config.h>`（尖括号、没有 `__has_include` 守卫），**没有本地配置时根本编不过**，所谓"通用发布构建"是出不来的；另外 `fnos_config.example.h` 和 `fnos_data.c`/`fnos_pair.c` 的兜底宏里都写着这台 NAS 的真实地址 `192.168.0.119`，等于把个人环境编进通用产物——现在统一改成中性的 `nas.local`，真实地址只存在于本地的 `fnos_config.h` 和板子的 NVS 里。
+**秘密扫描（已自动化）**。`test_lifecycle.sh` 的第 `0b` 阶段不只查清单，还做秘密扫描：包是可公开分发的，里面不能出现这台机器或这台 NAS 的任何标识（LAN 地址、Wi-Fi 口令宏、真实用户名、本地配置头文件名）。固件侧对应的是 `bash tools/release_check.sh`：它把本地的 `components/fnos_monitor/fnos_config.h` 暂时挪开，另建 `build-release/` 编一版，确认 ① **不含个人配置的通用构建确实编得出来**、② 产物里搜不到本机配置里的 SSID/口令/令牌/NAS 地址。跑完一定会把配置放回去（`trap`），只动 `build-release/`，不碰 `build/`。这条检查抓出过两个真问题：`fnos_ui.c` 原来写的是 `#include <fnos_config.h>`（尖括号、没有 `__has_include` 守卫），**没有本地配置时根本编不过**，所谓"通用发布构建"是出不来的；另外 `fnos_config.example.h` 和 `fnos_data.c`/`fnos_pair.c` 的兜底宏里都写着这台 NAS 的真实地址 `<NAS_IP>`，等于把个人环境编进通用产物——现在统一改成中性的 `nas.local`，真实地址只存在于本地的 `fnos_config.h` 和板子的 NVS 里。
 
 需要说清楚的边界：**通用构建里的 Wi-Fi 仍是编译期宏**（模板值是 `your-ssid`/`your-password`）。板子目前没有配网界面，配对流程写进 NVS 的是 NAS 地址、令牌和证书，不含 Wi-Fi。所以"通用发布构建"现在指的是"不含个人数据、能被任何人 clone 下来自己填配置后编出可用固件"，不是"刷进去就能用"。要做成后者得加配网入口（SoftAP 配置页或串口配置），那是独立于本方案的一项工作。
 

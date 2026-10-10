@@ -34,9 +34,9 @@ I (3769) esp_lvgl:touch: Touch input device registered successfully
 I (3782) ESP32_P4_EV: Setting LCD backlight: 45%
 I (3791) main: heap display        internal=244KB largest=204KB dma=206KB psram=27623KB
 I (3895) fnos_view: dashboard created (4 pages, 180 s window)
-I (3897) fnos_data: polling http://192.168.0.119:8799/api/v1/status every 1000 ms
+I (3897) fnos_data: polling http://<NAS_IP>:8799/api/v1/status every 1000 ms
 I (3917) main: backlight 45% (day)
-I (7523) fnos_net: got ip 192.168.0.214
+I (7523) fnos_net: got ip <BOARD_IP>
 I (8167) fnos_data: history backfilled: 300 samples
 I (37748) fnos_data: poll ok=30 fail=0 19ms cpu=3.0% mem=62.0% rx=39.6 tx=1104.0 KB/s alerts=1
 ```
@@ -54,7 +54,7 @@ I (37748) fnos_data: poll ok=30 fail=0 19ms cpu=3.0% mem=62.0% rx=39.6 tx=1104.0
 | OVERVIEW | CPU 2%(load 0.44 12 cores) / MEMORY 59%(18.4/31 GB) / HOTTEST 74C(cpu 32C) / UPTIME 9d 08h；CPU-MEM 双曲线在动；温度榜 NIC 74C、NVME0 44C、NVME3 38C、iGPU 33C、CPU 32C；6 个存储占用条 34/59/65/5/0/10%；底部红色 `RAID md127 degraded (broken)` |
 | STORAGE | `6 volumes 26.7 TB total 14.1 TB used`；6 行 `挂载点/文件系统/占用条/百分比/已用-总量`（18 GB/63 GB、7.0 TB/11.9 TB、6.9 TB/10.6 TB、18 GB/383 GB、0 GB/2.7 TB、92 GB/949 GB）；RAID ARRAYS：md1 OK 2/2、md0 OK 1/1、md127 **DEGRADED broken**（红）；DISK ACTIVITY：sde/sdb/sdg 各约 R 344 KB/s；ZFS ARC 13 GB hit 95% |
 | NETWORK | DOWNLOAD 6.6 KB/s（total received 350 GB）、UPLOAD 96.5 KB/s（total sent 145 GB）；双曲线 + 自适应纵轴刻度 200/100/0.0 KB/s；`interface enp1s0-ovs poll 1 s agent 7 ms samples 318` |
-| SYSTEM | CONTAINERS：netdata/qbittorrentee/qdrant 绿点 up、fnos-exporter 红点 `Exited (255) 11 days ago`；TEMPERATURES 8 项；AGENT/LINK：host nas、endpoint 192.168.0.119:8799、http 10 ms (status 200)、poll 29 ok / 0 err、last error none、data age 0 s、wifi 192.168.0.214 -5x dBm |
+| SYSTEM | CONTAINERS：netdata/qbittorrentee/qdrant 绿点 up、fnos-exporter 红点 `Exited (255) 11 days ago`；TEMPERATURES 8 项；AGENT/LINK：host nas、endpoint <NAS_IP>:8799、http 10 ms (status 200)、poll 29 ok / 0 err、last error none、data age 0 s、wifi <BOARD_IP> -5x dBm |
 
 同一页两张相隔 ~10 s 的照片里曲线形状、CPU/内存数值、温度都在变 → 界面确实在持续刷新，不是冻结画面。
 
@@ -173,7 +173,7 @@ I (37748) fnos_data: poll ok=30 fail=0 19ms cpu=3.0% mem=62.0% rx=39.6 tx=1104.0
 * 系统：5 个容器（mcpcat-app / netdata / qdrant 运行中，fnos-exporter 与 qbittorrentee 已退出，红点 +
   容器自带状态文本）、**7 路温度全部可见不裁切**（NIC 75°C 红、NVMe 33–45°C、iGPU/CPU 35°C）、
   端点自检 8 行（主机 / 端点 / HTTP 6 ms 状态 200 / 轮询 27 正常 0 失败 / 最近错误无 / 数据年龄 0s /
-  Wi-Fi 192.168.0.214 -37 dBm / 内部内存 235 KB）；
+  Wi-Fi <BOARD_IP> -37 dBm / 内部内存 235 KB）；
 * 串口：`dashboard v2 created (4 pages, 180 s window)`、`history backfilled: 300 samples`、
   `poll ok=30 fail=0 17ms`、内部 RAM 稳态 236 KB（v1 是 239 KB，多出来的是字体与控件）。
 
@@ -556,9 +556,9 @@ P3 系统（温度十行分级条 + 采集端点七行 + 告警）。刷新 `ui_
 
 - 固件：`build/fnos_monitor.bin` **1556384 B**（14:20 构建，`CONFIG_FNOS_AUTO_PAGE_SEC=0` 未改动），已烧录运行。
 - 串口 `logs/skeleton-boot.log`（143 行，复位后捕获）：`[3.92] fnos_ui: ui created (pages=4)` →
-  `[7.70] fnos_net: got ip 192.168.0.214` → `[8.11] fnos_data: history backfilled: 300 samples`，
+  `[7.70] fnos_net: got ip <BOARD_IP>` → `[8.11] fnos_data: history backfilled: 300 samples`，
   无 watchdog / 断言 / `VERIFY MODE`，堆稳态 `internal=230KB dma=192KB psram=27602KB`。
-- 实机（`adb` 唤醒相机后间隔 10 s 两帧，md5 不同 ⇒ 界面活着）：P0 全量显示——顶栏 `采集 192.168.0.119:8799 · 本机 192.168.0.214`
+- 实机（`adb` 唤醒相机后间隔 10 s 两帧，md5 不同 ⇒ 界面活着）：P0 全量显示——顶栏 `采集 <NAS_IP>:8799 · 本机 <BOARD_IP>`
   + 绿色"在线"胶囊、四张 KPI（`CPU 2` / `内存 51` / `最高温度 33` / `运行时长 10d 15h`，
   副行 `负载 0.21/0.57/0.75`、`15.9/31.0 GB · 余 15.2`、`CPU 33°C · 12 核`、`进程 2012 · runq 1`）、
   存储六行 `已用 … · 可用 …` + 分级条（36% / 60% / 66% / 6% / 0% / 10%，60% 与 66% 转橙）、
@@ -613,7 +613,7 @@ P3 系统（温度十行分级条 + 采集端点七行 + 告警）。刷新 `ui_
 - **构建**：`./idf.sh build` EXIT=0，`build/fnos_monitor.bin` **0x1a9ef0 B**（1.74 MB），app 分区余 82%。
 - **串口**（`tools/serial_capture.py --seconds 15`，捕获后自动复位回运行模式）：
   `[0.82] fnos_ui: ui created (pages=5)` → `[0.82] main: boot complete` →
-  `[3.68] fnos_net: got ip 192.168.0.214` → `[4.08] fnos_data: history backfilled: 300 samples`；
+  `[3.68] fnos_net: got ip <BOARD_IP>` → `[4.08] fnos_data: history backfilled: 300 samples`；
   堆稳态 `internal=217KB largest=172KB dma=179KB psram=27240KB`；**无** watchdog / 断言 /
   `Guru Meditation` / `VERIFY MODE`。
 - **实机照片**（手机相机预览截图，屏幕在画面里转 90°）：
@@ -687,7 +687,7 @@ P3 系统（温度十行分级条 + 采集端点七行 + 告警）。刷新 `ui_
     桩件模拟"老采集端只发 `n`"的 7 路数据，把**回退路径**变成可回归的图 ——
     面板上现在跑的正是这一屏（`7 路传感器 · 最热 NIC 76.0°C`，每行第一行 `NIC`/`NVME2`…、
     第二行只有数值），不再只靠设备照片当基线。
-  - 固件 `./idf.sh build` + 烧录成功（13:31:38），串口 `got ip 192.168.0.214`、
+  - 固件 `./idf.sh build` + 烧录成功（13:31:38），串口 `got ip <BOARD_IP>`、
     `history backfilled: 300 samples`、无崩溃、无 `VERIFY MODE`。
 - **面板上要真正看到这些名字，还差一步**：把采集端部署到 NAS
   （`cd nas && SSHPASS=… NAS_SUDO_PASS=… ./install.sh`）。当前面板显示 `NIC`/`NVME2`
@@ -739,14 +739,14 @@ P3 系统（温度十行分级条 + 采集端点七行 + 告警）。刷新 `ui_
   **每行都是"名字 + 数值"同一行**，与主机预览 `09-legacy-p4.png` 一致 —— 用户报的
   "值飘在右下角"消失。页头 `7 路传感器 · 最热 NIC 76.0°C` + `1 路 ≥75°C 危险 · 0 路 ≥60°C 注意` 正常。
 - 交付态复核：`CONFIG_FNOS_AUTO_PAGE_SEC=0`、开机第 0 页（16:39:16 烧录，串口
-  `sta ip: 192.168.0.214`、`history backfilled: 300 samples`、无崩溃、无 `VERIFY MODE`）。
+  `sta ip: <BOARD_IP>`、`history backfilled: 300 samples`、无崩溃、无 `VERIFY MODE`）。
 
 
 ## 20. 真机部署记录：NAS 采集端换成"温度全量自适应"版（2026-10-06 16:44）
 
 **这一步是用户明确授权后由代理直接做的**（此前几轮一直卡在"需要 SSH 凭据"）。
 
-- 连接：`ssh llll@192.168.0.119`（fnOS/Debian 12，内核 `6.18.18.c1107-trim`，主机名 `nas`）。
+- 连接：`ssh llll@<NAS_IP>`（fnOS/Debian 12，内核 `6.18.18.c1107-trim`，主机名 `nas`）。
   顺带把本机 `~/.ssh/id_ed25519.pub` 装进 `/home/llll/.ssh/authorized_keys`
   （该用户家目录原先不存在 —— 登录时一直报 `Could not chdir to home directory /home/llll` ——
   已创建并 chown 到 `llll:1001`）；**sudo 仍需密码**，不落盘、不进记忆。
@@ -804,8 +804,8 @@ TLS 服务 / 6 秒超时全部排除，问题只能在 POST 这一段。
 **证据**（修复后同一条 `tls` 命令，真机串口）：
 
 ```
-探针：identity 来自 192.168.0.119:8798，证书 1184 字节
-[tls] HTTPS 通过 https://192.168.0.119:8798/api/v1/health（ok=1 status=200 len=106）
+探针：identity 来自 <NAS_IP>:8798，证书 1184 字节
+[tls] HTTPS 通过 https://<NAS_IP>:8798/api/v1/health（ok=1 status=200 len=106）
       ｜ POST /api/v1/pair ok=1 status=403：配对码已过期，请重新生成
 ```
 
@@ -855,7 +855,7 @@ I (8797) fnos_ui: 没有 Wi-Fi 凭据：自动弹出配网卡（顶栏按钮同�
 I (9306) fnos_net: scan started
 I (11819) fnos_net: scan done: 17 个 AP                                   ← 真机扫到 17 个
 I (34485) wifi_store: 凭据已保存（ssid 4 字符，口令 13 字符）              ← 用户在屏上输入
-I (38628) fnos_net: got ip 192.168.0.214                                  ← 连上内网
+I (38628) fnos_net: got ip <BOARD_IP>                                  ← 连上内网
 I (68963) fnos_data: poll ok=30 fail=0 11ms …                             ← 数据照常进来
 ```
 
@@ -906,7 +906,7 @@ p3 系统（三列；容器空态 / 硬件温度 / 暂无告警事件）。
 ### 23.3 实机缺陷：配网卡自己冒出来盖住系统页（本轮最有价值的一条）
 
 **现象**：p3 照片里"接入 Wi-Fi"卡自行弹出、正在扫描，而串口 `wifi show` 回显
-`凭据：有 / SSID：llll / 状态：已连接 llll（192.168.0.214）`。
+`凭据：有 / SSID：llll / 状态：已连接 llll（<BOARD_IP>）`。
 
 **第一次修（方向对但不够）**：开机规则的判据从 `fnos_net_configured()`（要等网络层读完 NVS 才置真，
 与 ~3.5 s 的截止时刻存在竞态）换成权威存储 `fnos_wifi_store_load()`。烧录后抓串口 26 s，
