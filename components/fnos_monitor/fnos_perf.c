@@ -13,10 +13,38 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lvgl.h"
+#if CONFIG_LV_USE_PROFILER
+/* 配置结构体只定义在私有头里（公开头里是个不完整类型，栈上开不出来）。 */
+#include "src/misc/lv_profiler_builtin_private.h"
+#endif
 
 #include "fnos_ui.h"
 
 static const char *TAG = "perf";
+
+#if CONFIG_LV_USE_PROFILER
+/* ---- LVGL 官方 profiler（只编进台架固件，生产固件没有 CONFIG_LV_USE_PROFILER）----
+   用途：把"每帧绘制 ~12ms 到底花在哪些函数上"用官方工具量出来，而不是靠猜。
+   入口：串口 `prof once <ms>` = 清缓冲 → 开记录 → 等 ms → 关 → 把 FTrace 文本打到串口；
+        `prof on|off|dump` 是手动挡。
+   节奏要点：本函数跑在 wifi_cli 任务里（不是 LVGL 任务），vTaskDelay 不挡渲染，
+        所以采到的就是拖动帧本身——代价是 profiler 自己那点记账开销（只看占比，别当绝对耗时）。 */
+static uint64_t pf_prof_tick(void) { return (uint64_t)esp_timer_get_time(); }   /* µs */
+static void pf_prof_flush(const char *buf) { fputs(buf, stdout); }
+
+static void pf_prof_arm(void)
+{
+    lv_profiler_builtin_config_t cfg;
+    lv_profiler_builtin_config_init(&cfg);
+    cfg.buf_size     = CONFIG_LV_PROFILER_BUILTIN_BUF_SIZE;
+    cfg.tick_per_sec = 1000000;      /* esp_timer_get_time() 给的是微秒 */
+    cfg.tick_get_cb  = pf_prof_tick;
+    cfg.flush_cb     = pf_prof_flush;
+    /* 重新 init = 清空缓冲：官方 flush 只打印、不重置游标，不清就会把上一轮的记录再打一遍。 */
+    lv_profiler_builtin_init(&cfg);
+    lv_profiler_builtin_set_enable(true);
+}
+#endif
 
 #define PF_SAMPLES        256     /* 每种样本的上限；满了丢新样本（报里的 n 让人看得见） */
 #define PF_STEP_MS        8       /* 脚本推进节奏 = UK_GESTURE_POLL_MS */
@@ -189,6 +217,7 @@ static void pf_detach(void)
 static void pf_start_cb(lv_event_t *e)
 {
     if (lv_event_get_code(e) != LV_EVENT_RENDER_START) return;
+    LV_PROFILER_BEGIN_TAG("frame");   /* profiler：一帧的顶，配对在 RENDER_READY */
     int64_t now = esp_timer_get_time();
     s_frame_start_us = now;
     if (!s_run.active) { s_last_ready_us = 0; s_have_ready = false; return; }
@@ -201,6 +230,7 @@ static void pf_start_cb(lv_event_t *e)
 static void pf_render_cb(lv_event_t *e)
 {
     if (lv_event_get_code(e) != LV_EVENT_RENDER_READY) return;
+    LV_PROFILER_END_TAG("frame");
     int64_t now = esp_timer_get_time();
     if (!s_run.active) { s_last_frame_us = now; s_frame_start_us = 0; return; }
 
@@ -454,6 +484,39 @@ static int pf_int(const char *s, int def)
 bool fnos_perf_cli(char *line)
 {
     char *cmd = strtok(line, " \t");
+    if (cmd && strcmp(cmd, "prof") == 0) {
+#if CONFIG_LV_USE_PROFILER
+        const char *sub = strtok(NULL, " \t");
+        if (!sub || strcmp(sub, "on") == 0) {
+            pf_prof_arm();
+            printf("prof: 已开记录（buf=%d B，item≈%d）\n",
+                   (int)CONFIG_LV_PROFILER_BUILTIN_BUF_SIZE,
+                   (int)(CONFIG_LV_PROFILER_BUILTIN_BUF_SIZE / 24));
+        } else if (strcmp(sub, "off") == 0) {
+            lv_profiler_builtin_set_enable(false);
+            printf("prof: 已停\n");
+        } else if (strcmp(sub, "once") == 0) {
+            int ms = pf_int(strtok(NULL, " \t"), 120);
+            pf_prof_arm();
+            printf("=== PROF BEGIN %dms ===\n", ms);
+            vTaskDelay(pdMS_TO_TICKS(ms));
+            lv_profiler_builtin_set_enable(false);
+            lv_profiler_builtin_flush();
+            printf("=== PROF END ===\n");
+        } else if (strcmp(sub, "dump") == 0) {
+            lv_profiler_builtin_set_enable(false);
+            printf("=== PROF BEGIN dump ===\n");
+            lv_profiler_builtin_flush();
+            printf("=== PROF END ===\n");
+        } else {
+            printf("prof: 认不出 '%s'（on | off | once <ms> | dump）\n", sub);
+        }
+#else
+        printf("prof: 这份固件没编进 LVGL profiler（要 CONFIG_LV_USE_PROFILER=y）\n");
+#endif
+        return true;
+    }
+
     if (!cmd || strcmp(cmd, "bench") != 0) return false;
 
     char *a1 = strtok(NULL, " \t");
@@ -464,6 +527,7 @@ bool fnos_perf_cli(char *line)
         printf("bench tap <page 0-5> [cycles]            按下→首帧 / 松手→首帧（合成点按导航键）\n"
                "bench swipe <page 0-5> [px] [cycles]     拖动期帧间隔（合成横滑，左右交替；px 0 = 半个显示宽）\n"
                "bench idle <page 0-5> [seconds]          稳态帧间隔 / ui_tick / 各任务 CPU\n"
+               "prof once <ms>                           LVGL 官方 profiler：采 ms 毫秒的 FTrace 文本\n"
                "结束打印一行 [bench] kind=… 供 tools/perf_bench.py 解析\n");
         return true;
     }

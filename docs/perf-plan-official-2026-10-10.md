@@ -181,7 +181,8 @@ to the amount of the data in the block. The size of the entire picture has no in
 | 2 | **A2** LVGL 官方 PPA 绘制单元（含 `LV_DRAW_BUF_ALIGN=128` 前提） | ❌ 已还原 | 见 2.4 表：每帧 +1.2~2.1 ms |
 | 3 | 官方 README 的 `buffer_height` 吞吐方向（120 → 300 行） | ❌ 已还原 | 报告第 21 条：**撕裂保护静默失效**（`TRIPLE_PARTIAL` 的 partial 缓冲走内部 RAM，240 KB 是本板天花板）⇒ 每帧 **+17 ms** |
 | 4 | **B1** 无效区最小化 | 🟡 部分落地 | ① `clear_layers` 的**无条件标脏**已修（报告第 22 条，只省稳态）；②③⑤ 对 `iv/rs2rr` **无作用**——拖动期间 `ui_tick` 在 `motion_busy()` 处提前 return（`fnos_ui.c:4562`），刷新根本不在拖动帧里跑 ⇒ 不再投入 |
-| 5 | 收口 | ✅ | `tools/verify_all.sh --flash` = **10 PASS / 0 FAIL**（含这两处保留改动）；报告第 21/22 条已写入 `docs/perf-report-2026-10-10.md` |
+| 5 | 官方 LVGL profiler 归因"绘制 12 ms" | ✅ 已量清（无杠杆） | 报告第 23 条：台架里开 `LV_USE_PROFILER` + `prof once <ms>` + `tools/perf_trace.py`。拖动帧每帧 ≈**100 个绘制任务 + ≈776 次 `is_independent` 依赖检查**（O(任务²) 扫描）+ 字形绘制，**没有单一热点**；且 profiler 自身记账 ≈2.5 µs/条、占窗口 ≈43% ⇒ 只信调用次数分布。结论：能减的只有每帧绘制任务数（同屏对象/标签数），属 UI 规模重构，收益与台架噪声（±1.2 ms）同阶 ⇒ 不投 |
+| 6 | 收口 | ✅ | `tools/verify_all.sh --flash` = **10 PASS / 0 FAIL**（含保留改动）；报告第 21/22/23 条已写入 `docs/perf-report-2026-10-10.md` |
 
 **官方文档这条线的结论（round 6 收口）**：能给的杠杆已经用尽——A1/A2 实测负（2.3/2.4）、官方
 `buffer_height` 方向被内部 RAM 天花板堵死（报告第 21 条）、B1 里唯一真正白烧的一条已修但只影响稳态

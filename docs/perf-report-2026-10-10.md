@@ -319,6 +319,34 @@
      注意**它不改善拖动指标**：拖动期间 `ui_tick` 在 `if (motion_busy())` 处提前返回（`fnos_ui.c:4562`），
      刷新根本不在拖动帧里跑 ⇒ 这条只省稳态/idle 的刷新与 CPU（辅助指标）。
 
+23. **官方 profiler 量到"绘制 12 ms 里没有单一热点"（这一枪是测量，不是优化）**：LVGL 自带
+     `LV_USE_PROFILER` + `LV_PROFILER_BUILTIN`（本机默认关）。台架固件里开了它
+     （`LV_PROFILER_DRAW/REFR/LAYOUT/STYLE/FONT` 全开、缓冲 512 KB、
+     `LV_PROFILER_INCLUDE="src/misc/lv_profiler_builtin.h"` —— 官方默认值 `"lvgl/src/..."` 在本仓库的
+     include 布局下压根找不到头文件；配置结构体只在 `lv_profiler_builtin_private.h` 里，公开头是个
+     不完整类型），配一个真机 tick（`esp_timer_get_time` 微秒 + `tick_per_sec=1000000`，官方默认
+     `lv_tick_get` 只有 1 ms 分辨率、量不了 27 ms 的帧内结构）与一个 flush 回调（`fputs` 到串口）。
+     入口：串口 `prof once <ms>`（跑在 `wifi_cli` 任务里，**不挡渲染**，采到的就是拖动帧本身）；
+     解析：`tools/perf_trace.py`（按 tid 还原调用栈 → self = 区间 − 直接子区间，按帧归一）。
+
+     拖动窗口（120 ms、2 帧、14,540 条 trace）前几名**全在绘制调度簿记**上：
+     `lv_draw_get_next_available_task` 444 次 self 9.6 ms、`is_independent` **1,552 次** self 9.1 ms、
+     `dispatch` 275 次 4.8 ms、`EVENT_DRAW_MAIN` 60 次 4.4 ms、`SW` 477 次 3.7 ms、
+     `lv_draw_dispatch_layer` 274 次 3.4 ms、`lv_draw_add_task` 203 次、`lv_draw_dispatch_request` 207 次；
+     真正贴像素的 `lv_draw_sw_blend` 只有 22 次 0.5 ms；文字链 `lv_draw_sw_label` 172 次 +
+     `lv_draw_label` 176 + `lv_draw_character` 172 + `lv_draw_unit_draw_letter` 175。
+     ⇒ 每帧 ≈**100 个绘制任务 + ≈776 次任务独立性检查**（LVGL 的依赖扫描是 O(任务²)）+ 一批字形绘制。
+     另一口窗口（没有渲染帧、纯 timer 路径，119 ms）里 `timer_cb` self 20.9 ms、
+     `lv_obj_update_layout` **16.0 ms / 23 次 ≈ 700 µs 一次**（第 10 条那 3.5 ms/帧布局账的同一来源）。
+
+     **这些读数不能当绝对耗时**（必须写清）：官方 profiler 每次写入都要拿互斥锁 + 读 `esp_timer`
+     （本板 ≈2.5 µs），w2 的 14,540 条 trace ÷ 83.8 ms ⇒ 光记账就 ≈36 ms（≈43%），而且按 trace
+     密度不成比例地放大高频小函数（`is_independent` 5.8 µs/次显然不是真的）。所以只信**调用次数与
+     相对结构**，绝对毫秒仍以无侵入计数器 `[dbg-flush]` / `[dbg-layout]` 为准。
+     结论：绘制时间被**摊薄在很多小操作**上——没有"改一处省 1 ms"的旋钮；能减的只有每帧绘制任务数
+     （= 同屏对象/标签数），那是 UI 规模重构，预期收益（~1 ms 量级）与台架噪声（±1.2 ms，见第 21 条复测）
+     同阶 ⇒ **在这台台架上既证不实也证不伪**，故本轮不投。
+
 ## 五、未做（诚实清单）
 
 - 远端 `d84039f` 里这几处未移植：曲线环 `EXT_RAM_BSS_ATTR`、`pool_layout` 布局跳过、
@@ -342,6 +370,10 @@
   健壮性修复；22 是净收益但只影响稳态，不影响 iv/rs2rr）。
 - 输入采样侧（读回调外层采样、读周期 8→4 ms）本轮已实测为**中性**，而且台架对这条线不可判
   （第四节 14：`pf_read_cb` 会覆写坐标、合成手指每 8 ms 走一步）⇒ 以后不要再用这套台架去调它。
+- 官方 profiler 这条线已经走完（第四节 23）：绘制 12 ms **没有单一热点**，是"很多小操作"摊薄
+  （每帧 ≈100 个绘制任务 + ≈776 次独立性检查 + 字形绘制）。要减只能减每帧绘制任务数（同屏对象/标签数），
+  那是 UI 规模重构，预期收益与台架噪声同阶 ⇒ 本轮**不做**，也不建议在没有更精确验收手段（如外部
+  高速相机量 p50）之前做。工具已入库（`prof once` + `tools/perf_trace.py`），随时可复测。
 - P2 的 p95 尾巴（34.9 ms 里偶发的 45 ms+ 帧）只查到"脏区大 + 等 VSYNC"这一步，
   没有进一步归因到具体某一帧。
 - 未推送远端：本地 `main` 未动，成果都在 `perf/eval-20261010`，等确认后再决定怎么合。
