@@ -179,8 +179,19 @@ to the amount of the data in the block. The size of the entire picture has no in
 | 0 | 复现基线（同机同台架同脚本） | ✅ | `iv 26,976/26,873/26,783`、`rs2rr 22,378/22,248/22,201`、`rr2rs 4,600/4,637/4,565`、frames 120/119/116 |
 | 1 | **A1** 绘制缓冲进片内 SRAM | ❌ 已还原 | 见 2.3 表：无收益 |
 | 2 | **A2** LVGL 官方 PPA 绘制单元（含 `LV_DRAW_BUF_ALIGN=128` 前提） | ❌ 已还原 | 见 2.4 表：每帧 +1.2~2.1 ms |
-| 3 | **B1** 无效区最小化（本轮唯一剩下的杠杆） | ⏳ 待做 | 先量"每帧脏区来自哪个页/哪个控件"，再按 1→2→3→5 顺序改，每改一处跑一次 bench |
-| 4 | 收口 | ⏳ | `tools/verify_all.sh --flash` 必须 10 PASS；`capture-board` 确认朝向/触摸；正负结果都写进 `docs/perf-report-2026-10-10.md` |
+| 3 | 官方 README 的 `buffer_height` 吞吐方向（120 → 300 行） | ❌ 已还原 | 报告第 21 条：**撕裂保护静默失效**（`TRIPLE_PARTIAL` 的 partial 缓冲走内部 RAM，240 KB 是本板天花板）⇒ 每帧 **+17 ms** |
+| 4 | **B1** 无效区最小化 | 🟡 部分落地 | ① `clear_layers` 的**无条件标脏**已修（报告第 22 条，只省稳态）；②③⑤ 对 `iv/rs2rr` **无作用**——拖动期间 `ui_tick` 在 `motion_busy()` 处提前 return（`fnos_ui.c:4562`），刷新根本不在拖动帧里跑 ⇒ 不再投入 |
+| 5 | 收口 | ✅ | `tools/verify_all.sh --flash` = **10 PASS / 0 FAIL**（含这两处保留改动）；报告第 21/22 条已写入 `docs/perf-report-2026-10-10.md` |
+
+**官方文档这条线的结论（round 6 收口）**：能给的杠杆已经用尽——A1/A2 实测负（2.3/2.4）、官方
+`buffer_height` 方向被内部 RAM 天花板堵死（报告第 21 条）、B1 里唯一真正白烧的一条已修但只影响稳态
+（第 22 条）、B2 触摸本来就是中断模式且官方 `refresh_now` 改善不了 P1 的地板（4.6 ms 注入量化 +
+8.35 ms 半帧）、B3 字体已是 2bpp 质量下限。剩下的 0.5~0.7 ms 落在"每帧绘制 ≈12 ms + 整帧 handoff
+≈10 ms"这两块上，而这两块**不吃 UI/配置侧的优化**；要再跨线只能动厂商组件的刷屏主路径（用户未拍板）。
+
+**测量噪声（重要）**：同一份固件重复跑同一脚本，`iv p50` 在本轮出现 26,867 ~ 28,029 µs 的散布
+（±1.2 ms），`cpu_lvgl` 出现 12.6 ~ 17.5 的散布 ⇒ **小于 5% 的差异这台台架判不了**；比较必须同场次、
+看最好值，并且不要把噪声当收益/回退。P2 的 30% 目标（iv ≤26.3 ms）恰好落在这个噪声带里。
 
 生产状态已恢复：`CONFIG_BSP_LCD_DPI_BUFFER_NUMS=3`、`use_psram=true`、`LV_USE_PPA` 关闭、`LV_DRAW_BUF_ALIGN=4`，
 重新 build+flash 后启动日志 `ui created (pages=6)` @5513 µs / `boot complete` @5542 µs（与 10 PASS 那次逐字同刻）。

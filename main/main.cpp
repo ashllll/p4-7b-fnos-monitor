@@ -131,7 +131,10 @@ extern "C" void app_main(void)
        建完之后再换，已经建好的对象还留着旧颜色（LVGL 样式是拷贝语义）。 */
     fnos_ui_theme_use(CONFIG_FNOS_PALETTE);
 
-    if (bsp_display_lock(0)) {
+    /* 不能用 try-lock（0 超时）：LVGL 正在首刷时"忙"会被误判成"失败"，UI 一次都建不出来，
+       日志只留一句 display lock failed。2026-10-10 的矩阵旋转与绘制切片两次实验都撞在这上面
+       （改成 2s 后立刻通过，见 docs/perf-report-2026-10-10.md 第 12/18 条）。 */
+    if (bsp_display_lock(2000)) {
         fnos_ui_create();
 #if CONFIG_FNOS_AUTO_PAGE_SEC > 0
         lv_timer_create(auto_page_cb, CONFIG_FNOS_AUTO_PAGE_SEC * 1000, NULL);

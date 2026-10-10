@@ -69,6 +69,10 @@ static bool same_numeric_structure(const char *a, const char *b)
 static void clear_layers(lv_obj_t *obj)
 {
     number_label_t *n=(number_label_t *)obj;
+    /* 无事可清就直接走：uk_set_text() 每个标签每 500ms 都会走到这里，而结尾那句
+       lv_obj_invalidate() 会把整个标签标脏 —— 文本没变也照标，纯属白烧刷新。
+       （拖动期间 ui_tick 提前返回，所以这条只省 idle/稳态的功。） */
+    if (!n->layers && !n->active) return;
     lv_anim_delete(obj,number_step);
     while (n->layers) {
         glyph_layer_t *next=n->layers->next;
