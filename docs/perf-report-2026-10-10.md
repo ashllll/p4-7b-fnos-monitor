@@ -229,6 +229,32 @@
     （md5 `4aa702438d34f72b4e96b89538bdc563` = 备份 `/tmp/v9_pristine.c`）、`tools/patches` 删除，
     非旋转路径的同类调用（:2604-2605）也没动。
 
+17. **把面板帧缓冲 3→4 ⇒ 回归（这一枪，用户拍板「可以」后实测）**：假设"旋转 partial 每帧要等下一个
+     VSYNC 才拿得到空闲缓冲"——3 个缓冲时 `display_bridge_pipeline_init_from_cfg`
+     （`display_bridge_common.c:1079`）把 fb[0]/fb[1] 当显示/绘制对，`empty_list` 只剩 fb[2] 一个，
+     `display_bridge_pipeline_wait_free_buf`（`:1200`）取不到就 `ulTaskNotifyTake` 死等，而归还由
+     `on_refresh_done`（VSYNC 中断）驱动 ⇒ 每帧最多归还 1 个。于是把上限抬到 4：IDF
+     `components/esp_lcd/dsi/mipi_dsi_priv.h:36 DPI_PANEL_MAX_FB_NUM` 3→4，并把
+     `dpi_panel_draw_bitmap` 里"这块绘制缓冲本身就在帧缓冲里"的硬编码判定（原来只认 `fbs[0..2]`）
+     改成 `for (i < num_fbs)` 循环；适配器 `adapter_internal.h:41 ESP_LV_ADAPTER_MAX_FRAME_BUFFERS` 3→4、
+     `display_bridge_common.h:60 frame_buffers[3]` 换成宏、`display_manager_fetch_panel_frame_buffers`
+     加 `fb3` 与 `required >= 4` 分支、`display_manager_required_frame_buffer_count` 旋转分支返回 4。
+     实机（同机、同台架、同脚本，3×`swipe:3:0:3`，每组 180；回滚后同场复测的 3 缓冲即对照）：
+
+     | 配置 | iv p50 (µs) | rs2rr p50 (µs) | rr2rs p50 (µs) | frames |
+     |---|---|---|---|---|
+     | 3 缓冲（对照） | 26,976 / 26,873 / 26,783 | 22,378 / 22,248 / 22,201 | 4,600 / 4,637 / 4,565 | 120 / 119 / 116 |
+     | 4 缓冲 | 28,465 / 28,538 / 28,850 | 24,026 / 24,008 / 24,858 | 4,607 / 4,742 / 4,545 | 107 / 111 / 116 |
+
+     ⇒ 每帧 iv **+1.5~2.1 ms**、帧工作 rs2rr **+1.6~2.7 ms**，帧数还少约 10%。`rr2rs` 没变（等待本来
+     就不在这一项里），说明多出来的那个缓冲换来的"不等 VSYNC"确实到手了，但代价更大：绘制目标在 4 个
+     缓冲之间轮流 ⇒ 它比过去陈旧 2~3 帧，`display_bridge_v9_prepare_partial_back_buffer` 的基线与修补面
+     是按"上一次显示的那个缓冲"算的，目标越陈旧要补的越多。与第 10、16 条同型——**适配器这套 partial
+     机制依赖那两步看起来多余的维护**（整帧 msync、layout 标记、紧耦合的双缓冲对）。已全部还原（IDF 2 处、
+     适配器 3 处、BSP `Kconfig` 的 `range 1 4`、`sdkconfig.defaults`、`sdkconfig`），回滚后按生产配置重编、
+     烧录并跑 `tools/verify_all.sh --flash` = **10 PASS / 0 FAIL**；为它准备的 `tools/patches/vendor`
+     补丁与 apply 脚本一并删除（不为负收益的改动出交付物）。
+
 ## 五、未做（诚实清单）
 
 - 远端 `d84039f` 里这几处未移植：曲线环 `EXT_RAM_BSS_ATTR`、`pool_layout` 布局跳过、
