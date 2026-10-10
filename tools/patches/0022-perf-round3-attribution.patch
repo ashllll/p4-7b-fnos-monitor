@@ -1,0 +1,246 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ashllll <ashllll@users.noreply.github.com>
+Date: Sat, 10 Oct 2026 06:45:44 +0800
+Subject: [PATCH 22/23] =?UTF-8?q?perf(round3):=20=E5=BD=92=E5=9B=A0=20-27.?=
+ =?UTF-8?q?9%=20=E7=9A=84=E6=9D=A5=E6=BA=90=EF=BC=88BSP=20=E7=BB=98?=
+ =?UTF-8?q?=E5=88=B6=E7=BC=93=E5=86=B2=E7=8B=AC=E5=8D=A0=E5=B8=A7=E5=B7=A5?=
+ =?UTF-8?q?=E4=BD=9C=20-29.6%=EF=BC=89=EF=BC=8C=E8=A1=A5=E4=B8=A4=E6=9D=A1?=
+ =?UTF-8?q?=E8=B4=9F=E7=BB=93=E6=9E=9C=20+=20=E5=8F=B0=E6=9E=B6=E5=85=9C?=
+ =?UTF-8?q?=E5=BA=95=E4=B8=8A=E6=8A=A5?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+结论（同机同台架，每组 3× swipe:3:0:3，读 [bench] 的 iv/rs2rr/rr2rs）：
+- 真基线 a563000 全套（缓冲 50 行、日志开）：iv p50 38.6~38.8 ms、帧工作 rs2rr 31.0~31.4 ms、空档 rr2rs 7.3 ms
+- 只把 BSP 绘制缓冲 50→120 行：iv 28.8~29.2 ms、rs2rr 22.0~22.1 ms ⇒ 帧工作 -29.6%、iv -25%
+- 最终树：iv 26.9~27.0 ms、rs2rr 22.3~22.4 ms、rr2rs 4.6~4.8 ms
+⇒ -27.9% 的最大单项是绘制缓冲（全屏 12 切片→5 切片）；UI 文件本身只值 -6.6%（省的是等 15 ms
+刷新周期的空档，帧工作没有变好 +1.8%）；真基线 38.6 ms 与 base.csv 的 37.6 ms 在噪声内，
+基线数字可复现。剩下的 22 ms/帧是 TRIPLE_PARTIAL 固定成本 + LVGL 绘制，只能动适配器。
+
+两条新负结果（都不留在树里）：
+- 适配器“延迟交接”（flush 尾部 mark_busy+等 VSYNC+换缓冲挪到下一帧开头）：blit 5.6~7.5 ms → 8 µs、
+  wait → 1.2~3.6 ms，但台架 iv 26,849/27,812/27,172 对对照 26,932/27,006/26,991 不变
+  ⇒ 拖动帧间隔不由 flush 的等待决定（与“缝失效”“缓冲 600 行”同向的第二个独立证据）。已还原 pristine。
+- 触摸采样侧（读回调外层采样 + 读周期 8→4 ms）：实机 iv/rs2rr/rr2rs 三项全中性；而且这套台架对
+  这条线不可判——pf_read_cb 先转发真实回调再覆写 data->point，合成手指只由 pf_script_tick 每 8 ms
+  走一步（rr2rs 4.5 ms 就是注入量化）。已 git checkout 回退。
+
+工具修复：
+- components/fnos_monitor/fnos_perf.c：pf_stop() 兜底上报（本轮没出过 [bench] 行就补一行）+
+  arm 失败打印原因 + s_reported 复位。触发场景：换回旧 fnos_ui.c 时 fnos_perf_init() 的调用点
+  （就在 UI 文件里）不存在 ⇒ 定时器从未创建、CLI 只回“已排队”，台架只能干等 180 s 超时。
+
+验证：tools/verify_all.sh --flash = 10 PASS / 0 FAIL（宿主 84 状态 + 几何/字形/重叠审计 + 四条入口
+栈深 + 烧录 30 s 无崩溃）。文档：docs/perf-report-2026-10-10.md（§一 归因表、§三 round 3 行、
+§四 13~15、§五 剩余杠杆量化、§六 真基线复现配方）。
+---
+ components/fnos_monitor/fnos_perf.c | 21 ++++++-
+ docs/perf-report-2026-10-10.md      | 91 ++++++++++++++++++++++++++---
+ 2 files changed, 101 insertions(+), 11 deletions(-)
+
+diff --git a/components/fnos_monitor/fnos_perf.c b/components/fnos_monitor/fnos_perf.c
+index 4576dfb..caf1f3d 100644
+--- a/components/fnos_monitor/fnos_perf.c
++++ b/components/fnos_monitor/fnos_perf.c
+@@ -219,6 +219,8 @@ static void pf_render_cb(lv_event_t *e)
+ 
+ /* ---------------------------------------------------------------- 报告 */
+ 
++static bool s_reported;   /* 本轮是否已经落过 [bench] 行（兜底上报用） */
++
+ static void pf_report(void)
+ {
+     uint32_t wall_ms = (uint32_t)((esp_timer_get_time() - s_run.run_us) / 1000);
+@@ -246,12 +248,18 @@ static void pf_report(void)
+            s_ntick, pf_pct(s_tick, s_ntick, 50), pf_pct(s_tick, s_ntick, 95), pf_max(s_tick, s_ntick),
+            total ? 100.0 * lvgl / total : 0.0, total ? 100.0 * idle / total : 0.0);
+     fflush(stdout);
++    s_reported = true;
+ }
+ 
+ static lv_timer_t *s_script_timer;
+ 
+ static void pf_stop(void)
+ {
++    /* 兜底：任何提前退出（arm 失败、超时、被新命令顶掉）都必须留下一行 [bench]，
++       否则 tools/perf_bench.py 只能干等到 180 s 超时，看不出断在哪一步
++       —— 2026-10-10 复现真基线时踩过：换回旧 fnos_ui.c 后 fnos_perf_init() 没人调用
++       （调用点就在 UI 文件里），定时器从未创建，CLI 只回 "已排队" 就再无输出。 */
++    if (s_run.active && !s_reported) pf_report();
+     s_run.active = false;
+     pf_detach();
+     if (s_script_timer) lv_timer_pause(s_script_timer);
+@@ -263,7 +271,11 @@ static void pf_arm(int64_t now)
+ {
+     if (s_run.kind == PF_SWIPE) {
+         /* 左右交替，免得连着同方向滑把页面滑到边上。 */
+-        if (!fnos_ui_swipe_point(s_run.dir, &s_run.x0, &s_run.y0)) { s_run.misses++; pf_stop(); return; }
++        if (!fnos_ui_swipe_point(s_run.dir, &s_run.x0, &s_run.y0)) {
++            printf("[bench] arm failed: swipe point unavailable (page=%d dir=%d)\n", s_run.page, s_run.dir);
++            fflush(stdout);
++            s_run.misses++; pf_stop(); return;
++        }
+         if (s_run.px <= 0) {
+             lv_display_t *d = lv_display_get_default();
+             s_run.px = d ? lv_display_get_horizontal_resolution(d) / 2 : 512;
+@@ -274,7 +286,11 @@ static void pf_arm(int64_t now)
+         s_run.y = s_run.y0;
+     } else {
+         /* 点按导航键中心：按下有反馈、松手换页，两个时延都在同一次手势里量到。 */
+-        if (!fnos_ui_nav_center(s_run.page, &s_run.x0, &s_run.y0)) { s_run.misses++; pf_stop(); return; }
++        if (!fnos_ui_nav_center(s_run.page, &s_run.x0, &s_run.y0)) {
++            printf("[bench] arm failed: nav center unavailable (page=%d)\n", s_run.page);
++            fflush(stdout);
++            s_run.misses++; pf_stop(); return;
++        }
+         s_run.x = s_run.x0;
+         s_run.y = s_run.y0;
+         s_run.steps = 0;
+@@ -367,6 +383,7 @@ static void pf_start(void)
+     s_last_ready_us = 0;
+     s_have_ready = false;
+     s_last_frame_us = 0;
++    s_reported = false;
+ 
+     pf_detach();   /* 上一轮留下的挂载先摘干净，否则会把 pf_read_cb 当成"真实回调"套娃 */
+     s_nreal = 0;
+diff --git a/docs/perf-report-2026-10-10.md b/docs/perf-report-2026-10-10.md
+index 7372c42..f55bea8 100644
+--- a/docs/perf-report-2026-10-10.md
++++ b/docs/perf-report-2026-10-10.md
+@@ -29,8 +29,25 @@
+   判 CPU 用 idle/tap（三个会话一致），别拿 swipe 的单次值说事。
+ 
+ 综合：**稳态（刷新开销、CPU、帧率）全面超过 30%；拖动跟手 -27.6~-27.9% / -29.0~-29.2%（差 0.8~1.0 个百分点）；
+-按下→首帧只有 8.2%。** 后两项不是没调好，而是不在 UI 侧——九条独立实验（第四节）都指向同一个地板：
+-TRIPLE_PARTIAL 每帧固定成本（整帧 blit + 整帧 cache msync ≈ 8 ms/帧）+ 60 Hz 面板节拍 + 输入采样周期。
++按下→首帧只有 8.2%。** 后两项不是没调好，而是不在 UI 侧——第四节十五条负结果里与拖动相关的各条
++都指向同一个地板：TRIPLE_PARTIAL 每帧固定成本（整帧 blit + 整帧 cache msync ≈ 8 ms/帧）
+++ 60 Hz 面板节拍 + 输入采样周期。
++
++**这一轮（goal round 3）新拿到的是归因，不是新速度。** 把"只换 `fnos_ui.c`"的对称实验和
++"只改 BSP 绘制缓冲"的对照做完后，-27.9% 的来源被拆开了（同机、同台架、每组 3 次 `swipe:3:0:3`）：
++
++| 固件 | iv p50 | 帧工作 `rs2rr` p50 | 帧间空档 `rr2rs` p50 |
++|---|---|---|---|
++| 真基线 = `a563000` 全套（缓冲 50 行、LVGL 日志开） | 38.6 / 38.8 / 38.6 ms | 31.0 / 31.4 / 31.3 ms | 7.3 / 7.3 / 13.8 ms |
++| 真基线 + 只把 BSP 绘制缓冲 50→120 行 | 29.2 / 28.9 / 28.8 ms | 22.0 / 22.1 / 21.9 ms | 7.1 / 6.7 / 7.0 ms |
++| 最终树（缓冲 120 + 本轮全部 UI 改动） | 26.9 / 27.0 / 27.0 ms | 22.4 / 22.4 / 22.4 ms | 4.6 / 4.6 / 4.8 ms |
++
++- **最大的单项是 BSP 绘制缓冲**（全屏 12 切片 → 5 切片）：帧工作 **-29.6%**、iv **-25%**；
++- **UI 文件本身只值 -6.6%**（iv 28.8→26.9），而且帧工作**没变好**（+1.8%），省下的是帧间空档
++  `rr2rs` 6.8→4.7 ms（`refresh_soon()` 不再等 15 ms 刷新周期 + 读周期 15→8 ms）；
++- 真基线 iv 38.6 ms 与 `base.csv` 的 37.6 ms 在噪声内 ⇒ **基线数字可复现**，-27.9% 不是测法造出来的；
++- ⇒ 拖动这条线的钱已经从"等刷新 / 切片开销"里挣完了：剩下每帧 22 ms 里是 TRIPLE_PARTIAL 的
++  固定成本（flush 8~10 ms）+ LVGL 实际绘制。**再要 30% 只能动适配器**（第五节）。
+ 
+ ## 二、远端 `d84039f` 判定
+ 
+@@ -62,6 +79,7 @@ TRIPLE_PARTIAL 每帧固定成本（整帧 blit + 整帧 cache msync ≈ 8 ms/
+ | `1fcdd29` | `refresh_soon()`：按下/拖动/切页不等 15 ms 刷新周期 | 每轮产帧数 +21~42%、FPS +27~47%、r2f -30~-40%；对 iv/p2f 无改善 |
+ | 本条 | 收尾：阶段分解仪表（p2rs/rs2rr/rr2rs，bench-only 默认关）、`main.cpp` 记录两条 tear-avoid 死路、本报告补负结果与跨会话复现 | `final.csv` 对 `base.csv`：tick -53.0%、r2f -40.3%/-29.4%、FPS +21~43%、iv -27.9%/-29.2%；宿主 9 PASS + 运动预算 PASS |
+ | 本轮（goal round 2） | 把 UI 侧最后三个候选逐个实测掉：flush 内部阶段分解仪表（`[dbg-flush]` rot/prep/msync/blit/dirty，只在 gitignored 的适配器里）、布局仪表（`[dbg-layout]` 每次 `layout_update_core` 的耗时）、translate 布局标记两探针、面板 MADCTL 硬件 180°、绘制缓冲 600 行 | 四条全负（第四节 9~12）；**没有一条改动留在树里**——`final3.csv` 复测确认 `final.csv` 的每一项（iv -27.6%/-29.0%、tick -52.9%、FPS +24.5%） |
++| 本轮（goal round 3） | 把手伸进适配器与输入侧各一次，然后把 -27.9% 的来源拆开：① 适配器"延迟交接"（flush 尾部的 `mark_busy`+等 VSYNC+换缓冲挪到下一帧开头）；② 触摸读回调外层采样 + indev 读周期 8→4 ms；③ 三组对照归因（真基线 / 真基线+只改 BSP 缓冲 120 行 / 最终树），全部用带拆分计数器的台架；④ 台架兜底上报（`pf_stop()` 若没出过 `[bench]` 行就补一行、arm 失败打印原因） | ①②全负（第四节 13/14），适配器已还原 pristine、UI 已 `checkout`；③ 见第一节归因表（**BSP 缓冲 -29.6% 帧工作**、UI 文件 -6.6% iv、真基线 38.6 ms 复现 `base.csv` 的 37.6 ms）；④ 工具修复，随本条提交（第四节 15） |
+ 
+ 门禁（每条提交后都跑）：宿主 84 状态渲染 + 几何/字形/溢出/重叠审计全绿；
+ `PREVIEW_MOTION` 响应与完成预算 PASS；固件构建 + 四条入口栈深在预算内。
+@@ -146,6 +164,34 @@ TRIPLE_PARTIAL 每帧固定成本（整帧 blit + 整帧 cache msync ≈ 8 ms/
+ 12. **LVGL 绘制缓冲 600 行（单切片）跑不动（本轮）**：BSP profile 的 `.buffer_height` 120→600
+     （`esp32_p4_wifi6_touch_lcd_7b.c:572`）后 `[dbg-flush]` 的 rot/prep/blit/dirty 与 120 行**完全一致**，
+     而且 `bench swipe 3 0 3` 180 s 内不出 `[bench]` 行（boot 等 12 s 与 30 s 两次都复现）⇒ 已回退到 120 行。
++13. **"延迟交接"：把 flush 尾部的换缓冲挪到下一帧开头，省下等待但不省帧时间（本轮）**：适配器
++    `display_bridge_v9_flush_partial_rotate` 尾部原本是 `mark_buf_busy` + `wait_free_buf`（等 VSYNC
++    释放缓冲）+ 换 `disp_fb/draw_fb`；改成"上一帧只记 `swap_pending`，下一帧开头再交接"后，
++    仪表读数：`blit` 7~9 µs（原先 5.6~7.5 ms，证明那 5.6~7.5 ms 全在 mark+wait）、`wait` 降到 1.2~3.6 ms，
++    **但台架 iv p50 26,849 / 27,812 / 27,172（对照 26,932 / 27,006 / 26,991）基本不变**。
++    ⇒ 与第 2、3 条一致的第二个独立证据：**拖动帧间隔不由 flush 的等待决定**。适配器已还原 pristine
++    （`grep -c dbg_` = 0），不留补丁。
++14. **触摸采样侧两条改动：实机全中性，而且台架根本看不见（本轮）**：① 把采样挂到触摸读回调外层
++    （`lv_indev_set_read_cb` 包装，"读到新坐标就立刻起帧"）；② 读周期 8 ms → 4 ms。实机三次
++    `swipe:3:0:3`：钩子+8 ms → iv 26,846 / 27,918 / 26,675；钩子+4 ms → 26,932 / 27,005 / 26,900；
++    无钩子对照 → 26,932 / 27,006 / 26,991 ⇒ **三项（iv / rs2rr / rr2rs）都没变**。
++    原因是台架自己包在最外层：`pf_read_cb`（`components/fnos_monitor/fnos_perf.c:152`）先转发真实读回调，
++    **再覆写 `data->point/state`**（:160-162）⇒ 任何 UI 侧包装都只看得到没有手指的真实面板（等于空转）；
++    而合成手指的位置只由 `pf_script_tick`（`lv_timer` 周期 `PF_STEP_MS`=8 ms，:484）每拍推进一步
++    （`PF_DRAG_STEPS=15`，插值在 :331-341）⇒ 拖动期的 `rr2rs`（实测 4.5 ms）**就是这套注入量化的产物**
++    （uniform[0, 8ms) 均值 4 ms）。**结论：触摸采样侧的任何改动在这个台架上不可判**；两条改动已
++    `git checkout` 回退。没有为了凑数字去改台架的注入节奏。
++15. **基线固件在新台架下静默停机（工具陷阱，已修）**：把 `fnos_ui.c` 换回 `a563000` 版本再跑
++    `bench swipe 3 0 3`，设备只回 "已排队"、之后**一行 `[bench]` 都不出**，`tools/perf_bench.py` 180 s
++    后抛 `TimeoutError: 等 [bench] 行超时`；`bench help` 正常、`bench idle`（不需要 arm）也静默 ⇒
++    不是 arm 失败。根因：`fnos_perf_init()` / `fnos_perf_note_tick()` 的**调用点在 UI 文件里**
++    （`components/fnos_monitor/fnos_ui.c:4644` / `:4587`），而 77c534b 给 `fnos_ui.c` 加的 28 行胶水
++    正是这两处 ⇒ 换回旧 UI 后台架定时器从未创建，CLI 只排队不报错。
++    复现基线要用「旧 UI + 胶水」：`git show a563000:components/fnos_monitor/fnos_ui.c > …/fnos_ui.c`，
++    再 `git show 77c534b -- components/fnos_monitor/fnos_ui.c > /tmp/bench_glue.patch` +
++    `patch -p1 -F3 < /tmp/bench_glue.patch`（`grep -c fnos_perf_init` = 1 才算对）。
++    本轮已给 `pf_stop()` 加兜底上报（未出过 `[bench]` 行就报一次）+ arm 失败打印原因，
++    以后同样的静默会直接变成一行可读的失败报告。
+ 
+ ## 五、未做（诚实清单）
+ 
+@@ -154,13 +200,18 @@ TRIPLE_PARTIAL 每帧固定成本（整帧 blit + 整帧 cache msync ≈ 8 ms/
+   已经超过 30%；曲线环要改图表数据结构，收益/风险不对称。
+ - 面板时序 / tear-avoid 缓冲策略（第四节 4/5/8 已证明 UI 侧到顶了，剩下的都在这一层：
+   DOUBLE_DIRECT 起不来、NONE 不支持旋转、MADCTL 硬件旋转无效（第 11 条），要动得改适配器或面板驱动）。
+-- **要再拿回最后 0.8~1.0 个百分点，只剩适配器 flush 路径这一件事**，且它现在被量化得很清楚：
+-  每帧 `prep` 1.2 ms（`display_bridge_v9_prepare_partial_back_buffer` 的**整帧** cache msync）
+-  + `blit` 5.6~7.5 ms（整帧 `draw_bitmap` + 等 VSYNC 放缓冲）。两条改法都在 gitignored 的
+-  `managed_components/espressif__esp_lvgl_adapter/` 里：① 只 msync 脏区对应范围；② 不再整帧 blit，
+-  而是按脏区直接写当前扫描缓冲（＝NONE 的行为 + 自己转那 180°）。本轮没做：它是厂商组件的
+-  结构改动，要么留成本地补丁（不进仓库、别人 clone 后没有），要么做成仓库内的 patch 文件 +
+-  apply 脚本，需要先定交付方式。
++- **要再拿回最后 0.8~1.0 个百分点，只剩适配器的"旋转路径"这一件事**，而且这一轮把它量得更准了：
++  每帧固定成本 `rot` 1.7 ms（PPA 把脏区转着写进中间缓冲）+ `prep` 1.2 ms（**整帧** cache msync）
++  ≈ 3 ms；第 11 条已经测出**绕开旋转路径时每帧省 ≈4 ms**（iv 24.2~25.4 ms），代价是画面反 180°。
++  第 13 条又证明"只把等 VSYNC 挪走"没用（`blit` 5.6~7.5 ms 里几乎全是等 VSYNC，挪走后台架 iv 不动）
++  ⇒ 可拿的是 `rot`+`prep`，不是 `blit` 的等待。三条现成改法都在 gitignored 的
++  `managed_components/espressif__esp_lvgl_adapter/` 里：① 只 msync 脏区对应范围（省 `prep`）；
++  ② 不再整帧 blit / 不再经中间缓冲，而是按脏区直接写当前扫描缓冲 + 自己在绘制路径上转那 180°
++  （＝NONE 的行为 + 自带旋转，省 `rot`）；③ `DOUBLE_DIRECT`（本板起不来，见 `main/main.cpp` 注释）。
++  本轮没做：它是厂商组件的结构改动，要么留成本地补丁（不进仓库、别人 clone 后没有），
++  要么做成仓库内的 patch 文件 + apply 脚本，需要先定交付方式（A/B/C 三选一，见最终答复）。
++- 输入采样侧（读回调外层采样、读周期 8→4 ms）本轮已实测为**中性**，而且台架对这条线不可判
++  （第四节 14：`pf_read_cb` 会覆写坐标、合成手指每 8 ms 走一步）⇒ 以后不要再用这套台架去调它。
+ - P2 的 p95 尾巴（34.9 ms 里偶发的 45 ms+ 帧）只查到"脏区大 + 等 VSYNC"这一步，
+   没有进一步归因到具体某一帧。
+ - 未推送远端：本地 `main` 未动，成果都在 `perf/eval-20261010`，等确认后再决定怎么合。
+@@ -183,6 +234,24 @@ python3 tools/perf_table.py /tmp/fnos-perf/base.csv /tmp/fnos-perf/cur.csv
+ 台架 sdkconfig（本机未跟踪）：`CONFIG_FNOS_UI_PERF_BENCH=y`、`CONFIG_FNOS_UI_MOTION_STATS=y`、
+ `CONFIG_LV_USE_LOG=n`（**必须 n**，开着日志时同一用例 iv 34 ms、tick 63 ms、p2f 104 ms，差一个量级）；
+ 生产配置的 sdkconfig 另有备份，验收前还原。
++注意上面那组数是**当时那套配置 + 当时那个日志级别**下的；本轮的三组对照里把 `CONFIG_LV_USE_LOG=y`
++单独恢复回来（默认级别、缓冲 120 行、同一份 UI），量出来与关掉时一样（iv 28.83 vs 28.83 ms）
++⇒ 复现旧数时要把日志级别一起对齐，别只改开关。
++
++真基线复现（**换回旧 UI 一定要补台架胶水**，否则 `fnos_perf_init()` 没人调用、CLI 只排队不执行，
++台架脚本只能等到 180 s 超时——第四节 15）：
++
++```bash
++git show a563000:components/fnos_monitor/fnos_ui.c > components/fnos_monitor/fnos_ui.c
++git show 77c534b -- components/fnos_monitor/fnos_ui.c > /tmp/bench_glue.patch
++patch -p1 -F3 --no-backup-if-mismatch < /tmp/bench_glue.patch   # grep -c fnos_perf_init 应为 1
++# 真基线还要把这几处也回到 a563000（绘制缓冲 50 行、LVGL 日志开）：
++git checkout a563000 -- components/esp32_p4_wifi6_touch_lcd_7b/esp32_p4_wifi6_touch_lcd_7b.c \
++    main/main.cpp sdkconfig.defaults
++# 归因三组：① 真基线；② 只 `git checkout HEAD -- <bsp 文件>`（缓冲 120）；
++#           ③ `cp` 回当前 fnos_ui.c。每组烧录后跑 3× swipe:3:0:3，读 [bench] 行的
++#           iv_p50_us / rs2rr_p50_us / rr2rs_p50_us（原始抓取脚本见下）。测完 git status 必须是干净的。
++```
+ 
+ 跨会话复现（同一份代码、不同会话，N=20，中位数）：swipe iv p50 27.1 / 27.2 / 28.2、iv p95
+ 34.8 / 34.9 / 34.7、r2f 32.4 / 32.5 / 32.3、tick 35.7 / 35.6 / 35.6（ms）；idle tick 35.5 / 35.5；FPS
+@@ -197,7 +266,11 @@ swipe 22.0 / 22.9。⇒ 这几项稳定可复核；`cpu_lvgl` 抖 ±40%（见第
+ #    给 obj->layout_inv 那段加 esp_timer，每 50 次打印 [dbg-layout] n= us_avg=
+ # ③ 串口原始抓取（复现单用例，不经 perf_bench 的 CSV）：/tmp/dbg_run.py
+ #    python3 /tmp/dbg_run.py        # 3× swipe:3:0:3，打印 iv/rs2rr/p2rs/rr2rs + 全部 [dbg-*] 行
++#    变体：/tmp/dbg_run_ho.py、/tmp/dbg_run_base.py（同一脚本、只换落盘文件名）——归因三组就靠它，
++#    每次只打印三行 "iv_p50=… rs2rr_p50=… p2rs_p50=… rr2rs_p50=… frames=…"
+ #    注意：关串口＝板子复位；开端口后要等 ~25 s 再发命令。
++# ④ p2rs/rs2rr/rr2rs 三个拆分计数器与 [bench] 行的对应字段是 bench-only 代码
++#    （components/fnos_monitor/fnos_perf.c，默认关），拿 N=20 CSV 时可以直接看列。
+ ```
+ 
+ 台架用例顺序也必须保持一致：`swipe:3:0:3,tap:3:3,idle:3:5`（顺序会改数值，见第一节）。

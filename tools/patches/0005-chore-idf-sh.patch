@@ -1,0 +1,481 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ashllll <ashllll@users.noreply.github.com>
+Date: Thu, 8 Oct 2026 23:59:05 +0800
+Subject: [PATCH 05/23] =?UTF-8?q?chore:=20idf.sh=20=E6=9E=84=E5=BB=BA?=
+ =?UTF-8?q?=E5=8C=85=E8=A3=85=E3=80=81=E4=BE=9D=E8=B5=96=E9=94=81=E4=B8=8E?=
+ =?UTF-8?q?=E5=BF=BD=E7=95=A5=E8=A7=84=E5=88=99?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- idf.sh：显式 IDF 环境（IDF_PATH/ESP_IDF_VERSION/FNOS_IDF_PYTHON）与 build/flash/monitor 包装
+- dependencies.lock 入库；.gitignore 增加 docs/evidence/（实机照片几十 MB，留在本地）
+---
+ .gitignore        |  15 +-
+ dependencies.lock | 359 ++++++++++++++++++++++++++++++++++++++++++++++
+ idf.sh            |  54 +++----
+ 3 files changed, 396 insertions(+), 32 deletions(-)
+ create mode 100644 dependencies.lock
+
+diff --git a/.gitignore b/.gitignore
+index 5f5815c..f3178b5 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -3,6 +3,7 @@ components/fnos_monitor/fnos_config.h
+ **/local_config.h
+ nas/*.local.sh
+ nas/deploy.local.sh
++.em_skill.json
+ 
+ # 构建产物
+ build/
+@@ -12,7 +13,6 @@ tools/preview/lv_kconfig_host.h
+ sdkconfig
+ sdkconfig.old
+ managed_components/
+-dependencies.lock
+ *.bin
+ *.elf
+ *.map
+@@ -30,3 +30,16 @@ tools/preview/palette-out/
+ tools/preview/pair_msgs.h
+ *.orig
+ *.rej
++
++# Local verification and physical acceptance data
++logs/
++*.log
++tools/preview/build-*/
++# 实机照片：手机相机截图，单轮就几十 MB；交付文档按本机路径引用它们，不入库
++docs/evidence/
++docs/evidence/*-device.png
++docs/evidence/*-p4-device.png
++docs/evidence/2026-10-07-temp-page-lvgl-native.png
++docs/evidence/2026-10-07-ui-lvgl-p*.png
++docs/evidence/2026-10-07-ui-temp-grouped-p*.png
++*.release-check
+diff --git a/dependencies.lock b/dependencies.lock
+new file mode 100644
+index 0000000..4acecd9
+--- /dev/null
++++ b/dependencies.lock
+@@ -0,0 +1,359 @@
++dependencies:
++  esp32_p4_wifi6_touch_lcd_7b:
++    dependencies: []
++    source:
++      path: /Users/llll/code/esp/p4-7b-fnos-monitor/components/esp32_p4_wifi6_touch_lcd_7b
++      type: local
++    version: 3.0.1
++  espressif/button:
++    component_hash: a1f34e8ed2e61ffef1a230fd9477005c2db335c7e1f6a239f43e5f119dcbe1b0
++    dependencies:
++    - name: espressif/cmake_utilities
++      registry_url: https://components.espressif.com
++      require: private
++      version: '*'
++    - name: idf
++      require: private
++      version: '>=4.0'
++    source:
++      registry_url: https://components.espressif.com
++      type: service
++    version: 4.2.1
++  espressif/cjson:
++    component_hash: e788323270d90738662d66fffa910bfe1fba019bba087f01557e70c40485b469
++    dependencies:
++    - name: idf
++      require: private
++      version: '>=5.0'
++    source:
++      registry_url: https://components.espressif.com/
++      type: service
++    version: 1.7.19~2
++  espressif/cmake_utilities:
++    component_hash: 351350613ceafba240b761b4ea991e0f231ac7a9f59a9ee901f751bddc0bb18f
++    dependencies:
++    - name: idf
++      require: private
++      version: '>=4.1'
++    source:
++      registry_url: https://components.espressif.com
++      type: service
++    version: 0.5.3
++  espressif/eppp_link:
++    component_hash: c1369b37f2b0b427b198ae14e07e7547d3da92b95fe4dc7f949e5de560b35f21
++    dependencies:
++    - name: espressif/esp_serial_slave_link
++      registry_url: https://components.espressif.com
++      require: private
++      version: ^1.1.0
++    - name: idf
++      require: private
++      version: '>=5.2'
++    source:
++      registry_url: https://components.espressif.com
++      type: service
++    version: 1.1.6
++  espressif/esp_codec_dev:
++    component_hash: df70f10af8d7b922add7b9d07372c9c97ab356e58d72b7a892050227c2d44348
++    dependencies:
++    - name: idf
++      require: private
++      version: '>=4.0'
++    source:
++      registry_url: https://components.espressif.com/
++      type: service
++    version: 1.5.11
++  espressif/esp_hosted:
++    component_hash: acda00d70be52c148b5f1c22e34c83fd182650c8e96ef83e81173627b1b13a0f
++    dependencies:
++    - name: idf
++      require: private
++      version: '>=5.3'
++    source:
++      registry_url: https://components.espressif.com/
++      type: service
++    version: 1.4.7
++  espressif/esp_lcd_ek79007:
++    component_hash: c5a0501fbab972031026aa6144354b31ed6db899cf2ee5a22ca4ebaf3fea1657
++    dependencies:
++    - name: espressif/cmake_utilities
++      registry_url: https://components.espressif.com
++      require: private
++      version: 0.*
++    - name: idf
++      require: private
++      version: '>=5.3'
++    source:
++      registry_url: https://components.espressif.com/
++      type: service
++    targets:
++    - esp32p4
++    version: 2.0.2~1
++  espressif/esp_lcd_touch:
++    component_hash: 3f85a7d95af876f1a6ecca8eb90a81614890d0f03a038390804e5a77e2caf862
++    dependencies:
++    - name: idf
++      require: private
++      version: '>=4.4.2'
++    source:
++      registry_url: https://components.espressif.com
++      type: service
++    version: 1.2.1
++  espressif/esp_lcd_touch_gt911:
++    component_hash: 737bdf29e0823eacf041381e81db2aaf5d378f3b5417df7f415f83319e3e790b
++    dependencies:
++    - name: espressif/esp_lcd_touch
++      registry_url: https://components.espressif.com
++      require: public
++      version: ^1.2.0
++    - name: idf
++      require: private
++      version: '>=5.2'
++    source:
++      registry_url: https://components.espressif.com/
++      type: service
++    version: 1.2.1
++  espressif/esp_lv_decoder:
++    component_hash: 331d23c304cea5d1aed0ad3cea7774874dbaeebb2217e8db6bf3cc8485ac9f9f
++    dependencies:
++    - name: espressif/esp_new_jpeg
++      registry_url: https://components.espressif.com
++      require: private
++      version: 1.*
++    - name: espressif/libpng
++      registry_url: https://components.espressif.com
++      require: private
++      version: 1.*
++    - name: idf
++      require: private
++      version: '>=5.3'
++    - name: lvgl/lvgl
++      registry_url: https://components.espressif.com
++      require: private
++      version: '>=8,<10'
++    source:
++      registry_url: https://components.espressif.com
++      type: service
++    targets:
++    - esp32
++    - esp32s2
++    - esp32s3
++    - esp32s31
++    - esp32p4
++    - esp32c2
++    - esp32c3
++    - esp32c5
++    - esp32c6
++    - esp32c61
++    - esp32h4
++    version: 0.4.3
++  espressif/esp_lv_fs:
++    component_hash: 66896007884b817df34c964f9a114fff538ee2674e99fee7159162498b93f94b
++    dependencies:
++    - name: espressif/cmake_utilities
++      registry_url: https://components.espressif.com
++      require: private
++      version: 0.*
++    - name: espressif/esp_mmap_assets
++      registry_url: https://components.espressif.com
++      require: private
++      version: '>=1.2'
++    - name: idf
++      require: private
++      version: '>=4.4'
++    - name: lvgl/lvgl
++      registry_url: https://components.espressif.com
++      require: private
++      version: '>=8,<10'
++    source:
++      registry_url: https://components.espressif.com
++      type: service
++    version: 1.0.1
++  espressif/esp_lvgl_adapter:
++    component_hash: bcb316bedda9e934d32567082a969a8e8f8f406dd32d23c359a299249dc18e81
++    dependencies:
++    - name: espressif/button
++      registry_url: https://components.espressif.com
++      require: public
++      version: 4.*
++    - name: espressif/esp_lcd_touch
++      registry_url: https://components.espressif.com
++      require: public
++      version: 1.*
++    - name: espressif/esp_lv_decoder
++      registry_url: https://components.espressif.com
++      require: public
++      version: 0.*
++    - name: espressif/esp_lv_fs
++      registry_url: https://components.espressif.com
++      require: public
++      version: 1.*
++    - name: espressif/freetype
++      registry_url: https://components.espressif.com
++      require: public
++      version: 2.*
++    - name: espressif/knob
++      registry_url: https://components.espressif.com
++      require: public
++      version: 1.*
++    - name: idf
++      require: private
++      version: '>=5.5'
++    - name: lvgl/lvgl
++      registry_url: https://components.espressif.com
++      require: private
++      version: '>=8,<10'
++    source:
++      registry_url: https://components.espressif.com/
++      type: service
++    version: 0.6.4
++  espressif/esp_mmap_assets:
++    component_hash: 42310c362596de2a37248c2937b1754bc29cd0356b9839e2a77cf791e6bcdde1
++    dependencies:
++    - name: espressif/cmake_utilities
++      registry_url: https://components.espressif.com
++      require: private
++      version: 0.*
++    - name: idf
++      require: private
++      version: '>=5.0'
++    source:
++      registry_url: https://components.espressif.com
++      type: service
++    version: 2.0.1
++  espressif/esp_new_jpeg:
++    component_hash: e1e7e6991193c41ed6c9fc386702aa7821433319e7aa9c3147cd3236310cd69c
++    dependencies: []
++    source:
++      registry_url: https://components.espressif.com
++      type: service
++    targets:
++    - esp32
++    - esp32s2
++    - esp32s3
++    - esp32s31
++    - esp32p4
++    - esp32c2
++    - esp32c3
++    - esp32c5
++    - esp32c6
++    - esp32c61
++    - esp32h4
++    version: 1.0.2
++  espressif/esp_serial_slave_link:
++    component_hash: ac1776806de0a6e371c84e87898bb983e19ce62aa7f1e2e5c4a3b0234a575d2c
++    dependencies:
++    - name: idf
++      require: private
++      version: '>=5.0'
++    source:
++      registry_url: https://components.espressif.com
++      type: service
++    version: 1.1.2
++  espressif/esp_wifi_remote:
++    component_hash: 0418b6c490eacf2cdfdfdc1fde9c41a89600949fd9e12b650e678fddefc56883
++    dependencies:
++    - name: espressif/esp_hosted
++      registry_url: https://components.espressif.com
++      require: private
++      rules:
++      - if: target in [esp32h2, esp32p4]
++      version: '>=0.0.6'
++    - name: espressif/wifi_remote_over_eppp
++      registry_url: https://components.espressif.com
++      require: private
++      version: '>=0.1'
++    - name: idf
++      require: private
++      version: '>=5.3'
++    source:
++      registry_url: https://components.espressif.com/
++      type: service
++    version: 1.2.5
++  espressif/freetype:
++    component_hash: aa9f7657a69b2b1c1f49044017fc424081d4e0fe6e97834cb43883548d44e3ca
++    dependencies:
++    - name: idf
++      require: private
++      version: '>=5.1'
++    source:
++      registry_url: https://components.espressif.com
++      type: service
++    version: 2.14.3~1
++  espressif/knob:
++    component_hash: b56694054cd34a683ac2a6f3661963ba00b1dab741a4f3bb59ed6666cbc9f3fb
++    dependencies:
++    - name: espressif/cmake_utilities
++      registry_url: https://components.espressif.com
++      require: private
++      version: 0.*
++    - name: idf
++      require: private
++      version: '>=4.4.1'
++    source:
++      registry_url: https://components.espressif.com
++      type: service
++    version: 1.1.0
++  espressif/libpng:
++    component_hash: b8c715f76b79a127d9b1b632e09acc23e7b29d2194af890a837adc2be5a2804b
++    dependencies:
++    - name: idf
++      require: private
++      version: '>=5.1'
++    - name: espressif/zlib
++      registry_url: https://components.espressif.com
++      require: private
++      version: ^1.2.13
++    source:
++      registry_url: https://components.espressif.com
++      type: service
++    version: 1.6.58~1
++  espressif/wifi_remote_over_eppp:
++    component_hash: 1fd6968af20f0b19e421f6b519b0a8caf81d689afc3783b564c28559e45f66ef
++    dependencies:
++    - name: espressif/eppp_link
++      registry_url: https://components.espressif.com
++      require: private
++      version: '>=0.1'
++    - name: idf
++      require: private
++      version: '>=5.3'
++    source:
++      registry_url: https://components.espressif.com
++      type: service
++    version: 0.3.3
++  espressif/zlib:
++    component_hash: 9083cada65f1c9d298ef92266232d071c6f2f335164e2799554b3eae73aedc55
++    dependencies:
++    - name: idf
++      require: private
++      version: '>=5.1'
++    source:
++      registry_url: https://components.espressif.com
++      type: service
++    version: 1.3.2~1
++  idf:
++    source:
++      type: idf
++    version: 5.5.3
++  lvgl/lvgl:
++    component_hash: 184e532558c1c45fefed631f3e235423d22582aafb4630f3e8885c35281a49ae
++    dependencies: []
++    source:
++      registry_url: https://components.espressif.com/
++      type: service
++    version: 9.5.0
++direct_dependencies:
++- espressif/cjson
++- espressif/esp32_p4_wifi6_touch_lcd_7b
++- espressif/esp_codec_dev
++- espressif/esp_hosted
++- espressif/esp_lcd_ek79007
++- espressif/esp_lcd_touch_gt911
++- espressif/esp_lvgl_adapter
++- espressif/esp_wifi_remote
++- idf
++- lvgl/lvgl
++manifest_hash: 2ee7674551581b485aafdec57a00b6a1663b2b45841371ef1bb955d4a60f22ba
++target: esp32p4
++version: 2.0.0
+diff --git a/idf.sh b/idf.sh
+index 9ba49a3..77a439e 100755
+--- a/idf.sh
++++ b/idf.sh
+@@ -1,32 +1,24 @@
+ #!/usr/bin/env bash
+-# 注意：必须用 bash —— use-esp-idf-5.5.3.sh 里定义的是 `idf.py()` 函数，
+-# POSIX sh 不接受带点的函数名。
+-# 本项目专用 idf.py 包装。
+-#
+-# 为什么需要它：
+-#   本机的 ESP-IDF 5.5.3 来自 PlatformIO 包（framework-espidf@3.50503.0），只通过
+-#   /Users/llll/code/esp/use-esp-idf-5.5.3.sh 设置 IDF_PATH/PATH，没有走 IDF 官方的
+-#   export.sh，因此环境变量 ESP_IDF_VERSION 缺失。
+-#   而 esp_wifi_remote 的 Kconfig 里是 `orsource "./Kconfig.idf_v$ESP_IDF_VERSION.in"`：
+-#   变量为空时该文件被静默跳过，于是依赖它的 SLAVE_IDF_TARGET 选项不存在，
+-#   ESP-Hosted 便退回默认的 SPI 传输——本板 C6 走的是 SDIO，Wi-Fi 会起不来。
+-#   IDF 官方 get_idf_version() 导出的是 major.minor（如 "5.5"），这里照此补上。
+-#
+-# 用法：
+-#   ./idf.sh set-target esp32p4
+-#   ./idf.sh build
+-#   ./idf.sh -p /dev/tty.usbmodemXXXX flash monitor
+-set -e
+-
+-. /Users/llll/code/esp/use-esp-idf-5.5.3.sh
+-
+-export ESP_IDF_VERSION="${ESP_IDF_VERSION:-5.5}"
+-
+-# 构建必须用 CommandLineTools 而不是完整 Xcode：本机 Xcode 的许可协议没同意过
+-# （同意需要 sudo，而本会话不允许交互审批），一旦 CMAKE 选到 Xcode 工具链就会以
+-#   "You have not agreed to the Xcode license agreements … exit code 69"
+-# 结束，而且报错在几百行 make 输出之后，看起来像编译失败。钉住它，
+-# 让"能不能构建"不再取决于机器上装没装 Xcode。
+-export DEVELOPER_DIR="${DEVELOPER_DIR:-/Library/Developer/CommandLineTools}"
+-
+-idf.py "$@"
++# Activate ESP-IDF beforehand, or supply a local activation script via FNOS_IDF_ENV.
++# esp_wifi_remote requires ESP_IDF_VERSION in major.minor form even for packaged IDF.
++set -euo pipefail
++if [ -n "${FNOS_IDF_ENV:-}" ]; then
++  [ -f "$FNOS_IDF_ENV" ] || { echo "IDF activation script not found" >&2; exit 1; }
++  . "$FNOS_IDF_ENV"
++fi
++if [ -z "${IDF_PATH:-}" ] || [ ! -f "$IDF_PATH/tools/idf.py" ]; then
++  echo "Activate ESP-IDF first, or set FNOS_IDF_ENV to your activation script." >&2
++  exit 1
++fi
++FNOS_IDF_PYTHON="${FNOS_IDF_PYTHON:-${IDF_PYTHON_ENV_PATH:+$IDF_PYTHON_ENV_PATH/bin/python}}"
++FNOS_IDF_PYTHON="${FNOS_IDF_PYTHON:-python3}"
++if [ -z "${ESP_IDF_VERSION:-}" ]; then
++  FNOS_IDF_FULL_VERSION=$("$FNOS_IDF_PYTHON" "$IDF_PATH/tools/idf.py" --version)
++  ESP_IDF_VERSION=$(printf '%s\n' "$FNOS_IDF_FULL_VERSION" | sed -nE 's/^ESP-IDF v?([0-9]+\.[0-9]+).*/\1/p')
++  [ -n "$ESP_IDF_VERSION" ] || { echo "Cannot determine ESP-IDF version" >&2; exit 1; }
++  export ESP_IDF_VERSION
++fi
++if [ "$(uname -s)" = Darwin ] && [ -d /Library/Developer/CommandLineTools ]; then
++  export DEVELOPER_DIR="${DEVELOPER_DIR:-/Library/Developer/CommandLineTools}"
++fi
++exec "$FNOS_IDF_PYTHON" "$IDF_PATH/tools/idf.py" "$@"

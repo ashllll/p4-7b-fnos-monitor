@@ -1,0 +1,375 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ashllll <ashllll@users.noreply.github.com>
+Date: Fri, 9 Oct 2026 22:48:29 +0800
+Subject: [PATCH 10/23] =?UTF-8?q?=E5=85=A8=E9=A1=B5=E6=B8=85=E5=8D=95?=
+ =?UTF-8?q?=E5=8F=AF=E8=AF=BB=E6=80=A7=E4=B8=8B=E9=99=90=EF=BC=9A=E6=B1=A0?=
+ =?UTF-8?q?=E4=B8=8E=E6=BB=9A=E5=8A=A8=E5=88=97=E8=87=AA=E5=8A=A8=E6=88=90?=
+ =?UTF-8?q?=E6=B8=85=E5=8D=95=EF=BC=8C=E5=AE=A1=E8=AE=A1=E8=A6=86=E7=9B=96?=
+ =?UTF-8?q?=E6=AF=8F=E4=B8=80=E9=A1=B5?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- uk_pool_create() 与 scroll_col() 建出来就带清单标记（默认承诺 UK_LIST_MIN_ROWS 项）：
+  新加的列表自动进审计，不再依赖调用方记得打标（上一轮漏打标时"0 违规"其实是没查）
+- 承诺项数由容器自带（uk_list_promise）：温度页设备池（展开后一块 200~260px）与首页
+  紧凑卷条用 uk_list_mark_one() 降为"完整露出一整项"；单项本身就比视口高的块清单免检
+  （判据 uk_list_item_max(o) > 容器高，只对承诺 1 项的清单生效，行清单照旧要两项）
+- inventory_sections()、overview_layout()、audit_list_floors() 统一读 uk_list_promise()，
+  下限公式仍只有 uk_list_readable_min() 一处，布局与审计不可能各演化一套口径
+- 新增 uk_list_item_max()；uk_list_readable_min() 形参 rows → items（它一直只懂项）
+- 覆盖活性探针：把审计的承诺临时 +1 项后整轮 45 处命中，分布在 02/03/04/05/06/08/09/
+  10/11/12 十组状态（六页 + 告警页 + 设置与诊断 + Wi-Fi 面板 + 容器页 + 温度展开态）
+- 验证：bash tools/preview/run.sh 84 帧矩阵 + 四项几何审计 + 对比度 4.5:1 通过、0 违规；
+  PREVIEW_NUMBERS=1 / PREVIEW_DATA_MOTION=1 均 PASS；逐帧曲线 p0 5765 / p1 1308 /
+  p2 7819 / p3 868 / p4 3069 / p5 24，其中 p0/p2/p4 与改前逐像素一致
+- 文档：docs/ui-refactoring-ui-2026-10-08.md 增"全页推广（迭代三）"一节
+---
+ components/fnos_monitor/fnos_ui.c    | 26 ++++++++++--------
+ components/fnos_monitor/ui_kit/uk.c  | 39 ++++++++++++++++++--------
+ components/fnos_monitor/ui_kit/uk.h  | 32 +++++++++++++++-------
+ docs/ui-refactoring-ui-2026-10-08.md | 41 ++++++++++++++++++++++++----
+ tools/preview/preview.c              | 23 ++++++++++------
+ 5 files changed, 113 insertions(+), 48 deletions(-)
+
+diff --git a/components/fnos_monitor/fnos_ui.c b/components/fnos_monitor/fnos_ui.c
+index 9fb7266..2802f13 100644
+--- a/components/fnos_monitor/fnos_ui.c
++++ b/components/fnos_monitor/fnos_ui.c
+@@ -497,6 +497,7 @@ static lv_obj_t *scroll_col(lv_obj_t *parent)
+     lv_obj_set_style_border_width(c, 0, 0);
+     lv_obj_set_style_pad_all(c, 0, 0);
+     lv_obj_set_style_pad_row(c, UK_S3, 0);
++    uk_list_mark(c);   /* 滚动列也是清单：默认承诺 UK_LIST_MIN_ROWS 项 */
+     lv_obj_set_style_pad_right(c, UK_SCROLL_INSET, 0);
+     lv_obj_set_style_min_height(c, 0, 0);
+     lv_obj_set_flex_flow(c, LV_FLEX_FLOW_COLUMN);
+@@ -1189,7 +1190,7 @@ static void build_p0(lv_obj_t *page)
+        实测条目高算，这里只是"还没数据"时的占位 —— 建树时池里还没有条目。 */
+     int32_t list_min = lv_font_get_line_height(UK_FONT_CJK_12) + UK_S1 + UK_BAR_H;
+     lv_obj_set_style_min_height(s_ui.overview_volumes, list_min, 0);
+-    uk_list_mark(s_ui.overview_volumes);
++    uk_list_mark_one(s_ui.overview_volumes);
+     lv_obj_set_style_pad_row(s_ui.overview_volumes, UK_S1, 0);
+     lv_obj_set_style_pad_right(s_ui.overview_volumes, UK_SCROLL_W + UK_S1, 0);
+     lv_obj_set_style_width(s_ui.overview_volumes, UK_SCROLL_W, LV_PART_SCROLLBAR);
+@@ -1282,7 +1283,6 @@ static void build_p1(lv_obj_t *page)
+         lv_obj_t *body = uk_card_body(s_ui.vol_card);
+         s_ui.vol_empty = empty_box(body, "未采集到存储卷", NULL);
+         s_ui.vol_pool = uk_pool_create(body, UK_LIST_MIN_WIDTH);
+-        uk_list_mark(s_ui.vol_pool);   /* 行清单：承诺完整露出 UK_LIST_MIN_ROWS 行 */
+         lv_obj_set_style_pad_row(s_ui.vol_pool, UK_ITEM_GAP, 0);
+         uk_pool_stretch(s_ui.vol_pool, false);
+         s_ui.vol_made = 0;
+@@ -1294,7 +1294,6 @@ static void build_p1(lv_obj_t *page)
+         lv_obj_t *body = uk_card_body(s_ui.raid_card);
+         s_ui.raid_empty = empty_box(body, "未采集到阵列", NULL);
+         s_ui.raid_pool = uk_pool_create(body, UK_LIST_MIN_WIDTH);
+-        uk_list_mark(s_ui.raid_pool);
+         lv_obj_set_style_pad_row(s_ui.raid_pool, UK_ITEM_GAP, 0);
+         uk_pool_stretch(s_ui.raid_pool, false);
+         s_ui.raid_made = 0;
+@@ -1308,7 +1307,6 @@ static void build_p1(lv_obj_t *page)
+         lv_obj_t *body = uk_card_body(s_ui.disk_card);
+         s_ui.disk_empty = empty_box(body, "未采集到磁盘活动", NULL);
+         s_ui.disk_pool = uk_pool_create(body, UK_LIST_MIN_WIDTH);
+-        uk_list_mark(s_ui.disk_pool);
+         lv_obj_set_style_pad_row(s_ui.disk_pool, UK_ITEM_GAP, 0);
+         uk_pool_stretch(s_ui.disk_pool, false);
+         s_ui.disk_made = 0;
+@@ -1470,7 +1468,6 @@ static void build_p3(lv_obj_t *page)
+         lv_obj_t *body = uk_card_body(s_ui.dock_card);
+         s_ui.dock_empty = empty_box(body, "等待容器采集", &s_ui.dock_empty_label);
+         s_ui.dock_pool = uk_pool_create(body, UK_LIST_MIN_WIDTH);
+-        uk_list_mark(s_ui.dock_pool);
+         lv_obj_set_style_pad_row(s_ui.dock_pool, UK_ITEM_GAP, 0);
+         uk_pool_stretch(s_ui.dock_pool, false);
+         s_ui.dock_made = 0;
+@@ -1483,7 +1480,6 @@ static void build_p3(lv_obj_t *page)
+         lv_obj_t *body = uk_card_body(s_ui.p3_temp_card);
+         s_ui.temp_empty = empty_box(body, "未采集到温度", NULL);
+         s_ui.p3_temp_pool = uk_pool_create(body, UK_LIST_MIN_WIDTH);
+-        uk_list_mark(s_ui.p3_temp_pool);
+         lv_obj_set_style_pad_row(s_ui.p3_temp_pool, UK_ITEM_GAP, 0);
+         uk_pool_stretch(s_ui.p3_temp_pool, false);
+         s_ui.p3_temp_made = 0;
+@@ -1616,6 +1612,9 @@ static void build_p4(lv_obj_t *page)
+ 
+     /* Column count follows available content width and configured preferred width. */
+     s_ui.temp_pool = uk_pool_create(body, UK_LIST_MIN_WIDTH);
++    /* 一台设备一块、块内还能展开通道（展开后一块 200~260px，比视口还高）——
++       这类可变高复合块只承诺"完整露出一块"，不能按行承诺两项。 */
++    uk_list_mark_one(s_ui.temp_pool);
+     lv_obj_set_style_pad_row(s_ui.temp_pool, UK_CARD_GAP, 0);
+     /* 一块一台设备、块高参差：不要让池把余量平分进每块（那会在块与块之间留大片空白） */
+     uk_pool_stretch(s_ui.temp_pool, false);
+@@ -1807,6 +1806,7 @@ static void build_p5(lv_obj_t *page)
+             s_ui.alert_page_col[g] = uk_col(body, 0);
+             lv_obj_set_width(s_ui.alert_page_col[g], LV_PCT(100));
+             lv_obj_set_style_pad_row(s_ui.alert_page_col[g], UK_S2, 0);
++            uk_list_mark(s_ui.alert_page_col[g]);   /* 三条一组的告警列也是清单 */
+             s_ui.alert_page_made[g] = 0;
+         }
+         s_ui.alert_page_empty = empty_box(body, "暂无告警事件", NULL);
+@@ -1817,6 +1817,7 @@ static void build_p5(lv_obj_t *page)
+         s_ui.alert_health = uk_col(body, 0);
+         lv_obj_set_width(s_ui.alert_health, LV_PCT(100));
+         lv_obj_set_style_pad_row(s_ui.alert_health, UK_S1, 0);
++        uk_list_mark(s_ui.alert_health);            /* 健康态的四行维度表 */
+         lv_obj_add_flag(s_ui.alert_health, LV_OBJ_FLAG_HIDDEN);
+         {
+             static const char *const hname[] = { "存储容量", "温度", "容器", "采集" };
+@@ -3415,10 +3416,10 @@ static void inventory_sections(lv_obj_t *container, lv_obj_t **cards,
+                （尤其是非活动页）条目的 coords 可能还是上一次布局留下的旧值。 */
+             item_min=LV_MAX(item_min,uk_list_readable_min(pools[i],1));  /* 完整一行 */
+             content =uk_list_content_min(pools[i]);                       /* 全部摊开 */
+-            /* 可读性下限：清单池至少完整露出 UK_LIST_MIN_ROWS 行（见 uk_list_readable_min）。
++            /* 可读性下限：清单池至少完整露出它承诺的项数（见 uk_list_readable_min）。
+                此前只有"最高条目"这一条 —— 那只保证一行：p1 的三张卡因此各剩 55px，
+                第二行必须滚动才看得到。 */
+-            readable=uk_list_readable_min(pools[i],UK_LIST_MIN_ROWS);
++            readable=uk_list_readable_min(pools[i],uk_list_promise(pools[i]));
+             /* 卡里除池以外的部分按**当前布局**量出来（标题、内外边距、隐藏的空态
+                占位都算进去）。手算的 chrome 会把它们占的行距漏掉 —— p1 的池就这
+                样比"卡最小高"少 8px，第二整行正好被切掉。改用 LV_SIZE_CONTENT 量
+@@ -3548,12 +3549,13 @@ static void overview_layout(void)
+         lv_obj_set_style_min_height(lv_obj_get_parent(resources), minimum, 0);
+     }
+ 
+-    /* 首页卷池：紧凑对比条（一格宽、和另外两张卡并列），只承诺"完整露出一行"
+-       —— 两行会把这排磁贴顶高 29px、把上面那排卡挤出可视区。它不写常数：
+-       下限按实测条目高算（曾按 "12px 行 + 4 + 条高" 手算成 21px，比一行还矮）。 */
++    /* 首页卷池：紧凑对比条（一格宽、和另外两张卡并列），只承诺"完整露出一项"
++       （uk_list_mark_one）—— 两行会把这排磁贴顶高 29px、把上面那排卡挤出可视区。
++       它不写常数：下限按实测条目高算（曾按 "12px 行 + 4 + 条高" 手算成 21px，比一行还矮）。 */
+     if (s_ui.overview_volumes && !lv_obj_has_flag(s_ui.overview_volumes, LV_OBJ_FLAG_HIDDEN)) {
+         lv_obj_update_layout(s_ui.overview_volumes);
+-        int32_t readable = uk_list_readable_min(s_ui.overview_volumes, 1);
++        int32_t readable = uk_list_readable_min(s_ui.overview_volumes,
++                                                uk_list_promise(s_ui.overview_volumes));
+         if (readable > 0) lv_obj_set_style_min_height(s_ui.overview_volumes, readable, 0);
+     }
+ 
+diff --git a/components/fnos_monitor/ui_kit/uk.c b/components/fnos_monitor/ui_kit/uk.c
+index a81a44f..1984735 100644
+--- a/components/fnos_monitor/ui_kit/uk.c
++++ b/components/fnos_monitor/ui_kit/uk.c
+@@ -527,6 +527,7 @@ lv_obj_t *uk_pool_create(lv_obj_t *parent, int32_t min_col_w)
+     lv_obj_set_flex_align(p, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+     lv_obj_set_style_min_height(p, 0, 0);
+     lv_obj_add_flag(p, LV_OBJ_FLAG_USER_2);
++    uk_list_mark(p);   /* 池建出来就是清单：默认承诺 UK_LIST_MIN_ROWS 项，见 uk_list_mark_one */
+     uk_pool_t *st = lv_malloc(sizeof *st);
+     LV_ASSERT_MALLOC(st);
+     memset(st, 0, sizeof *st);
+@@ -546,29 +547,43 @@ int32_t uk_pool_shown(lv_obj_t *pool)
+ { uk_pool_t *st=lv_obj_get_user_data(pool); return st ? st->shown : 0; }
+ 
+ /* ── 清单可读性下限 ───────────────────────────────────────────────────
+-   只有调用方显式 uk_list_mark() 的容器才按"行清单"处理。池**不**自动打标：温度页的
+-   设备块是可变高的复合块，一块就能合法地比视口还高，对它承诺"两行"没有意义。 */
+-void uk_list_mark(lv_obj_t *list) { if (list) lv_obj_add_flag(list, UK_LIST_FLAG); }
++   池和滚动列建出来就带标记（见 uk_pool_create / fnos_ui.c 的 scroll_col），
++   默认承诺 UK_LIST_MIN_ROWS 项；条目是可变高复合块的清单用 uk_list_mark_one()
++   把承诺降到一整项。 */
++void uk_list_mark(lv_obj_t *list)     { if (list) lv_obj_add_flag(list, UK_LIST_FLAG); }
++void uk_list_mark_one(lv_obj_t *list) { if (list) lv_obj_add_flag(list, UK_LIST_FLAG | UK_LIST_ONE_FLAG); }
+ bool uk_list_is(lv_obj_t *o) { return o && lv_obj_has_flag(o, UK_LIST_FLAG); }
+ bool uk_pool_is(lv_obj_t *o) { return o && lv_obj_has_flag(o, LV_OBJ_FLAG_USER_2); }
++int32_t uk_list_promise(lv_obj_t *list)
++{ return (list && lv_obj_has_flag(list, UK_LIST_ONE_FLAG)) ? 1 : UK_LIST_MIN_ROWS; }
+ 
+-/* 至少完整露出前面 rows 行需要多高。只用**条目高度**和列数算，不用坐标：
+-   重排之后（尤其是非活动页）条目的 coords 可能还是上一次布局的旧值，而高度是新的。
+-   行高按"最高条目"保守取，行距取容器当前行距（viewport_snap 撑大过就算撑大后的）。 */
+-int32_t uk_list_readable_min(lv_obj_t *list, int32_t rows)
++/* 清单里最高的一条（没有可见条目时 0）。单项就比视口高的块清单靠它豁免下限审计。 */
++int32_t uk_list_item_max(lv_obj_t *list)
+ {
+-    if (!list || rows <= 0) return 0;
+-    int32_t item=0, seen=0;
++    int32_t item=0;
++    if (!list) return 0;
+     for (uint32_t i=0;i<lv_obj_get_child_count(list);i++) {
+         lv_obj_t *it=lv_obj_get_child(list,i);
+         if (lv_obj_has_flag(it,LV_OBJ_FLAG_HIDDEN)) continue;
+         item=LV_MAX(item,lv_obj_get_height(it));
+-        seen++;
+     }
+-    if (!seen) return 0;
++    return item;
++}
++
++/* 至少完整露出前面 items 项需要多高。只用**条目高度**和列数算，不用坐标：
++   重排之后（尤其是非活动页）条目的 coords 可能还是上一次布局的旧值，而高度是新的。
++   项高按"最高条目"保守取，行距取容器当前行距（viewport_snap 撑大过就算撑大后的）。
++   条目本来就没那么多项时返回内容总高 —— 空清单返回 0，不会误报。 */
++int32_t uk_list_readable_min(lv_obj_t *list, int32_t items)
++{
++    if (!list || items <= 0) return 0;
++    int32_t item=uk_list_item_max(list), seen=0;
++    if (!item) return 0;
++    for (uint32_t i=0;i<lv_obj_get_child_count(list);i++)
++        if (!lv_obj_has_flag(lv_obj_get_child(list,i),LV_OBJ_FLAG_HIDDEN)) seen++;
+     int32_t cols=uk_pool_is(list) ? LV_MAX(1, uk_pool_cols(list)) : 1;
+     int32_t total=(seen+cols-1)/cols;
+-    int32_t want=LV_MIN(rows,total);
++    int32_t want=LV_MIN(items,total);
+     return want*item+(want-1)*lv_obj_get_style_pad_row(list,0);
+ }
+ 
+diff --git a/components/fnos_monitor/ui_kit/uk.h b/components/fnos_monitor/ui_kit/uk.h
+index 1f2903f..7dc68b8 100644
+--- a/components/fnos_monitor/ui_kit/uk.h
++++ b/components/fnos_monitor/ui_kit/uk.h
+@@ -136,18 +136,30 @@ void uk_pool_force_cols(lv_obj_t *pool, int32_t cols);
+    （容器装得下时行距回到 base_gap）。base_gap = 本来要用的那个行距。 */
+ void uk_viewport_snap(lv_obj_t *box, int32_t base_gap);
+ 
+-/* ── 清单可读性下限 ───────────────────────────────────────────────────
+-   "清单容器" = 可滚动、按行排条目的纵向列表（自适应池、事件列、首页的紧凑对比条）。
+-   它承诺至少完整露出 UK_LIST_MIN_ROWS 行：卡片因此不可能被算得"比一行还矮"
+-   （p1 的三张卡曾按 UK_ROW_H 手算成一行 55px、首页卷池曾手算成 21px）。
+-   行数只是下限，**行高一律实测**（条目自然高 + 容器行距），不写常数。
+-   uk_list_readable_min() 就是要用的下限高度（内容本来就不够那么多行时返回内容总高），
+-   布局拿它当 min_height，preview 的清单可读性审计用同一条式子判违规。 */
+-#define UK_LIST_FLAG LV_OBJ_FLAG_USER_3
+-void    uk_list_mark(lv_obj_t *list);                    /* 打上"清单容器"标记（行清单才打） */
++/* ── 清单可读性下限（全页统一） ───────────────────────────────────────
++   "清单容器" = 纵向排条目、内容多了自己滚的列表（自适应池、事件列、告警列、
++   首页的紧凑对比条）。它承诺至少完整露出**若干整项**：卡片因此不可能被算得
++   "比一项还矮"（p1 的三张卡曾按 UK_ROW_H 手算成一行 55px、首页卷池曾手算成 21px）。
++   项数只是下限，**高度一律实测**（条目自然高 + 容器行距），不写常数。
++   uk_list_readable_min() 就是要用的下限高度（内容本来就不够那么多项时返回内容总高），
++   布局拿它当 min_height，preview 的清单可读性审计用同一条式子判违规。
++
++   承诺几项由容器自己带：
++   - 池（uk_pool_create）和滚动列（scroll_col）**建出来就是清单**，默认承诺
++     UK_LIST_MIN_ROWS 项 —— 新加的列表自动被审计覆盖，不需要记得打标；
++   - 条目是可变高复合块（温度页的设备块：展开后一块能比视口还高）或容器本身
++     就没有第二项的空间（首页那条紧凑对比条，两行会把磁贴顶高、把上面的卡挤出去）时，
++     调用方用 uk_list_mark_one() 把承诺降到一整项。**单项本身就比视口高**时（设备块
++     展开态）连"露一整项"都做不到，审计对这种清单免检（它由"能滚 + 文本不被裁"兜底）。 */
++#define UK_LIST_FLAG     LV_OBJ_FLAG_USER_3   /* 是清单容器（参与下限审计） */
++#define UK_LIST_ONE_FLAG LV_OBJ_FLAG_USER_1   /* 只承诺一整项（默认承诺 UK_LIST_MIN_ROWS 项） */
++void    uk_list_mark(lv_obj_t *list);                    /* 承诺 UK_LIST_MIN_ROWS 项 */
++void    uk_list_mark_one(lv_obj_t *list);                /* 只承诺一整项（块清单 / 放不下的紧凑条） */
+ bool    uk_list_is(lv_obj_t *o);
+ bool    uk_pool_is(lv_obj_t *o);                         /* 池（USER_2） */
+-int32_t uk_list_readable_min(lv_obj_t *list, int32_t rows);   /* 完整露出 rows 行需要的高 */
++int32_t uk_list_promise(lv_obj_t *list);                 /* 该清单承诺几项（1 或 UK_LIST_MIN_ROWS） */
++int32_t uk_list_item_max(lv_obj_t *list);                /* 清单里最高的一条（0 = 没有可见条目） */
++int32_t uk_list_readable_min(lv_obj_t *list, int32_t items);  /* 完整露出 items 项需要的高 */
+ int32_t uk_list_content_min(lv_obj_t *list);                  /* 全部条目摊开需要的高 */
+ 
+ /* ── KPI 格（标签 / 大数字 / 单位 / 副读数 / 阈值条） ──────────────── */
+diff --git a/docs/ui-refactoring-ui-2026-10-08.md b/docs/ui-refactoring-ui-2026-10-08.md
+index 5407a29..a2a6e2d 100644
+--- a/docs/ui-refactoring-ui-2026-10-08.md
++++ b/docs/ui-refactoring-ui-2026-10-08.md
+@@ -171,12 +171,12 @@ DSH Desktop 提供定向意见并补查最终系统高度判据，其余 `fnos_u
+   大数字和值条）。
+ 
+ 新增 API（`components/fnos_monitor/ui_kit/uk.h`）：`UK_LIST_MIN_ROWS`、`uk_list_mark()` / `uk_list_is()`
+-（行清单标记，`LV_OBJ_FLAG_USER_3`；池**不**自动打标——温度页的设备块是可变高的复合块，一块就能合法
+-地比视口还高）、`uk_list_readable_min(list, rows)`、`uk_list_content_min(list)`。
++（清单标记，`LV_OBJ_FLAG_USER_3`）、`uk_list_readable_min(list, items)`、`uk_list_content_min(list)`。
++（本节最初的版本只给 p1/p3 的几个池显式打标、池不自动打标；下一节把它推广成全页统一口径。）
+ 
+-新增审计（`tools/preview/preview.c` 的 `audit_list_floors()`）：行清单容器的高度必须够它承诺的行数
+-（池 2 行、非池 1 行），判据与布局共用 `uk_list_readable_min()`。这是"卡片太小"的**正面**判据：
+-几何审计只查"跑出父对象"，"只露一行"完全合法，所以此前四个审计都不说话。
++新增审计（`tools/preview/preview.c` 的 `audit_list_floors()`）：清单容器的高度必须够它承诺的项数，
++判据与布局共用 `uk_list_readable_min()`。这是"卡片太小"的**正面**判据：几何审计只查"跑出父对象"，
++"只露一行"完全合法，所以此前四个审计都不说话。
+ 
+ 结果：p1 的存储卷卡与阵列健康卡各完整露出 2 行（卷 6 条、阵列 4 条），第三张磁盘活动卡落到折叠线
+ 以下（页可滚、卡片完整，不再是半截卡）；p3 的容器服务与硬件温度各 2 行。内容高于视口时容器定高、
+@@ -184,3 +184,34 @@ DSH Desktop 提供定向意见并补查最终系统高度判据，其余 `fnos_u
+ 
+ 已知且**先前就存在**的限制：`PREVIEW_SIZE=800x480` 的整轮矩阵在 `verify_reasons()`（配对失败原因
+ 必须都画在屏幕上）处 abort；把工作区改动 stash 掉、只编提交版 c81b8fc 复现同一断言，与本轮改动无关。
++
++## 全页推广（2026-10-09 迭代三）：清单下限覆盖每一页
++
++反馈原文："所有的页面都需要这样处理"（承接"部分卡片实在是太小了 没法看清信息 上下过窄"）。
++上一节只给 p1/p3 的几个池显式打了标 —— 打标是**调用方的记忆**，漏一处就等于没审计。这一节把
++"哪些容器算清单"变成类型自带：
++
++- `uk_pool_create()` 建出来的池自动是清单（默认承诺 `UK_LIST_MIN_ROWS` 项）；`fnos_ui.c` 的
++  `scroll_col()`（告警那种长短不一、还要换行的列）同样在建的时候自动打标。新加的列表不需要
++  任何人记得打标。
++- 承诺几项由容器自带（`uk_list_promise()`）：池与滚动列默认 2 项；**可变高复合块**清单和
++  **没有第二项空间**的紧凑条用 `uk_list_mark_one()` 降到一整项 —— 温度页设备池（展开后一块
++  200~260px 高）、首页那条紧凑卷条（两行会把这排磁贴顶高 29px、把上面的卡挤出可视区）。
++- 单项本身就比视口高时（设备块展开态）"露一整项"物理上做不到：审计对这种**块清单**免检
++  （判据是 `uk_list_item_max(o) > 容器高`，且只对承诺 1 项的清单生效；行清单不受影响 ——
++  p0 曾把 25px 的行塞进 21px 的池，那种情况照报）。块内文本不被裁由 `audit_bounds` 与对比度兜底。
++- 布局侧：`inventory_sections()`（p1/p3）与 `overview_layout()`（首页卷条）都改成读
++  `uk_list_promise()`，下限公式仍只有 `uk_list_readable_min()` 一处；审计侧
++  `audit_list_floors()` 同样读它 —— 布局与审计不可能各自演化出不同口径。
++- 新增 `uk_list_item_max()`（清单里最高的一条）；`uk_list_readable_min()` 的形参由 `rows` 改名
++  `items`（它一直只懂"项"，不懂"行"）。
++
++覆盖验证：
++
++- `bash tools/preview/run.sh`：84 帧静态矩阵 + 四项几何审计 + 对比度 4.5:1 全部通过，0 违规。
++- **覆盖活性探针**：把审计的承诺临时 +1 项后重跑整轮，45 处命中分布在 02/03/04/05/06/08/09/10/11/12
++  十组状态（六页主页面、告警与事件页、设置与诊断、Wi-Fi 面板、容器页、温度展开态、首页各变体）
++  ⇒ 清单审计在每一页都真的跑到了；"0 命中"不再是"没查"。
++- 恢复探针（`PREVIEW_AUDIT_ALL=1`）全轮 0 命中；`PREVIEW_NUMBERS=1` 与 `PREVIEW_DATA_MOTION=1`
++  均 PASS；逐页逐帧差异曲线 p0 5765 / p1 1308 / p2 7819 / p3 868 / p4 3069 / p5 24（p5 是告警页，
++  按设计不做数字过渡），其中 p0/p2/p4 与改前逐像素一致。
+diff --git a/tools/preview/preview.c b/tools/preview/preview.c
+index 6695611..199d88e 100644
+--- a/tools/preview/preview.c
++++ b/tools/preview/preview.c
+@@ -623,10 +623,10 @@ static unsigned audit_motion_page_bounds(lv_obj_t *root)
+     return found;
+ }
+ 
+-/* 清单可读性审计：清单容器（uk_list_is）的高度必须够它承诺的行数 ——
++/* 清单可读性审计：清单容器（uk_list_is）的高度必须够它**自己承诺的项数** ——
+    判据与布局用的是同一条式子（uk_list_readable_min）。
+-   池承诺 UK_LIST_MIN_ROWS 行；非池的清单容器（首页那条紧凑对比条）
+-   只承诺一整行，所以按 1 行判。
++   承诺几项由容器带（uk_list_promise）：池和滚动列默认 UK_LIST_MIN_ROWS 项，
++   可变高复合块清单（温度页设备池）与首页紧凑对比条明确降到一整项。
+    这条不变量是"卡片太小 / 上下过窄"的**正面**判据：几何审计只查"跑出父对象"，
+    而"池里只露出一行"完全合法（内容多时本来就允许滚动），所以 p1 三张卡各只剩
+    一行 55px、首页卷池只有 21px（比一行还矮）时，四个审计一个都没报。 */
+@@ -634,23 +634,28 @@ static void audit_list_floors(lv_obj_t *o)
+ {
+     if (lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return;
+     if (uk_list_is(o)) {
+-        int32_t rows = uk_pool_is(o) ? UK_LIST_MIN_ROWS : 1;
+-        int32_t floor_h = uk_list_readable_min(o, rows);
++        int32_t items = uk_list_promise(o);
++        int32_t floor_h = uk_list_readable_min(o, items);
++        /* 块清单（承诺一整项）里，单项本身就比容器高时连一整项都放不下 —— 这是
++           温度页设备块展开态的合法形态（块内通道多、比视口高，靠滚动看全），免检。
++           只承诺一项才免检：行清单承诺两项，条目只是"比容器高一点点"仍是违规（p0 曾
++           把 25px 的行塞进 21px 的池）。 */
++        if (items == 1 && uk_list_item_max(o) > lv_obj_get_height(o)) return;
+         if (floor_h > 0 && lv_obj_get_height(o) < floor_h) {
+             lv_area_t a;
+             lv_obj_get_coords(o, &a);
+             lv_obj_t *parent = lv_obj_get_parent(o);
+-            fprintf(stderr, "list too short: pool=[%d,%d]-[%d,%d] h=%d floor=%d rows=%d items=%u\n",
++            fprintf(stderr, "list too short: list=[%d,%d]-[%d,%d] h=%d floor=%d items=%d/%u\n",
+                     (int)a.x1, (int)a.y1, (int)a.x2, (int)a.y2, (int)lv_obj_get_height(o),
+-                    (int)floor_h, (int)rows, (unsigned)lv_obj_get_child_count(o));
++                    (int)floor_h, (int)items, (unsigned)lv_obj_get_child_count(o));
+             if (parent) {
+                 lv_area_t pa;
+                 lv_obj_get_coords(parent, &pa);
+                 fprintf(stderr, "  parent=[%d,%d]-[%d,%d] h=%d\n",
+                         (int)pa.x1, (int)pa.y1, (int)pa.x2, (int)pa.y2, (int)lv_obj_get_height(parent));
+             }
+-            fprintf(stderr, "  → 清单容器至少要完整露出 %d 行（行高实测 %d px，含行距）\n",
+-                    (int)rows, (int)((floor_h - (rows - 1) * lv_obj_get_style_pad_row(o, 0)) / rows));
++            fprintf(stderr, "  → 清单容器至少要完整露出 %d 项（项高实测 %d px，含行距）\n",
++                    (int)items, (int)((floor_h - (items - 1) * lv_obj_get_style_pad_row(o, 0)) / items));
+             if (getenv("PREVIEW_AUDIT_ALL")) s_audit_fail++; else abort();
+         }
+         return;   /* 池里不会再套池 */

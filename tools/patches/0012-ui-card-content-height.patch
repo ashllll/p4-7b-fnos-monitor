@@ -1,0 +1,230 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ashllll <ashllll@users.noreply.github.com>
+Date: Fri, 9 Oct 2026 23:58:14 +0800
+Subject: [PATCH 12/23] =?UTF-8?q?=E5=8D=A1=E7=89=87=E8=BE=B9=E7=95=8C?=
+ =?UTF-8?q?=E6=8C=89=E5=86=85=E5=AE=B9=E5=AE=9A=E9=AB=98=EF=BC=9A=E5=85=A8?=
+ =?UTF-8?q?=E9=A1=B5=E5=8D=A1=E7=89=87=E9=9A=8F=E5=86=85=E5=AE=B9=E4=BC=B8?=
+ =?UTF-8?q?=E7=BC=A9=EF=BC=8C=E9=A1=B5=E7=BA=A7=E6=BB=9A=E5=8A=A8=E5=85=9C?=
+ =?UTF-8?q?=E5=BA=95=EF=BC=8810=20PASS=20/=200=20FAIL=EF=BC=89?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+要求：系统页/温度页的卡片边界要随字符串自动缩放，所有界面都要有。
+
+根因：
+- 卡高一直按视口算：inventory_sections() 把容器高夹在实测可用高上
+  （target = LV_MAX(min_total, LV_MIN(h, desired))），uk_card_flex(card, grow>0) 又把
+  卡写成 LV_PCT(100) —— 内容少时留白，内容多时被页边界切掉
+- build_p4() 从未走 ui_page()：页显式关掉了滚动，长出来的卡片连滚都滚不到
+
+改动（components/fnos_monitor/fnos_ui.c，+40/−29）：
+- inventory_sections()（存储页 + 系统页共用）：卡高 = 池把全部条目摊开需要的高度，行内取最高者；
+  容器跟着撑高，一屏装不下交给页级滚动（删掉 minimum[] 插值那条夹逼路径）
+- build_p4()：页改用共用的 ui_page()；uk_card_flex(temp_card, 0) + 池 grow 0 / LV_SIZE_CONTENT
+- build_p5() 与 alert_health_sync()：告警卡按明细内容定高；空态盒子给真实行高
+  （内容高卡里 flex_grow 撑不出高度，字会跑到卡外）
+- build_p2()：网口卡按内容定高，余量全给趋势图
+- 刻意不定高的两处：总览页磁贴/曲线（图表本就吃满）、配对 / Wi-Fi / 诊断三个整页浮层（固定页脚）
+
+验证：
+- tools/preview/run.sh：84 状态 + 四项几何审计 0 违规；PREVIEW_SIZE=1280x800 同样全过
+  （800x480 的 verify_reasons 报错已用 git stash 在改前代码上复现同一 abort，属预存问题）
+- 与改前基线逐字节比对：37/84 张变化（系统/温度/告警三页全部状态 + 05-limits-p1 + 06-*-scroll + 11/12）
+- tools/verify_all.sh --flash：10 PASS / 0 FAIL（固件 6.7 MB 分区余 25%、四条入口栈深在预算内、
+  烧录 + 30 s 串口无崩溃/复位 + boot complete）
+- 相机逐张复核（tools/page_shot.py；原始图 docs/evidence/，按惯例不入库）：系统页 4 容器 / 24 路温度 /
+  8 台设备整卡成立、比屏高就页级滚动可达；温度页折叠时卡片边界停在最后一台设备下方（原先顶到页底、
+  留白 ~90px），--temp 0 展开 Core 网格后卡片当场长高、下面的行整体下移
+
+文档：docs/ui-refactoring-ui-2026-10-08.md 增"卡片边界按内容定高（迭代四）"与验证小节
+---
+ components/fnos_monitor/fnos_ui.c    | 69 ++++++++++++++++------------
+ docs/ui-refactoring-ui-2026-10-08.md | 34 ++++++++++++++
+ 2 files changed, 74 insertions(+), 29 deletions(-)
+
+diff --git a/components/fnos_monitor/fnos_ui.c b/components/fnos_monitor/fnos_ui.c
+index 2802f13..5fc19ec 100644
+--- a/components/fnos_monitor/fnos_ui.c
++++ b/components/fnos_monitor/fnos_ui.c
+@@ -1358,10 +1358,15 @@ static void build_p2(lv_obj_t *page)
+        成功率=ok/fail），删掉它省下 134px —— 否则网口清单会被 443px 的页底静默裁掉。 */
+     s_ui.net_note = NULL;
+     s_ui.net_card = ui_card(page, "网口与接口", NULL);
+-    uk_card_flex(s_ui.net_card, 1);
++    /* 卡片按内容定高：几个网口就多高（余量全给上面的趋势图，装不下时页级滚动）。
++       以前这里吃满余量 —— 只有一个网口时卡下半截是空的。 */
++    uk_card_flex(s_ui.net_card, 0);
+     lv_obj_set_style_min_height(s_ui.net_card,
+         2*UK_S3 + 2*lv_font_get_line_height(UK_FONT_CJK_16) + UK_ROW_H, 0);
+     s_ui.net_pool = uk_pool_create(uk_card_body(s_ui.net_card), UK_LIST_MIN_WIDTH);
++    /* 卡片按内容定高 ⇒ 池也要按内容定高（见 build_p4 同名注释）。 */
++    lv_obj_set_flex_grow(s_ui.net_pool, 0);
++    lv_obj_set_height(s_ui.net_pool, LV_SIZE_CONTENT);
+     uk_pool_stretch(s_ui.net_pool, false);
+ }
+ 
+@@ -1573,12 +1578,12 @@ static void build_p3(lv_obj_t *page)
+ /* ── P4: device summaries; every reported channel is available on demand. ── */
+ static void build_p4(lv_obj_t *page)
+ {
+-    /* v12：本页不再算坐标——摘要卡按内容自然高，通道卡吃掉剩余高度，
+-       通道的分列与行高由自适应池解（屏幕多大就用多少）。 */
+-    lv_obj_set_flex_flow(page, LV_FLEX_FLOW_COLUMN);   /* 页 = flex 列 */
+-    lv_obj_set_style_pad_all(page, 0, 0);             /* shell owns inset */
+-    lv_obj_set_style_pad_row(page, UK_CARD_GAP, 0);
+-    lv_obj_clear_flag(page, LV_OBJ_FLAG_SCROLLABLE);
++    /* v13：本页不再算坐标——两张卡都按内容自然高（设备多高卡就多高），分列与行高
++       由自适应池解（屏幕多大就用多少）。卡片按内容定高之后，一屏装不下就是常态，
++       页必须和其它页一样可滚，否则被页边界裁掉的那截连滚都滚不到
++       （设备多时温度卡比整页还高）。以前这里手摆 flex、显式关掉页滚动，
++       是"卡片永远吃满一屏"时代的写法。 */
++    ui_page(page);
+     lv_obj_t *note = ui_card(page, NULL, NULL);
+     uk_card_flex(note, 0);                       /* 摘要卡不抢空间：内容多高就多高 */
+     lv_obj_t *nbody = uk_card_body(note);
+@@ -1600,7 +1605,9 @@ static void build_p4(lv_obj_t *page)
+     lv_obj_set_width(s_ui.temp_note2, LV_PCT(100));
+ 
+     s_ui.temp_card = ui_card(page, "设备温度", "点按设备查看通道");
+-    uk_card_flex(s_ui.temp_card, 1);             /* 卡片吃满余量 */
++    /* 卡片按内容定高：装多少台设备就多高（页级滚动接管多出来的部分）。
++       以前这里吃满余量，设备少时卡下半截是空的 —— 边界不跟着内容走。 */
++    uk_card_flex(s_ui.temp_card, 0);
+     lv_obj_t *body = uk_card_body(s_ui.temp_card);
+ 
+     /* 空态：池外的一条提示（池里没有行时它就是卡片里唯一的内容） */
+@@ -1612,6 +1619,10 @@ static void build_p4(lv_obj_t *page)
+ 
+     /* Column count follows available content width and configured preferred width. */
+     s_ui.temp_pool = uk_pool_create(body, UK_LIST_MIN_WIDTH);
++    /* 卡片按内容定高 ⇒ 池也必须按内容定高（grow 0）：池的 flex_grow 1 在
++       "按内容定高"的卡里分不到余量，会被算成 0 高（同 uk_card_flex 的注释）。 */
++    lv_obj_set_flex_grow(s_ui.temp_pool, 0);
++    lv_obj_set_height(s_ui.temp_pool, LV_SIZE_CONTENT);
+     /* 一台设备一块、块内还能展开通道（展开后一块 200~260px，比视口还高）——
+        这类可变高复合块只承诺"完整露出一块"，不能按行承诺两项。 */
+     uk_list_mark_one(s_ui.temp_pool);
+@@ -1787,7 +1798,9 @@ static void build_p5(lv_obj_t *page)
+     panel_peach(s_ui.alert_page_sum);
+ 
+     lv_obj_t *card = ui_card(page, "告警与事件", NULL);
+-    uk_card_flex(card, 1);
++    /* 卡片按明细内容定高：几条告警就多高，不再吃满整页（明细再多由页级滚动接管）。
++       卡体仍是滚动列 —— 池要求条目等高等宽，而一条告警可能折成好几行。 */
++    uk_card_flex(card, 0);
+     {
+         lv_obj_t *body = uk_card_body(card);
+         lv_obj_add_flag(body, LV_OBJ_FLAG_SCROLLABLE);
+@@ -3392,10 +3405,8 @@ static void inventory_sections(lv_obj_t *container, lv_obj_t **cards,
+     if (h<min_sum) cols=LV_MIN(n,LV_MAX(1,(w+gap)/(UK_LIST_MIN_WIDTH+2*UK_S3+gap)));
+     int rows=(n+cols-1)/cols;
+     int32_t *want=uk_alloc((size_t)rows*sizeof *want);
+-    int32_t *minimum=uk_alloc((size_t)rows*sizeof *minimum);
+-    if (!want || !minimum) { lv_free(want); lv_free(minimum); return; }
++    if (!want) return;
+     memset(want,0,(size_t)rows*sizeof *want);
+-    memset(minimum,0,(size_t)rows*sizeof *minimum);
+     for (int i=0;i<n;i++) {
+         int32_t cw=(w-gap*(cols-1))/cols;
+         if (i==n-1 && n%cols==1) cw=w;
+@@ -3429,23 +3440,18 @@ static void inventory_sections(lv_obj_t *container, lv_obj_t **cards,
+             overhead=LV_MAX(lv_obj_get_height(cards[i])-lv_obj_get_height(pools[i]),0);
+             lv_obj_set_style_min_height(pools[i],readable,0);
+         }
+-        /* ① want：池把全部条目都摊开（content）时卡要多高；
+-           ② minimum：池只承诺 readable 行时卡要多高。
++        /* 卡片高度 = 池把**全部条目**摊开需要的高度（content）+ 卡里池以外的实测部分。
++           下限仍是池自己的 min_height（readable/item_min：至少完整露出承诺的项数）——
++           卡比池的下限还矮的话，池会溢到卡外面去。
+            两者都基于实测的 overhead，量不出时退回手算 chrome。 */
+         int32_t other=overhead>0 ? overhead : chrome;
+-        int r=i/cols;
+-        minimum[r]=LV_MAX(minimum[r],other+LV_MAX(item_min,readable));
+-        want[r]=LV_MAX(want[r],other+content);
+-    }
+-    int32_t min_total=(rows-1)*rowgap,desired=(rows-1)*rowgap;
+-    for (int r=0;r<rows;r++) { min_total+=minimum[r]; desired+=want[r]; }
+-    int32_t target=LV_MAX(min_total,LV_MIN(h,desired));
+-    int32_t remaining=target-min_total,extra=desired-min_total;
+-    for (int i=0;i<n;i++) {
+-        int r=i/cols;
+-        int32_t height=minimum[r]+(extra>0 ? (int64_t)remaining*(want[r]-minimum[r])/extra : 0);
+-        lv_obj_set_height(cards[i],height);
++        want[i/cols]=LV_MAX(want[i/cols],other+LV_MAX(content,LV_MAX(item_min,readable)));
+     }
++    /* 高度由内容定，不再夹在"父层分到的余量 h"上：内容比一屏高时就把容器撑高，
++       多出来的那截交给页级滚动（见下面那段注释）。 */
++    int32_t target=(rows-1)*rowgap;
++    for (int r=0;r<rows;r++) target+=want[r];
++    for (int i=0;i<n;i++) lv_obj_set_height(cards[i],want[i/cols]);
+     /* 内容比视口高时**不能**留在 grow=1：父层会把超出部分裁掉，而页级滚动的范围是
+        按容器自己的高度算的 —— 被裁的那截连滚都滚不到（p3 的硬件温度卡就这样少露
+        37px，四项几何审计因为"父可滚动"跳过了这一层，一直报不出来）。钉在 target
+@@ -3453,7 +3459,7 @@ static void inventory_sections(lv_obj_t *container, lv_obj_t **cards,
+     lv_obj_set_flex_grow(container,0);
+     lv_obj_set_height(container,target);
+     lv_obj_update_layout(container);
+-    lv_free(want); lv_free(minimum);
++    lv_free(want);
+ }
+ 
+ static void storage_layout(void)
+@@ -3715,8 +3721,13 @@ static void alert_health_sync(const fnos_status_t *st)
+ {
+     if (!s_ui.alert_health) return;
+     const bool on = st->ever_ok && st->online && st->nalerts == 0;
+-    /* "暂无告警事件"那句：体检块露面时收成一行让位，单独出现时仍整卡居中。 */
+-    if (s_ui.alert_page_empty) lv_obj_set_flex_grow(s_ui.alert_page_empty, on ? 0 : 1);
++    /* "暂无告警事件"那句：体检块露面时收成一行让位，单独出现时仍占一行。
++       卡片按内容定高 ⇒ 空态盒子不能靠 flex_grow 撑高（分不到余量会被算成 0 高，
++       字全跑到卡外），得像系统页告警卡那样给它一个真实高度。 */
++    if (s_ui.alert_page_empty) {
++        lv_obj_set_flex_grow(s_ui.alert_page_empty, 0);
++        lv_obj_set_height(s_ui.alert_page_empty, lv_font_get_line_height(UK_FONT_CJK_16));
++    }
+     show(s_ui.alert_health, on);
+     if (!on) return;
+ 
+diff --git a/docs/ui-refactoring-ui-2026-10-08.md b/docs/ui-refactoring-ui-2026-10-08.md
+index 5d26f7b..f1e07a0 100644
+--- a/docs/ui-refactoring-ui-2026-10-08.md
++++ b/docs/ui-refactoring-ui-2026-10-08.md
+@@ -246,3 +246,37 @@ DSH Desktop 提供定向意见并补查最终系统高度判据，其余 `fnos_u
+ 这次烧录验证的是功能、版面与运行健康；**250 ms 逐字符滑动的曲线本身仍只有主机预览的逐帧像素
+ 证据**（相机快门时间抓不到中途帧）。另一个操作教训：第一次抓温度页时 settle=3 s 拍到了上一页，
+ 提到 8 s 才拍到——切页是"下一跳生效"，取景前要留够。
++
++## 卡片边界按内容定高（2026-10-09 迭代四）
++
++要求是"卡片边界随字符串自动缩放，所有界面都要有"。根因两条：
++
++- 卡高一直是**视口**算出来的，不是内容算出来的：`inventory_sections()`（存储页/系统页共用）把容器
++  高度夹在实测可用高上（`target = LV_MAX(min_total, LV_MIN(h, desired))`），`uk_card_flex(card, grow>0)`
++  则把卡直接写成 `LV_PCT(100)` —— 内容少时卡片留白，内容多时卡片被页边界切掉。
++- 温度页的页根本不是可滚页：`build_p4()` 自己摆了 flex 容器并显式
++  `lv_obj_clear_flag(page, LV_OBJ_FLAG_SCROLLABLE)`，于是长出来的卡片连滚都滚不到。
++
++改法（全部在 `components/fnos_monitor/fnos_ui.c`）：
++
++| 位置 | 改动 |
++| --- | --- |
++| `inventory_sections()`（存储页 + 系统页） | 卡高 = 池把全部条目摊开需要的高度（行内取最高者），容器跟着撑高；一屏装不下交给页级滚动 |
++| `build_p4()` | 页改用共用的 `ui_page()`（可滚）；`uk_card_flex(temp_card, 0)` + 池 `grow 0 / LV_SIZE_CONTENT` |
++| `build_p5()` 与 `alert_health_sync()` | 告警卡按明细内容定高；空态盒子给真实行高（内容高卡里 `flex_grow` 撑不出高度，字会跑到卡外） |
++| `build_p2()` | 网口卡按内容定高，余量全给趋势图 |
++
++刻意**不**按内容定高的两处：总览页的磁贴/曲线（图表本就吃满余量），以及配对 / Wi-Fi / 诊断三个整页
++浮层（固定页脚的设置面板）。
++
++### 验证（2026-10-09 迭代四）
++
++- `bash tools/preview/run.sh`：84 状态 + 四项几何审计 0 违规；`PREVIEW_SIZE=1280x800` 同样全过。
++  （`800x480` 会在 `verify_reasons` 报错——用 `git stash` 在改前代码上复现同一 abort，属预存问题。）
++- 与改前基线逐字节比对：37/84 张变化 = 系统页/温度页/告警页全部状态、`05-limits-p1`、`06-*-scroll`、
++  11/12 系列；总览页与网络页未变。审计里"从未露面的构件"从基线 175 降到 17。
++- `tools/verify_all.sh --flash`：10 PASS / 0 FAIL（84 状态渲染 + 几何审计、固件 6.7 MB 分区余 25%、
++  四条入口栈深在预算内、烧录 + 30 s 串口无崩溃/复位 + `boot complete`）。
++- 相机逐张复核（`tools/page_shot.py`，原始图仅留本地）：系统页 4 个容器、24 路温度、8 台设备整卡成立，
++  比屏高就页级滚动可达；温度页折叠时卡片边界停在最后一台设备下方（原先顶到页底、留白 ~90px），
++  `--temp 0` 展开 Core 网格后卡片当场长高、下面的行整体下移。

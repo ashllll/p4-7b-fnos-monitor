@@ -1,0 +1,160 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ashllll <ashllll@users.noreply.github.com>
+Date: Fri, 9 Oct 2026 21:36:05 +0800
+Subject: [PATCH 08/23] =?UTF-8?q?UI=20=E5=AD=98=E5=82=A8=E9=A1=B5=E8=A1=8C?=
+ =?UTF-8?q?=E8=AF=BB=E6=95=B0=E5=8A=A8=E6=95=88=EF=BC=9A=E7=AC=AC=E4=BA=8C?=
+ =?UTF-8?q?=E8=A1=8C=E6=95=B0=E6=8D=AE=E4=B8=8D=E5=86=8D=E6=8C=A1=E4=BD=8F?=
+ =?UTF-8?q?=E8=A1=8C=E8=BA=AB=E4=BB=BD=EF=BC=8C=E5=8D=B7/=E9=98=B5?=
+ =?UTF-8?q?=E5=88=97/=E7=A3=81=E7=9B=98=E8=AF=BB=E6=95=B0=E9=80=90?=
+ =?UTF-8?q?=E5=AD=97=E7=AC=A6=E6=BB=91=E5=8A=A8?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- uk_row_set 的行身份只看 name1 + unit：第二行装的是每秒变化的读数（"已用 5.4 TB /
+  总计 7.3 TB"、"读 12 MB/s · 写 3 MB/s"），此前把它算进身份使 same_reading 恒为假，
+  val 永不进入过渡；name2 本身也走静态写入。改后 name2 走 uk_number_set_text(...,true)，
+  卷容量、阵列成员、磁盘读写速率随之逐字符滑动。
+- fnos_ui 卷行/阵列行把真实的第二行文本交给 uk_row_set，删掉紧随其后覆盖 name2 的
+  set_txt —— 那一行正是把动效写回静态的元凶。
+- uk_number_selfcheck 增补"行内读数"用例（第二行是数据时 val 与 name2 必须同时 active）；
+  把门控回退成旧写法重编译时该断言 abort，判据确实咬得住。
+- 六页数据夹具补上磁盘读写速率：磁盘行此前完全没进夹具，改没改都测不出来。
+- docs/ui-number-motion-2026-10-09.md 记录根因、改动、实测与遗留（值条补间是全局既有
+  行为，所有页都是一次到位，未纳入本次）。
+
+逐帧实测（1024×600，PREVIEW_DATA_MOTION=1，每帧与终帧整屏逐像素比对）：存储页过渡帧由
+全 0 变为 684 → 1117（150 ms 峰值）→ 0（350 ms），曲线形状与总览/网络/系统/温度页一致，
+其余五页逐像素与改前完全相同。run.sh 84 帧 + 字形/溢出/越界/重叠四项几何审计 + 格式残渣 +
+对比度（最低 4.64:1）通过；PREVIEW_NUMBERS=1 数字夹具自检通过。
+---
+ components/fnos_monitor/fnos_ui.c          |  9 ++++----
+ components/fnos_monitor/ui_kit/uk.c        | 11 ++++++---
+ components/fnos_monitor/ui_kit/uk_number.c | 10 ++++++++-
+ docs/ui-number-motion-2026-10-09.md        | 26 ++++++++++++++++++++++
+ tools/preview/preview.c                    |  6 +++++
+ 5 files changed, 53 insertions(+), 9 deletions(-)
+
+diff --git a/components/fnos_monitor/fnos_ui.c b/components/fnos_monitor/fnos_ui.c
+index f453629..8fec3b0 100644
+--- a/components/fnos_monitor/fnos_ui.c
++++ b/components/fnos_monitor/fnos_ui.c
+@@ -3936,9 +3936,9 @@ static void refresh(void)
+            与旧实现的 80/90 不一致是**有意改的**：全项目只能有一套阈值。
+            百分号写在数值里（val = "54%"）而不是拆到 unit：预览会断言
+            "54%" 这个**整串**在屏幕上，拆成两个 label 就找不到了。 */
+-        uk_row_set(row, v->mnt, " ", c1, NULL, (int32_t)v->pct, 0);
+-        set_txt(row->name2,"已用 %s / 总计 %s · %s",fmt_cap(c1,sizeof c1,v->used_gb),
+-                fmt_cap(c2,sizeof c2,v->total_gb),v->fs[0] ? v->fs : "-");
++        /* 副行交给 uk_row_set（它会把 name2 也走数字过渡）；再 set_txt 覆盖一遍
++           会把这层动效按静态文本写掉。 */
++        uk_row_set(row, v->mnt, b, c1, NULL, (int32_t)v->pct, 0);
+         lv_obj_set_style_text_color(row->val, uk_c(uk_pct_color((int32_t)v->pct)), 0);
+     }
+     pool_layout(&s_p1_vol_n, &s_p1_vol_w, &s_p1_vol_h, nvol, s_ui.vol_pool, UK_LIST_MIN_WIDTH, false, NULL);
+@@ -3958,8 +3958,7 @@ static void refresh(void)
+             vtxt = c1;
+             col = UK_WARN;
+         }
+-        uk_row_set(row,r->dev," ",vtxt,NULL,-1,col);
+-        set_txt(row->name2,"%s · %d/%d · %s",r->lvl,r->have,r->want,r->state);
++        uk_row_set(row,r->dev,b,vtxt,NULL,-1,col);
+         /* 右侧那列默认是等宽数字字体；写中文（正常/降级）时必须换回 CJK，
+            否则预览直接报缺字（num 字体里没有汉字）。 */
+         if (!syncing) lv_obj_set_style_text_font(row->val, UK_FONT_CJK_16, 0);
+diff --git a/components/fnos_monitor/ui_kit/uk.c b/components/fnos_monitor/ui_kit/uk.c
+index 1d758d0..7df165e 100644
+--- a/components/fnos_monitor/ui_kit/uk.c
++++ b/components/fnos_monitor/ui_kit/uk.c
+@@ -448,12 +448,17 @@ void uk_row_set(uk_row_t *r, const char *l1, const char *l2,
+ {
+     if (!r) return;
+     const bool two = (l2 && l2[0]);
++    /* "还是同一行"只看名字和单位。第二行装的是**读数**（"已用 5.4 TB / 总计 7.3 TB"、
++       "读 12 MB/s · 写 3 MB/s"），它每秒都在变，把它算进身份判定，val 的过渡就永远
++       进不来——存储页的卷百分比/阵列状态一直是这样被写死的（2026-10-09 实测：
++       p1 过渡帧与终帧逐像素相同，p0/p2/p3/p4 都有 250 ms 滑动）。 */
+     const bool same_reading = !strcmp(lv_label_get_text(r->unit), unit ? unit : "") &&
+-        !strcmp(lv_label_get_text(r->name1), l1 ? l1 : "") &&
+-        !strcmp(lv_label_get_text(r->name2), two ? l2 : "");
++        !strcmp(lv_label_get_text(r->name1), l1 ? l1 : "");
+ 
+     uk_set_text(r->name1, "%s", l1 ? l1 : "");
+-    uk_set_text(r->name2, "%s", two ? l2 : "");
++    /* 第二行同样是 number label（mk_label_raw），没理由比 val 少一层动效：
++       卷容量、阵列成员、磁盘读写速率都要逐字符滑动。 */
++    uk_number_set_text(r->name2, two ? l2 : "", true);
+     uk_number_set_text(r->val,val ? val : "",same_reading);
+     uk_set_text(r->unit, "%s", unit ? unit : "");
+ 
+diff --git a/components/fnos_monitor/ui_kit/uk_number.c b/components/fnos_monitor/ui_kit/uk_number.c
+index e63046d..e88ae9e 100644
+--- a/components/fnos_monitor/ui_kit/uk_number.c
++++ b/components/fnos_monitor/ui_kit/uk_number.c
+@@ -323,6 +323,14 @@ void uk_number_selfcheck(lv_obj_t *parent)
+     assert(((number_label_t *)k->val)->active);
+     uk_kpi_set(k,"1.0","GB/s","",-1); assert(!((number_label_t *)k->val)->active);
+     lv_obj_delete(k->box); lv_free(k);
+-
++    /* 行内读数（存储页的卷/阵列/磁盘形态）：第二行是每秒都在变的**数据**，
++       它既不能挡住 val 的过渡，自己也要能滑（见 uk_row_set 的 same_reading）。 */
++    uk_row_t *r=uk_row_create(parent,false,true);
++    uk_row_set(r,"/vol1","已用 5.4 TB / 总计 7.3 TB · btrfs","75%",NULL,75,0);
++    lv_obj_update_layout(parent);
++    uk_row_set(r,"/vol1","已用 5.5 TB / 总计 7.3 TB · btrfs","76%",NULL,76,0);
++    assert(((number_label_t *)r->val)->active);
++    assert(((number_label_t *)r->name2)->active);
++    lv_obj_delete(r->row); lv_free(r);
+ }
+ #endif
+diff --git a/docs/ui-number-motion-2026-10-09.md b/docs/ui-number-motion-2026-10-09.md
+index 50a94f4..c46fd86 100644
+--- a/docs/ui-number-motion-2026-10-09.md
++++ b/docs/ui-number-motion-2026-10-09.md
+@@ -75,3 +75,29 @@ Sanitizer 构建使用 `-DFNOS_PREVIEW_SANITIZE=ON`，分别运行数字夹具
+ 六页照片和 8 秒总览相机预览录像保存在本机 `Documents/ChatGPT/board-camera/number-motion-verify-20261009-113931/`，未复制到版本库。录像抽取逐帧检查，确认读数持续变化；相机反光、摩尔纹和采样限制使其不能充当精确帧率或面板撕裂测量。此次通过串口切页，未验证手指触摸、每个滚动列表的全部末项或全部故障态。
+ 
+ 交付配置仍是关闭自动轮播、保留数字动画；没有写入临时轮播固件，也未同步发布目录或推送。
++
++## 2026-10-09 存储页行读数（迭代对齐其他页）
++
++存储页此前只有容量汇总卡在做数字过渡。根因在 `uk_row_set`：行身份判定把"第二行文本"也算进去，
++而卷/阵列的第二行正是逐秒变化的读数，调用方只能传占位空格、再用 `set_txt` 覆盖 ⇒ `same_reading`
++恒为假，val 永不进入过渡；name2 本身走的也是静态写入。改前逐帧实测：p1 的过渡帧与终帧**逐像素相同**
++（0 差异），p0/p2/p3/p4 则有 250–350 ms 的滑动曲线。
++
++- `components/fnos_monitor/ui_kit/uk.c`：`same_reading` 只比较 name1 + unit；name2 改走
++  `uk_number_set_text(..., true)`（name1/name2 本来就是 number label）。
++- `components/fnos_monitor/fnos_ui.c`：卷行/阵列行把真实的第二行文本交给 `uk_row_set`，
++  删掉随后覆盖 name2 的 `set_txt`（它就是把这层动效写回静态的那一行）。
++- `components/fnos_monitor/ui_kit/uk_number.c`：`uk_number_selfcheck()` 增补"行内读数"用例
++  （第二行是数据时 val 与 name2 必须同时 active）。
++- `tools/preview/preview.c`：六页数据夹具补上磁盘读写速率——磁盘行此前完全没进夹具。
++
++验证（1024×600，`PREVIEW_DATA_MOTION=1`，每帧与终帧整屏逐像素比对）：p1 由全 0 变为
++684 → 1117（150 ms 峰值）→ 0（350 ms），曲线形状与 p0/p2/p3/p4 相同；其余五页逐像素与改前一致。
++分区看：卷块（y240–275）524 → 800 峰值 → 0，磁盘块（y490–515）160 → 351 → 0。
++`PREVIEW_NUMBERS=1` 自检通过；把 `uk.c` 的门控回退成旧写法后，该用例在 val 断言处 abort，
++说明判据确实咬得住。`tools/preview/run.sh` 84 帧 + 四项几何审计 + 格式残渣 + 对比度 4.5:1 通过。
++
++未纳入本次：行内值条的补间（`uk_bar_set` 传 `LV_ANIM_ON`，但没有主题/样式设置
++`LV_STYLE_ANIM_DURATION`，时长 0 ⇒ 所有页的值条都是一次到位，属全局既有行为，`uk.h` 中
++"时长固定 180 ms"的注释已失真）；系统页 dock 行与温度页副行仍沿用
++`uk_row_set` + `set_txt(name2)` 的旧写法，行为与改前一致（静态）。
+diff --git a/tools/preview/preview.c b/tools/preview/preview.c
+index 2d25fe3..7a14931 100644
+--- a/tools/preview/preview.c
++++ b/tools/preview/preview.c
+@@ -3406,6 +3406,12 @@ static void record_data_numbers(void)
+             s_motion_fixture.vols[i].used_gb+=1;
+             s_motion_fixture.vols[i].pct+=1;
+         }
++        /* 磁盘行（只有存储页有）此前完全没进夹具：它的读写速率是第二行读数，
++           动效恰恰要靠这一跳才看得出来。 */
++        for (int i=0;i<s_motion_fixture.ndisks;i++) {
++            s_motion_fixture.disks[i].rd_kbs+=1024;
++            s_motion_fixture.disks[i].wr_kbs+=512;
++        }
+         s_no_settle=true;
+         vtick_advance(500); lv_timer_handler();
+         for (unsigned elapsed=0;elapsed<=UK_NUMBER_MS+UK_NUMBER_MAX_STAGGER_MS;elapsed+=25) {

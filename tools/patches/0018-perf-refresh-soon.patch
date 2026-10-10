@@ -1,0 +1,75 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ashllll <ashllll@users.noreply.github.com>
+Date: Sat, 10 Oct 2026 02:13:18 +0800
+Subject: [PATCH 18/23] =?UTF-8?q?perf:=20=E6=8C=89=E4=B8=8B/=E6=8B=96?=
+ =?UTF-8?q?=E5=8A=A8/=E5=88=87=E9=A1=B5=E4=B8=8D=E7=AD=89=E5=88=B7?=
+ =?UTF-8?q?=E6=96=B0=E5=91=A8=E6=9C=9F=EF=BC=88refresh=5Fsoon=EF=BC=89?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+refresh_soon() = lv_timer_ready(lv_display_get_refr_timer(默认显示))：只把刷新定时器标成
+到期，渲染仍排在当前回调之后（同一个 lv_timer_handler 循环，不重入）。四个调用点：
+motion_paint 末、motion_finish 末、按下瞬间、fnos_ui_set_page 末。
+
+实机 N=20（对比基线）：每轮产帧数 tap +42.3%（78→111）、swipe +21.2%、idle +18.1%；
+fps tap 16.9→25.0（+47.2%）、swipe 18.4→23.4（+27.2%）；r2f -39.8%。
+没改善拖动帧间隔与按下→首帧（28.1ms / 10.9ms，与不含本机制的 27.3ms / 10.8ms 在噪声内）：
+按下→首帧看着被输入采样周期与面板/DMA flush 完成量化，不在 UI 侧等待上。
+下一步（未做）：把 p2f 拆成"按下→RENDER_START"与"RENDER_START→RENDER_READY"两段。
+---
+ components/fnos_monitor/fnos_ui.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/components/fnos_monitor/fnos_ui.c b/components/fnos_monitor/fnos_ui.c
+index e666c94..51d20fa 100644
+--- a/components/fnos_monitor/fnos_ui.c
++++ b/components/fnos_monitor/fnos_ui.c
+@@ -4829,6 +4829,15 @@ static void pages_warm(void)
+     }
+ }
+ 
++/* 让显示刷新定时器"下一轮处理立刻跑"：LVGL 默认每 LV_DEF_REFR_PERIOD(15ms) 才看
++   一次有没有脏区，按下反馈与拖动帧就被这段等待拖住。lv_timer_ready 只是把它标成
++   到期 —— 渲染还是排在当前回调之后（同一个 lv_timer_handler 循环里），不重入。 */
++static void refresh_soon(void)
++{
++    lv_timer_t *t = lv_display_get_refr_timer(lv_display_get_default());
++    if (t) lv_timer_ready(t);
++}
++
+ static void motion_paint(void)
+ {
+     /* 偏移没变就没有新像素可画：拖动时手指停住（或采样周期快过帧周期）会走到
+@@ -4838,6 +4847,7 @@ static void motion_paint(void)
+     lv_obj_set_style_translate_x(s_ui.page[s_motion.from], s_motion.offset, 0);
+     lv_obj_set_style_translate_x(s_ui.page[s_motion.to], s_motion.offset + s_motion.direction * s_motion.width, 0);
+     lv_obj_invalidate(s_ui.viewport);
++    refresh_soon();
+ }
+ 
+ /* exp(-k·i/64) 的 Q16 定点表（k = UK_MOTION_DAMPING）。手势动画每帧都要算一次
+@@ -4901,6 +4911,7 @@ static void motion_finish(void)
+         lv_obj_set_style_translate_x(s_ui.page[i], 0, 0);
+     }
+     lv_obj_invalidate(s_ui.viewport);
++    refresh_soon();
+     if (s_refresh_pending) {
+         s_refresh_pending = false;
+         refresh(); pair_refresh();
+@@ -5016,6 +5027,7 @@ void fnos_ui_set_page(int idx)
+     }
+     show(s_ui.diagnostics_button, idx == 3);
+     lv_obj_invalidate(s_ui.viewport);
++    refresh_soon();     /* 切页的第一帧立刻出，不等刷新周期 */
+ }
+ 
+ static void motion_release(void)
+@@ -5055,6 +5067,7 @@ static void motion_pointer_cb(lv_event_t *e)
+         s_motion.velocity = 0;
+         s_motion.tracking = true;
+         motion_poll_set(true);
++        refresh_soon();     /* 按下的反馈帧别等下一个 15ms 刷新周期 */
+     } else if (code == LV_EVENT_RELEASED) {
+         motion_release();
+     } else if ((code == LV_EVENT_SHORT_CLICKED || code == LV_EVENT_CLICKED) && s_motion.swallow_click) {

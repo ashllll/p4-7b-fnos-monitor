@@ -1,0 +1,336 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: ashllll <ashllll@users.noreply.github.com>
+Date: Sat, 10 Oct 2026 04:42:05 +0800
+Subject: [PATCH 20/23] =?UTF-8?q?perf:=20=E6=8B=96=E5=8A=A8=E5=B8=A7?=
+ =?UTF-8?q?=E9=97=B4=E9=9A=94=E5=8E=8B=E5=88=B0=E6=98=BE=E7=A4=BA=E6=B5=81?=
+ =?UTF-8?q?=E6=B0=B4=E7=BA=BF=E5=9C=B0=E6=9D=BF=EF=BC=88-27.9%=20/=20-29.2?=
+ =?UTF-8?q?%=EF=BC=89=EF=BC=8C=E8=AE=B0=E5=BD=95=E4=B8=89=E6=9D=A1?=
+ =?UTF-8?q?=E6=AD=BB=E8=B7=AF?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+把「还能不能再快」试到底：结论是 UI 侧到顶，剩下的都在 tear-avoid 缓冲路径上。
+
+改动
+- fnos_perf.c：阶段分解计数（p2rs / rs2rr / rr2rs，挂 LV_EVENT_RENDER_START），只在
+  CONFIG_FNOS_UI_PERF_BENCH 下编译；tools/perf_bench.py 解析这 8 个新字段。
+- main/main.cpp：注释记录两条 tear-avoid 死路与 TRIPLE_PARTIAL 每帧固定成本的实测，
+  避免后人重复踩。
+- docs/perf-report-2026-10-10.md：补最终数字、阶段分解表、负结果、口径的坑
+  （用例顺序会改数值、cpu_lvgl 跨会话抖动 ±40%）与跨会话复现。
+
+负结果（都已回退，fnos_ui.c 回到 1fcdd29 状态）
+- 窄条失效：绘制量降 ~25 倍，设备 iv 27.7 vs 28.1ms，噪声内；translate 改样式本身
+  就作废整页，窄条加不加一样。
+- 拖动快照（出页拍成画布）：iv p50 -25.0%，但按下→首帧 +65.7%（一次性快照 ~110ms 正好
+  落在拖动第一帧），LVGL CPU 不降 —— 每帧拷画布并不比画控件树便宜。
+- 手势轮询 8→4ms：更差（iv -21.8% vs -25.3%、CPU 9.2 vs 7.4）。
+- RENDER_READY 里 lv_timer_ready 抢刷新：与不加同值（帧间空档本来只有 5~7ms）。
+- 手势期间抑制整轮 ui_tick：贵的那段早被既有 motion_busy 门挡住。
+- 两条显示模式：DOUBLE_DIRECT 开机拿不到 LVGL 锁（UI 建不出来）、NONE 拒绝 ROTATE_180。
+
+验收（最终树，生产配置 sdkconfig）
+- tools/verify_all.sh --flash：10 PASS / 0 FAIL（宿主 9 项 + 固件构建 + 栈深 + 烧录 + 30s 串口）。
+- 实机 N=20（final.csv 对 base.csv）：ui_tick p50 -53.0% / p95 -57.2%、FPS(idle/tap/swipe)
+  +21.2% / +42.9% / +20.5%、CPU(idle/tap) -39.7% / -46.5%、拖动帧间隔 p50 -27.9% / p95 -29.2%、
+  松手→首帧 -40.3% / -29.4%；按下→首帧 -7.8%（地板 = 输入 2.9ms + 8.35ms 半帧，-30% 不可达）。
+---
+ components/fnos_monitor/fnos_perf.c | 46 ++++++++++++++-
+ docs/perf-report-2026-10-10.md      | 92 +++++++++++++++++++++++------
+ main/main.cpp                       |  9 +++
+ tools/perf_bench.py                 |  3 +
+ 4 files changed, 128 insertions(+), 22 deletions(-)
+
+diff --git a/components/fnos_monitor/fnos_perf.c b/components/fnos_monitor/fnos_perf.c
+index 49d9399..4576dfb 100644
+--- a/components/fnos_monitor/fnos_perf.c
++++ b/components/fnos_monitor/fnos_perf.c
+@@ -50,7 +50,7 @@ static struct {
+     int32_t x0, y0, x, y, span;
+     int step, steps, dir;
+     bool pressed, press_seen, rel_seen;
+-    bool wait_first, wait_rel, frame_arm;
++    bool wait_first, wait_rel, frame_arm, wait_p2rs;
+     int64_t press_us, release_us;
+     uint32_t frames;
+ } s_run;
+@@ -61,7 +61,16 @@ static uint32_t s_iv[PF_SAMPLES];    /* 相邻帧间隔：拖动跟手 / 稳态
+ static uint32_t s_tick[PF_SAMPLES];  /* ui_tick 总耗时（数据刷新 + 图表 + 行重建） */
+ static int s_np2f, s_nr2f, s_niv, s_ntick;
+ 
++/* 帧的三段分解（按下→首帧 与 拖动帧间隔 都只是一个总数，拆开才知道该优化哪一段）：
++   p2rs = 按下 → RENDER_START（等采样/等刷新周期/等上一次 flush）
++   rs2rr= RENDER_START → RENDER_READY（真正的绘制 + flush 提交）
++   rr2rs= 上一帧 RENDER_READY → 下一帧 RENDER_START（帧间空档：刷新定时器周期 + flush 等待） */
++static uint32_t s_p2rs[PF_SAMPLES], s_rs2rr[PF_SAMPLES], s_rr2rs[PF_SAMPLES];
++static int s_np2rs, s_nrs2rr, s_nrr2rs;
++
+ static int64_t s_last_frame_us;
++static int64_t s_frame_start_us, s_last_ready_us;
++static bool s_have_ready;
+ 
+ /* ---------------------------------------------------------------- 统计 */
+ 
+@@ -158,6 +167,7 @@ static void pf_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
+         s_run.press_seen = true;
+         s_run.press_us   = esp_timer_get_time();
+         s_run.wait_first = true;
++        s_run.wait_p2rs  = true;
+         s_run.frame_arm  = true;
+     } else if (!s_run.pressed && s_run.press_seen && !s_run.rel_seen) {
+         s_run.rel_seen   = true;
+@@ -176,17 +186,35 @@ static void pf_detach(void)
+ 
+ /* ---------------------------------------------------------------- 帧事件 */
+ 
++static void pf_start_cb(lv_event_t *e)
++{
++    if (lv_event_get_code(e) != LV_EVENT_RENDER_START) return;
++    int64_t now = esp_timer_get_time();
++    s_frame_start_us = now;
++    if (!s_run.active) { s_last_ready_us = 0; s_have_ready = false; return; }
++    if (s_run.frame_arm && s_have_ready && s_last_ready_us) {
++        pf_push(s_rr2rs, &s_nrr2rs, (uint32_t)(now - s_last_ready_us));   /* 与 iv 同一批样本 */
++    }
++    if (s_run.wait_p2rs) { s_run.wait_p2rs = false; pf_push(s_p2rs, &s_np2rs, (uint32_t)(now - s_run.press_us)); }
++}
++
+ static void pf_render_cb(lv_event_t *e)
+ {
+     if (lv_event_get_code(e) != LV_EVENT_RENDER_READY) return;
+     int64_t now = esp_timer_get_time();
+-    if (!s_run.active) { s_last_frame_us = now; return; }
++    if (!s_run.active) { s_last_frame_us = now; s_frame_start_us = 0; return; }
+ 
+     s_run.frames++;
+     if (s_run.wait_first) { s_run.wait_first = false; pf_push(s_p2f, &s_np2f, (uint32_t)(now - s_run.press_us)); }
+     if (s_run.wait_rel)   { s_run.wait_rel   = false; pf_push(s_r2f, &s_nr2f, (uint32_t)(now - s_run.release_us)); }
+     if (s_run.frame_arm && s_last_frame_us) pf_push(s_iv, &s_niv, (uint32_t)(now - s_last_frame_us));
++    if (s_frame_start_us) {
++        if (s_run.frame_arm) pf_push(s_rs2rr, &s_nrs2rr, (uint32_t)(now - s_frame_start_us));
++        s_frame_start_us = 0;
++    }
+     s_last_frame_us = now;
++    s_last_ready_us = now;
++    s_have_ready    = true;
+ }
+ 
+ /* ---------------------------------------------------------------- 报告 */
+@@ -202,6 +230,8 @@ static void pf_report(void)
+     printf("[bench] kind=%s page=%d cycles=%d misses=%d p2f_n=%d p2f_p50_us=%u p2f_p95_us=%u p2f_max_us=%u"
+            " r2f_n=%d r2f_p50_us=%u r2f_p95_us=%u r2f_max_us=%u"
+            " iv_n=%d iv_p50_us=%u iv_p95_us=%u iv_max_us=%u frames=%u wall_ms=%u fps_avg=%.1f fps_p50=%.1f"
++           " p2rs_n=%d p2rs_p50_us=%u rs2rr_n=%d rs2rr_p50_us=%u rs2rr_p95_us=%u"
++           " rr2rs_n=%d rr2rs_p50_us=%u rr2rs_p95_us=%u"
+            " tick_n=%d tick_p50_us=%u tick_p95_us=%u tick_max_us=%u cpu_lvgl=%.1f cpu_idle=%.1f\n",
+            s_run.kind == PF_TAP ? "tap" : (s_run.kind == PF_SWIPE ? "swipe" : "idle"),
+            s_run.page, s_run.cycles, s_run.misses,
+@@ -210,6 +240,9 @@ static void pf_report(void)
+            s_niv, iv50, pf_pct(s_iv, s_niv, 95), pf_max(s_iv, s_niv),
+            s_run.frames, wall_ms, wall_ms ? 1000.0 * s_run.frames / wall_ms : 0.0,
+            iv50 ? 1000000.0 / iv50 : 0.0,
++           s_np2rs, pf_pct(s_p2rs, s_np2rs, 50),
++           s_nrs2rr, pf_pct(s_rs2rr, s_nrs2rr, 50), pf_pct(s_rs2rr, s_nrs2rr, 95),
++           s_nrr2rs, pf_pct(s_rr2rs, s_nrr2rs, 50), pf_pct(s_rr2rs, s_nrr2rs, 95),
+            s_ntick, pf_pct(s_tick, s_ntick, 50), pf_pct(s_tick, s_ntick, 95), pf_max(s_tick, s_ntick),
+            total ? 100.0 * lvgl / total : 0.0, total ? 100.0 * idle / total : 0.0);
+     fflush(stdout);
+@@ -329,6 +362,10 @@ static void pf_start(void)
+     memset(s_iv, 0, sizeof s_iv);
+     memset(s_tick, 0, sizeof s_tick);
+     s_np2f = s_nr2f = s_niv = s_ntick = 0;
++    s_np2rs = s_nrs2rr = s_nrr2rs = 0;
++    s_frame_start_us = 0;
++    s_last_ready_us = 0;
++    s_have_ready = false;
+     s_last_frame_us = 0;
+ 
+     pf_detach();   /* 上一轮留下的挂载先摘干净，否则会把 pf_read_cb 当成"真实回调"套娃 */
+@@ -440,7 +477,10 @@ void fnos_perf_init(void)
+     done = true;
+ 
+     lv_display_t *disp = lv_display_get_default();
+-    if (disp) lv_display_add_event_cb(disp, pf_render_cb, LV_EVENT_RENDER_READY, NULL);
++    if (disp) {
++        lv_display_add_event_cb(disp, pf_render_cb, LV_EVENT_RENDER_READY, NULL);
++        lv_display_add_event_cb(disp, pf_start_cb, LV_EVENT_RENDER_START, NULL);
++    }
+     s_script_timer = lv_timer_create(pf_script_tick, PF_STEP_MS, NULL);
+     lv_timer_pause(s_script_timer);
+     lv_timer_create(pf_req_poll, PF_REQ_POLL_MS, NULL);
+diff --git a/docs/perf-report-2026-10-10.md b/docs/perf-report-2026-10-10.md
+index a7fbb7b..fafa35b 100644
+--- a/docs/perf-report-2026-10-10.md
++++ b/docs/perf-report-2026-10-10.md
+@@ -6,21 +6,30 @@
+ 
+ ## 一、结论速览
+ 
++数字来源：`final.csv`（最终树，N=20）对 `base.csv`（基线固件，N=20），同机同测法；每条都在
++`rs.csv`（同一份代码的上一次会话）复测过——结论见本节末"跨会话复现"。
++
+ | 面 | 指标（N=20 中位数） | 基线 | 现在 | Δ | 30% 目标 |
+ |---|---|---|---|---|---|
+-| 稳态 S2 | `ui_tick` p50 / p95 | 75.2 / 91.6 ms | 35.4 / 38.4 ms | **-52.9% / -58.1%** | ✅ |
+-| 稳态 S3 | LVGL 任务 CPU（tap/swipe/idle） | 14.4 / 10.4 / 6.3 % | 10.6 / 7.4 / 3.8 % | **-26.7% / -28.8% / -39.7%** | ✅ |
+-| 稳态 S1 | FPS（tap/swipe/idle） | 16.9 / 18.4 / 16.0 | 25.0 / 23.4 / 18.9 | **+47.2% / +27.2% / +18.1%** | ✅ |
+-| **P2 拖动跟手** | 拖动帧间隔 p50 / p95 | 37.6 / 49.1 ms | 28.1 / 34.6 ms | **-25.3% / -29.5%** | ❌ 差 0.5~4.7 pt |
+-| **P1 按下→首帧** | tap p2f | 11.64 ms | 10.92 ms | **-6.2%** | ❌ |
+-| P3 切页 | 松手→首帧 r2f（tap / swipe） | 119.9 / 45.9 ms | 72.1 / 32.3 ms | **-39.8% / -29.7%** | ✅ |
+-
+-实测口径的坑（写进判读规则，别拿它下结论）：`tap:3:3` 每轮只有 2~6 个帧间隔样本
+-（`iv_n` 中位数 3），它的 iv 统计量在基线上就在 16.5 / 181 / 50 ms 之间乱跳——
+-**tap 的 iv 不可用**；可用的是 tap 的 p2f/r2f/tick/fps（每轮都稳定）。`idle` 无帧间隔样本。
+-
+-综合：**性能面（稳态刷新、CPU、帧率）全面超过 30%；触控面里的拖动跟手改善 25~30%（差一点点），
+-按下→首帧只有 6~7%。** 按下→首帧的地板不在 UI 侧（见第四节负结果）。
++| 稳态 S2 | `ui_tick` p50 / p95（idle / swipe） | 75.6 / 94.5 ms | 35.5 / 40.4 ms | **-53.0% / -57.2%** | ✅ |
++| 稳态 S3 | LVGL 任务 CPU（idle / tap） | 6.3 / 14.4 % | 3.8 / 7.7 % | **-39.7% / -46.5%** | ✅ |
++| 稳态 S1 | FPS（idle / tap / swipe） | 16.0 / 17.0 / 18.5 | 19.4 / 24.3 / 22.3 | **+21.2% / +42.9% / +20.5%** | ✅ |
++| **P2 拖动跟手** | 拖动帧间隔 p50 / p95 | 37.6 / 49.1 ms | 27.1 / 34.8 ms | **-27.9% / -29.2%** | ❌ 差 2.1 / 0.6 pt |
++| **P1 按下→首帧** | tap p2f | 11.68 ms | 10.77 ms | **-7.8%** | ❌ |
++| P3 切页 | 松手→首帧 r2f（tap / swipe） | 120.4 / 45.9 ms | 71.9 / 32.4 ms | **-40.3% / -29.4%** | ✅ |
++
++实测口径的坑（写进判读规则，别拿它下结论）：
++
++- `tap:3:3` 每轮只有 2~6 个帧间隔样本（`iv_n` 中位数 3），它的 iv 统计量在基线上就在 16.5 / 181 / 50 ms
++  之间乱跳——**tap 的 iv 不可用**；可用的是 tap 的 p2f/r2f/tick/fps。`idle` 无帧间隔样本。
++- **用例顺序会改数值**：`swipe:3:0:3` 作为一轮的第一个用例时 tick p50 = 35.7 ms，作为第三个用例时
++  51.4 ms（先滑过别的页 ⇒ 当前页积了脏页，下一次刷新要把图表补齐）。比较必须保持同样的用例顺序。
++- **`cpu_lvgl` 跨会话抖动 ±40%**：同一份代码三个会话的 swipe 值是 7.1 / 7.5 / 10.5 %（基线 10.6）。
++  判 CPU 用 idle/tap（三个会话一致），别拿 swipe 的单次值说事。
++
++综合：**稳态（刷新开销、CPU、帧率）全面超过 30%；拖动跟手 -27.9% / -29.2%（差 2.1 / 0.6 个百分点）；
++按下→首帧只有 7.8%。** 后两项不是没调好，而是不在 UI 侧——四条独立实验（第四节）都指向同一个地板：
++TRIPLE_PARTIAL 每帧固定成本 + 60 Hz 面板节拍。
+ 
+ ## 二、远端 `d84039f` 判定
+ 
+@@ -50,6 +59,7 @@
+ | `fe6c552` | 基线与对比工具：`docs/perf-baseline-2026-10-09.md`、`tools/perf_table.py` | 基线 60 行 CSV 可复核 |
+ | `db655d4` | 手势与稳态第一批：绘制缓冲 120 行、整数弹簧（Q16 查表替 `expf`+`lroundf`）、轮询空闲暂停、采样周期 15→8 ms、关 LVGL 日志 | 拖动帧间隔 -27.5%（p50）/ -29.4%（p95）、CPU -31.7%、FPS +18.8% |
+ | `1fcdd29` | `refresh_soon()`：按下/拖动/切页不等 15 ms 刷新周期 | 每轮产帧数 +21~42%、FPS +27~47%、r2f -30~-40%；对 iv/p2f 无改善 |
++| 本条 | 收尾：阶段分解仪表（p2rs/rs2rr/rr2rs，bench-only 默认关）、`main.cpp` 记录两条 tear-avoid 死路、本报告补负结果与跨会话复现 | `final.csv` 对 `base.csv`：tick -53.0%、r2f -40.3%/-29.4%、FPS +21~43%、iv -27.9%/-29.2%；宿主 9 PASS + 运动预算 PASS |
+ 
+ 门禁（每条提交后都跑）：宿主 84 状态渲染 + 几何/字形/溢出/重叠审计全绿；
+ `PREVIEW_MOTION` 响应与完成预算 PASS；固件构建 + 四条入口栈深在预算内。
+@@ -57,10 +67,10 @@
+ ## 四、关键负结果（都做了实验，别重复踩）
+ 
+ 1. **按下→首帧不是 UI 侧延迟**。`refresh_soon()` 让"按下反馈帧"跳过 15 ms 刷新周期等待，
+-   并让采样周期从 15 ms 降到 8 ms，p2f 只从 11.64 ms 动到 10.92 ms（-6.2%）——
++   并让采样周期从 15 ms 降到 8 ms，p2f 只从 11.68 ms 动到 10.77 ms（-7.8%）——
+    按下到出帧这条链被"输入采样（8 ms 一档）+ 面板/DMA flush 完成"量化，UI 侧只剩 1~3 ms。
+    要证伪/证实需要把 p2f 拆成"按下→RENDER_START"与"RENDER_START→RENDER_READY"两段
+-   （计数钩子已有，未做）。
++   （本轮已拆，见第 8 条：地板 = 输入段 2.9 ms + 8.35 ms，UI 侧只剩零点几毫秒）。
+ 2. **拖动帧间隔的地板与绘制面积无关**。做了"只失效两页交界那条缝"的实验：拖动一帧真正变的
+    只有 |Δoffset|×屏高（约 40×443 px），比整视口失效（1008×443）小 ~25 倍。宿主 PARTIAL
+    模式（与设备同为 partial/triple 缓冲）下 151/151 帧与整视口失效**逐字节相同**（等价性证明），
+@@ -68,15 +78,51 @@
+    → 瓶颈在 DPI 面板扫描/缓冲握手这条流水线，不在绘制量；该改动已回退（不留无收益的复杂度）。
+    要继续压只能动面板时序或 tear-avoid 缓冲策略，属硬件侧，风险不对称。
+ 3. **`tap` 用例的帧间隔样本只有 2~6 个**，统计量不可判；本报告对 tap 只用 p2f/r2f/tick/fps。
++4. **换 tear-avoid 模式两条路都堵死**（想绕开"整帧 blit + 等 VSYNC"）：
++   `DOUBLE_DIRECT` 起不来——开机 `E esp_lvgl:adapter: esp_lv_adapter_lock(751): Failed to acquire LVGL lock`
++   （适配器任务在首帧 flush 里等 VSYNC 通知、一直持锁）⇒ UI 从没建出来，bench 超时；
++   `NONE` 不支持本板需要的 180° 旋转——`E esp_lvgl:disp: rotation not supported under TEAR_AVOID_MODE_NONE`，
++   并在 `bsp_display_start_with_config`（esp32_p4_wifi6_touch_lcd_7b.c:634）断言重启。两条都写进
++   `main/main.cpp` 注释，别再试。
++5. **拖动快照（出页拍成画布）也是负结果**：拖动期间出页不变，理论上可以拍一次快照、每帧只平移一张
++   1008×443 的 RGB565 画布（`lv_snapshot_take` + `lv_canvas`，`lv_snapshot_free` 已弃用要用
++   `lv_draw_buf_destroy`）。设备实测 iv p50 28.2 ms（-25.0%）、**按下→首帧 110.6 ms（+65.7%）**——
++   一次性快照 ~110 ms 正好砸在拖动第一帧上，而且 LVGL CPU 没降（10.4%，与不拍快照同值）⇒ 每帧拷
++   一张画布并不比画控件树便宜。已整体回退。宿主 A/B 记录（临时开关，事后删）：151 帧里 132 帧逐字节
++   相同，19 个拖动帧差 3~6 像素（最大通道差 24/255，在页面被裁边缘行）——方案能做对，但收益是负的。
++6. **加采样率、抢刷新时机都没用**：手势轮询 8→4 ms 反而更差（iv -21.8% vs -25.3%、CPU 9.2 vs 7.4——
++   多出来的采样全挤在流水线里）；在 `LV_EVENT_RENDER_READY` 里 `lv_timer_ready(手势轮询)` 想消掉帧间
++   那 5~7 ms 空档，实测与不加同值（iv p50 29.4 vs 29.3 ms）。两条都已回退。
++7. **"手势期间抑制 500 ms 全量刷新"不成立**：让 `ui_tick` 在 `motion_busy()` 时整轮早退，实测无差异——
++   贵的那段（`refresh()`）早被既有的 `if (motion_busy())` 门挡掉了，前面只剩数据读取。已回退。
++8. **为什么 UI 侧没杠杆了（阶段分解）**：加 `LV_EVENT_RENDER_START` 钩子把帧拆成
++   按下→START（`p2rs`）/ START→READY（`rs2rr`＝绘制 + flush 提交）/ READY→下一个 START（`rr2rs`＝帧间空档）：
++
++| 用例（N=10 中位数 µs） | iv50 | p2rs50 | rs2rr50 | rs2rr95 | rr2rs50 | tick50 |
++|---|---|---|---|---|---|---|
++| swipe:5:0:3（轻页） | 30,204 | 32,331 | 22,588 | 30,382 | 5,397 | 7,699 |
++| swipe:1:0:3（重页） | 33,394 | 70,171 | 26,512 | 29,061 | 6,937 | 63,947 |
++| swipe:3:0:3 | 29,293 | 61,972 | 22,715 | 25,329 | 6,811 | 51,224 |
++| tap:3:3（不拖动） | —（iv_n 太少） | 2,942 | 8,351 | — | — | — |
++
++   - `rs2rr` 22~27 ms 吃掉帧间隔的绝大部分，**而它与页面内容几乎无关**（轻页 22.6 vs 重页 26.5，同期
++     tick 差 8.6 倍）⇒ 固定成本主导：TRIPLE_PARTIAL 每帧都要"脏区 DMA2D 拷进中间缓冲 → 整帧
++     `esp_lcd_panel_draw_bitmap(0,0,全屏)`（1.2 MB）→ 等 VSYNC ISR 放缓冲"（`lvgl_bridge_v9.c:2462`
++     → `display_bridge_common.c:521`；再看 tap 行：小脏区一帧也要 8.35 ms）。
++   - `rr2rs` 只有 5~7 ms，本来就等于"等下一次手势采样"，没有可抢的东西。
++   - P1 的地板是同一个来源：tap 的 `p2rs` 2.9 ms（输入段）+ `rs2rr` 8.35 ms（≈半个 60 Hz 周期）≈ 11.2 ms，
++     基线 11.68 ms ⇒ **-30% 在结构上不可达**。
++   → 再往下压只能动面板时序 / tear-avoid 缓冲策略（硬件侧，风险不对称，本轮不做）。
+ 
+ ## 五、未做（诚实清单）
+ 
+ - 远端 `d84039f` 里这几处未移植：曲线环 `EXT_RAM_BSS_ATTR`、`pool_layout` 布局跳过、
+   `set_txt`/`uk_set_text` 栈缓冲、总览布局缓存。它们改善的是刷新/分配开销，而这两项
+   已经超过 30%；曲线环要改图表数据结构，收益/风险不对称。
+-- 手势期间抑制 500 ms 全量刷新（去掉拖动中偶发的大帧）。
+-- p2f 分解计数（判定第 4.1 条假设）。
+-- 面板时序 / tear-avoid 缓冲策略 A/B（判定第 4.2 条地板）。
++- 面板时序 / tear-avoid 缓冲策略（第四节 4/5/8 已证明 UI 侧到顶了，剩下的都在这一层：
++  DOUBLE_DIRECT 起不来、NONE 不支持旋转，要动得改适配器或面板驱动，属硬件侧）。
++- P2 的 p95 尾巴（34.8 ms 里偶发的 45 ms+ 帧）只查到"脏区大 + 等 VSYNC"这一步，
++  没有进一步归因到具体某一帧。
+ - 未推送远端：本地 `main` 未动，成果都在 `perf/eval-20261010`，等确认后再决定怎么合。
+ 
+ ## 六、复现
+@@ -89,7 +135,15 @@ PREVIEW_MOTION=0,1,0 PREVIEW_MOTION_SCROLL=1 PREVIEW_MOTION_RESPONSIVENESS=1 \
+ 
+ # 实机台架（需 CONFIG_FNOS_UI_PERF_BENCH=y）
+ python3 tools/perf_bench.py --port /dev/cu.usbmodemXXXX --label cur \
+-  --cases tap:3:3,swipe:3:0:3,idle:3:5 --repeat 20 --warmup 1 --boot 25 \
++  --cases swipe:3:0:3,tap:3:3,idle:3:5 --repeat 20 --warmup 1 --boot 25 \
+   --out /tmp/fnos-perf/cur.csv
+ python3 tools/perf_table.py /tmp/fnos-perf/base.csv /tmp/fnos-perf/cur.csv
+ ```
++
++台架 sdkconfig（本机未跟踪）：`CONFIG_FNOS_UI_PERF_BENCH=y`、`CONFIG_FNOS_UI_MOTION_STATS=y`、
++`CONFIG_LV_USE_LOG=n`（**必须 n**，开着日志时同一用例 iv 34 ms、tick 63 ms、p2f 104 ms，差一个量级）；
++生产配置的 sdkconfig 另有备份，验收前还原。
++
++跨会话复现（同一份代码、不同会话，N=20，中位数）：swipe iv p50 27.1 / 28.2、iv p95 34.8 / 34.7、
++r2f 32.4 / 32.3、tick 35.7 / 35.6（ms）；idle tick 35.5 / 35.8。⇒ 这几项稳定可复核；`cpu_lvgl`
++抖 ±40%（见第一节），别单次取信。
+diff --git a/main/main.cpp b/main/main.cpp
+index ba7cdd6..0d985c8 100644
+--- a/main/main.cpp
++++ b/main/main.cpp
+@@ -101,6 +101,15 @@ extern "C" void app_main(void)
+     bsp_display_cfg_t cfg = {
+         .lv_adapter_cfg = lv_cfg,
+         .rotation = ESP_LV_ADAPTER_ROTATE_180,
++        // 显示路径 A/B 都试过、都不可用（别重复踩）：
++        //  · DOUBLE_DIRECT：LVGL 直渲面板整帧缓冲、flush 只切地址，但本板起不来 ——
++        //    适配器 LVGL 任务在首帧 flush 里等 VSYNC 通知，一直持锁 → app_main 的
++        //    esp_lv_adapter_lock 超时（"display lock failed"），UI 根本没建出来。
++        //  · NONE：flush 只按脏区 draw_bitmap（面积成正比、没有整帧 blit），但适配器
++        //    明确拒绝旋转："rotation not supported under TEAR_AVOID_MODE_NONE"，
++        //    本板要 ROTATE_180。
++        // TRIPLE_PARTIAL 每帧固定成本 = 局部区拷进中间缓冲 + 整帧 blit（1024×600×2B ×2），
++        // 实测约 8ms/帧且与内容无关（轻页 22.6ms vs 重页 26.5ms，tick 差 8 倍而帧成本只差 17%）。
+         .tear_avoid_mode = ESP_LV_ADAPTER_TEAR_AVOID_MODE_DEFAULT_MIPI_DSI,
+         // 触摸不做任何镜像：adapter 只旋转 framebuffer，输入路径没有坐标变换，
+         // 官方示例的 mirror_x/mirror_y 在本板 + ROTATE_180 下等于再做一次 180° 翻转。
+diff --git a/tools/perf_bench.py b/tools/perf_bench.py
+index 864ef06..b39e803 100644
+--- a/tools/perf_bench.py
++++ b/tools/perf_bench.py
+@@ -27,6 +27,9 @@ FIELDS = ["kind", "page", "cycles", "misses",
+           "p2f_n", "p2f_p50_us", "p2f_p95_us", "p2f_max_us",
+           "r2f_n", "r2f_p50_us", "r2f_p95_us", "r2f_max_us",
+           "iv_n", "iv_p50_us", "iv_p95_us", "iv_max_us",
++          "p2rs_n", "p2rs_p50_us",
++          "rs2rr_n", "rs2rr_p50_us", "rs2rr_p95_us",
++          "rr2rs_n", "rr2rs_p50_us", "rr2rs_p95_us",
+           "frames", "wall_ms", "fps_avg", "fps_p50",
+           "tick_n", "tick_p50_us", "tick_p95_us", "tick_max_us",
+           "cpu_lvgl", "cpu_idle"]
