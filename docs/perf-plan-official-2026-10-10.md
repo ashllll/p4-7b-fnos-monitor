@@ -23,10 +23,11 @@
 ## 一、结论速览
 
 1. **官方推荐配置清单已经全部满足**（逐条核对见第二节表），没有"漏开官方开关"这种事可捡。
-2. 真正还没用、且官方明确支持的只有三条：
-   - **A1** 把 LVGL 绘制缓冲从 PSRAM 挪进片内 SRAM（BSP 一个字段：`profile.use_psram = false`）。
-   - **A2** 打开 LVGL 上游的 **Espressif PPA 绘制单元**（`CONFIG_LV_USE_PPA=y`）。
-   - **B1** 按官方"成本 ∝ 数据块大小"的原理**压缩每帧的无效区**（UI 架构层的功夫，不是硬件开关）。
+2. 官方支持的两条**硬件层**杠杆当天就测完了，**都是负结果**（明细见 2.3/2.4）：
+   - **A1** 绘制缓冲进片内 SRAM（`profile.use_psram = false`）⇒ 帧间隔 ±0.3~+1.5 ms，无收益，已还原。
+   - **A2** LVGL 上游 PPA 绘制单元（`CONFIG_LV_USE_PPA=y` + `LV_DRAW_BUF_ALIGN=128`）⇒ 每帧 +1.2~2.1 ms，已还原。
+3. 因此**只剩 UI 架构层的 B1**（压缩每帧无效区），这是官方文档里唯一还没被实测排掉、且直接对
+   「PPA 成本 ∝ 数据块大小」这条原理的杠杆 —— 见第三节。
 3. 结构性地拿不到的部分（第 17~20 条实测）：每帧的"整帧 handoff + 等 VSYNC"是这套 partial pipeline
    的固有成本，换缓冲数量、换渲染模式、换旋转实现都只会更慢或起不来。**30% 的缺口里有一部分是这块，
    不再指望用配置消灭它。**
@@ -85,6 +86,17 @@
   失败会走 `display_manager_alloc_draw_buffer()` 的报错路径（不会静默降级）。
 - **验收**：bench 同脚本 `iv/rs2rr/rr2rs` 三组数字 + `cpu_lvgl` + 片内余量日志 + `tools/verify_all.sh --flash` 仍 10 PASS。
 
+**实测（2026-10-10，同机同台架同脚本，bench 配置，3×`swipe:3:0:3`）——负结果，已还原：**
+
+| 配置 | iv p50 (µs) | rs2rr p50 (µs) | rr2rs p50 (µs) | frames | cpu_lvgl |
+|---|---|---|---|---|---|
+| 绘制缓冲在 PSRAM（现状） | 26,976 / 26,873 / 26,783 | 22,378 / 22,248 / 22,201 | 4,600 / 4,637 / 4,565 | 120 / 119 / 116 | ~16% |
+| 绘制缓冲在片内 SRAM | 28,528 / 27,046 / 27,277 | 23,902 / 22,424 / 22,561 | 4,897 / 4,622 / 5,024 | 117 / 125 / 94 | 16.1 / 13.6 / 11.8% |
+
+⇒ 一片内 SRAM 分配成功（启动无报错、`ui created` 5536 µs 正常），但**帧间隔没变好**（第一组 +1.5 ms，后两组 ±0.3 ms），
+CPU 也没降。原因：每帧真正写进绘制缓冲的只有脏区那 0.26~0.30 MB（130~154 kpx），PSRAM 200M 完全吃得住；
+瓶颈在整帧 handoff + 等 VSYNC（第 17/19/20 条），与"缓冲在哪儿"无关。**已 `git checkout` 还原。**
+
 ### 2.4 A2｜LVGL 上游 PPA 绘制单元（官方开关）
 
 - **官方依据**：LVGL 9.5.0 自带 Espressif PPA 绘制单元：
@@ -97,6 +109,21 @@
 - **预期**：官方原文「PPA 可显著降低 CPU 占用；通常不会带来明显的 FPS 提升」⇒ 记在 `cpu_lvgl`／功耗，
   FPS 若无变化属正常，不作为失败判据。
 - **风险**：PPA 与 DSI 扫描输出争 PSRAM 带宽（同 A1 的官方结论）；可能出现争用导致 `iv` 反而变差 ⇒ 必须 A/B。
+
+**硬前提（第一次 build 就撞上了，官方断言）**：LVGL 的 PPA 单元要求绘制缓冲对齐等于 L2 cache line 尺寸 ——
+`managed_components/lvgl__lvgl/src/draw/espressif/ppa/lv_draw_ppa_private.h:41`：
+`#error "CONFIG_LV_DRAW_BUF_ALIGN must be equal to CONFIG_CACHE_L2_CACHE_LINE_SIZE!"`
+⇒ 我们 `CONFIG_LV_DRAW_BUF_ALIGN=4`（`sdkconfig:2930`）而 L2 是 128（`:1523`），必须一起改成 `CONFIG_LV_DRAW_BUF_ALIGN=128` 才能编过。
+
+**实测（同上条件）——负结果，已还原：**
+
+| 配置 | iv p50 (µs) | rs2rr p50 (µs) | rr2rs p50 (µs) | frames | cpu_lvgl |
+|---|---|---|---|---|---|
+| 现状 | 26,976 / 26,873 / 26,783 | 22,378 / 22,248 / 22,201 | 4,600 / 4,637 / 4,565 | 120 / 119 / 116 | ~16% |
+| `LV_USE_PPA=y` + `LV_DRAW_BUF_ALIGN=128` | 28,185 / 29,011 / 28,354 | 23,941 / 24,077 / 24,104 | 4,694 / 4,952 / 4,604 | 120 / 96 / 112 | 15.7 / 11.9 / 12.4% |
+
+⇒ 每帧 **+1.2~2.1 ms**、CPU 也没省：LVGL 的 PPA 绘制与适配器的 PPA SRM（每帧旋转）**抢同一个 PPA + 同一条 PSRAM 通路**，
+官方那句"通常不会带来明显的 FPS 提升"在本机还要更差一点。**已还原（`LV_USE_PPA` 与 `LV_DRAW_BUF_ALIGN` 都回原值）。**
 
 ### 2.5 已核对但**不适用**的官方项（避免重复踩）
 
@@ -145,22 +172,25 @@ to the amount of the data in the block. The size of the entire picture has no in
 
 ---
 
-## 四、执行顺序（每步都有独立验收，任何一步为负立即还原）
+## 四、执行状态（每步独立验收，负向立即还原）
 
-1. **复现基线**（同机同台架同脚本）：确认 `iv p50 ≈26.9 ms`、`rs2rr p50 ≈22.3 ms`、`rr2rs ≈4.6 ms`、frames ≈120。
-2. **A1**：`use_psram=false` + 片内余量日志 → build/flash → bench（三组）→ 与第 1 步逐项对比。
-   - 正向（哪怕 0.3 ms）就保留；负向立即 `git checkout -- components/esp32_p4_wifi6_touch_lcd_7b/esp32_p4_wifi6_touch_lcd_7b.c`。
-3. **B1**：先用现有计数器（`CONFIG_FNOS_UI_MOTION_STATS` + 适配器 flush 统计）量出"每帧脏区来自哪个页/哪个控件"，
-   再按 1→2→3 的顺序做；每改一处跑一次 bench，避免混变量。
-4. **A2**：`CONFIG_LV_USE_PPA=y`（并做 `DRAW_UNIT_CNT` 1 vs 2 的交叉 A/B）→ 主要看 `cpu_lvgl`，
-   FPS 不变不算失败。
-5. **收口**：`tools/verify_all.sh --flash` 必须 10 PASS / 0 FAIL；`capture-board` 拍一张确认朝向与触摸；
-   把正向项与负向项都写进 `docs/perf-report-2026-10-10.md`（负结果同样要留，别让下一个人重踩）。
+| # | 步骤 | 状态 | 实测 |
+|---|---|---|---|
+| 0 | 复现基线（同机同台架同脚本） | ✅ | `iv 26,976/26,873/26,783`、`rs2rr 22,378/22,248/22,201`、`rr2rs 4,600/4,637/4,565`、frames 120/119/116 |
+| 1 | **A1** 绘制缓冲进片内 SRAM | ❌ 已还原 | 见 2.3 表：无收益 |
+| 2 | **A2** LVGL 官方 PPA 绘制单元（含 `LV_DRAW_BUF_ALIGN=128` 前提） | ❌ 已还原 | 见 2.4 表：每帧 +1.2~2.1 ms |
+| 3 | **B1** 无效区最小化（本轮唯一剩下的杠杆） | ⏳ 待做 | 先量"每帧脏区来自哪个页/哪个控件"，再按 1→2→3→5 顺序改，每改一处跑一次 bench |
+| 4 | 收口 | ⏳ | `tools/verify_all.sh --flash` 必须 10 PASS；`capture-board` 确认朝向/触摸；正负结果都写进 `docs/perf-report-2026-10-10.md` |
+
+生产状态已恢复：`CONFIG_BSP_LCD_DPI_BUFFER_NUMS=3`、`use_psram=true`、`LV_USE_PPA` 关闭、`LV_DRAW_BUF_ALIGN=4`，
+重新 build+flash 后启动日志 `ui created (pages=6)` @5513 µs / `boot complete` @5542 µs（与 10 PASS 那次逐字同刻）。
 
 ## 五、期望值与边界（不吹）
 
 - 30% 目标的算术：真基线 `rs2rr 31.0 ms → 目标 ≤21.7 ms`，现在 22.2~22.4 ms（差 0.5~0.7 ms）；
   `iv 37.6 ms → 目标 ≤26.3 ms`，现在 26.8~27.0 ms（差 0.5~0.7 ms）。
-- 这 0.5~0.7 ms 只能来自"每帧要处理的像素更少/更近"：A1（写目标进片内）+ B1（脏区更小）正对这两点。
+- 这 0.5~0.7 ms 只能来自"每帧要处理的像素更少"：硬件层的两条（A1/A2）当天实测为负，
+  所以剩下的希望全在 **B1（脏区更小）**：`rot` 1.7~1.9 ms 与 `prep` 1.2 ms 都随面积走，
+  把每帧 130~154 kpx 压下来就是按比例省时间。
 - **不承诺**：pipeline 每帧的整帧 handoff 与 VSYNC 等待（第 17/19/20 条）不吃 UI 优化，
-  如果做完 A1+B1 仍差一点点，那就是架构边界，届时如实报告，而不是继续堆负收益的改动。
+  如果做完 B1 仍差一点点，那就是架构边界，届时如实报告，而不是继续堆负收益的改动。
