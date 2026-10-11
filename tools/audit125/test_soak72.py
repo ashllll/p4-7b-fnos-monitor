@@ -348,7 +348,7 @@ def main():
 
     # --- 16. PSRAM 空闲底线击穿 → FAIL
     def psram_low(i, el, rec):
-        rec["mem"]["pfree"] = soak72.PFREE_MIN_BYTES - 1
+        rec["mem"]["pmin"] = soak72.PFREE_MIN_BYTES - 1  # 瞬时 pfree 已恢复，仍须抓住历史低点
 
     code, s = run_case("psramlow", build(4.0, mutate=psram_low), hours=4.0)
     check("psram_floor_fail", code == 1 and state_of(s, "heap_floor") == "fail",
@@ -628,6 +628,14 @@ def main():
           "argv=%s" % cap["argv"])
 
     # --- 33. 掉线：记一条 error 就收工，不重开串口、不留 complete=true、不泄漏设备路径
+    for name, chunks in (("silent", []), ("malformed", [b"FNOS_DIAG {broken}\n"])):
+        code, cap, d, opens = capture_case("capzero_" + name, chunks)
+        check("capture_zero_samples_" + name,
+              code == soak72.EXIT_FAIL and cap["complete"] is False
+              and cap["sample_count"] == 0 and opens == 1
+              and any(e["event"] == "no_valid_samples" for e in cap["errors"]),
+              "code=%s cap=%s" % (code, cap))
+
     code, cap, d, opens = capture_case("capfail", [(sample_lines()[0] + "\n").encode()], raise_after=1)
     errs = cap.get("errors") or []
     check("capture_disconnect_no_retry",
@@ -672,7 +680,7 @@ def main():
     notes = "".join(s["notes"])
     check("summary_notes_and_measurements",
           "不得相加" in notes and all("measured" in c for c in s["checks"])
-          and any(c["name"] == "heap_floor" and "pfree" in c["measured"] for c in s["checks"]),
+          and any(c["name"] == "heap_floor" and "pmin" in c["measured"] for c in s["checks"]),
           "notes=%d 条，checks=%d 条" % (len(s["notes"]), len(s["checks"])))
 
 

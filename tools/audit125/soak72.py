@@ -467,14 +467,14 @@ def evaluate(samples, capture, hours, elf_sha, windows, load_meta=None):
         "imin": min(r["mem"]["imin"] for r in recs),
         "imax": min(r["mem"]["imax"] for r in recs),
         "dmin": min(r["mem"]["dmin"] for r in recs),
-        "pfree": min(r["mem"]["pfree"] for r in recs),
+        "pmin": min(r["mem"]["pmin"] for r in recs),
     }
     floors = {"imin": IMIN_MIN_BYTES, "imax": IMAX_MIN_BYTES, "dmin": DMIN_MIN_BYTES,
-              "pfree": PFREE_MIN_BYTES}
-    under = [k for k in ("imin", "imax", "dmin", "pfree") if mem_min[k] < floors[k]]
+              "pmin": PFREE_MIN_BYTES}
+    under = [k for k in ("imin", "imax", "dmin", "pmin") if mem_min[k] < floors[k]]
     add("heap_floor", "fail" if under else "pass",
         ("击穿：" if under else "全程最小值 ") +
-        "、".join("%s=%d(>=%d)" % (k, mem_min[k], floors[k]) for k in ("imin", "imax", "dmin", "pfree")),
+        "、".join("%s=%d(>=%d)" % (k, mem_min[k], floors[k]) for k in ("imin", "imax", "dmin", "pmin")),
         dict(mem_min))
 
     # g 预热与趋势
@@ -831,7 +831,10 @@ def capture_main(args, argv):
                 # 收工时残在半行缓冲区里：不猜它的后半截
                 state["parse_drop"] += 1
                 state["parse_drop_run_max"] = max(state["parse_drop_run_max"], drop_run + 1)
-            state["complete"] = True
+            if state["sample_count"] == 0:
+                errors.append({"at": _now_iso(), "event": "no_valid_samples"})
+            else:
+                state["complete"] = True
     except KeyboardInterrupt:
         errors.append({"at": _now_iso(), "event": "interrupted"})
     except Exception as exc:                                  # noqa: BLE001

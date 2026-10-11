@@ -161,8 +161,8 @@ def main():
           f"实际字段 {sorted(ident)}")
 
     if not tls_on:
-        print("  （NAS 关掉了 TLS：板子会直接进明文配对，跳过固定相关的断言）")
-        pem = None
+        bad("NAS 未启用 TLS：未验证 TLS 固定，配对验收未完成")
+        return 3
     else:
         pem = ident["cert_pem"]
 
@@ -240,8 +240,8 @@ def main():
         status2, _ = req(a.host, a.port, "/api/v1/pair", ctx=ctx, method="POST",
                           body=json.dumps({"code": "000000", "name": "x"}))
         check(status2 in (400, 403), "④ 错误配对码被拒", f"实际 {status2}")
-    except ssl.SSLError:
-        pass
+    except ssl.SSLError as e:
+        bad(f"④ 错误配对码请求握手失败，未验证拒绝行为：{e}")
 
     if not token:
         return 1

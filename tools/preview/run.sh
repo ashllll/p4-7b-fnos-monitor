@@ -61,3 +61,22 @@ cmake --build build -j8 2>&1 | tail -20
 rm -rf "$OUT"
 ./build/preview "$OUT"
 python3 ppm2png.py "$OUT"
+
+# Exercise dynamic inventories with the same renderer and audits as the samples.
+MATRIX=$(mktemp -d)
+trap 'rm -rf "$MATRIX"' EXIT
+python3 hardware_fixtures.py "$MATRIX/fixtures" > "$MATRIX/fixtures.log"
+for fixture in empty compact mixed dense; do
+  if ! PREVIEW_HARDWARE_FIXTURE="$MATRIX/fixtures/$fixture.json" \
+       ./build/preview "$MATRIX/$fixture" > "$MATRIX/$fixture.log" 2>&1; then
+    tail -20 "$MATRIX/$fixture.log" >&2
+    exit 1
+  fi
+  echo "hardware inventory $fixture: PASS"
+done
+if ! PREVIEW_ALLOC_FAIL_AT=0 PREVIEW_HARDWARE_FIXTURE="$MATRIX/fixtures/mixed.json" \
+     ./build/preview "$MATRIX/oom" > "$MATRIX/oom.log" 2>&1; then
+  tail -20 "$MATRIX/oom.log" >&2
+  exit 1
+fi
+echo "hardware inventory allocation failure and retry: PASS"

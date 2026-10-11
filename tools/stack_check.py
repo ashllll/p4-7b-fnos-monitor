@@ -92,14 +92,18 @@ def add_cpp_aliases(frames, calls):
 
 
 def load(elf, objdump):
-    out = subprocess.run([objdump, "-d", "--no-show-raw-insn", elf],
-                         capture_output=True, text=True).stdout
+    result = subprocess.run([objdump, "-d", "--no-show-raw-insn", elf],
+                            capture_output=True, text=True)
+    if result.returncode or not result.stdout.strip():
+        raise ValueError("objdump 无法读取 ELF，未执行栈预算检查")
+    out = result.stdout
     frames, calls = collections.defaultdict(int), collections.defaultdict(set)
     cur = None
     for line in out.splitlines():
         m = re.match(r"^([0-9a-f]+) <([^>]+)>:", line)
         if m:
             cur = m.group(2)
+            frames[cur] = 0
             continue
         if cur is None:
             continue
@@ -144,7 +148,15 @@ def main():
     if not os.path.exists(a.elf):
         print(f"找不到 {a.elf}，先 ./idf.sh build（注意要 export DEVELOPER_DIR）")
         return 2
-    frames, calls = load(a.elf, a.objdump)
+    try:
+        frames, calls = load(a.elf, a.objdump)
+    except (OSError, ValueError) as e:
+        print(f"栈检查失败：{e}", file=sys.stderr)
+        return 2
+    missing = [root for root in ROOTS if root not in frames]
+    if missing:
+        print("栈检查失败：缺少任务入口 " + ", ".join(missing), file=sys.stderr)
+        return 2
     print(f"{os.path.relpath(a.elf, REPO)}：{len(frames)} 个函数\n")
 
     cb_depth = {}

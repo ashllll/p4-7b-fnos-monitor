@@ -371,7 +371,13 @@ static void commit_status(const fnos_status_t *st, int http_ms, int status_code)
     }
     fnos_status_t *dst = &s_status;
     uint32_t ok = dst->ok_count, fail = dst->fail_count;
+    bool hist_ts_ok = dst->hist_ts_ok;
+    int hist_span_s = dst->hist_span_s, hist_avg_gap_x10 = dst->hist_avg_gap_x10;
     fnos_status_copy(dst, st);              // 保留不可变动态清单，旧引用独立释放
+    /* 历史由独立端点回填，不属于当前状态帧。 */
+    dst->hist_ts_ok = hist_ts_ok;
+    dst->hist_span_s = hist_span_s;
+    dst->hist_avg_gap_x10 = hist_avg_gap_x10;
     dst->ever_ok = true;
     s_valid = true;
     dst->online = true;

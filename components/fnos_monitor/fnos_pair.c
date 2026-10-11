@@ -98,7 +98,9 @@ static EXT_RAM_BSS_ATTR unsigned char s_der[1600];
 
 static bool has_cert(const char *pem)
 {
-    return pem && pem[0] && strstr(pem, "BEGIN CERTIFICATE") != NULL;
+    const char *begin = pem ? strstr(pem, "-----BEGIN CERTIFICATE-----") : NULL;
+    return begin && strstr(begin + strlen("-----BEGIN CERTIFICATE-----"),
+                           "-----END CERTIFICATE-----") != NULL;
 }
 
 // 把 PEM 正文（去掉头尾行和所有空白）base64 解码成 DER，再算 SHA-256，
@@ -106,6 +108,7 @@ static bool has_cert(const char *pem)
 // 同时伪造证书和那个字段就能骗过肉眼比对。
 static bool pem_fingerprint(const char *pem, char *out, size_t out_cap)
 {
+    if (!has_cert(pem) || !out || out_cap == 0) return false;
     size_t n = 0;
     for (const char *p = pem; *p; p++) {
         if (*p == '-') {
@@ -120,6 +123,7 @@ static bool pem_fingerprint(const char *pem, char *out, size_t out_cap)
             while (*p && *p != '\n') {     // "-----BEGIN …-----" 整行跳过
                 p++;
             }
+            if (!*p) break;
             continue;
         }
         if (*p == '\r' || *p == '\n' || *p == ' ' || *p == '\t') {

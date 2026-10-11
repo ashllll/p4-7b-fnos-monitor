@@ -68,6 +68,19 @@ int main(void)
     fnos_counts_t impossible={.temps=INT_MAX};
     assert(!fnos_status_create(&shared,&impossible));
     assert(!strcmp(shared.host,"replacement"));
+    /* A syntactically valid frame can exceed the inventory budget through names.
+       Reject the whole frame and preserve the previous complete snapshot. */
+    size_t cap = CONFIG_FNOS_SNAPSHOT_MAX_BYTES;
+    char *oversized = malloc(cap + 64);
+    assert(oversized);
+    strcpy(oversized, "{\"ready\":true,\"host\":\"");
+    size_t prefix = strlen(oversized);
+    memset(oversized + prefix, 'a', cap);
+    strcpy(oversized + prefix + cap, "\"}");
+    assert(!fnos_status_parse(oversized,&shared,&reason));
+    assert(reason && !strcmp(reason,"data capacity"));
+    assert(!strcmp(shared.host,"replacement"));
+    free(oversized);
     fnos_status_release(&shared); fnos_status_release(&previous);
     cJSON_free(json); cJSON_Delete(root);
     puts("PASS: full large frame, long IDs, modules, concurrent readers, replacement, shrink, malformed input, byte budget rejection");

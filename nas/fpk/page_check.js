@@ -75,7 +75,16 @@ class El {
   setAttribute() {}
   getAttribute() { return null; }
   querySelector() { return null; }
-  querySelectorAll() { return []; }
+  querySelectorAll(sel) {
+    if (sel !== '[data-revoke]') return [];
+    if (this._revokeHTML !== this.innerHTML) {
+      this._revokeHTML = this.innerHTML;
+      this._revokeNodes = [...String(this.innerHTML).matchAll(/<button\b[^>]*data-revoke="([^"]*)"[^>]*>/g)].map(m => {
+        const b = new El('button'); b.dataset.revoke = m[1]; return b;
+      });
+    }
+    return this._revokeNodes || [];
+  }
   focus() {}
   select() {}
   remove() {}
@@ -154,6 +163,7 @@ const dom = {
 const seen = [];
 let deferredConfigPost = null;
 const dockerPostBodies = [];
+const revokeBodies = [];
 function fetchStub(url, opts = {}) {
   const method = (opts.method || 'GET').toUpperCase();
   // 页面里的 url 是 BASE + path；BASE 由 location.pathname 推出来，这里直接取路径尾
@@ -164,6 +174,7 @@ function fetchStub(url, opts = {}) {
   const key = method + ' ' + p;
   seen.push(key);
   if (key === 'POST /api/collector/docker') dockerPostBodies.push(JSON.parse(opts.body));
+  if (key === 'POST /api/devices/revoke') revokeBodies.push(JSON.parse(opts.body));
   if (key === 'POST /api/config' && deferredConfigPost) return deferredConfigPost;
   if (!(key in canned)) {
     return Promise.resolve({
@@ -205,6 +216,7 @@ let failures = 0;
 process.on('unhandledRejection', (e) => fail('异步路径抛出未捕获异常', e));
 function fail(what, e) {
   failures++;
+  process.exitCode = 1;
   console.log(`  \x1b[31m✗\x1b[0m ${what}：${e && e.message ? e.message : e}`);
   if (e && e.stack) {
     const line = e.stack.split('\n').find((l) => l.includes('index.html') || l.includes('evalmachine'));
@@ -227,7 +239,8 @@ try {
   for (let i = 0; i < 20; i++) await settle();
 
   // 逐个点击处理器：一条条走，哪条挂了能直接点名
-  const clicks = ['gencode', 'cancelcode', 'savecfg', 'rundiag', 'reloadlogs'];
+  const clicks = [...new Set([...html.matchAll(/\$\('([^']+)'\)\.onclick\s*=/g)].map(m => m[1]))];
+  if (!clicks.length) fail('没有发现任何点击处理器', new Error('零覆盖'));
   for (const id of clicks) {
     const node = byId.get(id);
     if (!node || typeof node.onclick !== 'function') {
@@ -241,6 +254,27 @@ try {
     } catch (e) {
       fail(`#${id} 点击处理器抛异常`, e);
     }
+  }
+
+  // 空设备表也要执行真实生成的撤销按钮，核对其发送的设备 ID。
+  const originalState = canned['GET /api/state'];
+  const originalRevoke = canned['POST /api/devices/revoke'];
+  try {
+    if (!originalState) throw new Error('缺少 state 样本');
+    context.renderState({ ...originalState, devices: [{ name: 'gate-fixture', last4: 'gate', last_ip: 'fixture' }] });
+    canned['POST /api/devices/revoke'] = { removed: 1 };
+    const buttons = byId.get('devrows').querySelectorAll('[data-revoke]');
+    if (buttons.length !== 1 || typeof buttons[0].onclick !== 'function') throw new Error('撤销按钮未绑定');
+    const before = revokeBodies.length;
+    await buttons[0].onclick();
+    await settle();
+    if (revokeBodies.length !== before + 1 || revokeBodies[before].id !== 'gate') throw new Error('撤销请求没有携带按钮对应的设备 ID');
+    ok('设备撤销处理器发送了对应的设备 ID');
+  } catch (e) { fail('设备撤销回归', e); }
+  finally {
+    if (originalRevoke === undefined) delete canned['POST /api/devices/revoke'];
+    else canned['POST /api/devices/revoke'] = originalRevoke;
+    if (originalState) context.renderState(originalState);
   }
 
   // 导航按钮（切页）
@@ -325,7 +359,12 @@ try {
     ];
     for (const [what, needle, label] of want) {
       if (needle === undefined) { fail(`无法核对概览卡片的${label}（样本里没有）`, new Error('样本缺失')); continue; }
-      if (!cards.includes(String(needle))) {
+      const card = cards.split(/(?=<div class="card">)/).find(part => part.includes('<h3>' + what + '</h3>')) || '';
+      // HTML attributes (e.g. progress width) are not visible values.
+      const rendered = what === 'CPU' ? ((card.match(/<div class="big">([\s\S]*?)<\/div>/) || [])[1] || '') : card;
+      const visible = rendered.replace(/<[^>]*>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+      if (!visible.includes(String(needle))) {
         fail(`概览卡片没有渲染出${label}（期望含 ${JSON.stringify(String(needle))}）`,
              new Error('实际 ' + JSON.stringify(cards.slice(0, 100))));
       } else {
@@ -610,5 +649,5 @@ try {
   }
 
   console.log(`\n结果：${failures === 0 ? '管理页脚本全部路径跑通 ✓' : failures + ' 处异常'}`);
-  process.exit(failures ? 1 : 0);
-})();
+  process.exitCode = failures ? 1 : (process.exitCode || 0);
+})().catch((e) => fail('检查主流程抛出异常', e));

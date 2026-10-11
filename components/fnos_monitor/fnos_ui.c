@@ -1348,6 +1348,7 @@ static void build_p2(lv_obj_t *page)
                            2 * lv_font_get_line_height(UK_FONT_CJK_12) + 2 * UK_S3 + 3 * UK_S1);
     for (int i = 0; i < 4; i++) {
         s_ui.kpi2[i] = uk_kpi_create(krow, title[i]);
+        if (!s_ui.kpi2[i]) continue;
         if (s_ui.ncards < UI_CARDS) s_ui.cards[s_ui.ncards++] = s_ui.kpi2[i]->box;
         /* 数值色 = 曲线色：上行紫、下行青，和趋势图两条线一一对应 */
         lv_obj_set_style_text_color(s_ui.kpi2[i]->val, uk_c(tcol[i]), 0);
@@ -1373,7 +1374,8 @@ static void build_p2(lv_obj_t *page)
 
 static void network_layout(void)
 {
-    if (!s_ui.kpi2[0]) return;
+    for (unsigned i = 0; i < sizeof s_ui.kpi2 / sizeof s_ui.kpi2[0]; i++)
+        if (!s_ui.kpi2[i]) return;
     lv_obj_t *row = lv_obj_get_parent(s_ui.kpi2[0]->box);
     lv_obj_update_layout(row);
     int32_t width = lv_obj_get_content_width(row);
@@ -3721,7 +3723,10 @@ static void header_refresh(void)
 
 static void inventory_notice(void)
 {
-    if (!uk_alloc_failed()) return;
+    bool missing_kpi = false;
+    for (unsigned i = 0; i < sizeof s_ui.kpi2 / sizeof s_ui.kpi2[0]; i++)
+        if (!s_ui.kpi2[i]) missing_kpi = true;
+    if (!uk_alloc_failed() && !missing_kpi) return;
     lv_label_set_text_static(s_ui.foot_txt, "界面内存不足 · 部分设备尚未显示");
     lv_obj_set_style_text_color(s_ui.foot_txt, uk_c(UK_WARN), 0);
     lv_obj_set_style_bg_color(s_ui.foot_dot, uk_c(UK_WARN), 0);
@@ -5025,8 +5030,9 @@ void fnos_ui_set_page(int idx)
     }
     lv_anim_delete(&s_motion, motion_exec);
     if (s_page < 0 || motion_reduced()) {
+        nav_select(idx);       /* 首次刷新也必须有有效的导航状态 */
         refresh_page(idx);     /* 无动画切换：亮出来之前先把目标页刷到最新 */
-        nav_select(idx); motion_finish();
+        motion_finish();
     } else if (s_motion.active && idx == s_motion.from) {
         /* A quick tap back reverses from the current frame, not from zero. */
         int old = s_motion.from;

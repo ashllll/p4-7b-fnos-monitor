@@ -29,6 +29,24 @@ REPO = os.path.dirname(os.path.dirname(HERE))
 MAIN_CPP = os.path.join(REPO, "main", "main.cpp")
 FNOS_DATA_H = os.path.join(REPO, "components", "fnos_monitor", "fnos_data.h")
 
+# ESP-IDF 默认包含末尾 NUL 的 9 字节；项目显式配置覆盖默认。
+def configured_sha_size():
+    size = 9
+    for name in ("sdkconfig.defaults", "sdkconfig"):
+        path = os.path.join(REPO, name)
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8") as fh:
+                match = re.search(r"^CONFIG_APP_RETRIEVE_LEN_ELF_SHA=(\d+)$", fh.read(), re.M)
+            if match:
+                size = int(match.group(1))
+    if not 9 <= size <= 65:
+        sys.exit("CONFIG_APP_RETRIEVE_LEN_ELF_SHA 必须在 ESP-IDF 的 9~65 范围内")
+    return size
+
+
+SHA_SIZE = configured_sha_size()
+SHA_HEX = "".join("0123456789abcdef"[(i * 7) % 16] for i in range(64))
+
 SIG = "static void diag_timer_cb(lv_timer_t *t)"
 
 FAILS = []
@@ -123,7 +141,9 @@ static int esp_app_get_elf_sha256(char *dst, size_t size)
     static const char *HEX = "0123456789abcdef";
     char sha[64];
     for (int i = 0; i < 64; i++) sha[i] = HEX[(i * 7) % 16];
-    size_t n = (size < 65) ? size : 65;
+    // esp_app_desc.c 先按 CONFIG 长度缓存 SHA hex（含 NUL），再按调用方容量复制。
+    const size_t configured_size = __SHA_SIZE__;
+    size_t n = (size < configured_size) ? size : configured_size;
     if (n < 2) return 0;
     memcpy(dst, sha, n - 1);
     dst[n - 1] = 0;
@@ -193,13 +213,12 @@ SUB = {
     "mem": {"ifree", "imin", "imax", "dfree", "dmin", "pfree", "pmin"},
     "stk": {"lvgl", "poll", "pair"},
 }
-HEX64 = re.compile(r"^[0-9a-f]{64}$")
 
 
-def compile_harness(tmp, body):
+def compile_harness(tmp, body, sha_size=SHA_SIZE):
     with open(os.path.join(tmp, "sdkconfig.h"), "w", encoding="utf-8") as f:
         f.write("/* 主机替身：诊断回调只看 CONFIG_FNOS_* 之外的东西，留空即可 */\n")
-    src = HARNESS.replace("__CBODY__", body)
+    src = HARNESS.replace("__CBODY__", body).replace("__SHA_SIZE__", str(sha_size))
     path = os.path.join(tmp, "diag_host.cpp")
     with open(path, "w", encoding="utf-8") as f:
         f.write(src)
@@ -225,7 +244,7 @@ def run_case(exe, case):
     return out
 
 
-def check_schema(rec, case):
+def check_schema(rec, case, sha_size=SHA_SIZE):
     check(set(rec) == TOP, f"[{case}] 顶层字段集合",
           f"多={sorted(set(rec) - TOP)} 少={sorted(TOP - set(rec))}")
     for k, want in SUB.items():
@@ -235,7 +254,8 @@ def check_schema(rec, case):
     check(isinstance(rec.get("n"), int) and rec["n"] >= 1, f"[{case}] n 是正整数")
     check(isinstance(rec.get("up"), int) and rec["up"] >= 0, f"[{case}] up 是毫秒整数")
     check(rec.get("hz") == 10, f"[{case}] hz==10", f"实际={rec.get('hz')}")
-    check(bool(HEX64.match(str(rec.get("fw", "")))), f"[{case}] fw 是 64 位小写 hex",
+    check(rec.get("fw") == SHA_HEX[:sha_size - 1],
+          f"[{case}] fw 是配置长度 {sha_size - 1} 的 SHA hex 前缀",
           f"实际={rec.get('fw')}")
     check(isinstance(rec.get("rst"), int), f"[{case}] rst 是整数")
     check(isinstance(rec.get("ev"), list) and all(isinstance(x, str) for x in rec["ev"]),
@@ -317,6 +337,11 @@ def main():
     check_schema(sa, "stacks_absent")
     check(sa["stk"]["poll"] == 0 and sa["stk"]["pair"] == 0 and sa["stk"]["lvgl"] == 3000,
           "[stacks_absent] 缺任务的栈余量是 0 而不是缺失字段", f"实际={sa['stk']}")
+
+    # 覆盖 IDF 默认前缀及完整 SHA 配置；回调仍使用同一份真实源码。
+    for size in sorted({9, 65} - {SHA_SIZE}):
+        exe, _ = compile_harness(tmp, body, sha_size=size)
+        check_schema(run_case(exe, "fresh")[0], f"sha_buffer_{size}", sha_size=size)
 
     print()
     if FAILS:

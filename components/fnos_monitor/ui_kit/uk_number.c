@@ -319,6 +319,10 @@ void uk_number_selfcheck(lv_obj_t *parent)
     uk_number_motion_enable(true); uk_number_set_text(o,"3 GB",true); assert(n->active);
     size_t used=layer_bytes;
     lv_obj_delete(o); assert(layer_bytes<used); /* Destructor must remove in-flight callbacks and layers. */
+    uk_test_alloc_fail_after(0);
+    assert(!uk_kpi_create(parent,"rate") && uk_alloc_failed());
+    uk_kpi_set(NULL,"9.9","MB/s","",-1);
+    uk_test_alloc_fail_after(-1); uk_alloc_reset();
     uk_kpi_t *k=uk_kpi_create(parent,"rate");
     lv_obj_set_width(k->box,LV_PCT(100)); lv_obj_set_height(k->box,LV_SIZE_CONTENT);
     lv_obj_set_flex_grow(k->box,0);

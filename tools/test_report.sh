@@ -13,6 +13,7 @@ cd "$(cd "$(dirname "$0")/.." && pwd)"
 export PATH="$HOME/.local/bin:$PATH"
 QUICK=0
 FULL=0
+HARD_FAIL=0
 for a in "$@"; do
   [ "$a" = "--quick" ] && QUICK=1
   [ "$a" = "--full" ] && FULL=1
@@ -31,11 +32,13 @@ if [ "$QUICK" = "1" ]; then
   SUITE_LINE="（--quick：本次没有重跑，见上一次的报告）"
   SUITE_COUNT="?"
 else
-  nas/fpk/test_lifecycle.sh >"$TMP/suite.log" 2>&1
+  SUITE_RC=0
+  nas/fpk/test_lifecycle.sh >"$TMP/suite.log" 2>&1 || SUITE_RC=$?
   SUITE_COUNT=$(grep -oE '结果：[0-9]+ 项通过，[0-9]+ 项失败' "$TMP/suite.log" | tail -1)
   # 套件报红时把日志留到固定位置：$TMP 跑完就删，否则"哪一条红的"永远查不到
   # （真发生过一次 130/1，紧接着连跑两次都是 131/0，日志已经没了）
-  if ! grep -q '0 项失败' <<<"${SUITE_COUNT:-}"; then
+  if [ "$SUITE_RC" != 0 ] || ! grep -qE '^结果：[0-9]+ 项通过，0 项失败$' <<<"${SUITE_COUNT:-}"; then
+    HARD_FAIL=1
     cp "$TMP/suite.log" /tmp/nsc-suite-failed.log
     echo "  ! 套件有失败项，日志已留到 /tmp/nsc-suite-failed.log"
     grep -E '✗' "$TMP/suite.log" | head -5 | sed 's/^/      /'
@@ -49,10 +52,13 @@ else
   # **别用 `grep -P`**：macOS 自带的 BSD grep 没有这个选项，它会直接报错退出，
   # 于是计数变成 0、与汇总数一比就误报（或者更糟：被 `|| echo 0` 吞掉变成永远相等）。
   # 用 -F 配一个字面量（前导两个空格 + 绿 ✓ 的转义序列）最稳。
-  SUITE_TICKS=$(grep -cF "$(printf '  \033[32m✓')" "$TMP/suite.log" 2>/dev/null || echo 0)
+  SUITE_TICKS=$(grep -cF "$(printf '  \033[32m✓')" "$TMP/suite.log" 2>/dev/null || true)
   SUITE_PASS=$(sed -n 's/.*结果：\([0-9]\+\) 项通过.*/\1/p' "$TMP/suite.log" | tail -1)
   SUITE_LINE="${SUITE_COUNT#结果：}"
   SUITE_LINE="${SUITE_LINE:-没有取到结果}"
+  if [ "$SUITE_RC" != 0 ]; then
+    SUITE_LINE="$SUITE_LINE —— **进程异常退出（$SUITE_RC）**"
+  fi
   if [ -n "${SUITE_PASS:-}" ] && [ "${SUITE_PASS}" != "${SUITE_TICKS}" ]; then
     echo "  ✗ 套件汇总说 ${SUITE_PASS} 项通过，但日志里只有 ${SUITE_TICKS} 个 ✓"
     echo "      说明有用例根本没执行（比如整段被挪到了 shebang 之前），或者计数丢了"
@@ -112,6 +118,7 @@ if [ "$FULL" = "1" ]; then
     echo "  ✗ 通用发布构建 + 秘密扫描"
     tail -3 "$TMP/release.log" | sed 's/^/      /'
     RELEASE_ROW="**失败**（本次实跑）"
+    HARD_FAIL=1
   fi
 else
   RELEASE_ROW="**本次未运行**（要两三分钟）——跑 \`bash tools/release_check.sh\` 或 \`bash tools/test_report.sh --full\`"
@@ -121,6 +128,8 @@ if [ -x "$HOME/.platformio/packages/toolchain-riscv32-esp/bin/riscv32-esp-elf-ob
     python3 tools/stack_check.py
 else
   echo "  ! 没有 RISC-V 工具链，跳过栈预算检查"
+  echo "静态栈预算|**未运行**（缺少工具链）" >>"$TMP/checks"
+  HARD_FAIL=1
 fi
 
 hdr "统计产物"
@@ -144,7 +153,7 @@ hdr "写报告"
   echo
   echo "## 结论一句话"
   echo
-  echo "NAS 侧应用包在**开发机上**完成了端到端验证：${SUITE_LINE}。"
+  echo "NAS 侧应用包本次端到端验证结果：${SUITE_LINE}。"
   echo "安装到真 NAS、以及开发板与 NAS 的真实配对，**尚未进行**（见最后一节）。"
   echo
   echo "## 环境"
@@ -201,7 +210,7 @@ hdr "写报告"
     echo "      在 test_report.sh 的 how 分支里补上，否则报告里那一格是「—」"
     HARD_FAIL=1
   fi
-  echo "| 板子动作序列（配对 + 证书固定） | 明文取证书→自算指纹→固定建 TLS→换令牌→带令牌取数；含「固定别的证书必须失败」及其对照 | 通过（已并入套件 7d 阶段） | \`python3 nas/fpk/board_sim.py --host <NAS> --port 8798 --pair-code <码>\` |"
+  echo "| 板子动作序列（配对 + 证书固定） | 明文取证书→自算指纹→固定建 TLS→换令牌→带令牌取数；含「固定别的证书必须失败」及其对照 | 随生命周期套件验证：$SUITE_LINE | \`python3 nas/fpk/board_sim.py --host <NAS> --port 8798 --pair-code <码>\` |"
   echo "| 通用发布构建 + 秘密扫描 | 不含本地配置也能编出来；产物里搜不到 SSID/口令/令牌/NAS 地址 | ${RELEASE_ROW} | \`bash tools/release_check.sh\` |"
   echo
   echo "## 每一项都在验什么"

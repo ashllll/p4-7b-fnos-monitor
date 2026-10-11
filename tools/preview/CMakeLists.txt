@@ -12,7 +12,7 @@ set(COMP "${REPO}/components/fnos_monitor")
 # Only export public UI configuration to the preview, never network credentials.
 set(UI_DEVICE_CONFIG "${REPO}/build/config/sdkconfig.h")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${UI_DEVICE_CONFIG}")
-file(STRINGS "${UI_DEVICE_CONFIG}" UI_CONFIG REGEX "^#define CONFIG_FNOS_(UI_|CHART_WINDOW )")
+file(STRINGS "${UI_DEVICE_CONFIG}" UI_CONFIG REGEX "^#define CONFIG_FNOS_(UI_|CHART_WINDOW |STATUS_MAX_BYTES |SNAPSHOT_MAX_BYTES )")
 # 台架命令只在真机上编：它读触摸 indev、量任务 CPU，宿主没有这两样（也缺 freertos 桩）。
 # 关掉它不影响被审计的东西——按页刷新等优化都不在台架开关里面。
 list(FILTER UI_CONFIG EXCLUDE REGEX "CONFIG_FNOS_UI_PERF_BENCH")

@@ -8,6 +8,7 @@
 
 bool parse_status(const char *json, fnos_status_t *st);
 bool parse_history(const char *js);
+void commit_status(const fnos_status_t *st, int http_ms, int status_code);
 int fnos_data_hist_read(int64_t since_seq, fnos_sample_t *out, int max, int64_t *next_seq);
 
 /* 抠出来的代码里那两个文件级静态（见 extract.py 的替身段） */
@@ -115,9 +116,9 @@ int main(int argc, char **argv)
     /* 截断过的字符串必须是**合法 UTF-8**：半截字符在屏幕上是豆腐块或乱码，
        而且看不出是"被截断"还是"数据本身坏了"。这里逐字段验一遍。 */
     const char *fields[] = { st.host, st.net.ifname, st.last_err,
-                             st.vols[0].mnt, st.raid[0].dev, st.raid[0].state,
-                             st.docker[0].n, st.docker[0].s, st.temps[0].dev, st.temps[0].ch,
-                             st.alerts[0].lv, st.alerts[0].m };
+                             (st.nvols ? st.vols[0].mnt : ""), (st.nraid ? st.raid[0].dev : ""), (st.nraid ? st.raid[0].state : ""),
+                             (st.ndocker ? st.docker[0].n : ""), (st.ndocker ? st.docker[0].s : ""), (st.ntemps ? st.temps[0].dev : ""), (st.ntemps ? st.temps[0].ch : ""),
+                             (st.nalerts ? st.alerts[0].lv : ""), (st.nalerts ? st.alerts[0].m : "") };
     int bad = 0;
     for (size_t i = 0; i < sizeof fields / sizeof fields[0]; i++) {
         if (!utf8_ok(fields[i])) {
@@ -163,7 +164,7 @@ int main(int argc, char **argv)
            parse_history 往 s_h_* 里写，fnos_data_hist_read 把它们读出来画曲线。
            这两头从来没在设备外跑过，也从来没一起跑过：写进去的值顺序对不对、
            窗口落后太多时会不会给错段，只有读回来才知道。 */
-        if (argc >= 7) {
+        if (argc >= 8) {
             fnos_sample_t *sm = calloc(4096, sizeof *sm);
             int64_t next = 0;
             int got = fnos_data_hist_read(0, sm, 4096, &next);
@@ -199,5 +200,18 @@ int main(int argc, char **argv)
             free(sm);
         }
     }
+    if (argc >= 5) {
+        int span = s_status.hist_span_s, gap = s_status.hist_avg_gap_x10;
+        bool ts_ok = s_status.hist_ts_ok;
+        commit_status(&st, 12, 200);
+        commit_status(&st, 13, 200);
+        if (s_status.hist_ts_ok != ts_ok || s_status.hist_span_s != span ||
+            s_status.hist_avg_gap_x10 != gap) {
+            puts("BADHIST status poll erased history metadata"); return 5;
+        }
+        puts("history metadata preserved across consecutive status polls");
+    }
+    fnos_status_release(&st);
+    fnos_status_release(&s_status);
     return bad ? 3 : 0;
 }

@@ -27,7 +27,7 @@ EXTRA_SOURCES = ["fnos_snapshot.c"]
 # 按名字抠函数体：名字在哪个源里都能找到（找不到就报错，不静默跳过）。
 FUNCS = [
     # fnos_data.c：薄壳 + 历史回填
-    "parse_status", "parse_history", "fnos_data_hist_read",
+    "parse_status", "parse_history", "commit_status", "fnos_data_hist_read",
     # fnos_snapshot.c：字符串 arena + 字段解析
     "snapshot_malloc", "owned_alloc",
     "fnos_status_create", "fnos_status_release", "fnos_status_copy", "fnos_status_text",
@@ -131,6 +131,9 @@ float s_h_cpu[FNOS_HIST_MAX], s_h_mem[FNOS_HIST_MAX];
 float s_h_rx[FNOS_HIST_MAX], s_h_tx[FNOS_HIST_MAX];
 int64_t s_seq;
 fnos_status_t s_status;
+bool s_valid;
+#define esp_timer_get_time() 1000000
+#define http_ring_push(ms) ((void)0)
 
 /* fnos_snapshot.c 里字符串 arena 的类型与容量上限：函数原文要用，类型照抠、上限照抄同样的兜底值。 */
 {chr(10).join(types)}

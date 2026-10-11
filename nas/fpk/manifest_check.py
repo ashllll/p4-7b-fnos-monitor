@@ -37,7 +37,7 @@ KNOWN = {
     "service_port", "checkport", "disable_authorization_path", "changelog",
 }
 REQUIRED = {"appname", "version", "display_name", "desc", "source", "platform",
-            "maintainer", "maintainer_url", "desktop_uidir"}
+            "maintainer", "maintainer_url", "desktop_uidir", "desktop_applaunchname"}
 # "待填写"这类占位：本地装机测试无所谓，提交上架前必须填掉
 PLACEHOLDER = re.compile(r"待填写|TODO|FIXME|your-|example\.com|xxx", re.I)
 
@@ -58,7 +58,7 @@ def parse(path):
     return out
 
 
-def wiring_problems():
+def wiring_problems(pkg=DEFAULT_PKG):
     """四处**分散在不同文件里、必须一致**的常量。
 
     网关前缀、Socket 文件名、服务端口、应用标识——写错任何一处的后果都是"装上也
@@ -74,7 +74,6 @@ def wiring_problems():
     （否则安装时检查的是一个端口、实际监听的是另一个）。
     """
     out = []
-    pkg = os.path.join(HERE, "nasscreencompanion")
     mpath = os.path.join(pkg, "manifest")
     cpath = os.path.join(pkg, "app", "ui", "config")
     spath = os.path.join(pkg, "app", "server", "nas_companion_server.py")
@@ -85,10 +84,17 @@ def wiring_problems():
 
     m = dict(re.findall(r"^(\w+)\s*=\s*(.*)$", io.open(mpath, encoding="utf-8").read(), re.M))
     cfg = json.loads(io.open(cpath, encoding="utf-8").read())
-    entries = list((cfg.get(".url") or {}).items())
+    if not isinstance(cfg, dict):
+        return ["app/ui/config 顶层必须是 JSON 对象"]
+    group = cfg.get(".url")
+    if not isinstance(group, dict):
+        return ["app/ui/config 的 .url 必须是 JSON 对象"]
+    entries = list(group.items())
     if len(entries) != 1:
         return [f"app/ui/config 里应当只有一个入口，实际 {len(entries)} 个"]
     eid, ent = entries[0]
+    if not isinstance(ent, dict):
+        return ["app/ui/config 的入口配置必须是 JSON 对象"]
     srv = io.open(spath, encoding="utf-8").read()
 
     def const(name):
@@ -202,6 +208,9 @@ def main():
     # ── 必要字段与未知字段
     for k in sorted(REQUIRED - set(m)):
         problems.append(f"缺必要字段 {k}")
+    for k in sorted(REQUIRED & set(m)):
+        if not m[k].strip():
+            problems.append(f"必要字段 {k} 不能为空")
     for k in sorted(set(m) - KNOWN):
         warns.append(f"不认识的字段 {k}（官方文档里没有，可能是拼写错误）")
 
@@ -256,8 +265,10 @@ def main():
             except ValueError as e:
                 problems.append(f"{uidir}/config 不是合法 JSON：{e}")
             else:
+                if not isinstance(data, dict):
+                    problems.append(f"{uidir}/config 顶层必须是 JSON 对象")
                 ids = set()
-                for grp in data.values():
+                for grp in (data.values() if isinstance(data, dict) else []):
                     if isinstance(grp, dict):
                         ids |= set(grp)
                 if launch not in ids:
@@ -275,7 +286,10 @@ def main():
         (problems if strict else warns).append(msg + ("（--strict 下算错误）" if strict else ""))
 
     problems += layout_evidence_problems()
-    problems += wiring_problems()
+    try:
+        problems += wiring_problems(pkg)
+    except (OSError, ValueError, TypeError) as exc:
+        problems.append(f"包内常量核对失败：{type(exc).__name__}: {exc}")
 
     print(f"manifest 共 {len(m)} 个字段")
     for w in warns:

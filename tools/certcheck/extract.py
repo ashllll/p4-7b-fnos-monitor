@@ -19,17 +19,16 @@ def main():
     src_path, out_path = sys.argv[1], sys.argv[2]
     src = io.open(src_path, encoding="utf-8").read()
 
-    # 两个函数都要：指纹（用户逐段比对的依据）+ CN/到期（同一屏上显示给用户看的）
+    # 同时提取证书边界校验与指纹函数，覆盖实际调用路径。
     fns = []
-    for name, sig in (("pem_fingerprint",
+    for name, sig in (("has_cert", r"^static bool has_cert\(const char \*pem\)\n"),
+                      ("pem_fingerprint",
                        r"^static bool pem_fingerprint\(const char \*pem, char \*out, size_t out_cap\)\n"),
                       # 只验 pem_fingerprint：cert_info 依赖 mbedtls 的 x509 整套
                       # （不是 base64/sha256 两个文件），为它把整个 library/ 编到
                       # 主机不值当——它做的只是把 mbedtls 解出的 subject 与
                       # valid_to 格式化一下，风险在编译期（mday→day 已经踩过）。
                       ):
-        if name != "pem_fingerprint":
-            continue
         # **按花括号配对切，别用非贪婪正则**：`cert_info()` 里面有嵌套的
         # `if (!crt) { … }`，`\{.*?\n\}` 会停在那个内层块的收尾行上，
         # 抠出来的东西少一半（报 `use of undeclared identifier 'crt'`）。

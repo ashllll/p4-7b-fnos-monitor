@@ -3232,7 +3232,7 @@ static void record_motion(lv_indev_t *pointer)
 static lv_obj_t *hardware_contains(lv_obj_t *object, const char *text)
 {
     if (lv_obj_has_flag(object,LV_OBJ_FLAG_HIDDEN)) return NULL;
-    if (lv_obj_check_type(object,&lv_label_class) && strstr(lv_label_get_text(object),text)) return object;
+    if (lv_obj_has_class(object,&lv_label_class) && strstr(lv_label_get_text(object),text)) return object;
     for (uint32_t i=0;i<lv_obj_get_child_count(object);i++) {
         lv_obj_t *found=hardware_contains(lv_obj_get_child(object,i),text);
         if (found) return found;

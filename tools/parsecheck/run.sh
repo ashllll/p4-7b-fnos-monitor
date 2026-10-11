@@ -22,6 +22,10 @@ cc -I build/config -I "$CJ" -I components/fnos_monitor -o "$OUT/ps" \
    tools/parsecheck/main.c "$OUT/ps.c" "$CJ/cJSON.c" 2>&1 | head -20
 [ -x "$OUT/ps" ] || { echo "编译失败"; exit 1; }
 
+# Legitimate empty inventory must be accepted rather than dereferencing NULL vectors.
+printf '%s\n' '{"ready":true,"host":"empty-inventory"}' > "$OUT/empty.json"
+"$OUT/ps" "$OUT/empty.json" || exit 1
+
 # 历史回填：同样从没在设备外跑过，而且刚改过 ?n= 协议
 python3 - "$OUT/full.json" "$OUT/hist.json" <<'PY'
 import json, sys

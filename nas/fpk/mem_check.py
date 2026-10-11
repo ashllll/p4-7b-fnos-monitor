@@ -42,6 +42,9 @@ def rss_kb():
 
 def main():
     total = int(sys.argv[1]) if len(sys.argv) > 1 else 3000
+    if total < BATCH * 6:
+        print("样本太少，未判定（请求数至少 3000）")
+        return 3
     tmp = tempfile.mkdtemp()
     os.environ.update(TRIM_APPDEST=tmp, TRIM_PKGVAR=tmp, TRIM_PKGETC=tmp,
                       TRIM_APPNAME="nasscreencompanion")
@@ -50,7 +53,7 @@ def main():
     spec.loader.exec_module(m)
 
     cfg = dict(m.DEFAULT_CONFIG)
-    cfg.update(port=0, bind="127.0.0.1", tls_enabled=False)
+    cfg.update(port=0, bind="127.0.0.1", tls_enabled=False, auth_mode="lan")
     state = m.State(cfg)
     servers, _ = m.make_servers(state, cfg, bind_socket=False)
     tcp = [s for s in servers if not getattr(s, "is_unix", False)][0]
@@ -64,7 +67,10 @@ def main():
     for i in range(1, total + 1):
         c = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
         c.request("GET", PATHS[i % len(PATHS)])
-        c.getresponse().read()
+        response = c.getresponse()
+        response.read()
+        if response.status != 200:
+            raise RuntimeError(f"被测端点 {PATHS[i % len(PATHS)]} 返回 {response.status}，未覆盖有效请求")
         c.close()
         if i % BATCH == 0:
             cur = rss_kb()
@@ -78,7 +84,7 @@ def main():
     # 判据：拿后 1/3 的样本比中间 1/3，增长必须很小（噪声量级）。
     if len(samples) < 6:
         print("样本太少，不做判定（请求数至少 3000 才有意义）")
-        return 0
+        return 3
     third = len(samples) // 3
     mid = samples[third]
     last = samples[-1]

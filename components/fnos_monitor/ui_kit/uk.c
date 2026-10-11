@@ -740,7 +740,8 @@ void uk_pool_relayout(lv_obj_t *pool, int32_t min_col_w, bool data_fit, lv_obj_t
 /* ── KPI ──────────────────────────────────────────────────────────── */
 uk_kpi_t *uk_kpi_create(lv_obj_t *parent, const char *label)
 {
-    uk_kpi_t *k = lv_malloc(sizeof *k);
+    uk_kpi_t *k = uk_alloc(sizeof *k);
+    if (!k) return NULL;
     memset(k, 0, sizeof *k);
     lv_obj_t *box = lv_obj_create(parent);
     lv_obj_set_flex_grow(box, 1);

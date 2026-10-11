@@ -25,7 +25,7 @@ function loadCards() {
   try {
     out = execFileSync(bin, [path.join(require('os').tmpdir(), 'scrollgap-cm')],
                        { env: { ...process.env, PREVIEW_CARDMAP: '1' }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-  } catch (e) { out = e.stdout || ''; }
+  } catch (e) { throw new Error('preview 卡片几何生成失败：' + e.message); }
   const cards = [];
   for (const line of out.split('\n')) {
     const m = line.match(/^\[card\] p=(-?\d+) x=(-?\d+) y=(-?\d+) w=(\d+) h=(\d+) list=(\d)/);
@@ -88,21 +88,29 @@ function findTrack(g, x0, x1, y0, y1) {
   return { x0: cols[0], x1: cols[cols.length - 1], len: cols.length };
 }
 
-/* 内容右缘 = 滚动条左侧（或不含滚动条的整行）里最右的"非底色"像素列。
-   两个坑（都踩过）：
-   1) 滚动条自身 1px 抗锯齿边会被当成内容 → 先把条子整列剔除（bars）。
-   2) v8 起卡片是"竖向渐变"表面，**没有一个统一的底色**：拿卡片右上角一个点当
-      base、按 60 的容差比全局，会把卡片自己下部的深色渐变点判成内容（假报 1~2px）。
-      改成逐行基线——每行取左侧保证空白的参考列作该行底色，再按 44 容差判内容。 */
+/* 内容右缘：逐行排除滚动条与横向长连通背景带。
+   卡片可有渐变、状态带和内层表面；轨道右侧留白提供外层背景对照，
+   长色带提供内层背景对照，避免把整行背景当成贴着轨道的文字。 */
 function contentRight(g, x0, x1, y0, y1, base, bars) {
   const isBar = x => bars.some(b => x >= b.x0 - 1 && x <= b.x1 + 1);
   let cr = -1;
   for (let y = y0; y < y1; y++) {
-    const [br, bg, bb] = g(x0, y);            /* x0 落在卡片左侧内边距里，必为底色 */
+    // 横向长连通色带是背景；同一行可同时有卡面和状态带两种背景。
+    const backgrounds = [];
+    const distance = (a, b) => a.reduce((sum, v, i) => sum + Math.abs(v - b[i]), 0);
+    let start = x0, color = g(x0, y);
+    for (let x = x0 + 1; x <= x1 + 1; x++) {
+      const next = x <= x1 ? g(x, y) : null;
+      if (next && distance(next, color) <= 12) continue;
+      if (x - start >= (x1 - x0 + 1) * 0.4) backgrounds.push(color);
+      start = x; color = next;
+    }
+    if (!backgrounds.length) backgrounds.push(g(x0, y));
+    if (base) backgrounds.push(base(y));
     for (let x = x0; x <= x1; x++) {
       if (isBar(x)) continue;
       const [r, gg, b] = g(x, y);
-      if (Math.abs(r - br) + Math.abs(gg - bg) + Math.abs(b - bb) > 44) cr = Math.max(cr, x);
+      if (backgrounds.every(bg => distance([r, gg, b], bg) > 44)) cr = Math.max(cr, x);
     }
   }
   return cr;
@@ -124,7 +132,7 @@ function audit(file, page) {
     const track = findTrack(g, c.x + c.w - 80, c.x + c.w - 3, c.y + CARD_TITLE_H, c.y + c.h - 8);
     if (!track) continue;                       /* 这张卡的列表没在滚（内容不溢出），跳过 */
     const cr = contentRight(g, c.x + CARD_PAD, track.x0 - 1,
-                            c.y + CARD_TITLE_H, c.y + c.h - 8, null, bars);
+                            c.y + CARD_TITLE_H, c.y + c.h - 8, y => g(track.x1 + 3, y), bars);
     rows.push({ name: `卡(${c.x},${c.y} ${c.w}x${c.h})`, track, cr,
                 gap: track.x0 - cr, edge: (c.x + c.w - 1) - track.x1 });
   }
@@ -139,15 +147,16 @@ for (const f of files) {
   const page = m ? +m[1] : (f.includes('system') ? 3 : f.includes('storage') ? 1 : null);
   if (page === null) { console.log(`\n### ${f}：整屏/诊断态，跳过（非四页网格）`); continue; }
   const rows = audit(path.join(dir, f), page);
-  if (!rows.length) { console.log(`\n### ${f}：没有在滚的列表，跳过`); continue; }
+  if (!rows.length) { console.log(`\n### ${f}：未检测到可审核的滚动条`); continue; }
   console.log(`\n### ${f}`);
   for (const r of rows) {
     checked++;
-    const ok = r.gap >= 8 && r.edge >= 4;
+    const ok = r.cr >= 0 && r.gap >= 8 && r.edge >= 4;
     if (!ok) bad++;
     console.log(`  ${r.name}  滚动条 x=[${r.track.x0},${r.track.x1}]  内容右缘=${r.cr}  ` +
                 `内容→条=${r.gap}px  条→卡片内缘=${r.edge}px  ${ok ? 'OK' : '<<< 不合格'}`);
   }
 }
 console.log(`\n合计 ${checked} 处滚动条，不合格 ${bad} 处。判据：内容→条 >= 8px 且 条→内缘 >= 4px。`);
+if (!checked) { console.error("未执行滚动条审核：缺少 PNG、轨道或可审核列表"); process.exit(2); }
 process.exit(bad ? 1 : 0);

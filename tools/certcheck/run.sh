@@ -13,10 +13,11 @@
 # `fnos_pair.c` 里把 `pem_fingerprint` 原文抠出来编译（抠出来的文本同时校验，改一行
 # 就会失败提醒）。mbedtls 用 ESP-IDF 自带的源码编到主机上，不写替身——
 # 这样连 base64/sha256 的实现都跟板子上是同一份。
-set -u
+set -euo pipefail
 export DEVELOPER_DIR=/Library/Developer/CommandLineTools
 cd "$(cd "$(dirname "$0")/../.." && pwd)"
 
+command -v openssl >/dev/null || { echo "缺少 openssl，无法验证指纹" >&2; exit 1; }
 SRC=components/fnos_monitor/fnos_pair.c
 MB="$HOME/.platformio/packages/framework-espidf@3.50503.0/components/mbedtls/mbedtls"
 OUT=$(mktemp -d)
@@ -36,6 +37,8 @@ else
   echo "用临时自签证书（没有本地测试实例）"
 fi
 
+[ -s "$PEM" ] || { echo "没有可用证书" >&2; exit 1; }
+
 # ── 3. 编 mbedtls 的两个源文件到主机（不写替身）
 # platform_util.c 也要带上：sha256.c 会调 mbedtls_platform_zeroize，
 # 少了它链接期才报错（Undefined symbols: _mbedtls_platform_zeroize）
@@ -43,8 +46,14 @@ for f in base64 sha256 platform_util; do
   cc -c -I"$MB/include" -o "$OUT/$f.o" "$MB/library/$f.c" || exit 1
 done
 cc -I"$MB/include" -o "$OUT/fp" tools/certcheck/main.c "$OUT/fp.c" \
-   "$OUT/base64.o" "$OUT/sha256.o" "$OUT/platform_util.o" 2>&1 | head -20
+   "$OUT/base64.o" "$OUT/sha256.o" "$OUT/platform_util.o" 2>&1
 [ -x "$OUT/fp" ] || { echo "编译失败"; exit 1; }
+
+# Malformed PEM inputs exercise the exact extracted firmware parser under sanitizers.
+cc -fsanitize=address,undefined -fno-omit-frame-pointer -I"$MB/include" \
+   -o "$OUT/malformed" tools/certcheck/malformed.c "$OUT/fp.c" \
+   "$OUT/base64.o" "$OUT/sha256.o" "$OUT/platform_util.o"
+"$OUT/malformed"
 
 # ── 4. 三方对照（指纹 + CN/到期）
 FIRMWARE=$("$OUT/fp" "$PEM")
@@ -61,6 +70,9 @@ d = hashlib.sha256(base64.b64decode("".join(body))).hexdigest().upper()
 print(":".join(d[i:i+2] for i in range(0, len(d), 2)))
 PY
 )
+for fingerprint in "$FIRMWARE" "$OPENSSL" "$PY"; do
+  [[ "$fingerprint" =~ ^([0-9A-F]{2}:){31}[0-9A-F]{2}$ ]] || { echo "无有效 SHA-256 指纹，验证失败" >&2; exit 1; }
+done
 echo
 echo "固件 pem_fingerprint()  : $FIRMWARE"
 echo "服务端 Python 那套      : $PY"
