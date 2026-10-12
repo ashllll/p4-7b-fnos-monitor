@@ -161,6 +161,8 @@ run_check "停止失败时不删记录、不写配置（M21/M25/M26）" bash nas
 run_check "配网提交代次、迟到事件与 RPC 失败" python3 tools/test_wifi_submission.py
 run_check "报告入口错误传播与未完成状态（纯桩）" python3 -W error::ResourceWarning tools/test_report_entry.py
 run_check "空原因集合与缺预览配置负控" python3 tools/test_host_gate_failures.py
+run_check "发布配置恢复与工具失败边界（无设备）" python3 -W error::ResourceWarning tools/test_gate_failures.py
+run_check "Manifest 包身份与字段形状负控" python3 -W error::ResourceWarning tools/test_manifest_failures.py
 run_check "PID 写失败与卸载收尾（无 NAS）" python3 nas/fpk/test_lifecycle_failures.py
 run_check "API 与向导规则负控（无 NAS）" python3 nas/fpk/test_validation_gates.py
 run_check "检查器故障收尾（无 NAS）" python3 -W error::ResourceWarning nas/fpk/test_tool_cleanup.py

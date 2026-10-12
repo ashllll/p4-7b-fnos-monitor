@@ -4,14 +4,14 @@
 
 硬盘、存储卷、网口、容器和温度通道按实际数据创建卡片；名称换行、列数随可用空间调整，长清单通过滚动查看。采集失败、旧值、权限不足和未启用来源有各自的状态提示。
 
-**当前本地候选以 `53e1bf868bee0e2b66b05a8df8df342ba6ee29a4` 为基线，包含六页界面和独立复核补丁。** 本轮补丁保存在本地 main 提交；尚未推送、重新打包或操作真实 NAS／开发板；仓库内旧 FPK 不包含本轮修复。逐项结论与证据边界见 [复核记录](docs/codex-open-items-review-2026-10-11.md) 和 [问题账本](docs/open-items-review-ledger-2026-10-11.json)。
+**六页界面与独立复核补丁已随 `aed0ecc` 推送到 main。** 仓库内旧 FPK 未重新打包，不包含这些修复；本轮未操作真实 NAS／开发板。当前验证范围与剩余限制见 [未闭环事项](docs/open-items-2026-10-11.md)。
 
 | 范围 | 当前状态 |
 | --- | --- |
 | 本地候选源码 | 总览、存储、网络、系统、温度、独立告警六页，配对 / 配网 / 诊断覆盖层 |
-| 当前远端源码 | 本轮未推送或回读远端；本地候选不代表远端已更新 |
+| 当前远端源码 | `aed0ecc`，已核对 main 提交与文件身份 |
 | 旧飞牛安装包 | [1.2.5 历史安装包](nas/fpk/nasscreencompanion.fpk)，不作为本轮候选交付或整改验收证据 |
-| 主机验证 | 固件构建、原生预览、匿名 NAS 生命周期及针对性故障负控；范围见复核记录 |
+| 主机验证 | 固件构建、原生预览、匿名 NAS 生命周期及针对性故障负控；范围见未闭环事项 |
 | 尚未闭环 | 真实 LVGL 内存耗尽恢复、旧 NVS 混代与回退／掉电、设备信任与安装权限、浏览器视觉、容量目标／30% 性能／72 小时长测 |
 | 固件分发 | 源码与配置模板；个人实机 `.bin`、NVS 和凭据不随仓库分发 |
 
@@ -90,7 +90,7 @@ afed3abd9d910b13302b29a0d058b504ee5c279155f2c4b43b587193456bcc35
 | 工具链 / 目标 | ESP-IDF 5.5.3 / `esp32p4` |
 | 硅片配置 | 默认 P4 rev3.x；pre-v3 与 rev3.x 固件不能互刷 |
 
-以下克隆命令取得执行时的远端版本，不能保证包含未推送的本地候选。先按自己的 ESP-IDF 安装方式激活环境，使 `IDF_PATH` 和所需 Python、RISC-V 工具链可用。例如使用 ESP-IDF 的 `export.sh`，或 EIM 提供的 activation script。
+以下克隆命令取得执行时的远端版本。先按自己的 ESP-IDF 安装方式激活环境，使 `IDF_PATH` 和所需 Python、RISC-V 工具链可用。例如使用 ESP-IDF 的 `export.sh`，或 EIM 提供的 activation script。
 
 ```bash
 git clone https://github.com/ashllll/p4-7b-fnos-monitor.git
@@ -135,7 +135,7 @@ export FNOS_SERIAL_PORT='/dev/cu.YOUR_BOARD_PORT'
 | `CONFIG_FNOS_UI_REDUCED_MOTION` | 关闭 | 开启后保留跟手，松手直接落定 |
 | `CONFIG_FNOS_PALETTE` | `device` | 也可选 `graphite`、`abyss`、`phosphor` |
 
-预算限制字节资源，**不是固定设备数量上限**。超预算或解析失败会保留最后有效快照并报错；部分受控分配失败会提示设备尚未显示；但当前真实 LVGL 内存分配失败先触发启用的断言并停留，调用者收到 NULL 时的回退测试不能证明真实内存耗尽可恢复（见复核记录 §62）。旧来源、权限不足与真正零值不能混为一谈。完整实现和矩阵范围见 [硬件自适应记录](docs/ui-hardware-adaptive-audit-2026-10-08.md)。
+预算限制字节资源，**不是固定设备数量上限**。超预算或解析失败会保留最后有效快照并报错；部分受控分配失败会提示设备尚未显示；但当前真实 LVGL 内存分配失败先触发启用的断言并停留，调用者收到 NULL 时的回退测试不能证明真实内存耗尽可恢复（见[未闭环事项](docs/open-items-2026-10-11.md)）。旧来源、权限不足与真正零值不能混为一谈。完整实现和矩阵范围见 [硬件自适应记录](docs/ui-hardware-adaptive-audit-2026-10-08.md)。
 
 ## 开发与验证
 
@@ -177,7 +177,7 @@ bash nas/fpk/test_lifecycle.sh
 - 首页与网络页按内容高度重新分配空间，清单保留滚动入口，避免页面底部裁掉卡片。
 - 温度展开串口取证 `temp N`、`page_shot.py --temp N`，以及屏上未消费格式说明符审计。
 
-上述提交与 84 张预览、十分钟观察是历史记录。本轮候选已包含六页及新取证参数，并完成独立源码复核和部分主机整改；本轮没有推送，不能据此推断远端内容。当前固件构建、89 帧布局审计与 NAS 主机证据各有范围，均不能代替实际设备、浏览器视觉或长期运行验收。最终逐项残余以问题账本为准。
+上述提交与 84 张预览、十分钟观察是历史记录。当前 main 已包含六页、新取证参数及独立复核修复。固件构建、89 帧布局审计与 NAS 主机证据各有范围，均不能代替实际设备、浏览器视觉或长期运行验收；逐项残余见[未闭环事项](docs/open-items-2026-10-11.md)。
 
 ## 常见问题
 
@@ -203,7 +203,8 @@ bash nas/fpk/test_lifecycle.sh
 | [tools/preview/](tools/preview/README.md) | 真实 LVGL 主机预览与交互 / 硬件矩阵 |
 | [docs/ui-device-reference.md](docs/ui-device-reference.md) | 当前视觉与动效方向 |
 | [docs/ui-v12-lvgl-native.md](docs/ui-v12-lvgl-native.md) | 原生 UI 架构及迁移记录 |
-| [docs/verification.md](docs/verification.md) | 历次验证索引，区分主机、构建、实机与 NAS 证据 |
+| [docs/verification.md](docs/verification.md) | 验证入口与证据边界 |
+| [docs/open-items-2026-10-11.md](docs/open-items-2026-10-11.md) | 当前验证结果、原审计编号去向与待验收事项 |
 | [docs/fnos-market-submission.md](docs/fnos-market-submission.md) | 官方应用库提交准备与待完成项 |
 | [docs/archive/ui/](docs/archive/ui/README.md) | 旧版设计与 HTML 原型，仅作历史参考 |
 

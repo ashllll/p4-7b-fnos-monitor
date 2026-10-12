@@ -1,5 +1,7 @@
 # 触控/渲染性能报告（2026-10-10）
 
+本文保留当时的实机测量与负结果，不代表当前固件重新通过实机验收。已并入源码的旧补丁快照已清理，可从 Git 历史追溯；当前验证入口见 [验证指南](verification.md)。
+
 目标（用户口径）：拉取 GitHub 最新代码 → 判定性能提交是否真有效 → 在其上继续改进，
 **触控与性能提升 30%**。数字一律来自实机计数器；宿主只做回归门禁。
 基线固件 = `a563000` + 纯仪表（零优化），基线与测法见 `docs/perf-baseline-2026-10-09.md`。
@@ -83,7 +85,7 @@
 
 ## 三、本轮在本地做了什么
 
-分支 `perf/eval-20261010`（`main` 未动）：
+当时的实验分支 `perf/eval-20261010`（该阶段 `main` 未动）：
 
 | 提交 | 内容 | 证据 |
 |---|---|---|
@@ -96,7 +98,7 @@
 | 本条 | 收尾：阶段分解仪表（p2rs/rs2rr/rr2rs，bench-only 默认关）、`main.cpp` 记录两条 tear-avoid 死路、本报告补负结果与跨会话复现 | `final.csv` 对 `base.csv`：tick -53.0%、r2f -40.3%/-29.4%、FPS +21~43%、iv -27.9%/-29.2%；宿主 9 PASS + 运动预算 PASS |
 | 本轮（goal round 2） | 把 UI 侧最后三个候选逐个实测掉：flush 内部阶段分解仪表（`[dbg-flush]` rot/prep/msync/blit/dirty，只在 gitignored 的适配器里）、布局仪表（`[dbg-layout]` 每次 `layout_update_core` 的耗时）、translate 布局标记两探针、面板 MADCTL 硬件 180°、绘制缓冲 600 行 | 四条全负（第四节 9~12）；**没有一条改动留在树里**——`final3.csv` 复测确认 `final.csv` 的每一项（iv -27.6%/-29.0%、tick -52.9%、FPS +24.5%） |
 | 本轮（goal round 3） | 把手伸进适配器与输入侧各一次，然后把 -27.9% 的来源拆开：① 适配器"延迟交接"（flush 尾部的 `mark_busy`+等 VSYNC+换缓冲挪到下一帧开头）；② 触摸读回调外层采样 + indev 读周期 8→4 ms；③ 三组对照归因（真基线 / 真基线+只改 BSP 缓冲 120 行 / 最终树），全部用带拆分计数器的台架；④ 台架兜底上报（`pf_stop()` 若没出过 `[bench]` 行就补一行、arm 失败打印原因） | ①②全负（第四节 13/14），适配器已还原 pristine、UI 已 `checkout`；③ 见第一节归因表（**BSP 缓冲 -29.6% 帧工作**、UI 文件 -6.6% iv、真基线 38.6 ms 复现 `base.csv` 的 37.6 ms）；④ 工具修复，随本条提交（第四节 15） |
-| 本轮（goal round 4） | 把两个"每帧固定成本"各砍一次：① 适配器整帧 M2C → 按矩形 cache 维护（顺带做了可复用的 `tools/patches` 交付骨架）；② 绘制缓冲 120 → 300 / 600 行（想每帧只 flush 一次） | 两条都不成立（第四节 16 / 12）：① 实测**回归** +1.0~1.5 ms 帧工作 ⇒ 适配器已还原 pristine（md5 4aa7024…）、`tools/patches` 已删；② 300/600 行 LVGL 锁饥饿、UI 建不出来 ⇒ `.buffer_height` 回到 120 并把症状写进 BSP 注释 |
+| 本轮（goal round 4） | 把两个"每帧固定成本"各砍一次：① 适配器整帧 M2C → 按矩形 cache 维护（曾准备独立补丁交付）；② 绘制缓冲 120 → 300 / 600 行（想每帧只 flush 一次） | 两条都不成立（第四节 16 / 12）：① 实测**回归** +1.0~1.5 ms 帧工作 ⇒ 适配器已还原 pristine（md5 4aa7024…）、实验补丁已删；② 300/600 行 LVGL 锁饥饿、UI 建不出来 ⇒ `.buffer_height` 回到 120 并把症状写进 BSP 注释 |
 
 门禁（每条提交后都跑）：宿主 84 状态渲染 + 几何/字形/溢出/重叠审计全绿；
 `PREVIEW_MOTION` 响应与完成预算 PASS；固件构建 + 四条入口栈深在预算内。
@@ -222,11 +224,11 @@
     `display_cache_msync_invalidate_framebuffer(impl->draw_fb, frame_buffer_size)`（`lvgl_bridge_v9.c:2768`），
     改成只在两条 CPU 真的碰帧缓冲的路径（`copy_diff_repair_from_front_to_back` :3009、
     `copy_unrendered_area_from_front_to_back` :3173 的 CPU 回退分支）前后按矩形
-    `esp_cache_msync`（读前失效 / 写后回写），并为它建了 `tools/patches/`（patch 文件 + 幂等 apply.sh）。
+    `esp_cache_msync`（读前失效 / 写后回写），并曾准备 patch 文件与幂等 apply 脚本。
     实机：iv **28.8 / 27.7 / 28.0 ms**、rs2rr **23.9 / 23.4 / 23.3 ms**（pristine 对照 26.9 / 27.0 / 27.0、
     22.4 / 22.4 / 22.4）⇒ **帧工作反而多 1.0~1.5 ms**。与第 10 条同型：**少做 cache/布局维护会让后续
     绘制更贵**（M2C 扫场像是把脏行提前写回，压掉了绘制期的 PSRAM 突刺）。已还原 pristine
-    （md5 `4aa702438d34f72b4e96b89538bdc563` = 备份 `/tmp/v9_pristine.c`）、`tools/patches` 删除，
+    （md5 `4aa702438d34f72b4e96b89538bdc563` = 备份 `/tmp/v9_pristine.c`）、实验补丁删除，
     非旋转路径的同类调用（:2604-2605）也没动。
 
 17. **把面板帧缓冲 3→4 ⇒ 回归（这一枪，用户拍板「可以」后实测）**：假设"旋转 partial 每帧要等下一个
@@ -252,8 +254,8 @@
      是按"上一次显示的那个缓冲"算的，目标越陈旧要补的越多。与第 10、16 条同型——**适配器这套 partial
      机制依赖那两步看起来多余的维护**（整帧 msync、layout 标记、紧耦合的双缓冲对）。已全部还原（IDF 2 处、
      适配器 3 处、BSP `Kconfig` 的 `range 1 4`、`sdkconfig.defaults`、`sdkconfig`），回滚后按生产配置重编、
-     烧录并跑 `tools/verify_all.sh --flash` = **10 PASS / 0 FAIL**；为它准备的 `tools/patches/vendor`
-     补丁与 apply 脚本一并删除（不为负收益的改动出交付物）。
+     烧录并跑 `tools/verify_all.sh --flash` = **10 PASS / 0 FAIL**；为它准备的厂商组件补丁与 apply 脚本
+     一并删除（不为负收益的改动出交付物）。
 
 18. **面板侧 `ROTATE_0` + LVGL 绘制期矩阵旋转 ⇒ 能跑、画面也正确，但更慢（这一枪）**：想法是让适配器
      不走 `flush_partial_rotate`（省 rot 1.7 + prep 1.2 + 整帧 blit），180° 交给 LVGL 在**绘制时**用矩阵
@@ -365,7 +367,7 @@
   而是按脏区直接转着写当前扫描缓冲（PPA 按面积算，理论上比现在的整屏 PPA + 整帧 blit 便宜，但
   "省 ≈4 ms"这个上限来自第 11 条**完全不旋转**的配置，这条路仍要做旋转，实际能省多少**未验证**）。
   另外两条更重的：ⓐ 换一块吃 MADCTL 的屏 / 让 BSP 走 DSI 命令模式（本板 MADCTL 是 no-op，第 11 条）；
-  ⓑ 改面板驱动的时序/刷新策略。交付方式用户已拍板 **B**（仓库内 patch + 幂等 apply 脚本，见 `tools/patches/`），
+  ⓑ 改面板驱动的时序/刷新策略。后续若获授权修改厂商组件，交付方式仍为用户选定的 **B**（仓库内独立 patch + 幂等 apply 脚本），
   但**负收益的改动不出交付物**——本轮的 18/19/20/21 都已还原（21 只保留 `bsp_display_lock(2000)` 这一处
   健壮性修复；22 是净收益但只影响稳态，不影响 iv/rs2rr）。
 - 输入采样侧（读回调外层采样、读周期 8→4 ms）本轮已实测为**中性**，而且台架对这条线不可判
@@ -376,7 +378,7 @@
   高速相机量 p50）之前做。工具已入库（`prof once` + `tools/perf_trace.py`），随时可复测。
 - P2 的 p95 尾巴（34.9 ms 里偶发的 45 ms+ 帧）只查到"脏区大 + 等 VSYNC"这一步，
   没有进一步归因到具体某一帧。
-- 未推送远端：本地 `main` 未动，成果都在 `perf/eval-20261010`，等确认后再决定怎么合。
+- 当时的交付状态：该实验阶段尚未推送，本地 `main` 未动，成果保留在 `perf/eval-20261010`；当前源码状态以 README 为准。
 
 ## 六、复现
 

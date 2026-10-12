@@ -1409,7 +1409,7 @@ static void run_state(preview_state_t st, int index)
         lv_timer_handler();
     }
     /* create() 之后、任何 set_page 之前的"初始帧"：这一帧专抓"create 时没把初始页显示出来"
-     * 这类只在设备上暴露的 bug（2026-10-05 实例见 docs/verification.md §17.3）。 */
+     * 这类只在设备上暴露的 bug；复验入口见 docs/verification.md。 */
 
 
     for (int p = 0; p < FNOS_UI_PAGE_COUNT; p++) {

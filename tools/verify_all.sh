@@ -288,6 +288,13 @@ if python3 tools/test_host_gate_failures.py >"$OUT/host_gate_failures.log" 2>&1;
 else
   bad "主机门负控失败（见 $OUT/host_gate_failures.log）"
 fi
+for checker in test_gate_failures test_manifest_failures; do
+  if python3 -W error::ResourceWarning "tools/$checker.py" >"$OUT/$checker.log" 2>&1; then
+    pass "tools/$checker.py"
+  else
+    bad "回归失败（见 $OUT/$checker.log）"
+  fi
+done
 if python3 tools/test_perf_samples.py >"$OUT/perf_samples.log" 2>&1; then
   pass "性能样本完整性（无设备）"
 else
