@@ -55,8 +55,9 @@ bool uk_test_alloc_was_triggered(void);
 /* 页根：满屏 flex column，底色 UK_BG。所有页面都从这里开始。 */
 lv_obj_t *uk_screen(void);
 
-/* 外壳：把页根切成 [顶栏][左 rail | 内容区][底部状态行]，返回内容区。
-   rail/head/foot 可为 NULL（不需要）。内容区是 flex column、gap UK_S3、pad UK_S3。 */
+/* 外壳：[顶栏][左 rail | 内容区][状态行]；窄屏 rail 改为底部 dock。
+   导航方向由创建时视口与清单首选宽度决定，内容区始终供页面复用。
+   rail/head/foot 可为 NULL（不需要）。 */
 lv_obj_t *uk_shell(lv_obj_t *scr, lv_obj_t **out_rail, lv_obj_t **out_head, lv_obj_t **out_foot);
 
 /* 内容区里的行容器：flex row、gap UK_S3、flex-grow 1（= kk_layout 的"一行卡片"）。

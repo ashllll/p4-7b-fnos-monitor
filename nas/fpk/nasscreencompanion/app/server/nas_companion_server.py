@@ -1039,7 +1039,7 @@ class Handler(BaseHTTPRequestHandler):
                 want = 0
             if want > 0:
                 rows = rows[-want:]
-            return self._send(200, {"cols": ["ts", "cpu", "mem", "rx_kbs", "tx_kbs"],
+            return self._send(200, {"cols": ["ts", "cpu", "mem", "rx_kbs", "tx_kbs", "temp_max"],
                                     "rows": rows, "n": len(rows)})
 
         # -- 管理端点（仅网关）

@@ -8,6 +8,7 @@
 #include <string.h>
 #include <stddef.h>
 #include <float.h>
+#include <math.h>
 #include <limits.h>
 #ifdef ESP_PLATFORM
 #include "esp_heap_caps.h"
@@ -94,9 +95,9 @@ bool fnos_status_create(fnos_status_t *out, const fnos_counts_t *c)
     for (int i=0;i<s.nvols;i++) s.vols[i].mnt = s.vols[i].fs = "";
     for (int i=0;i<s.nraid;i++) s.raid[i].dev = s.raid[i].lvl = s.raid[i].state =
         s.raid[i].health = s.raid[i].what = "";
-    for (int i=0;i<s.ndisks;i++) s.disks[i].dev = "";
+    for (int i=0;i<s.ndisks;i++) s.disks[i].dev = s.disks[i].smart = "";
     for (int i=0;i<s.ntemps;i++) s.temps[i].dev = s.temps[i].ch = s.temps[i].dn = "";
-    for (int i=0;i<s.ndocker;i++) s.docker[i].n = s.docker[i].s = "";
+    for (int i=0;i<s.ndocker;i++) s.docker[i].n = s.docker[i].s = s.docker[i].id = "";
     for (int i=0;i<s.nalerts;i++) s.alerts[i].lv = s.alerts[i].m = "";
     for (int i=0;i<s.nmods;i++) s.mods[i].name = s.mods[i].status = "";
     for (int i=0;i<s.nnets;i++) s.nets[i].ifname = s.nets[i].state = "";
@@ -137,6 +138,9 @@ static int64_t  lnum(const cJSON *o, const char *k)
 { return (int64_t)clampd(number(o,k), -9.0e15, 9.0e15); }
 static float    fnum(const cJSON *o, const char *k)
 { return (float)clampd(number(o,k), -FLT_MAX, FLT_MAX); }
+/* Optional metrics preserve unknown vs genuine zero, including hostile numbers. */
+static bool metric_number(const cJSON *o, const char *key)
+{ const cJSON *v=item(o,key); return cJSON_IsNumber(v) && isfinite(v->valuedouble) && v->valuedouble>=0 && v->valuedouble<=FLT_MAX; }
 static const char *string(const cJSON *o, const char *key)
 { const cJSON *v=item(o,key); return cJSON_IsString(v) && v->valuestring ? v->valuestring : ""; }
 static const cJSON *array(const cJSON *root, const char *key)
@@ -197,6 +201,9 @@ bool fnos_status_parse(const char *json, fnos_status_t *out, const char **reason
     }
     i=0; cJSON_ArrayForEach(v,array(root,"disks")) {
         fnos_disk_t *r=&s.disks[i++]; TEXT(r->dev,v,"dev"); r->rd_kbs=fnum(v,"rd_kbs"); r->wr_kbs=fnum(v,"wr_kbs");
+        r->has_read_ms=metric_number(v,"read_ms"); r->read_ms=fnum(v,"read_ms");
+        r->has_write_ms=metric_number(v,"write_ms"); r->write_ms=fnum(v,"write_ms");
+        TEXT(r->smart,v,"smart"); r->smart_ts=lnum(v,"smart_ts");
     }
     i=0; cJSON_ArrayForEach(v,array(root,"temps")) {
         fnos_temp_t *r=&s.temps[i++]; TEXT(r->dev,v,"dev"); TEXT(r->ch,v,"ch"); TEXT(r->dn,v,"dn");
@@ -206,6 +213,11 @@ bool fnos_status_parse(const char *json, fnos_status_t *out, const char **reason
     if (s.ntemps>1) qsort(s.temps,s.ntemps,sizeof *s.temps,temp_cmp);
     i=0; cJSON_ArrayForEach(v,array(root,"docker")) {
         fnos_docker_t *r=&s.docker[i++]; TEXT(r->n,v,"n"); TEXT(r->s,v,"s"); r->up=cJSON_IsTrue(item(v,"up"));
+        TEXT(r->id,v,"id");
+        r->has_cpu=metric_number(v,"cpu_pct"); r->cpu_pct=fnum(v,"cpu_pct");
+        r->has_mem=metric_number(v,"mem_mb"); r->mem_mb=fnum(v,"mem_mb");
+        r->has_restarts=metric_number(v,"restarts") && number(v,"restarts")<=UINT32_MAX && floor(number(v,"restarts"))==number(v,"restarts");
+        r->restarts=unum(v,"restarts"); r->metrics_ts=lnum(v,"metrics_ts");
     }
     i=0; cJSON_ArrayForEach(v,array(root,"alerts")) {
         fnos_alert_t *r=&s.alerts[i++]; TEXT(r->lv,v,"lv"); TEXT(r->m,v,"m");

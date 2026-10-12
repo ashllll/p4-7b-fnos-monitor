@@ -8,6 +8,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <stdbool.h>
 
 #include "lvgl.h"
 #include "sdkconfig.h"
@@ -67,7 +68,7 @@
 #define UK_LIST_MIN_WIDTH CONFIG_FNOS_UI_LIST_MIN_WIDTH
 
 /* ── 度量 ─────────────────────────────────────────────────────────── */
-#define UK_RADIUS        3          /* Reference: nearly square panels */
+#define UK_RADIUS        8          /* Touch adaptation; not an official UniFi size */
 #define UK_RADIUS_SM     4          /* 胶囊 / 按钮                    */
 #define UK_BAR_H         4          /* 阈值条高                       */
 #define UK_BAR_H_HERO    8          /* 主容量条高                     */
@@ -79,9 +80,13 @@
 #define UK_SCR_H         600
 #define UK_RAIL_W        76         /* 左导航宽（中文标签，令牌 44 是桌面值） */
 #define UK_HEAD_H        44
-#define UK_DOCK_H        52
+#define UK_DOCK_H        56
+#define UK_NAV_ITEM_H    64         /* Icon + Chinese label + touch padding */
+#define UK_ENTITY_MIN_WIDTH (2 * UK_LIST_MIN_WIDTH) /* Identity + metric comparison columns */
+#define UK_DETAIL_WIDTH (2 * UK_LIST_MIN_WIDTH)
+#define UK_CONTENT_COLUMNS 3       /* Preferred comparison columns before rail collapses */
 #define UK_PANEL_GAP     4
-#define UK_HERO_GROW     3
+#define UK_HERO_GROW     2
 #define UK_AUX_GROW      1
 #define UK_MOTION_MS     160
 #define UK_MOTION_MIN_MS 80
@@ -150,14 +155,15 @@
 
 #include "fnos_fonts.h"   /* LV_FONT_DECLARE(ui_font_*) */
 
-/* ── 运行时配色（预置表见 uk_theme.c：device / graphite / abyss / phosphor） ── */
+/* ── 运行时配色（预置表见 uk_theme.c：unifi / device / graphite / abyss / phosphor） ── */
 typedef struct {
     uint32_t bg, s0, s1, surf_t, s2, s3, off, line;
     uint32_t t1, t2, t3, t4;
     uint32_t blue, blue_txt, ok, warn, danger;
     uint32_t s_cpu, s_mem, s_temp, s_down, s_up, s_zfs;
     uint32_t rail_n, rail_day, nav, nav_sel;
-    uint32_t hero, mint, peach, ink, on_primary, on_danger;
+    uint32_t resource_primary, resource_secondary, summary, on_summary, on_primary, on_danger;
+    bool summary_light;
 } uk_pal_t;
 
 extern uk_pal_t g_uk_pal;
@@ -189,10 +195,10 @@ extern uk_pal_t g_uk_pal;
 #define UK_RAIL_DAY  (g_uk_pal.rail_day)
 #define UK_NAV       (g_uk_pal.nav)
 #define UK_NAV_SEL   (g_uk_pal.nav_sel)
-#define UK_HERO      (g_uk_pal.hero)
-#define UK_MINT      (g_uk_pal.mint)
-#define UK_PEACH     (g_uk_pal.peach)
-#define UK_INK       (g_uk_pal.ink)
+#define UK_RESOURCE_PRIMARY      (g_uk_pal.resource_primary)
+#define UK_RESOURCE_SECONDARY      (g_uk_pal.resource_secondary)
+#define UK_SUMMARY     (g_uk_pal.summary)
+#define UK_ON_SUMMARY       (g_uk_pal.on_summary)
 #define UK_ON_PRIMARY (g_uk_pal.on_primary)
 #define UK_ON_DANGER  (g_uk_pal.on_danger)
 

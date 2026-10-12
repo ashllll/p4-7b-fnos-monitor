@@ -36,14 +36,18 @@ typedef struct { const char *mnt, *fs; float total_gb, used_gb, free_gb, pct; } 
    于是降级阵列的进度百分比从来没显示过（审计 §8.2）。 */
 typedef struct { const char *dev, *lvl, *state, *health, *what; bool ok;
                  int have, want; float sync_pct; } fnos_raid_t;
-typedef struct { const char *dev; float rd_kbs, wr_kbs; } fnos_disk_t;
+typedef struct { const char *dev; float rd_kbs, wr_kbs;
+                 bool has_read_ms, has_write_ms; float read_ms, write_ms;
+                 const char *smart; int64_t smart_ts; } fnos_disk_t;
 /* 温度：一条 = 一个**传感器通道**（不是一个设备）。
    dev/ch = 内核短名与通道名（enp1s0 / PHY、nvme2n1 / Composite…），保证"同一路永远
    认得住"；dn = **人读的设备名**（"Marvell AQC113 10GbE" / "Samsung SSD 990 PRO 2TB" /
    "Intel N100"）—— 用户要拿它决定"给谁降温"，所以界面上优先显示 dn，"NIC"这种缩写
    等于没说。老采集端两个字段都没有，解析层把它的拼接名塞进 dev，界面照旧显示。 */
 typedef struct { const char *dev, *ch, *dn; float c; } fnos_temp_t;
-typedef struct { const char *n; bool up; const char *s; } fnos_docker_t;
+typedef struct { const char *n; bool up; const char *s; const char *id;
+                 bool has_cpu, has_mem, has_restarts;
+                 float cpu_pct, mem_mb; uint32_t restarts; int64_t metrics_ts; } fnos_docker_t;
 typedef struct { const char *lv, *m; } fnos_alert_t;
 // 采集段状态（协议 v2 的 modules 字段）。status 原样收下不认识的词，
 // 显示时再决定怎么翻译——不能在解析层就把没见过的状态丢掉。
@@ -105,7 +109,7 @@ bool fnos_status_parse(const char *json, fnos_status_t *out, const char **reason
 void fnos_status_copy(fnos_status_t *out, const fnos_status_t *source);
 void fnos_status_release(fnos_status_t *out);
 
-typedef struct { float cpu, mem, rx_kbs, tx_kbs; } fnos_sample_t;
+typedef struct { float cpu, mem, rx_kbs, tx_kbs, temp_max; } fnos_sample_t;
 
 // 启动轮询任务（幂等）。未联网时任务自己等待，不阻塞调用方。
 void fnos_data_start(void);

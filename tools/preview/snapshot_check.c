@@ -87,5 +87,18 @@ int main(void)
     fnos_status_release(&shared); fnos_status_release(&previous);
     cJSON_free(json); cJSON_Delete(root);
     puts("PASS: full large frame, long IDs, modules, concurrent readers, replacement, shrink, malformed input, byte budget rejection");
+
+    fnos_status_t metrics={0};
+    assert(fnos_status_parse("{\"ready\":true,\"disks\":[{\"dev\":\"sda\",\"read_ms\":0,\"write_ms\":null,\"smart\":\"failed\",\"smart_ts\":1700000000}],\"docker\":[{\"n\":\"worker\",\"id\":\"stable-id\",\"cpu_pct\":250.5,\"mem_mb\":128,\"restarts\":0,\"metrics_ts\":1700000001}]}",&metrics,&reason));
+    assert(metrics.disks[0].has_read_ms && metrics.disks[0].read_ms==0 && !metrics.disks[0].has_write_ms);
+    assert(!strcmp(metrics.disks[0].smart,"failed") && metrics.disks[0].smart_ts==1700000000);
+    assert(metrics.docker[0].has_cpu && metrics.docker[0].cpu_pct==250.5f);
+    assert(metrics.docker[0].has_mem && metrics.docker[0].has_restarts && metrics.docker[0].restarts==0);
+    assert(!strcmp(metrics.docker[0].id,"stable-id"));
+    assert(fnos_status_parse("{\"ready\":true,\"disks\":[{}],\"docker\":[{\"cpu_pct\":-1,\"mem_mb\":1e100,\"restarts\":1.5}]}",&metrics,&reason));
+    assert(!metrics.disks[0].has_read_ms && !metrics.disks[0].smart[0]);
+    assert(!metrics.docker[0].has_cpu && !metrics.docker[0].has_mem && !metrics.docker[0].has_restarts);
+    fnos_status_release(&metrics);
+    puts("PASS optional metrics: real zero, null, absent, negative, overflow, fractional restart and stable identity");
     return 0;
 }

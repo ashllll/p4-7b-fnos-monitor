@@ -209,7 +209,9 @@ class Collector:
                 with self.lock:
                     self.snapshot = snap
                     self.history.append([snap["ts"], snap["cpu"]["pct"], snap["mem"]["pct"],
-                                         snap["net"]["rx_kbs"], snap["net"]["tx_kbs"]])
+                                         snap["net"]["rx_kbs"], snap["net"]["tx_kbs"],
+                                         max((t["c"] for t in snap.get("temps", []) if isinstance(t.get("c"), (int,float))), default=None)
+                                         if "temps" not in snap.get("errors", []) and snap.get("modules", {}).get("temps", {}).get("status", "ok") == "ok" else None])
                     if len(self.history) > self.hist_len:
                         del self.history[:len(self.history) - self.hist_len]
             except Exception as exc:                      # 采集失败不能让服务挂掉
@@ -431,30 +433,75 @@ class Collector:
         return self._trim("raid", out)
 
     def _disk_io(self):
-        """md 阵列 + 物理盘的读写速率（KB/s），用于判断"NAS 正在干活吗"。"""
+        """KiB/s and read/write mean completion times; no I/O means unknown latency."""
         cur = {}
         for line in read_text("/proc/diskstats").splitlines():
             f = line.split()
-            if len(f) < 14:
+            if len(f) < 14 or not re.fullmatch(r"md\d+|sd[a-z]+|nvme\d+n\d+|dm-\d+", f[2]):
                 continue
-            name = f[2]
-            if not (name.startswith("md") or re.match(r"^(sd[a-z]+|nvme\d+n\d+)$", name)
-                    or name.startswith("dm-")):
-                continue
-            cur[name] = (int(f[5]) * 512, int(f[9]) * 512)          # sectors read/written
+            cur[f[2]] = tuple(int(f[i]) for i in (5, 9, 3, 7, 6, 10))
         now = time.monotonic()
+        previous = self._prev_disk
+        prev, pt = previous if previous else ({}, now)
         rates = []
-        if self._prev_disk:
-            prev, pt = self._prev_disk
-            dt = max(1e-6, now - pt)
-            for name, (r, w) in cur.items():
-                pr, pw = prev.get(name, (r, w))
-                rd = max(0.0, (r - pr) / dt / 1024.0)
-                wr = max(0.0, (w - pw) / dt / 1024.0)
-                rates.append({"dev": name, "rd_kbs": round(rd, 1), "wr_kbs": round(wr, 1)})
+        for name, values in sorted(cur.items()):
+            row = {"dev": name, "rd_kbs": 0.0, "wr_kbs": 0.0,
+                   "read_ms": None, "write_ms": None}
+            old = prev.get(name)
+            if old and now > pt and all(a >= b for a, b in zip(values, old)):
+                d = [a-b for a,b in zip(values, old)]
+                row.update(rd_kbs=round(d[0]*512/(now-pt)/1024, 1),
+                           wr_kbs=round(d[1]*512/(now-pt)/1024, 1),
+                           read_ms=round(d[4]/d[2], 2) if d[2] else None,
+                           write_ms=round(d[5]/d[3], 2) if d[3] else None)
+            rates.append(row)
         self._prev_disk = (cur, now)
-        rates.sort(key=lambda d: (d["rd_kbs"] + d["wr_kbs"]), reverse=True)
+        self._smart_enrich(rates)
         return self._trim("disks", rates)
+
+    def _smart_enrich(self, rows):
+        """One due physical disk per tick, bounded read-only probe; never wake standby."""
+        import shutil
+        import subprocess
+        now = time.monotonic()
+        cache = getattr(self, '_smart_cache', {})
+        physical = [r for r in rows if re.fullmatch(r'sd[a-z]+|nvme\d+n\d+', r['dev'])]
+        ids = {r['dev'] for r in physical}
+        cache = {k:v for k,v in cache.items() if k in ids}
+        period = max(1.0, float(os.environ.get('FNAS_SMART_INTERVAL', '60')))
+        due = sorted((r for r in physical if now-cache.get(r['dev'], (-period,))[0] >= period),
+                     key=lambda r: cache.get(r['dev'], (-period,))[0])
+        if due:
+            dev = due[0]['dev']
+            state, stamp = 'unavailable', 0
+            binary = shutil.which('smartctl')
+            if not binary:
+                state = 'missing'
+            else:
+                try:
+                    run = subprocess.run([binary, '-j', '-H', '-n', 'standby,3', '/dev/'+dev],
+                                         capture_output=True, timeout=0.4, check=False)
+                    data = json.loads(run.stdout)
+                    if not isinstance(data,dict): raise ValueError('invalid SMART response')
+                    passed = data.get('smart_status', {}).get('passed')
+                    if isinstance(passed, bool) and not (run.returncode & 7):
+                        state, stamp = ('passed' if passed else 'failed'), int(time.time())
+                    elif run.returncode == 3:
+                        state = 'standby'
+                    elif any('permission denied' in str(m.get('string','')).lower() for m in data.get('smartctl',{}).get('messages',[]) if isinstance(m,dict)):
+                        state = 'denied'
+                except subprocess.TimeoutExpired:
+                    state = 'timeout'
+                except PermissionError:
+                    state = 'denied'
+                except (OSError, ValueError, TypeError):
+                    pass
+            cache[dev] = (now, state, stamp)
+        for row in rows:
+            item = cache.get(row['dev'])
+            row['smart'] = item[1] if item else ('pending' if row['dev'] in ids else 'unsupported')
+            row['smart_ts'] = item[2] if item else 0
+        self._smart_cache = cache
 
     # ── 温度：把 /sys/class/hwmon 下**每一个**可读通道都报出来（板端逐路显示）。
     #
@@ -781,6 +828,9 @@ class Collector:
                             % (dev, r.get("state") or "?")})
             elif prog:
                 out.append({"lv": "info", "m": "%s%s" % (dev, prog)})
+        for disk in (snap.get("disks") or []):
+            if disk.get("smart") == "failed":
+                out.append({"lv":"crit", "m":"SMART %s failed" % disk.get("dev","?")})
         for v in (snap.get("vols") or []):
             pct = v.get("pct") or 0
             if pct >= 90:

@@ -183,6 +183,22 @@
    "dev"
   ],
   [
+   "disks",
+   "read_ms"
+  ],
+  [
+   "disks",
+   "write_ms"
+  ],
+  [
+   "disks",
+   "smart_ts"
+  ],
+  [
+   "disks",
+   "smart"
+  ],
+  [
    "temps",
    "dev"
   ],
@@ -213,6 +229,26 @@
   [
    "docker",
    "s"
+  ],
+  [
+   "docker",
+   "id"
+  ],
+  [
+   "docker",
+   "cpu_pct"
+  ],
+  [
+   "docker",
+   "mem_mb"
+  ],
+  [
+   "docker",
+   "restarts"
+  ],
+  [
+   "docker",
+   "metrics_ts"
   ],
   [
    "alerts",

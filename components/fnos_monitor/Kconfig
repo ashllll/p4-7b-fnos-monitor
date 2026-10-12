@@ -28,16 +28,17 @@ menu "fnOS monitor"
             平时保持 0，交给你自己点导航/滑动翻页。
 
     config FNOS_PALETTE
-        string "配色方案（device / graphite / abyss / phosphor）"
-        default "device"
+        string "配色方案（unifi / device / graphite / abyss / phosphor）"
+        default "unifi"
         help
             预置配色见 components/fnos_monitor/ui_kit/uk_theme.c：
-              device    深紫画布 + 薄荷绿 / 桃橙（参考设备，默认）
+              unifi     UniFi Network 深色语言，NAS 触控适配（默认）
+              device    深紫画布 + 薄荷绿 / 桃橙（旧参考设备）
               graphite  中性石墨蓝灰
               abyss     深空蓝 + 青，像网络运维终端
               phosphor  近黑 + 磷光绿，对比度最高
             配色只管颜色：版面几何全在 ui_kit/（LVGL 原生 flex，不推导坐标），与配色无关
-            —— 换配色不会挪动任何一个元素。名字写错会退回 device（设备照样能开机）。
+            —— 换配色不会挪动任何一个元素。名字写错会退回 unifi（设备照样能开机）。
 
     config FNOS_STATUS_MAX_BYTES
         int "Maximum telemetry response bytes"

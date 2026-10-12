@@ -4,6 +4,23 @@
 #include <string.h>
 
 /* ── 预置 ─────────────────────────────────────────────────────────── */
+/* Network 10.6.106 dark observations, adapted for a NAS touch display.
+   Surfaces/text/accent follow the recorded baseline; chart/status colours are
+   project choices with separate semantics, not an official UniFi token set. */
+static const uk_pal_t P_UNIFI = {
+    .bg = 0x131416, .s0 = 0x0E0F11, .s1 = 0x1C1E21, .surf_t = 0x202328,
+    .s2 = 0x282B2F, .s3 = 0x34383D, .off = 0x42474D, .line = 0x34383D,
+    .t1 = 0xF9FAFA, .t2 = 0xDEE0E3, .t3 = 0xB7BCC2, .t4 = 0xA0A7B0,
+    .blue = 0x0068F5, .blue_txt = 0x4797FF,
+    .ok = 0x62D28A, .warn = 0xF4BB60, .danger = 0xFF8C94,
+    .s_cpu = 0x4797FF, .s_mem = 0x70C9E8, .s_temp = 0xD5BC72,
+    .s_down = 0x70C9E8, .s_up = 0xB99AE8, .s_zfs = 0x62D28A,
+    .rail_n = 0x131416, .rail_day = 0x131416, .nav = 0x131416, .nav_sel = 0x1D304A,
+    .resource_primary = 0x1C1E21, .resource_secondary = 0x1C1E21,
+    .summary = 0x202328, .on_summary = 0xDEE0E3, .summary_light = false,
+    .on_primary = 0xFFFFFF, .on_danger = 0x19202A,
+};
+
 static const uk_pal_t P_DEVICE = {
     .bg = 0x15131F, .s0 = 0x11101B, .s1 = 0x211E2F, .surf_t = 0x252235,
     .s2 = 0x302B40, .s3 = 0x423A50, .off = 0x51495F, .line = 0x4A435C,
@@ -13,7 +30,8 @@ static const uk_pal_t P_DEVICE = {
     .s_cpu = 0xAFC2EE, .s_mem = 0xAFC2EE, .s_temp = 0xD69C82,
     .s_down = 0x8FC8BB, .s_up = 0xD7A68D, .s_zfs = 0x8BD1AD,
     .rail_n = 0x15131F, .rail_day = 0x15131F, .nav = 0x1C1929, .nav_sel = 0x302737,
-    .hero = 0x264439, .mint = 0x233D39, .peach = 0xCA957D, .ink = 0x242131,
+    .resource_primary = 0x264439, .resource_secondary = 0x233D39, .summary = 0xCA957D, .on_summary = 0x242131,
+    .summary_light = true,
     .on_primary = 0x242131, .on_danger = 0x242131,
 };
 
@@ -26,7 +44,8 @@ static const uk_pal_t P_GRAPHITE = {
     .s_cpu = 0x4797FF, .s_mem = 0x63BDE3, .s_temp = 0xA0BD28,
     .s_down = 0x63BDE3, .s_up = 0xB47CDE, .s_zfs = 0xA0BD28,
     .rail_n = 0x141518, .rail_day = 0x1C1F22, .nav = 0x232629, .nav_sel = 0x272A2D,
-    .hero = 0x294D43, .mint = 0x203833, .peach = 0xBE937E, .ink = 0x19202A,
+    .resource_primary = 0x294D43, .resource_secondary = 0x203833, .summary = 0xBE937E, .on_summary = 0x19202A,
+    .summary_light = true,
     .on_primary = 0xFFFFFF, .on_danger = 0x19202A,
 };
 
@@ -39,7 +58,8 @@ static const uk_pal_t P_ABYSS = {
     .s_cpu = 0x35C7F0, .s_mem = 0x7FA8FF, .s_temp = 0xB8D43C,
     .s_down = 0x35C7F0, .s_up = 0xC08BF0, .s_zfs = 0xB8D43C,
     .rail_n = 0x0B1219, .rail_day = 0x121A24, .nav = 0x1A2532, .nav_sel = 0x1F2C3B,
-    .hero = 0x244A48, .mint = 0x193335, .peach = 0xC99A7C, .ink = 0x12202C,
+    .resource_primary = 0x244A48, .resource_secondary = 0x193335, .summary = 0xC99A7C, .on_summary = 0x12202C,
+    .summary_light = true,
     .on_primary = 0xFFFFFF, .on_danger = 0x12202C,
 };
 
@@ -54,19 +74,21 @@ static const uk_pal_t P_PHOSPHOR = {
     .s_cpu = 0x3BE07A, .s_mem = 0x39C6D6, .s_temp = 0xC8E04A,
     .s_down = 0x39C6D6, .s_up = 0xE07AC8, .s_zfs = 0xC8E04A,
     .rail_n = 0x0B0D0E, .rail_day = 0x111315, .nav = 0x191C1E, .nav_sel = 0x1E2224,
-    .hero = 0x254A36, .mint = 0x1B3227, .peach = 0xCB9E71, .ink = 0x15221A,
+    .resource_primary = 0x254A36, .resource_secondary = 0x1B3227, .summary = 0xCB9E71, .on_summary = 0x15221A,
+    .summary_light = true,
     .on_primary = 0xFFFFFF, .on_danger = 0x15221A,
 };
 
 static const struct { const char *name; const uk_pal_t *p; } PRESETS[] = {
+    { "unifi", &P_UNIFI },
     { "device", &P_DEVICE },
     { "graphite", &P_GRAPHITE },
     { "abyss",    &P_ABYSS },
     { "phosphor", &P_PHOSPHOR },
 };
 
-uk_pal_t g_uk_pal = P_DEVICE;
-static const char *s_pal_name = "device";
+uk_pal_t g_uk_pal = P_UNIFI;
+static const char *s_pal_name = "unifi";
 
 void uk_theme_use(const char *name)
 {
@@ -91,7 +113,7 @@ void fnos_ui_theme_use(const char *name)
     for (size_t i = 0; i < sizeof PRESETS / sizeof PRESETS[0]; i++) {
         if (strcmp(PRESETS[i].name, name) == 0) { uk_theme_use(name); return; }
     }
-    uk_theme_use("device");
+    uk_theme_use("unifi");
 }
 
 const char *fnos_ui_theme_name(void) { return s_pal_name; }

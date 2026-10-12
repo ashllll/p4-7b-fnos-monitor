@@ -93,17 +93,33 @@ lv_obj_t *uk_shell(lv_obj_t *scr, lv_obj_t **out_rail, lv_obj_t **out_head, lv_o
     lv_obj_t *head = lv_obj_create(scr);
     lv_obj_set_size(head, LV_PCT(100), LV_SIZE_CONTENT);
     lv_obj_set_style_min_height(head, UK_HEAD_H, 0);
-    style_surface(head, UK_BG, 0);
+    style_surface(head, UK_SURF_S2, 0);
     lv_obj_set_flex_flow(head, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(head, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_all(head, UK_S2, 0);
     lv_obj_set_style_pad_column(head, UK_S2, 0);
 
+    /* Use a rail only when the measured display leaves room for comparison
+       columns. Narrow displays retain a touch dock; no entity counts enter this. */
+    const bool side = lv_display_get_horizontal_resolution(NULL) >=
+                      UK_RAIL_W + UK_CONTENT_COLUMNS * UK_LIST_MIN_WIDTH;
+    lv_obj_t *workspace = lv_obj_create(scr);
+    lv_obj_set_width(workspace, LV_PCT(100));
+    lv_obj_set_flex_grow(workspace, 1);
+    style_surface(workspace, UK_BG, 0);
+    lv_obj_set_style_pad_all(workspace, 0, 0);
+    lv_obj_set_style_pad_column(workspace, 0, 0);
+    lv_obj_set_style_min_height(workspace, 0, 0);
+    lv_obj_set_flex_flow(workspace, LV_FLEX_FLOW_ROW);
+    lv_obj_remove_flag(workspace, LV_OBJ_FLAG_SCROLLABLE);
+
     /* A solid, clipped viewport repaints exposed pixels during gestures on
        TRIPLE_PARTIAL; pages are siblings, outside flex, sharing its geometry. */
-    lv_obj_t *content = lv_obj_create(scr);
-    lv_obj_set_width(content, LV_PCT(100));
+    lv_obj_t *content = lv_obj_create(workspace);
+    lv_obj_set_width(content, 0);
+    lv_obj_set_height(content, LV_PCT(100));
     lv_obj_set_flex_grow(content, 1);
+    lv_obj_set_style_min_width(content, 0, 0);
     style_surface(content, UK_BG, 0);
     lv_obj_set_style_pad_all(content, UK_S2, 0);
     lv_obj_set_style_pad_row(content, 0, 0);
@@ -122,13 +138,19 @@ lv_obj_t *uk_shell(lv_obj_t *scr, lv_obj_t **out_rail, lv_obj_t **out_head, lv_o
     lv_obj_set_flex_align(foot, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(foot, UK_S2, 0);
 
-    lv_obj_t *rail = lv_obj_create(scr);
-    lv_obj_set_size(rail, LV_PCT(100), UK_DOCK_H);
+    lv_obj_t *rail = lv_obj_create(side ? workspace : scr);
+    lv_obj_set_size(rail, side ? UK_RAIL_W : LV_PCT(100), side ? LV_PCT(100) : UK_DOCK_H);
+    if (side) lv_obj_move_to_index(rail, 0);
+    else lv_obj_move_to_index(rail, 1); /* S1 horizontal application navigation above workspace. */
     style_surface(rail, UK_BG, 0);
-    lv_obj_set_flex_flow(rail, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_flow(rail, side ? LV_FLEX_FLOW_COLUMN : LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_row(rail, UK_S1, 0);
     lv_obj_set_flex_align(rail, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_hor(rail, UK_S2, 0);
-    lv_obj_set_style_pad_ver(rail, UK_S1, 0);
+    lv_obj_set_style_pad_ver(rail, side ? UK_S2 : UK_S1, 0);
+    lv_obj_add_flag(rail, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(rail, side ? LV_DIR_VER : LV_DIR_HOR);
+    lv_obj_set_scrollbar_mode(rail, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_style_pad_column(rail, UK_PANEL_GAP, 0);
 
     if (out_rail) *out_rail = rail;
@@ -350,6 +372,23 @@ static lv_obj_t *mk_line(lv_obj_t *parent, int32_t gap)
     return l;
 }
 
+/* A comparison row keeps identity separate from metrics on wide containers.
+   Compact containers retain the same full text in a vertical reading order. */
+static void comparison_row_layout(lv_event_t *e)
+{
+    uk_row_t *r = lv_event_get_user_data(e);
+    lv_obj_t *a = lv_obj_get_child(r->row, 0), *b = lv_obj_get_child(r->row, 1);
+    if (!a || !b) return;
+    int32_t w = lv_obj_get_content_width(r->row);
+    bool wide = w >= UK_ENTITY_MIN_WIDTH && !lv_obj_has_flag(b, LV_OBJ_FLAG_HIDDEN);
+    lv_flex_flow_t flow = wide ? LV_FLEX_FLOW_ROW_WRAP : LV_FLEX_FLOW_COLUMN;
+    if (lv_obj_get_style_flex_flow(r->row, 0) != flow) lv_obj_set_flex_flow(r->row, flow);
+    int32_t aw = wide ? (w - UK_S3) / 3 : LV_PCT(100);
+    int32_t bw = wide ? w - UK_S3 - aw : LV_PCT(100);
+    if (lv_obj_get_style_width(a, 0) != aw) lv_obj_set_width(a, aw);
+    if (lv_obj_get_style_width(b, 0) != bw) lv_obj_set_width(b, bw);
+}
+
 uk_row_t *uk_row_create(lv_obj_t *parent, bool with_led, bool with_bar)
 {
     uk_row_t *r = uk_alloc(sizeof *r);
@@ -360,9 +399,9 @@ uk_row_t *uk_row_create(lv_obj_t *parent, bool with_led, bool with_bar)
     lv_obj_t *row = lv_obj_create(parent);
     lv_obj_set_width(row, LV_PCT(100));
     lv_obj_set_height(row, LV_SIZE_CONTENT);
-    lv_obj_set_style_bg_color(row, lv_color_mix(uk_c(UK_PEACH), uk_c(UK_BG), UK_ROW_TINT_OPA), 0);
-    lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(row, UK_RADIUS, 0);
+    lv_obj_set_style_bg_color(row, uk_c(UK_SURF_T), 0);
+    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_radius(row, 0, 0);
     lv_obj_set_style_border_width(row, 0, 0);
     lv_obj_set_style_pad_all(row, 0, 0);
     /* Separated tiles have inner breathing room; dense Wi-Fi rows retain their own layout. */
@@ -441,6 +480,8 @@ uk_row_t *uk_row_create(lv_obj_t *parent, bool with_led, bool with_bar)
         lv_obj_set_style_radius(r->bar, UK_BAR_H / 2, LV_PART_INDICATOR);
         lv_obj_set_style_anim_duration(r->bar, UK_BAR_ANIM_MS, LV_PART_MAIN);
     }
+    lv_obj_set_style_pad_column(row, UK_S3, 0);
+    lv_obj_add_event_cb(row, comparison_row_layout, LV_EVENT_SIZE_CHANGED, r);
     return r;
 }
 
@@ -474,6 +515,7 @@ void uk_row_set(uk_row_t *r, const char *l1, const char *l2,
         else     lv_obj_add_flag(line2, LV_OBJ_FLAG_HIDDEN);
     }
 
+    lv_obj_send_event(r->row, LV_EVENT_SIZE_CHANGED, NULL);
     if (r->led) lv_obj_set_style_bg_color(r->led, uk_c(led_hex ? led_hex : UK_OFF), 0);
     if (r->bar) {
         if (pct < 0) lv_obj_add_flag(r->bar, LV_OBJ_FLAG_HIDDEN);

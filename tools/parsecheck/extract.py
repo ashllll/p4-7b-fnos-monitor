@@ -35,7 +35,7 @@ FUNCS = [
     # fnos_status_parse 里调 clampd()/inum()/… 时这里会缺定义，报出来的
     # 错却是"编译失败"，看着像别的问题。
     "item", "number", "clampd", "inum", "unum", "lnum", "fnum", "string", "array", "count",
-    "temp_cmp",                          # 温度行的固定排序（fnos_status_parse 调它）
+    "metric_number", "temp_cmp",                          # 温度行的固定排序（fnos_status_parse 调它）
     "fnos_status_parse",
 ]
 
@@ -137,7 +137,7 @@ def main():
 int64_t s_nas_ts;
 char s_conn_err[24];
 float s_h_cpu[FNOS_HIST_MAX], s_h_mem[FNOS_HIST_MAX];
-float s_h_rx[FNOS_HIST_MAX], s_h_tx[FNOS_HIST_MAX];
+float s_h_rx[FNOS_HIST_MAX], s_h_tx[FNOS_HIST_MAX], s_h_temp[FNOS_HIST_MAX];
 int64_t s_seq;
 int64_t s_h_ts[FNOS_HIST_MAX];
 int s_hist_count;

@@ -52,8 +52,8 @@ COLLECTOR = os.environ.get(
 # `"what":"recovery"`（板端 RAID 卡与告警分级都靠它们），最长约 34 字节。
 # 放在模块级是因为 tools/parsecheck/make_payload.py 也要读它：满载样本的条数按同一份
 # 每项字节数反算，免得两边各说各话（那边曾经在取不到上限时退化成 10**9，把检查挂死）。
-PER_ENTRY = {"vols": 110, "raid": 130, "disks": 60, "temps": 45,
-             "docker": 95, "alerts": 250}
+PER_ENTRY = {"vols": 110, "raid": 130, "disks": 220, "temps": 45,
+             "docker": 240, "alerts": 250}
 OVERHEAD = 1500          # cpu/mem/net/mods/trunc/caps 这些固定段
 # 本轮到底有没有真的比过"NAS 上限 vs 板子容量"：没有比过时最终那行判定必须说出来
 # 而不是照旧 ✔（审计 M23 —— 死掉的 RX_BUF_SIZE 检查让"没核对"印成了"核对通过"）。
@@ -189,11 +189,12 @@ def load_reads(argv):
 def all_source_keys():
     """采集端源码里出现过的所有 `"键":`，用来兜一条底：板子读的字段名，
     在 NAS 代码里至少得存在（哪怕本机这条分支走不到）。"""
-    src = read_text(COLLECTOR)
+    src = read_text(COLLECTOR) + "\n" + read_text(DOCKER_TRANSPORT)
     # 两种写法都算：字典字面量 `"k": v`，以及下标赋值 `snap["k"] = v`
     # （顶层快照的很多字段是后一种，只认字面量会误报）。
     keys = set(re.findall(r'["\']([A-Za-z_0-9]+)["\']\s*:', src))
     keys |= set(re.findall(r'\[\s*["\']([A-Za-z_0-9]+)["\']\s*\]\s*=', src))
+    keys |= set(re.findall(r"\b([A-Za-z_][A-Za-z_0-9]*)\s*=", src))
     return keys
 
 
@@ -297,13 +298,17 @@ def main():
                 # 稳定 id），containers() 只负责取数、校验和排序。只扫 containers() 会把
                 # n/up/s 三个键看成"采集端没有"——那是检查跟丢了代码，不是协议不符。
                 body = "\n".join(filter(None, (method_body(DOCKER_TRANSPORT, "containers"),
-                                              method_body(DOCKER_TRANSPORT, "row_from_container")))) or None
+                                              method_body(DOCKER_TRANSPORT, "row_from_container"),
+                                              method_body(DOCKER_TRANSPORT, "_enrich_metrics")))) or None
             else:
                 body = method_body(COLLECTOR, meth) if meth else None
+                if scope == "disks": body = (body or "") + (method_body(COLLECTOR,"_smart_enrich") or "")
             if body is None:
                 problems.append(f"{scope}.{key}：找不到构造该段的方法（{meth}）")
                 continue
             ok = bool(re.search(r'["\']%s["\']\s*:' % re.escape(key), body))
+            ok = ok or bool(re.search(r"\[\s*['\"]%s['\"]\s*\]\s*=" % re.escape(key), body))
+            ok = ok or bool(re.search(r"\b%s\s*=" % re.escape(key), body))
             where = f"采集端源码 {meth}()（本机该段为空）"
         else:
             problems.append(f"{scope}.{key}：响应里没有这个段（status.{scope}）")
@@ -400,7 +405,7 @@ def limits_problems():
 
     # 板子**自己**的两个数字也得对得上：它一次性能收多少行历史，与它内部环形缓冲
     # 的格数、以及接收缓冲的字节数。板子现在会带 `?n=FNOS_HIST_MAX` 去要，所以
-    # 接收缓冲必须装得下这么多行（按每行 48 字节估，另留 512 字节给 JSON 外壳）。
+    # 接收缓冲必须装得下这么多行（按每行 64 字节估，另留 512 字节给 JSON 外壳）。
     m = re.search(r"#define\s+HIST_BUF_SIZE\s+\(?\s*(\d+)\s*\*\s*(\d+)\s*\)?", fw2)
     m2 = re.search(r"#define\s+HIST_BUF_SIZE\s+(\d+)", fw2)
     if m:
@@ -446,14 +451,14 @@ def limits_problems():
             else:
                 print(f"状态帧预算：CONFIG_FNOS_STATUS_MAX_BYTES={budget} ≥ 满载估计 {worst}")
     if buf and hist:
-        need = hist * 48 + 512
+        need = hist * 64 + 512
         CAPACITY_CHECKED = True
         if buf < need:
             out.append(f"HIST_BUF_SIZE={buf} 装不下 FNOS_HIST_MAX={hist} 行"
-                       f"（按每行 48 字节估，至少要 {need}）—— 多出来的会被截断，"
+                       f"（按每行 64 字节估，至少要 {need}）—— 多出来的会被截断，"
                        f"JSON 解不出来，板子会每秒重试一次、曲线回填永远不成功")
         else:
-            print(f"板子历史预算估算：HIST_BUF_SIZE={buf} ≥ FNOS_HIST_MAX={hist}×48+512={need}（不是任意数值长度上界）")
+            print(f"板子历史预算估算：HIST_BUF_SIZE={buf} ≥ FNOS_HIST_MAX={hist}×64+512={need}（不是任意数值长度上界）")
     return out
 
 

@@ -7,7 +7,7 @@
 - 发布目录：`/Users/llll/code/esp/p4-7b-fnos-monitor-release`（2026-10-08 已核实独立克隆，main，origin `https://github.com/ashllll/p4-7b-fnos-monitor.git`）。禁止在开发目录执行源码发布、推送或 PR；发布目录保留既有远端历史。
 - 真实配置 `components/fnos_monitor/fnos_config.h` 留本地，使用 `.example.h`；不发布个人固件、串口日志、截图或凭据。
 - UI 唯一源码是 `components/fnos_monitor/fnos_ui.c` + `ui_kit` 构件；旧 JSON/MVVM 管线已移除。当前实现见 `docs/ui-v12-lvgl-native.md`，最新整改与验证见 `docs/ui-fixes-2026-10-07.md`；总览环表/趋势/卷比较设计合同与验证见 `docs/ui-overview-cuktech.md`；六页骨架重排（六页 IA + 12 栅格 + 首页 443px 纵向预算）见 `docs/ui-iter3-skeleton-2026-10-08.md`，剩余问题清零（告警页体检块、温度展开串口取证、结论带 %d 漏屏修复）见 `docs/ui-iter4-remaining-2026-10-08.md`。
-- 当前视觉方向与页面动效见 `docs/ui-device-reference.md`：默认 `device` 主题、NAS 运行时长主块、底部导航与原生跟手切页。改动页面控制器后同时运行 `PREVIEW_MOTION` 及首次入页/重复目标回归，命令见 `tools/preview/README.md`。
+- 当前视觉方向见 `docs/ui-unifi-v11-2026-10-12.md`：默认 `unifi` 主题、健康与实体摘要优先、行式清单与详情、宽屏左导航/窄屏顶部导航；原生跟手动效的历史记录见 `docs/ui-device-reference.md`。改动页面控制器后同时运行 `PREVIEW_MOTION` 及首次入页/重复目标回归，命令见 `tools/preview/README.md`。
 - 改文案/字号后运行 `bash tools/gen_fonts.sh`，再运行 `bash tools/preview/run.sh`。不要手改生成字体。
 - 改版面/控件尺寸后，`tools/preview/run.sh` 的四条审计会替你兜住"用户根本看不见"的错：字形覆盖、标签溢出、**子对象跑出父对象**、**可点击控件互相压住**。后两条是补上来的——配对键盘的四行键原先只给了装三行的盒子，第四行（删除/0/确认）整排掉到卡片外压在"关闭"按钮上，而字形审计与文字断言全都不说话：那三个键"存在"，只是画错了地方。**动盒子高度就必须回头算里面装的东西要多大。**
 - **屏上不许出现没被消费掉的格式说明符**（`%d`/`%s`/`%u`）：`set_txt(x, "%s", cond ? "A" : "容器 %d/%d 运行", n, m)` 会把 `%d/%d` 原样印到设备屏上（2026-10-08 实机抓到，样张当时恰好没覆盖那条分支）。`tools/preview/preview.c` 的 `audit_format_residue()` 已挂进每个审计面（样张 / 夜间矩阵 / 夜间样张），出现即 abort；新增状态分支时也要给样张，否则规则管不到它。

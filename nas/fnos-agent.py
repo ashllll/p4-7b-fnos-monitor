@@ -30,6 +30,7 @@ import copy
 import hmac
 import json
 import math
+import http.client
 import os
 import re
 import socket
@@ -127,6 +128,87 @@ def raid_health(r):
     return "unknown"                             # 其余情况缺汇总行就不猜：未知不是健康
 
 
+MAX_RESPONSE=4*1024*1024
+DOCKER_SOCKET='/var/run/docker.sock'
+# The reader accepts no URL/ID from clients: IDs come only from Docker inventory.
+_metrics_cache = {}
+_metrics_previous = {}
+_metrics_cursor = 0
+
+def _metrics_get(identifier, suffix):
+    if not re.fullmatch(r'[0-9a-f]{64}', identifier) or suffix not in ('json', 'stats?stream=false&one-shot=true'):
+        raise ValueError('invalid read-only Docker metric request')
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as raw:
+        raw.settimeout(0.3)
+        raw.connect(DOCKER_SOCKET)
+        request = ('GET /containers/%s/%s HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n' % (identifier, suffix)).encode('ascii')
+        raw.sendall(request)
+        with http.client.HTTPResponse(raw) as response:
+            response.begin()
+            if response.status != 200:
+                raise RuntimeError('Docker metrics unavailable')
+            body = response.read(MAX_RESPONSE+1)
+    if len(body)>MAX_RESPONSE:
+        raise ValueError('Docker metric response exceeds budget')
+    result=json.loads(body)
+    if not isinstance(result,dict):
+        raise ValueError('invalid Docker metrics')
+    return result
+
+def _metric_value(value):
+    return isinstance(value,(int,float)) and not isinstance(value,bool) and math.isfinite(value) and value>=0
+
+def _enrich_metrics(raw_rows, rows):
+    """Rotate through every entity; bounded work per frame, explicit cache timestamp."""
+    global _metrics_cache, _metrics_previous, _metrics_cursor
+    identities=[str(c.get('Id','')) for c in raw_rows]
+    ids={i for i in identities if re.fullmatch(r'[0-9a-f]{64}',i)}
+    _metrics_cache={k:v for k,v in _metrics_cache.items() if k in ids}
+    _metrics_previous={k:v for k,v in _metrics_previous.items() if k in ids}
+    eligible=sorted(ids)
+    if eligible:
+        identifier=eligible[_metrics_cursor % len(eligible)]
+        _metrics_cursor+=1
+        metrics={}
+        # A failed inspection cannot publish old restart/resource values as new.
+        try:
+            info=_metrics_get(identifier,'json')
+            count=info.get('RestartCount')
+            if isinstance(count,int) and not isinstance(count,bool) and count>=0:
+                metrics['restarts']=count
+        except (OSError, ValueError, RuntimeError, http.client.HTTPException):
+            pass
+        container=next(c for c in raw_rows if c.get('Id')==identifier)
+        if container.get('State')=='running':
+            try:
+                stats=_metrics_get(identifier,'stats?stream=false&one-shot=true')
+                cpu=stats.get('cpu_stats') or {}
+                usage=(cpu.get('cpu_usage') or {}).get('total_usage')
+                system=cpu.get('system_cpu_usage')
+                cores=cpu.get('online_cpus') or len((cpu.get('cpu_usage') or {}).get('percpu_usage') or [])
+                prior=_metrics_previous.get(identifier)
+                if all(_metric_value(v) for v in (usage,system,cores)):
+                    if prior and usage>=prior[0] and system>prior[1] and cores>0:
+                        metrics['cpu_pct']=round((usage-prior[0])/(system-prior[1])*cores*100,2)
+                    _metrics_previous[identifier]=(usage,system)
+                memory=stats.get('memory_stats') or {}
+                used=memory.get('usage')
+                inactive=(memory.get('stats') or {}).get('total_inactive_file', (memory.get('stats') or {}).get('inactive_file',0))
+                if _metric_value(used) and _metric_value(inactive):
+                    metrics['mem_mb']=round(max(0,used-inactive)/1024**2,2)
+            except (OSError, ValueError, RuntimeError, http.client.HTTPException):
+                _metrics_previous.pop(identifier,None)
+        else:
+            _metrics_previous.pop(identifier,None)
+        if metrics: metrics['metrics_ts']=int(time.time())
+        _metrics_cache[identifier]=metrics
+    # Rows are still in source order here. Sorting happens after enrichment.
+    for original,row in zip(raw_rows,rows):
+        identifier=str(original.get('Id',''))
+        row.update(id=identifier,cpu_pct=None,mem_mb=None,restarts=None,metrics_ts=0)
+        row.update(_metrics_cache.get(identifier,{}))
+
+
 class Collector:
     def __init__(self, interval=1.0, netif=None, volumes=None, hist_len=300):
         self.interval = float(interval)
@@ -191,7 +273,9 @@ class Collector:
                         break
                     self.snapshot = snap
                     self.history.append([snap["ts"], snap["cpu"]["pct"], snap["mem"]["pct"],
-                                         snap["net"]["rx_kbs"], snap["net"]["tx_kbs"]])
+                                         snap["net"]["rx_kbs"], snap["net"]["tx_kbs"],
+                                         max((t["c"] for t in snap.get("temps", []) if isinstance(t.get("c"), (int,float))), default=None)
+                                         if "temps" not in snap.get("errors", []) and snap.get("modules", {}).get("temps", {}).get("status", "ok") == "ok" else None])
                     if len(self.history) > self.hist_len:
                         del self.history[:len(self.history) - self.hist_len]
             except Exception as exc:                      # 采集失败不能让服务挂掉
@@ -414,30 +498,75 @@ class Collector:
         return out
 
     def _disk_io(self):
-        """md 阵列 + 物理盘的读写速率（KB/s），用于判断"NAS 正在干活吗"。"""
+        """KiB/s and read/write mean completion times; no I/O means unknown latency."""
         cur = {}
         for line in read_text("/proc/diskstats").splitlines():
             f = line.split()
-            if len(f) < 14:
+            if len(f) < 14 or not re.fullmatch(r"md\d+|sd[a-z]+|nvme\d+n\d+|dm-\d+", f[2]):
                 continue
-            name = f[2]
-            if not (name.startswith("md") or re.match(r"^(sd[a-z]+|nvme\d+n\d+)$", name)
-                    or name.startswith("dm-")):
-                continue
-            cur[name] = (int(f[5]) * 512, int(f[9]) * 512)          # sectors read/written
+            cur[f[2]] = tuple(int(f[i]) for i in (5, 9, 3, 7, 6, 10))
         now = time.monotonic()
+        previous = self._prev_disk
+        prev, pt = previous if previous else ({}, now)
         rates = []
-        if self._prev_disk:
-            prev, pt = self._prev_disk
-            dt = max(1e-6, now - pt)
-            for name, (r, w) in cur.items():
-                pr, pw = prev.get(name, (r, w))
-                rd = max(0.0, (r - pr) / dt / 1024.0)
-                wr = max(0.0, (w - pw) / dt / 1024.0)
-                rates.append({"dev": name, "rd_kbs": round(rd, 1), "wr_kbs": round(wr, 1)})
+        for name, values in sorted(cur.items()):
+            row = {"dev": name, "rd_kbs": 0.0, "wr_kbs": 0.0,
+                   "read_ms": None, "write_ms": None}
+            old = prev.get(name)
+            if old and now > pt and all(a >= b for a, b in zip(values, old)):
+                d = [a-b for a,b in zip(values, old)]
+                row.update(rd_kbs=round(d[0]*512/(now-pt)/1024, 1),
+                           wr_kbs=round(d[1]*512/(now-pt)/1024, 1),
+                           read_ms=round(d[4]/d[2], 2) if d[2] else None,
+                           write_ms=round(d[5]/d[3], 2) if d[3] else None)
+            rates.append(row)
         self._prev_disk = (cur, now)
-        rates.sort(key=lambda d: (d["rd_kbs"] + d["wr_kbs"]), reverse=True)
+        self._smart_enrich(rates)
         return rates
+
+    def _smart_enrich(self, rows):
+        """One due physical disk per tick, bounded read-only probe; never wake standby."""
+        import shutil
+        import subprocess
+        now = time.monotonic()
+        cache = getattr(self, '_smart_cache', {})
+        physical = [r for r in rows if re.fullmatch(r'sd[a-z]+|nvme\d+n\d+', r['dev'])]
+        ids = {r['dev'] for r in physical}
+        cache = {k:v for k,v in cache.items() if k in ids}
+        period = max(1.0, float(os.environ.get('FNAS_SMART_INTERVAL', '60')))
+        due = sorted((r for r in physical if now-cache.get(r['dev'], (-period,))[0] >= period),
+                     key=lambda r: cache.get(r['dev'], (-period,))[0])
+        if due:
+            dev = due[0]['dev']
+            state, stamp = 'unavailable', 0
+            binary = shutil.which('smartctl')
+            if not binary:
+                state = 'missing'
+            else:
+                try:
+                    run = subprocess.run([binary, '-j', '-H', '-n', 'standby,3', '/dev/'+dev],
+                                         capture_output=True, timeout=0.4, check=False)
+                    data = json.loads(run.stdout)
+                    if not isinstance(data,dict): raise ValueError('invalid SMART response')
+                    passed = data.get('smart_status', {}).get('passed')
+                    if isinstance(passed, bool) and not (run.returncode & 7):
+                        state, stamp = ('passed' if passed else 'failed'), int(time.time())
+                    elif run.returncode == 3:
+                        state = 'standby'
+                    elif any('permission denied' in str(m.get('string','')).lower() for m in data.get('smartctl',{}).get('messages',[]) if isinstance(m,dict)):
+                        state = 'denied'
+                except subprocess.TimeoutExpired:
+                    state = 'timeout'
+                except PermissionError:
+                    state = 'denied'
+                except (OSError, ValueError, TypeError):
+                    pass
+            cache[dev] = (now, state, stamp)
+        for row in rows:
+            item = cache.get(row['dev'])
+            row['smart'] = item[1] if item else ('pending' if row['dev'] in ids else 'unsupported')
+            row['smart_ts'] = item[2] if item else 0
+        self._smart_cache = cache
 
     # ── 温度：把 /sys/class/hwmon 下**每一个**可读通道都报出来（板端逐路显示）。
     #
@@ -728,6 +857,7 @@ class Collector:
                     "up": c.get("State") == "running",
                     "s": c.get("Status") or "",
                 })
+            _enrich_metrics(rows,result)
             result.sort(key=lambda x: (not x["up"], x["n"]))
             self._docker_seen_up.update(c["n"] for c in result if c["up"])
         except Exception:
@@ -787,6 +917,9 @@ class Collector:
                             % (dev, r.get("state") or "?")})
             elif prog:
                 out.append({"lv": "info", "m": "%s%s" % (dev, prog)})
+        for disk in (snap.get("disks") or []):
+            if disk.get("smart") == "failed":
+                out.append({"lv":"crit", "m":"SMART %s failed" % disk.get("dev","?")})
         for v in (snap.get("vols") or []):
             if v["pct"] >= 90:
                 out.append({"lv": "crit", "m": "%s free %.1f%% left" % (v["mnt"], 100 - v["pct"])})
@@ -1068,7 +1201,7 @@ class Handler(BaseHTTPRequestHandler):
                 hist = list(col.history)
             if want and want < len(hist):
                 hist = hist[-want:]
-            return self._send(200, json.dumps({"v": 1, "cols": ["ts", "cpu", "mem", "rx_kbs", "tx_kbs"],
+            return self._send(200, json.dumps({"v": 1, "cols": ["ts", "cpu", "mem", "rx_kbs", "tx_kbs", "temp_max"],
                                                "rows": hist}, separators=(",", ":")))
         if path in ("/api/v1/health", "/health"):
             with col.lock:

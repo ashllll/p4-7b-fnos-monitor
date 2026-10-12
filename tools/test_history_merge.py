@@ -23,11 +23,22 @@ static void *writer(void *arg) {
 }
 int main(int argc,char **argv) {
  assert(argc==2); fnos_sample_t out[FNOS_HIST_MAX]; int64_t next=0; bool reset=false;
- if(!strcmp(argv[1],"ui")) {
+ if(!strcmp(argv[1],"temperature")) {
+  assert(parse_history("{\"rows\":[[1700000000,1,2,3,4],[1700000001,1,2,3,4,42.5],[1700000002,1,2,3,4,null]]}"));
+  assert(fnos_data_hist_read_ex(0,out,FNOS_HIST_MAX,&next,&reset)==3);
+  assert(isnan(out[0].temp_max) && out[1].temp_max==42.5f && isnan(out[2].temp_max));
+  fnos_status_t st={0};const char *why=NULL;
+  assert(fnos_status_parse("{\"ready\":true,\"ts\":1700000003,\"temps\":[{\"c\":32},{\"c\":45}]}",&st,&why));
+  commit_status(&st,1,200);fnos_status_release(&st);
+  assert(fnos_data_hist_read_ex(next,out,1,&next,&reset)==1 && out[0].temp_max==45);
+  assert(fnos_status_parse("{\"ready\":true,\"ts\":1700000004,\"temps\":[{\"c\":45}],\"modules\":{\"temps\":{\"status\":\"stale\"}}}",&st,&why));
+  commit_status(&st,1,200);fnos_status_release(&st);
+  assert(fnos_data_hist_read_ex(next,out,1,&next,&reset)==1 && isnan(out[0].temp_max));
+ } else if(!strcmp(argv[1],"ui")) {
   live(7,1700000010);ui_cursor=fnos_data_hist_seq()+100;history_reset();
-  ui_history_tick();assert(ui_clears==4 && ui_cursor==fnos_data_hist_seq());
+  ui_history_tick();assert(ui_clears==5 && ui_cursor==fnos_data_hist_seq());
   live(100,1700000010);assert(parse_history(history));
-  ui_clears=0;ui_history_tick();assert(ui_clears==4 && ui_cursor==fnos_data_hist_seq());
+  ui_clears=0;ui_history_tick();assert(ui_clears==5 && ui_cursor==fnos_data_hist_seq());
   ui_clears=0;ui_history_tick();assert(ui_clears==0);
  } else if(!strcmp(argv[1],"merge") || !strcmp(argv[1],"oom")) {
   live(100,1700000010);live(101,1700000011);int64_t cursor=fnos_data_hist_seq();assert(cursor==2);
@@ -94,7 +105,7 @@ def run():
 static int64_t ui_cursor;
 static int ui_clears;
 static struct { bool ever_ok; } s_st={true};
-static struct { struct { int chart; } overview_resource[2]; int overview_net,tr_net; } s_ui;
+static struct { struct { int chart; } overview_resource[2]; int overview_net,tr_net,temp_history; } s_ui;
 static bool s_overview_gap[3];
 static void chart_clear(int chart,int channels) { (void)chart; (void)channels; ui_clears++; }
 static void ui_history_tick(void) {
@@ -105,7 +116,7 @@ static void ui_history_tick(void) {
   cmd=['cc','-std=c11','-pthread','-fsanitize=address,undefined,float-cast-overflow','-fno-sanitize-recover=all','-g','-I'+str(ROOT/'build/config'),'-I'+str(ROOT/'components/fnos_monitor'),'-I'+str(cj),str(p/'test.c'),str(cj/'cJSON.c'),'-o',str(p/'test')]
   subprocess.run(cmd,check=True,capture_output=True)
   env=dict(os.environ,ASAN_OPTIONS='detect_leaks=0')
-  for case in ('ui','merge','reset','full','unknown-time','bad-order','capacity','lock','concurrent'):
+  for case in ('temperature','ui','merge','reset','full','unknown-time','bad-order','capacity','lock','concurrent'):
    result=subprocess.run([str(p/'test'),case],capture_output=True,env=env,timeout=20)
    assert result.returncode==0,(case,result.stderr)
   # Fault only this allocation function; leave parser and snapshot allocations real.
@@ -122,7 +133,7 @@ static void ui_history_tick(void) {
   assert mutant!=main;(p/'test.c').write_text(mutant);subprocess.run(cmd,check=True,capture_output=True)
   result=subprocess.run([str(p/'test'),'ui'],capture_output=True,env=env,timeout=20)
   assert result.returncode!=0 and b'ui_cursor==fnos_data_hist_seq()' in result.stderr,'UI empty-batch cursor negative control must fail'
- print('PASS history merge: 9 production scenarios, real pthread mutex, allocation failure, reset and UI empty-batch negative controls; ASan/UBSan')
+ print('PASS history merge: 10 production scenarios, real pthread mutex, allocation failure, reset and UI empty-batch negative controls; ASan/UBSan')
 def chart_test():
  ui=(ROOT/'components/fnos_monitor/fnos_ui.c').read_text()
  start=ui.index('    for (int i = 0; i < n; i++) {',ui.index('static void ui_tick('))
@@ -139,27 +150,27 @@ def chart_test():
 #include <assert.h>
 #define LV_CHART_POINT_NONE INT32_MAX
 typedef int lv_obj_t;
-static struct { struct {lv_obj_t *chart;} overview_resource[2]; lv_obj_t *overview_net,*tr_net; } s_ui;
+static struct { struct {lv_obj_t *chart;} overview_resource[2]; lv_obj_t *overview_net,*tr_net,*temp_history; } s_ui;
 static bool s_overview_gap[3];
-static int32_t points[6];static int point_count;
-static void uk_trend_push(lv_obj_t *c,int32_t series,int32_t v) {(void)c;(void)series;assert(point_count<6);points[point_count++]=v;}
-struct sample {float cpu,mem,rx_kbs,tx_kbs;};
+static int32_t points[7];static int point_count;
+static void uk_trend_push(lv_obj_t *c,int32_t series,int32_t v) {(void)c;(void)series;assert(point_count<7);points[point_count++]=v;}
+struct sample {float cpu,mem,rx_kbs,tx_kbs,temp_max;};
 """
  main=r"""
 static void draw(float v) {
- struct sample smp[1]={{v,v,v,v}};int n=1;bool live[3]={true,true,true};point_count=0;
+ struct sample smp[1]={{v,v,v,v,v}};int n=1;bool live[3]={true,true,true};point_count=0;
 """+block+r"""
- assert(point_count==6);
+ assert(point_count==7);
 }
 int main(void) {
  float invalid[]={FLT_MAX,-FLT_MAX,INFINITY,-INFINITY,NAN,0x1p31f,nextafterf(-0x1p31f,-INFINITY)};
  for(unsigned i=0;i<sizeof invalid/sizeof invalid[0];i++) {
-  draw(invalid[i]);for(int j=0;j<6;j++)assert(points[j]==LV_CHART_POINT_NONE);
+  draw(invalid[i]);for(int j=0;j<7;j++)assert(points[j]==LV_CHART_POINT_NONE);
  }
  float valid[]={0,12.75f,-12.75f,-0x1p31f,nextafterf(0x1p31f,0),FLT_MIN};
  int32_t expected[]={0,12,-12,INT32_MIN,2147483520,0};
  for(unsigned i=0;i<sizeof valid/sizeof valid[0];i++) {
-  draw(valid[i]);for(int j=0;j<6;j++)assert(points[j]==expected[i]);
+  draw(valid[i]);for(int j=0;j<7;j++)assert(points[j]==expected[i]);
  }
  return 0;
 }
@@ -176,7 +187,7 @@ int main(void) {
    assert mutant!=main;src.write_text(pre+helper+mutant);subprocess.run(cmd,check=True,capture_output=True)
    result=subprocess.run([str(exe)],capture_output=True,env=env,timeout=10)
    assert result.returncode!=0 and b'outside the range of representable values' in result.stderr,result.stderr
- print('PASS production ui_tick six chart sinks: finite boundary/nonfinite gaps, fractional truncation; old casts rejected by float-cast-overflow')
+ print('PASS production ui_tick seven chart sinks: finite boundary/nonfinite gaps, fractional truncation; old casts rejected by float-cast-overflow')
 def range_test():
  ui=(ROOT/'components/fnos_monitor/fnos_ui.c').read_text()
  def piece(a,b):
@@ -191,7 +202,7 @@ def range_test():
 #include <float.h>
 #include <math.h>
 #include <assert.h>
-static struct {int overview_net,tr_net;} s_ui;
+static struct {int overview_net,tr_net,temp_history;} s_ui;
 static struct status {struct {float rx_kbs,tx_kbs;} net;} state,*st=&state;
 static int32_t peak,result;
 static int32_t chart_peak(int chart,int series){(void)chart;(void)series;return peak;}

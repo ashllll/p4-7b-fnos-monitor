@@ -1,5 +1,7 @@
 # Device 风格：NAS 内容与原生动效
 
+> 历史设备参考设计。当前默认方向已由 [UniFi 1.1 全界面迭代](ui-unifi-v11-2026-10-12.md) 接替；本文的旧实机证据不覆盖该重构。
+
 参考：[KindofDevice 的演示视频](https://www.instagram.com/reel/DdZMx18NM6z/)。
 用户选择复刻视觉与动效，内容继续使用 NAS 数据。实现位于 `fnos_ui.c` 和原生 LVGL `ui_kit`，没有引入第二套 Web UI。
 设计评审使用 `interface-design`，动效参考 `emilkowalski/animate`。
