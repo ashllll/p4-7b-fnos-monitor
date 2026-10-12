@@ -299,6 +299,14 @@ static void pf_stop(void)
 
 static void pf_arm(int64_t now)
 {
+    /* Every cycle needs fresh sample/response latches. Keeping press_seen or
+       step from the previous drag skips its timing and can release immediately. */
+    s_run.press_seen = s_run.rel_seen = false;
+    s_run.wait_first = s_run.wait_rel = s_run.wait_p2rs = false;
+    s_run.frame_arm = false;
+    s_run.step = 0;
+    s_last_frame_us = s_last_ready_us = s_frame_start_us = 0;
+    s_have_ready = false;
     if (s_run.kind == PF_SWIPE) {
         /* 左右交替，免得连着同方向滑把页面滑到边上。 */
         if (!fnos_ui_swipe_point(s_run.dir, &s_run.x0, &s_run.y0)) {
@@ -447,8 +455,9 @@ static void pf_start(void)
     } else {
         s_run.phase = PH_SETTLE;
         s_run.phase_us = now;
-        /* 点按要有一页可切：先落到目标页，第一轮再由 pf_next_cycle 切走。 */
-        fnos_ui_set_page(s_run.page);
+        /* 首轮也先落到别页：每次点按都必须真的切回目标页。 */
+        fnos_ui_set_page(s_run.kind == PF_TAP
+                         ? (s_run.page + 1) % FNOS_UI_PAGE_COUNT : s_run.page);
     }
     if (s_script_timer) lv_timer_resume(s_script_timer);
     ESP_LOGI(TAG, "bench start kind=%d page=%d cycles=%d idle_ms=%d", (int)kind, s_run.page, s_run.cycles, s_run.idle_ms);

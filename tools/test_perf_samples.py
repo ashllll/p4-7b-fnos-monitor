@@ -10,7 +10,8 @@ import perf_table as table
 
 class Samples(unittest.TestCase):
     def record(self):
-        return '[bench] ' + ' '.join(f'{k}={"tap" if k == "kind" else 1}' for k in bench.FIELDS)
+        values = {"kind": "tap", "cycles": 3, "p2f_n": 3, "r2f_n": 3, "misses": 0}
+        return '[bench] ' + ' '.join(f'{k}={values.get(k, 1)}' for k in bench.FIELDS)
 
     def test_record_validation(self):
         self.assertEqual(bench.parse_bench(self.record())['frames'], 1)
@@ -35,6 +36,17 @@ class Samples(unittest.TestCase):
             row, _ = bench.run_case(serial, 'tap:3', 1)
         self.assertEqual(serial.reads, 3)
         self.assertEqual(row['cpu_idle'], 1)
+
+    def test_incomplete_cycles_are_rejected(self):
+        for field in ('cycles', 'p2f_n', 'r2f_n', 'misses'):
+            old, new = (0, 1) if field == 'misses' else (3, 1)
+            record = self.record().replace(f'{field}={old}', f'{field}={new}')
+            class Serial:
+                def write(self, _): pass
+                def flush(self): pass
+                def read(self, _): return (record + '\n').encode()
+            with self.subTest(field=field), patch.object(bench, 'drain'), self.assertRaises(ValueError):
+                bench.run_case(Serial(), 'tap:3:3', 1)
 
     def test_missing_newline_times_out(self):
         class Serial:

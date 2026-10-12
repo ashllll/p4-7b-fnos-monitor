@@ -2535,10 +2535,10 @@ static void verify_wifi(void)
     wifi_click("显示");
     lv_obj_t *password_label = visible_text(lv_screen_active(), "abcdefghi");
     assert(password_label);
-    uk_test_alloc_fail_after(1);  /* SSID 格式化成功，随后口令掩码分配失败。 */
+    uk_test_alloc_fail_after(0);  /* 短 SSID 与口令掩码无需临时分配。 */
     wifi_click("隐藏");
-    assert(uk_test_alloc_was_triggered());
-    assert(!strcmp(lv_label_get_text(password_label), "口令"));
+    assert(!uk_test_alloc_was_triggered());
+    assert(!strcmp(lv_label_get_text(password_label), "*********"));
     assert(visible_text(lv_screen_active(), "显示"));
     uk_test_alloc_fail_after(-1);
     uk_alloc_reset();
@@ -2863,7 +2863,7 @@ static unsigned motion_ms(const char *name, unsigned fallback, bool allow_zero)
 
 static void motion_prepare(void)
 {
-    if (!getenv("PREVIEW_MOTION") && !getenv("PREVIEW_DATA_MOTION")) return;
+    if (!getenv("PREVIEW_MOTION") && !getenv("PREVIEW_DATA_MOTION") && !getenv("PREVIEW_REFRESH_WORK")) return;
     /* Freeze both clock-dependent telemetry text and the history cursor; advancing
        native LVGL time must not manufacture new NAS samples or change freshness. */
     s_motion_clock_us = 1000000000LL;
@@ -3169,11 +3169,17 @@ static void motion_response_probe(motion_record_t *record, int base, int target,
                     complete = (int)(t + 1 - cases[i].duration);
             }
         }
-        printf("response: %s press=%ums sample=%dms first=%dms release=%dms complete=%dms page=%d expected=%d\n",
-               cases[i].name, press_wait, first_sample, first_follow, released, complete, fnos_ui_page(), wanted);
+        printf("response: %s press=%ums sample=%dms first=%dms sample_to_follow=%dms release=%dms complete=%dms page=%d expected=%d\n",
+               cases[i].name, press_wait, first_sample, first_follow,
+               first_follow < 0 ? -1 : first_follow - first_sample,
+               released, complete, fnos_ui_page(), wanted);
+        fflush(stdout);
         if (enforce) {
             assert(moved == cases[i].follow);
             assert(fnos_ui_page() == wanted);
+            if (cases[i].step && cases[i].follow)
+                assert(first_follow == first_sample &&
+                       "a sampled horizontal drag must not wait for another polling tick");
             if (response_budget && cases[i].follow) {
                 assert(first_sample >= 0 && first_follow >= 0);
                 unsigned response = (unsigned)(first_follow - (cases[i].step || cases[i].commit ? 0 : first_sample));
@@ -3314,7 +3320,9 @@ static void record_motion(lv_indev_t *pointer)
 
     const char *scroll_probe = getenv("PREVIEW_MOTION_SCROLL");
     if (scroll_probe && !strcmp(scroll_probe, "1")) {
-        lv_obj_t *viewport = motion_vertical_viewport(lv_screen_active());
+        /* Search the active content page: the shell/navigation may also report
+           overflow, but dragging a navigation button tests a different action. */
+        lv_obj_t *viewport = motion_vertical_viewport(motion_native_page(pages[0]));
         assert(viewport && "motion vertical probe needs a visible overflowing list");
         lv_area_t area;
         assert(visible_click_area(viewport, &area));
@@ -3741,6 +3749,103 @@ static void verify_chart_mapping(void)
     puts("checks: production LVGL line chart large/full-int32 coordinates and draw PASS");
 }
 
+static unsigned s_refresh_size_changes, s_refresh_nav_styles;
+
+static void refresh_work_event(lv_event_t *e)
+{
+    if (lv_event_get_code(e) == LV_EVENT_SIZE_CHANGED) s_refresh_size_changes++;
+    if (lv_event_get_code(e) == LV_EVENT_STYLE_CHANGED) s_refresh_nav_styles++;
+}
+
+static void verify_inventory_rename(const char **field, const char *sample)
+{
+    const char *original = *field;
+    lv_obj_t *label = visible_text(lv_screen_active(), original);
+    assert(label);
+    int32_t original_height = lv_obj_get_height(label);
+    char expanded[CONFIG_FNOS_UI_TEXT_SCRATCH_BYTES * 2 + 1];
+    const char words[] = "Long device name ";
+    for (size_t i = 0; i < sizeof expanded - 1; i++) expanded[i] = words[i % (sizeof words - 1)];
+    expanded[sizeof expanded - 1] = 0;
+    bool renamed = fnos_status_text(&s_motion_fixture, field, "%s", expanded);
+    assert(renamed);
+    uk_test_alloc_fail_after(0);
+    regression_tick();
+    assert(uk_test_alloc_was_triggered() && uk_alloc_failed());
+    assert(visible_text(lv_screen_active(), original));
+    assert(visible_text(lv_screen_active(), "界面内存不足 · 部分设备尚未显示"));
+    uk_test_alloc_fail_after(-1);
+    regression_tick();
+    label = visible_text(lv_screen_active(), expanded);
+    assert(label && lv_obj_get_height(label) > original_height);
+    hardware_reachable(label);
+    snapshot(sample);
+    bool restored = fnos_status_text(&s_motion_fixture, field, "%s", original);
+    assert(restored);
+    regression_tick();
+    label = visible_text(lv_screen_active(), original);
+    assert(label && lv_obj_get_height(label) == original_height);
+}
+
+static void verify_refresh_work(void)
+{
+    lv_display_t *display = lv_display_get_default();
+    lv_obj_t *nav_label = visible_text(lv_screen_active(), "总览");
+    assert(nav_label);
+    lv_obj_t *nav = lv_obj_get_parent(nav_label);
+    lv_obj_add_event_cb(nav, refresh_work_event, LV_EVENT_STYLE_CHANGED, NULL);
+    for (int page = 0; page < FNOS_UI_PAGE_COUNT; page++) {
+        fnos_ui_set_page(page);
+        fnos_ui_motion_settle();
+        for (int settle = 0; settle < 4; settle++) regression_tick();
+        lv_refr_now(display);
+        lv_obj_t *inventory = NULL;
+        if (page == 1) {
+            lv_obj_t *title = visible_text(lv_screen_active(), "存储卷");
+            assert(title);
+            inventory = lv_obj_get_parent(lv_obj_get_parent(lv_obj_get_parent(title)));
+            lv_obj_add_event_cb(inventory, refresh_work_event, LV_EVENT_SIZE_CHANGED, NULL);
+        }
+        s_refresh_size_changes = s_refresh_nav_styles = 0;
+        for (int sample = 0; sample < 4; sample++) {
+            vtick_advance(500);
+            lv_timer_handler();
+        }
+        printf("refresh work: page=%d ticks=4 inventory_size_changes=%u nav_style_changes=%u\n",
+               page, s_refresh_size_changes, s_refresh_nav_styles);
+        /* A stable snapshot must not restyle unrelated navigation on each tick. */
+        assert(s_refresh_nav_styles == 0);
+        assert(s_refresh_size_changes == 0);
+        if (inventory) lv_obj_remove_event_cb(inventory, refresh_work_event);
+        s_refresh_nav_styles = 0;
+        fnos_ui_set_page(page);
+        assert(s_refresh_nav_styles == 0);
+    }
+    lv_obj_remove_event_cb(nav, refresh_work_event);
+    fnos_ui_set_page(1); fnos_ui_motion_settle(); regression_tick();
+    assert(s_motion_fixture.nvols > 0);
+    verify_inventory_rename(&s_motion_fixture.vols[0].mnt, "refresh-long-volume");
+    fnos_ui_set_page(3); fnos_ui_motion_settle(); regression_tick();
+    assert(s_motion_fixture.ndocker > 0);
+    verify_inventory_rename(&s_motion_fixture.docker[0].n, "refresh-long-container");
+    fnos_ui_set_page(1); fnos_ui_motion_settle(); regression_tick();
+    lv_obj_t *volume_title = visible_text(lv_screen_active(), "存储卷");
+    assert(volume_title);
+    lv_obj_t *volume_card = lv_obj_get_parent(lv_obj_get_parent(volume_title));
+    int32_t original_width = lv_obj_get_width(volume_card);
+    int32_t original_height = s_scr_h;
+    s_scr_h = original_height == 480 ? 600 : 480;
+    lv_display_set_resolution(display, s_scr_w, s_scr_h);
+    regression_tick();
+    assert(lv_obj_get_width(volume_card) != original_width);
+    snapshot("refresh-resized-viewport");
+    s_scr_h = original_height;
+    lv_display_set_resolution(display, s_scr_w, s_scr_h);
+    regression_tick();
+    assert(lv_obj_get_width(volume_card) == original_width);
+    puts("checks: stable refresh, repeated current-page navigation, same-count long-name reflow, viewport resize and untruncated formatting PASS");
+}
+
 int main(int argc, char **argv)
 {
     if (argc > 1) s_outdir = argv[1];
@@ -3810,6 +3915,7 @@ int main(int argc, char **argv)
 
     if (getenv("PREVIEW_NUMBERS")) { record_numbers(); return preview_finish(); }
     fnos_ui_create();
+    if (getenv("PREVIEW_REFRESH_WORK")) { verify_refresh_work(); return preview_finish(); }
     if (getenv("PREVIEW_DATA_MOTION")) { record_data_numbers(); return preview_finish(); }
 
     /* 卡片几何的"唯一来源"：把已建好的卡片按真实 coords 吐出来，

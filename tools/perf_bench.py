@@ -122,6 +122,14 @@ def run_case(ser, case, timeout):
                     row = parse_bench(line)
                     if row["kind"] != case.split(":", 1)[0]:
                         raise ValueError("bench kind 与请求用例不符")
+                    if row["kind"] != "idle":
+                        requested = int(cmd.split()[-1])
+                        requested = requested if requested > 0 else 3
+                        if (row["cycles"] != requested or row["misses"]
+                                or row["p2f_n"] != requested or row["r2f_n"] != requested):
+                            raise ValueError("bench 手势计时不完整：请求 %d 轮，cycles=%d misses=%d p2f_n=%d r2f_n=%d"
+                                             % (requested, row["cycles"], row["misses"],
+                                                row["p2f_n"], row["r2f_n"]))
                     return row, line
                 # 只把"针对本命令"的报错当失败；冷启动那条杂散字节的报错不算
                 bad = ("认不出" in line and first in line) or ("bench" in line and "认不出" in line) \

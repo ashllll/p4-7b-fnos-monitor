@@ -65,6 +65,14 @@ menu "fnOS monitor"
 
     menu "UI reference ranges and layout"
 
+        config FNOS_UI_TEXT_SCRATCH_BYTES
+            int "UI formatting scratch buffer on the LVGL stack (bytes)"
+            range 64 1024
+            default 256
+            help
+                Format ordinary labels once without allocating a temporary string.
+                Longer text uses an exact-size allocation and is never truncated.
+
         config FNOS_UI_REDUCED_MOTION
             bool "Use gentler page transitions"
             default n

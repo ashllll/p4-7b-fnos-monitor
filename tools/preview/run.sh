@@ -20,7 +20,7 @@ PREVIEW_BANDS_AT PREVIEW_BARMAP PREVIEW_CARDLIST PREVIEW_CARDMAP PREVIEW_CARDMAP
 PREVIEW_CHART_MAP PREVIEW_DATA_MOTION PREVIEW_ENTER_MID PREVIEW_HARDWARE_FIXTURE PREVIEW_MOTION
 PREVIEW_MOTION_FIRST_ENTRY PREVIEW_MOTION_INPUT PREVIEW_MOTION_REPEAT_TARGET
 PREVIEW_MOTION_RESPONSIVENESS PREVIEW_MOTION_SCROLL PREVIEW_NUMBERS PREVIEW_OVERLAP_TRACE
-PREVIEW_PAGE_CARDS PREVIEW_PAIR_FIRST_ENTRY PREVIEW_PARTIAL PREVIEW_PROBE PREVIEW_SIZE
+PREVIEW_PAGE_CARDS PREVIEW_PAIR_FIRST_ENTRY PREVIEW_PARTIAL PREVIEW_PROBE PREVIEW_REFRESH_WORK PREVIEW_SIZE
 PREVIEW_TRACE_CARDS PREVIEW_WHO PREVIEW_WHOALL"
 
 # 供 env 用的 "-u NAME" 串。变量名都是大写标识符，展开后不会带空格或通配符。
@@ -141,6 +141,11 @@ if [ "$FRAMES" -lt 84 ]; then
 fi
 echo "渲染帧数：$FRAMES"
 python3 ppm2png.py "$OUT_REAL"
+
+# Stable telemetry must reuse layout, while same-count renames still wrap and
+# reflow. Keep this regression in the normal gate rather than a manual-only mode.
+env $(preview_env_args) PREVIEW_REFRESH_WORK=1 ./build/preview "$OUT_REAL/refresh-work"
+python3 ppm2png.py "$OUT_REAL/refresh-work"
 
 # snapshot_check 是 ownership / 并发 / 容量预算三项验收的**唯一**自动化证据。
 # 以前 CMake 建了它、run.sh 却只编译 preview、从不执行（审计 M16），唯一执行处是

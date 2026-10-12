@@ -130,6 +130,10 @@ static void sample_layers(number_label_t *n, uint32_t elapsed)
 }
 static void number_step(void *obj, int32_t elapsed)
 {
+    if (!motion_enabled || !lv_obj_is_visible(obj)) {
+        clear_layers(obj);
+        return;
+    }
     number_label_t *n=obj;
     sample_layers(n,(uint32_t)elapsed);
     if ((uint32_t)elapsed>=n->span) clear_layers(obj);
@@ -368,6 +372,14 @@ void uk_number_selfcheck(lv_obj_t *parent)
     uk_number_set_text(o,"1 GB",true); assert(!n->active);
     uk_number_motion_enable(false); uk_number_set_text(o,"2 GB",true); assert(!n->active);
     uk_number_motion_enable(true); uk_number_set_text(o,"3 GB",true); assert(n->active);
+    uk_number_motion_enable(false);
+    number_step(o,UK_NUMBER_MS/3);
+    assert(!n->active && !n->layers && !strcmp(lv_label_get_text(o),"3 GB"));
+    uk_number_motion_enable(true); uk_number_set_text(o,"4 GB",true); assert(n->active);
+    lv_obj_add_flag(o,LV_OBJ_FLAG_HIDDEN);
+    number_step(o,UK_NUMBER_MS/3);
+    assert(!n->active && !n->layers && !strcmp(lv_label_get_text(o),"4 GB"));
+    lv_obj_remove_flag(o,LV_OBJ_FLAG_HIDDEN);
     uk_number_settle(o);
     lv_obj_set_width(o,LV_SIZE_CONTENT);
     lv_font_t proportional=*UK_FONT_NUM_32;

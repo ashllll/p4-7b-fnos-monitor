@@ -2,6 +2,7 @@
 
 本目录是 ESP32-P4 7B 的开发工程。继承 `../AGENTS.md` 的嵌入式开发/发布分离规则与用户当前提供的全局协作、技能和设备约束。
 
+- **本项目协作规则（开发目录与发布目录均适用）**：Codex 直接完成实现、调查与审核，禁用所有 DeepSeek Harness / DSH 任务委派；此规则覆盖旧的自动委派与 OCR + DSH 流程，只有用户再次明确授权才能恢复。
 - 开发目录：`/Users/llll/code/esp/p4-7b-fnos-monitor`。
 - 发布目录：`/Users/llll/code/esp/p4-7b-fnos-monitor-release`（2026-10-08 已核实独立克隆，main，origin `https://github.com/ashllll/p4-7b-fnos-monitor.git`）。禁止在开发目录执行源码发布、推送或 PR；发布目录保留既有远端历史。
 - 真实配置 `components/fnos_monitor/fnos_config.h` 留本地，使用 `.example.h`；不发布个人固件、串口日志、截图或凭据。

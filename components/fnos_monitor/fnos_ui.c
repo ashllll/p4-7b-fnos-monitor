@@ -314,11 +314,17 @@ static lv_obj_t *flex_btn(lv_obj_t *parent, const char *txt, int kind,
 static void set_text_v(lv_obj_t *label, bool animate, const char *fmt, va_list ap)
 {
     if (!label) return;
+    char scratch[CONFIG_FNOS_UI_TEXT_SCRATCH_BYTES];
     va_list measure;
     va_copy(measure,ap);
-    int n=vsnprintf(NULL,0,fmt,measure);
+    int n=vsnprintf(scratch,sizeof scratch,fmt,measure);
     va_end(measure);
-    char *text=n>=0 ? uk_alloc((size_t)n+1) : NULL;
+    if (n < 0) return;
+    if ((size_t)n < sizeof scratch) {
+        uk_number_set_text(label,scratch,animate);
+        return;
+    }
+    char *text=uk_alloc((size_t)n+1);
     if (text) {
         vsnprintf(text,(size_t)n+1,fmt,ap);
         uk_number_set_text(label,text,animate);
@@ -2036,6 +2042,7 @@ static void pair_build(lv_obj_t *page)
 
 static void pair_show(bool on)
 {
+    if (!on && !s_pair_open) return;
     if (on) fnos_ui_motion_settle();
     s_pair_open = on;
     if (on) s_pair_forget_armed = false;
@@ -2817,6 +2824,7 @@ static void pair_layout(bool code, bool fingerprint)
 static void pair_refresh(void)
 {
     if (!s_ui.pair_btn_lbl) return;
+    uint32_t previous_alert = s_pair_alert;
 
     fnos_pair_view_t v;
     fnos_pair_view(&v);
@@ -2844,7 +2852,8 @@ static void pair_refresh(void)
         set_txt(s_ui.pair_btn_lbl, "%s", "配对");
         s_pair_alert = UK_WARN;
     }
-    theme_apply();   /* 颜色只在这一处落地，别在别处再写一遍 */
+    /* A stable pairing state must not restyle navigation and dirty its layout. */
+    if (s_pair_alert != previous_alert) theme_apply();
 
     if (!s_pair_open || !s_ui.pair_card) return;
 
@@ -3458,9 +3467,61 @@ static void temp_blk_fill(int i)
 
 /* Section geometry is measured from this frame's card content. When the
    viewport is short, section cards also wrap; no fixture ratios or item caps. */
-static void inventory_sections(lv_obj_t *container, lv_obj_t **cards,
-                               lv_obj_t **pools, const int *counts, int n)
+typedef struct { uint64_t shape; bool ready; } inventory_layout_cache_t;
+static inventory_layout_cache_t s_storage_layout, s_system_layout;
+
+static uint64_t inventory_shape_mix(uint64_t shape, uint32_t value)
 {
+    return (shape ^ value) * UINT64_C(1099511628211);
+}
+
+static uint64_t inventory_shape_object(uint64_t shape, lv_obj_t *obj)
+{
+    if (!obj) return inventory_shape_mix(shape, 0);
+    shape = inventory_shape_mix(shape, lv_obj_get_width(obj));
+    shape = inventory_shape_mix(shape, lv_obj_get_height(obj));
+    shape = inventory_shape_mix(shape, lv_obj_get_child_count(obj));
+    return inventory_shape_mix(shape, lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN));
+}
+
+/* Compare resolved geometry, including wrapped identities and content-sized
+   value boxes. Counts alone cannot detect longer names or wider readings. */
+static uint64_t inventory_shape(lv_obj_t *container, lv_obj_t **cards,
+                                lv_obj_t **pools, const int *counts, int n)
+{
+    uint64_t shape = inventory_shape_object(UINT64_C(14695981039346656037), container);
+    lv_obj_t *parent = lv_obj_get_parent(container);
+    shape = inventory_shape_object(shape, parent);
+    for (uint32_t i = 0; i < lv_obj_get_child_count(parent); i++)
+        shape = inventory_shape_object(shape, lv_obj_get_child(parent, i));
+    for (int i = 0; i < n; i++) {
+        shape = inventory_shape_mix(shape, counts[i]);
+        shape = inventory_shape_object(shape, cards[i]);
+        shape = inventory_shape_object(shape, lv_obj_get_child(cards[i], 0));
+        lv_obj_t *pool = pools[i];
+        shape = inventory_shape_object(shape, pool);
+        if (!pool) continue;
+        shape = inventory_shape_mix(shape, lv_obj_get_style_pad_row(pool, 0));
+        shape = inventory_shape_mix(shape, lv_obj_get_style_pad_column(pool, 0));
+        for (uint32_t j = 0; j < lv_obj_get_child_count(pool); j++) {
+            lv_obj_t *row = lv_obj_get_child(pool, j);
+            shape = inventory_shape_object(shape, row);
+            for (uint32_t k = 0; k < lv_obj_get_child_count(row); k++) {
+                lv_obj_t *line = lv_obj_get_child(row, k);
+                shape = inventory_shape_object(shape, line);
+                for (uint32_t p = 0; p < lv_obj_get_child_count(line); p++)
+                    shape = inventory_shape_object(shape, lv_obj_get_child(line, p));
+            }
+        }
+    }
+    return shape;
+}
+
+static void inventory_sections(inventory_layout_cache_t *cache, lv_obj_t *container,
+                               lv_obj_t **cards, lv_obj_t **pools, const int *counts, int n)
+{
+    lv_obj_update_layout(container);
+    if (cache->ready && cache->shape == inventory_shape(container, cards, pools, counts, n)) return;
     lv_obj_set_height(container,0);
     lv_obj_set_flex_grow(container,1);
     lv_obj_update_layout(container);
@@ -3545,6 +3606,8 @@ static void inventory_sections(lv_obj_t *container, lv_obj_t **cards,
     lv_obj_set_height(container,target);
     lv_obj_update_layout(container);
     lv_free(want);
+    cache->shape = inventory_shape(container, cards, pools, counts, n);
+    cache->ready = true;
 }
 
 static void storage_layout(void)
@@ -3556,13 +3619,14 @@ static void storage_layout(void)
         lv_point_t text;
         lv_text_get_size(&text, lv_label_get_text(value), UK_FONT_NUM_32,
                          0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-        lv_obj_set_style_text_font(value, text.x <= width ? UK_FONT_NUM_32 : UK_FONT_NUM_20, 0);
+        const lv_font_t *font = text.x <= width ? UK_FONT_NUM_32 : UK_FONT_NUM_20;
+        if (lv_obj_get_style_text_font(value, 0) != font) lv_obj_set_style_text_font(value, font, 0);
     }
     lv_obj_update_layout(s_ui.page[1]);
     lv_obj_t *cards[]={s_ui.vol_card,s_ui.raid_card,s_ui.disk_card};
     lv_obj_t *pools[]={s_ui.vol_pool,s_ui.raid_pool,s_ui.disk_pool};
     const int counts[]={s_ui.vol_made,s_ui.raid_made,s_ui.disk_made};
-    inventory_sections(s_ui.storage_cards,cards,pools,counts,sizeof counts/sizeof counts[0]);
+    inventory_sections(&s_storage_layout,s_ui.storage_cards,cards,pools,counts,sizeof counts/sizeof counts[0]);
 }
 
 static void system_layout(void)
@@ -3573,7 +3637,7 @@ static void system_layout(void)
     lv_obj_t *cards[]={s_ui.dock_card,s_ui.p3_temp_card};
     lv_obj_t *pools[]={s_ui.dock_pool,s_ui.p3_temp_pool};
     const int counts[]={s_ui.dock_made,s_ui.p3_temp_made};
-    inventory_sections(s_ui.p3_cols,cards,pools,counts,sizeof counts/sizeof counts[0]);
+    inventory_sections(&s_system_layout,s_ui.p3_cols,cards,pools,counts,sizeof counts/sizeof counts[0]);
 }
 
 /* No module entry is the legacy contract. Explicit denied/missing/error must not
@@ -3941,7 +4005,7 @@ static void refresh(void)
         if (cur >= 0 && cur < FNOS_UI_PAGE_COUNT) s_page_dirty[cur] = false;
     }
 
-    uk_number_motion_enable(st->online);
+    uk_number_motion_enable(st->online && !motion_busy());
 
     /* 顶栏：主机 / 端点 / 状态胶囊 / 信号 */
     set_txt(s_ui.h_host, "%s", st->host[0] ? st->host : "fnos");
@@ -5101,6 +5165,7 @@ static void motion_finish(void)
 #endif
     s_motion.active = false;
     s_motion.velocity = 0;
+    uk_number_motion_enable(s_st.online);
     for (int i = 0; i < FNOS_UI_PAGE_COUNT; i++) {
         show(s_ui.page[i], i == s_page);
         lv_obj_set_style_translate_x(s_ui.page[i], 0, 0);
@@ -5202,7 +5267,7 @@ void fnos_ui_set_page(int idx)
         /* 点的是当前页：没必要在按下的这一帧同步刷一遍整个应用，交给下一拍
            （≤500ms）或手势收尾那次的 refresh。 */
         s_refresh_pending = true;
-        fnos_ui_motion_settle();
+        if (s_motion.active) fnos_ui_motion_settle();
         return;
     }
     lv_anim_delete(&s_motion, motion_exec);
@@ -5315,6 +5380,18 @@ static void motion_tick(lv_timer_t *timer)
     motion_paint();
 }
 
+/* Consume a fresh pointer sample in the same LVGL timer pass. Independent read
+   and gesture timers can run in the opposite order; waiting for the next pass
+   then adds any intervening render/flush time to the finger-to-page delay.
+   Keep the driver's read callback and timer user data intact (including bench
+   injection). The gesture timer remains a fallback for explicit indev reads. */
+static void motion_read_tick(lv_timer_t *timer)
+{
+    lv_indev_t *indev = lv_timer_get_user_data(timer);
+    lv_indev_read(indev);
+    if (s_motion.tracking && s_motion.pointer == indev) motion_tick(NULL);
+}
+
 /* Display-lock protected. Retry only the missing timer, never register callbacks twice. */
 static void motion_poll_start(void)
 {
@@ -5340,7 +5417,10 @@ static void motion_init(void)
            半个周期，直接吃进"按下→首帧"的 p50。GT911 读一次只要几百微秒，抽到
            8ms（= 手势轮询周期）把这段量化误差压掉一半。 */
         lv_timer_t *read = lv_indev_get_read_timer(indev);
-        if (read) lv_timer_set_period(read, 8);
+        if (read) {
+            lv_timer_set_period(read, UK_GESTURE_POLL_MS);
+            lv_timer_set_cb(read, motion_read_tick);
+        }
     }
     motion_poll_start();
 }

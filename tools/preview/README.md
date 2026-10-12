@@ -146,6 +146,20 @@ PREVIEW_MOTION=0,1,0 PREVIEW_MOTION_SCROLL=1 PREVIEW_MOTION_RESPONSIVENESS=1 \
 输入/动画期间仍检查终帧像素、内容不透明和历史不被伪造。两个预算都设为 0 时仅测量而不执行预算断言。
 可增加 `PREVIEW_SIZE=800x480` 或 `1280x800` 验证相同手势在不同视口上的行为。
 
+稳定数据刷新回归已加入 `run.sh` 的默认验收，也可单独执行：
+
+```bash
+PREVIEW_REFRESH_WORK=1 tools/preview/build/preview /tmp/fnos-refresh-work
+```
+
+它检查六页连续刷新不重复改导航样式、存储清单不反复伸缩；同时以数量不变的长卷名和
+长容器名验证换行、重排、缩回与完整字符串保留，并覆盖长文本分配失败提示和下一拍恢复。
+同一棵 UI 树还会切换视口高度并恢复，检查清单列宽随布局重新测量。
+`CONFIG_FNOS_UI_TEXT_SCRATCH_BYTES` 控制单次格式化的栈缓冲，默认 256 字节、范围 64–1024；
+超长内容继续使用精确分配，不能通过截断名称节省开销。调整后须重建设备配置、重跑栈检查。
+页面过渡期间数字显示最新读数，数字滚动在过渡结束后恢复；隐藏数字的既有动画会在下一次
+动画采样释放图层。这些检查与主机帧采样不代表实机帧率，实机 A/B 必须另行记录。
+
 ## 前置
 
 1. 至少跑过一次 `./idf.sh build` —— 需要 `build/config/sdkconfig.h`（主机 LVGL 用设备端真实 `CONFIG_LV_*`）；
