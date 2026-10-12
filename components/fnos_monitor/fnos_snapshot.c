@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stddef.h>
+#include <float.h>
 #include <limits.h>
 #ifdef ESP_PLATFORM
 #include "esp_heap_caps.h"
@@ -123,6 +124,19 @@ static const cJSON *item(const cJSON *o, const char *key)
 { return cJSON_GetObjectItemCaseSensitive(o, key); }
 static double number(const cJSON *o, const char *key)
 { const cJSON *v=item(o,key); return cJSON_IsNumber(v) ? v->valuedouble : 0; }
+/* 采集端给的是 JSON number，落到窄类型上要先夹：double→int/uint/float 在越界与
+   NaN/±inf 时是 UB（审计 M03）。实机表现是屏上出现垃圾数而不是崩溃，所以没有
+   崩溃现场可查——只能在这里一次性收口。9e15 在 double 里精确，且在 int64 范围内。 */
+static double clampd(double v, double lo, double hi)
+{ if (v != v) return lo; if (v < lo) return lo; if (v > hi) return hi; return v; }
+static int      inum(const cJSON *o, const char *k)
+{ return (int)clampd(number(o,k), -2147483648.0, 2147483647.0); }
+static uint32_t unum(const cJSON *o, const char *k)
+{ return (uint32_t)clampd(number(o,k), 0.0, 4294967295.0); }
+static int64_t  lnum(const cJSON *o, const char *k)
+{ return (int64_t)clampd(number(o,k), -9.0e15, 9.0e15); }
+static float    fnum(const cJSON *o, const char *k)
+{ return (float)clampd(number(o,k), -FLT_MAX, FLT_MAX); }
 static const char *string(const cJSON *o, const char *key)
 { const cJSON *v=item(o,key); return cJSON_IsString(v) && v->valuestring ? v->valuestring : ""; }
 static const cJSON *array(const cJSON *root, const char *key)
@@ -147,42 +161,47 @@ bool fnos_status_parse(const char *json, fnos_status_t *out, const char **reason
     if (reason) *reason = "data capacity";
     if (!fnos_status_create(&s,&counts)) goto fail;
 #define TEXT(field, object, key) do { if (!fnos_status_text(&s, &(field), "%s", string(object,key))) goto fail; } while (0)
-    TEXT(s.host,root,"host"); s.uptime_s=number(root,"uptime_s");
-    s.source_ts=number(root,"ts"); s.proto=number(root,"proto");
+    TEXT(s.host,root,"host"); s.uptime_s=unum(root,"uptime_s");
+    s.source_ts=lnum(root,"ts"); s.proto=inum(root,"proto");
     const cJSON *o=item(root,"cpu");
-    s.cpu.pct=number(o,"pct"); s.cpu.load1=number(o,"load1");
-    s.cpu.load5=number(o,"load5"); s.cpu.load15=number(o,"load15");
-    s.cpu.temp_c=number(o,"temp_c"); s.cpu.cores=number(o,"cores");
-    s.cpu.runq=number(o,"runq"); s.cpu.procs=number(o,"procs");
+    s.cpu.pct=fnum(o,"pct"); s.cpu.load1=fnum(o,"load1");
+    s.cpu.load5=fnum(o,"load5"); s.cpu.load15=fnum(o,"load15");
+    s.cpu.temp_c=fnum(o,"temp_c"); s.cpu.cores=inum(o,"cores");
+    s.cpu.runq=inum(o,"runq"); s.cpu.procs=inum(o,"procs");
     o=item(root,"mem");
-    s.mem.total_mb=number(o,"total_mb"); s.mem.used_mb=number(o,"used_mb");
-    s.mem.avail_mb=number(o,"avail_mb"); s.mem.pct=number(o,"pct");
-    s.mem.swap_total_mb=number(o,"swap_total_mb"); s.mem.swap_used_mb=number(o,"swap_used_mb");
+    s.mem.total_mb=fnum(o,"total_mb"); s.mem.used_mb=fnum(o,"used_mb");
+    s.mem.avail_mb=fnum(o,"avail_mb"); s.mem.pct=fnum(o,"pct");
+    s.mem.swap_total_mb=fnum(o,"swap_total_mb"); s.mem.swap_used_mb=fnum(o,"swap_used_mb");
     o=item(root,"net");
     TEXT(s.net.ifname,o,"if");
-    s.net.rx_kbs=number(o,"rx_kbs"); s.net.tx_kbs=number(o,"tx_kbs");
-    s.net.rx_total_gb=number(o,"rx_total_gb"); s.net.tx_total_gb=number(o,"tx_total_gb");
+    s.net.rx_kbs=fnum(o,"rx_kbs"); s.net.tx_kbs=fnum(o,"tx_kbs");
+    s.net.rx_total_gb=fnum(o,"rx_total_gb"); s.net.tx_total_gb=fnum(o,"tx_total_gb");
+    /* 摘要行就是"选中网卡那一行"（采集端 summary = dict(selected)），里面同样带
+       state/speed_mbps/physical；以前只解析了速率，摘要的这三项恒为 ""/0/false，
+       凡是读摘要而不是读列表的消费者拿到的都是假值（审计 M02）。 */
+    TEXT(s.net.state,o,"state");
+    s.net.speed_mbps=inum(o,"speed_mbps"); s.net.physical=cJSON_IsTrue(item(o,"physical"));
     const cJSON *v=NULL;
     int i=0;
     cJSON_ArrayForEach(v,array(root,"vols")) {
         fnos_vol_t *r=&s.vols[i++]; TEXT(r->mnt,v,"mnt"); TEXT(r->fs,v,"fs");
-        r->total_gb=number(v,"total_gb"); r->used_gb=number(v,"used_gb");
-        r->free_gb=number(v,"free_gb"); r->pct=number(v,"pct");
+        r->total_gb=fnum(v,"total_gb"); r->used_gb=fnum(v,"used_gb");
+        r->free_gb=fnum(v,"free_gb"); r->pct=fnum(v,"pct");
     }
     i=0; cJSON_ArrayForEach(v,array(root,"raid")) {
         fnos_raid_t *r=&s.raid[i++]; TEXT(r->dev,v,"dev"); TEXT(r->lvl,v,"lvl"); TEXT(r->state,v,"state");
         /* 采集端 v1.2.5 起给结构健康度与维护动作；老采集端没有这两个键 ⇒ 空串 ⇒ 界面显示"状态未知"。 */
         TEXT(r->health,v,"health"); TEXT(r->what,v,"what");
-        r->ok=cJSON_IsTrue(item(v,"ok")); r->have=number(v,"have");
-        r->want=number(v,"want"); r->sync_pct=number(v,"sync_pct");
+        r->ok=cJSON_IsTrue(item(v,"ok")); r->have=inum(v,"have");
+        r->want=inum(v,"want"); r->sync_pct=fnum(v,"sync_pct");
     }
     i=0; cJSON_ArrayForEach(v,array(root,"disks")) {
-        fnos_disk_t *r=&s.disks[i++]; TEXT(r->dev,v,"dev"); r->rd_kbs=number(v,"rd_kbs"); r->wr_kbs=number(v,"wr_kbs");
+        fnos_disk_t *r=&s.disks[i++]; TEXT(r->dev,v,"dev"); r->rd_kbs=fnum(v,"rd_kbs"); r->wr_kbs=fnum(v,"wr_kbs");
     }
     i=0; cJSON_ArrayForEach(v,array(root,"temps")) {
         fnos_temp_t *r=&s.temps[i++]; TEXT(r->dev,v,"dev"); TEXT(r->ch,v,"ch"); TEXT(r->dn,v,"dn");
         if (!r->dev[0]) { TEXT(r->dev,v,"n"); }
-        r->c=number(v,"c");
+        r->c=fnum(v,"c");
     }
     if (s.ntemps>1) qsort(s.temps,s.ntemps,sizeof *s.temps,temp_cmp);
     i=0; cJSON_ArrayForEach(v,array(root,"docker")) {
@@ -197,16 +216,17 @@ bool fnos_status_parse(const char *json, fnos_status_t *out, const char **reason
         if (!fnos_status_text(&s,&r->name,"%s",v->string ? v->string : "")) goto fail;
         const cJSON *state=item(v,"status");
         if (cJSON_IsString(state)) TEXT(r->status,v,"status");
-        else if (!fnos_status_text(&s,&r->status,cJSON_IsNumber(state) ? "#%.0f" : "unknown",number(v,"status"))) goto fail;
+        else if (!fnos_status_text(&s,&r->status,cJSON_IsNumber(state) ? "#%.0f" : "unknown",
+                                   clampd(number(v,"status"), -9.0e15, 9.0e15))) goto fail;
     }
     i=0; cJSON_ArrayForEach(v,interfaces) {
         fnos_netif_t *r=&s.nets[i++]; TEXT(r->ifname,v,"if"); TEXT(r->state,v,"state");
-        r->rx_kbs=number(v,"rx_kbs"); r->tx_kbs=number(v,"tx_kbs");
-        r->rx_total_gb=number(v,"rx_total_gb"); r->tx_total_gb=number(v,"tx_total_gb");
-        r->speed_mbps=number(v,"speed_mbps"); r->physical=cJSON_IsTrue(item(v,"physical"));
+        r->rx_kbs=fnum(v,"rx_kbs"); r->tx_kbs=fnum(v,"tx_kbs");
+        r->rx_total_gb=fnum(v,"rx_total_gb"); r->tx_total_gb=fnum(v,"tx_total_gb");
+        r->speed_mbps=inum(v,"speed_mbps"); r->physical=cJSON_IsTrue(item(v,"physical"));
     }
     o=item(root,"zfs"); s.has_zfs=cJSON_IsObject(o);
-    s.zfs_arc_gb=number(o,"arc_gb"); s.zfs_hit_pct=number(o,"hit_pct");
+    s.zfs_arc_gb=fnum(o,"arc_gb"); s.zfs_hit_pct=fnum(o,"hit_pct");
     cJSON_ArrayForEach(v,item(item(root,"trunc"),"dropped")) {
         if (cJSON_IsNumber(v) && v->valuedouble>0) {
             double sum=s.source_dropped+v->valuedouble;

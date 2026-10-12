@@ -56,3 +56,6 @@ target_compile_options(
     PRIVATE
         $<$<COMPILE_LANGUAGE:C>:-Wno-format -Wno-unused-variable>
 )
+
+include("${CMAKE_CURRENT_LIST_DIR}/cmake/fnos_chart_math.cmake")
+fnos_use_safe_chart_map(__idf_lvgl__lvgl)

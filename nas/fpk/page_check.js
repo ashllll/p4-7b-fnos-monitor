@@ -37,6 +37,10 @@ function attrs(tag) {
   for (const m of tag.matchAll(/([a-zA-Z-]+)="([^"]*)"/g)) out[m[1]] = m[2];
   return out;
 }
+function datasetAttrs(a) {
+  return Object.fromEntries(Object.entries(a).filter(([k]) => k.startsWith('data-'))
+    .map(([k, v]) => [k.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase()), v]));
+}
 const navButtons = [];
 for (const m of html.matchAll(/<nav\b[^>]*>([\s\S]*?)<\/nav>/g)) {
   for (const b of m[1].matchAll(/<button\b[^>]*>/g)) navButtons.push(attrs(b[0]));
@@ -110,13 +114,13 @@ for (const id of ids) el(id);
 // 垫片按页面的用法给即可（section 的 id 也登记进 ids 表，便于后面检查）。
 const navEls = navButtons.map((a) => {
   const e = new El('button', a.id || '');
-  e.dataset = { ...a };
+  e.dataset = datasetAttrs(a);
   if (a.class) e.className = a.class;
   return e;
 });
 const sectionEls = sections.map((a) => {
   const e = new El('section', a.id || '');
-  e.dataset = { ...a };
+  e.dataset = datasetAttrs(a);
   if (a.class) e.className = a.class;
   return e;
 });
@@ -139,7 +143,7 @@ const dom = {
   querySelector: (sel) => {
     if (!selCache.has(sel)) {
       const found = selectorExists(sel);
-      if (found === false) unresolved.push(sel);
+      if (found !== true) unresolved.push(sel);
       selCache.set(sel, new El('div', sel.replace(/[^\w]/g, '_')));
     }
     return selCache.get(sel);
@@ -200,7 +204,12 @@ const sandbox = {
   fetch: fetchStub,
   setInterval: () => 0,
   clearInterval: () => {},
-  setTimeout: (fn) => { Promise.resolve().then(fn); return 0; },
+  // Preserve deadlines instead of firing every 10-second abort immediately.
+  // Unref prevents the page's next poll from keeping this bounded checker alive.
+  setTimeout: (fn, ms) => { const timer = setTimeout(fn, ms); timer.unref(); return timer; },
+  clearTimeout,
+  AbortController,
+  addEventListener: () => {},
   console,
   confirm: () => true,
   alert: () => {},
@@ -262,7 +271,7 @@ try {
   try {
     if (!originalState) throw new Error('缺少 state 样本');
     context.renderState({ ...originalState, devices: [{ name: 'gate-fixture', last4: 'gate', last_ip: 'fixture' }] });
-    canned['POST /api/devices/revoke'] = { removed: 1 };
+    canned['POST /api/devices/revoke'] = { ok: true, removed: 1 };
     const buttons = byId.get('devrows').querySelectorAll('[data-revoke]');
     if (buttons.length !== 1 || typeof buttons[0].onclick !== 'function') throw new Error('撤销按钮未绑定');
     const before = revokeBodies.length;
@@ -281,10 +290,18 @@ try {
   const navs = navEls;
   let navOk = 0;
   for (const b of navs) {
-    if (typeof b.onclick !== 'function') continue;
-    try { await b.onclick(); await settle(); navOk++; } catch (e) { fail('导航按钮切换抛异常', e); }
+    if (typeof b.onclick !== 'function') { fail('导航按钮没有点击处理器', new Error('未绑定')); continue; }
+    try {
+      await b.onclick(); await settle();
+      const active = sectionEls.filter(s => s.classList.contains('on'));
+      const selected = navs.filter(n => n.classList.contains('on'));
+      if (!b.dataset.t || active.length !== 1 || active[0].id !== 's-' + b.dataset.t ||
+          selected.length !== 1 || selected[0] !== b) throw new Error('目标页面未唯一激活');
+      navOk++;
+    } catch (e) { fail('导航按钮切换抛异常', e); }
   }
-  if (navs.length) ok(`${navOk}/${navs.length} 个导航按钮切换正常`);
+  if (!navs.length || navOk !== navs.length) fail('导航覆盖不完整', new Error('零导航或存在未通过按钮'));
+  else ok(`${navOk}/${navs.length} 个导航按钮切换正常`);
 
   // 内容断言：光"没抛异常"不够。JS 读一个不存在的属性只会得到 undefined，
   // 不会报错 —— 页面会把错的东西安静地画出来（和固件读不到字段就显示 0 一个道理）。
@@ -438,7 +455,11 @@ try {
   } else {
     expect('hhint', '采集异常', '采集异常时的顶栏提示');
   }
-  expect('hseq', 'seq ' + (col.seq || 0), '顶栏的采样序号');
+  if (!Number.isSafeInteger(col.seq) || col.seq <= 0) {
+    fail('无法核对 #hseq（样本须含正整数 seq）', new Error('样本不足'));
+  } else {
+    expect('hseq', 'seq ' + col.seq, '顶栏的采样序号');
+  }
   // 诊断页那张表：出问题时用户就是照它逐项看的
   const dg2 = canned['GET /api/diagnostics'] || {};
   const firstCheck = (dg2.checks || [])[0];
@@ -495,7 +516,8 @@ try {
     await context.refresh();
     for (let i = 0; i < 10; i++) await settle();
     expectClass('hdot', 'err', '管理接口出错时的状态点');
-    expect('hhint', errText, '管理接口出错时的顶栏提示');
+    expect('hhint', '服务未完成请求', '管理接口出错时的匿名顶栏提示');
+    if (String(byId.get('hhint').textContent).includes(errText)) fail('管理错误泄漏原始响应', new Error('错误必须匿名'));
   } catch (e) {
     fail('注入管理接口错误后 refresh() 抛异常', e);
   } finally {
@@ -518,7 +540,7 @@ try {
     for (let i = 0; i < 10; i++) await settle();
     expect('tlsline', '未能启用', 'TLS 启用失败时的提示');
     expect('tlsline', '证书文件读不出来（page_check 注入）', 'TLS 失败的具体原因');
-    expect('tlsline', '明文 HTTP', 'TLS 失败时的明文警告');
+    expect('tlsline', '遥测面已停止监听', 'TLS 失败时的拒绝监听提示');
     expectClass('tlsdot', 'err', 'TLS 启用失败时的状态点');
     // ② 配置里主动关掉
     canned['GET /api/state'] = Object.assign({}, savedState, {
@@ -571,7 +593,7 @@ try {
     canned['GET /api/state'] = { ...staleConfig, config: { ...staleConfig.config, docker_enabled: true } };
     canned['POST /api/collector/docker'] = { ok: true, docker_enabled: true };
     releaseConfig({ ok: true, status: 200,
-      json: async () => ({ ok: true, changed: [] }), text: async () => '{"ok":true,"changed":[]}' });
+      json: async () => ({ ok: true, changed: [], restart_required: [] }), text: async () => '{"ok":true,"changed":[],"restart_required":[]}' });
     deferredConfigPost = null;
     await saving;
     for (let i = 0; i < 10; i++) await settle();
@@ -592,7 +614,9 @@ try {
       await byId.get('savecfg').onclick();
       await context.refresh();
       checkConfig(byId.get('c-docker').value === '1' &&
-                  String(byId.get('cfghint').textContent).includes(message), failing + '失败后草稿和错误提示保留');
+                  String(byId.get('cfghint').textContent).includes('服务未完成请求') &&
+                  !String(byId.get('cfghint').textContent).includes(message) &&
+                  (failing !== 'POST /api/collector/docker' || String(byId.get('cfghint').textContent).includes('服务配置已保存')), failing + '失败后草稿、匿名错误及部分保存提示保留');
       checkConfig(!byId.get('c-docker').disabled && !byId.get('c-port').disabled, failing + '失败释放控件disabled');
     }
   } catch (e) {

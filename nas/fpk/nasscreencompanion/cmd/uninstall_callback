@@ -2,8 +2,30 @@
 . "$(dirname "$0")/_common.sh"
 # 卸载后：清掉本应用留下的运行痕迹。数据目录由系统处理，这里只做兜底。
 say "卸载收尾"
-as_package rm -f "$PID_FILE" 2>/dev/null
-cleanup_socket
-as_package rm -f "$PKG_VAR/upgrade.was_running" 2>/dev/null
+# 卸载前的停止可能没成功（权限/进程卡住），而 PID 文件一删就再也判断不了进程还在不在，
+# 以前不管实际情况都报"已释放端口"（审计 M26）。先如实看一眼，再说结论。
+still=0
+pid_before=""
+if is_running; then
+  pid_before=$(as_package cat "$PID_FILE" 2>/dev/null || true)
+  warn "服务进程仍在运行（卸载前的停止没有成功），再试一次"
+  service_stop >/dev/null 2>&1 || true
+  # 用**刚才记下的 pid** 判断存活，而不是只看 is_running：PID 文件一旦被哪条路径
+  # 清掉，is_running 立刻变 false，卸载就会报"已释放端口"（假绿，审计 M26）。
+  case "$pid_before" in
+    ''|*[!0-9]*) ;;
+    *) as_package kill -0 "$pid_before" 2>/dev/null && still=1 ;;
+  esac
+  is_running && still=1
+fi
+if [ "$still" = 1 ]; then
+  warn "进程 ${pid_before:-未知} 没能停下来：端口很可能仍被占用，**PID 记录保留**在 ${PID_FILE}（没删）。"
+  warn "删掉记录就再也查不到是谁占着端口了。手工处理：ps -p ${pid_before:-<pid>} -o pid,stat,cmd 看状态，"
+  warn "确认可以结束后 kill -KILL ${pid_before:-<pid>}，再重跑一次卸载。"
+  exit 1
+fi
+as_package rm -f "$PID_FILE" 2>/dev/null || { fail "进程已结束，但 PID 记录删除失败"; exit 1; }
+cleanup_socket || { fail "进程已结束，但 Socket 删除失败"; exit 1; }
+as_package rm -f "$PKG_VAR/upgrade.was_running" 2>/dev/null || { fail "升级恢复标志删除失败，请重试卸载收尾"; exit 1; }
 say "已释放端口与 Socket。开发版采集器（${DEV_AGENT_PORT}）与其他服务未受影响。"
 exit 0

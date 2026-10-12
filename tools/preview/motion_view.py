@@ -9,7 +9,12 @@ import os
 from pathlib import Path
 import re
 import tempfile
+import sys
 from urllib.parse import quote
+
+# Reuse the bounded, CRC/framing-validating PNG decoder used by photo gates.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from photo_check import decode_png
 
 
 HEAD = r'''</title><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -107,9 +112,10 @@ def safe_file(directory, name, extensions):
 
 
 def check_png(path):
-    with path.open("rb") as stream:
-        if stream.read(8) != b"\x89PNG\r\n\x1a\n":
-            raise ValueError(f"不是 PNG 文件：{path.name!r}")
+    try:
+        decode_png(path)
+    except SystemExit as exc:
+        raise ValueError(f"PNG 解码验证失败：{path.name!r}") from exc
 
 
 def main():

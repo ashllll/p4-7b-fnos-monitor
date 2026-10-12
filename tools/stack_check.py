@@ -46,6 +46,20 @@ ROOTS = {
         7 * 1024, 0,
         "配对任务（fnos_pair.c：7 KB，栈在 PSRAM）",
     ),
+    "probe_task": (
+        8 * 1024, 0,
+        "TLS 自检任务（fnos_pair.c：8 KB，PSRAM；同步接口由调用方承担同等栈需求）",
+    ),
+    "cli_task": (
+        4 * 1024, 0,
+        "串口命令任务（fnos_wifi_cli.c：xTaskCreate 4 KB；TLS 探针仅异步排队）",
+    ),
+    "ui_retry_task": (
+        16 * 1024, 0,
+        "降级恢复任务（main.cpp：拿不到显示锁时 xTaskCreate(ui_retry_task, 16 KB)）："
+        "按 5/10/20/40/60 秒退避重试 ui_build_locked() → fnos_ui_create()，跟 app_main "
+        "是同一条建 UI 路径，所以它必须和 app_main 一样被算进来（审计 M11）。",
+    ),
 }
 
 # 这些函数是通过函数指针被调用的，静态图看不到调用者，单独算它们的子树深度，
@@ -57,6 +71,10 @@ CALLBACK_TARGETS = ["ui_tick", "pair_btn_cb", "pair_pad_cb", "pair_ok_cb",
                     "temp_toggle_cb", "wifi_result_cb", "wifi_connect_cb",
                     "number_event", "number_step", "number_destroy",
                     "diag_timer_cb"]
+
+
+BRANCH_OPS = {"beq", "bne", "blt", "bge", "bltu", "bgeu", "beqz", "bnez",
+              "blez", "bgez", "bltz", "bgtz", "bgt", "ble", "bgtu", "bleu"}
 
 
 _SIMPLE_ITANIUM = re.compile(r"^_Z(?:L)?(\d+)(.+)$")
@@ -91,28 +109,169 @@ def add_cpp_aliases(frames, calls):
     return alias
 
 
+def constant_inputs(code):
+    """有限常量集合的数据流：在分支汇合处取并集，未知路径不能被已知值覆盖。
+
+    仅为寄存器栈调整求常量，不把指针/内存或被调用函数的返回值当常量。
+    集合扩张超限或分析不收敛时退为未知，绝不据此放行。
+    """
+    if not code:
+        return {}
+    addresses = {addr: i for i, (addr, _, _) in enumerate(code)}
+    states = {0: {"zero": frozenset({0})}}
+    pending = collections.deque([0])
+    steps = 0
+    def signed(value):
+        value &= 0xffffffff
+        return value - 0x100000000 if value & 0x80000000 else value
+    def number(text):
+        return int(text, 16 if text.lower().lstrip("-").startswith("0x") else 10)
+    stores = {"sb", "sh", "sw", "sd", "fsw", "fsd", "fence", "nop"}
+    controls = {"j", "jr", "ret", "jal", "jalr", "call", "tail"}
+    caller_saved = {"ra", *[f"a{i}" for i in range(8)], *[f"t{i}" for i in range(7)]}
+    while pending:
+        steps += 1
+        if steps > len(code) * 100:
+            return {}  # 有界分析不收敛，所有地址均未知。
+        i = pending.popleft()
+        addr, op, args = code[i]
+        state = dict(states[i])
+        value = None
+        try:
+            if op == "li":
+                value = {signed(number(args[1]))}
+            elif op == "lui":
+                value = {signed(number(args[1]) << 12)}
+            elif op == "mv":
+                value = state.get(args[1])
+            elif op in {"addi", "andi", "ori", "slli"} and args[1] in state:
+                imm = number(args[2])
+                fn = {"addi": lambda v: v + imm, "andi": lambda v: v & imm,
+                      "ori": lambda v: v | imm, "slli": lambda v: v << (imm & 31)}[op]
+                value = {signed(fn(v)) for v in state[args[1]]}
+            elif op in {"add", "sub"} and args[1] in state and args[2] in state:
+                value = {signed(x + y if op == "add" else x - y)
+                         for x in state[args[1]] for y in state[args[2]]}
+        except (ValueError, IndexError):
+            pass
+        branch = op in BRANCH_OPS
+        if op in {"jal", "jalr", "call"}:
+            for reg in caller_saved:
+                state.pop(reg, None)
+        elif not branch and op not in controls | stores:
+            state.pop(args[0], None)
+            if value is not None and len(value) <= 16 and args[0] != "sp":
+                state[args[0]] = frozenset(value)
+        state["zero"] = frozenset({0})
+        successors = []
+        if op not in {"j", "jr", "ret", "tail"} and i + 1 < len(code):
+            successors.append(i + 1)
+        if branch or op == "j":
+            try:
+                target = int(args[-1].split()[0], 16)
+                if target in addresses:
+                    successors.append(addresses[target])
+            except ValueError:
+                pass
+        for nxt in successors:
+            if nxt not in states:
+                merged = state
+            else:
+                old = states[nxt]
+                merged = {reg: old[reg] | state[reg] for reg in old.keys() & state.keys()
+                          if len(old[reg] | state[reg]) <= 16}
+                if merged == old:
+                    continue
+            states[nxt] = dict(merged)
+            pending.append(nxt)
+    return {code[i][0]: state for i, state in states.items()}
+
+
 def load(elf, objdump):
     result = subprocess.run([objdump, "-d", "--no-show-raw-insn", elf],
                             capture_output=True, text=True)
     if result.returncode or not result.stdout.strip():
         raise ValueError("objdump 无法读取 ELF，未执行栈预算检查")
     out = result.stdout
+    functions = collections.defaultdict(list)
+    function = None
+    for line in out.splitlines():
+        header = re.match(r"^[0-9a-f]+ <([^>]+)>:", line)
+        if header:
+            function = header.group(1)
+        insn = re.match(r"\s*([0-9a-f]+):\s+(\S+)\s*(.*)", line)
+        if function and insn:
+            addr, op, operands = insn.groups()
+            args = [arg.strip() for arg in operands.split("#", 1)[0].split(",")]
+            functions[function].append((int(addr, 16), op, args))
+    inputs = {name: constant_inputs(code) for name, code in functions.items()}
     frames, calls = collections.defaultdict(int), collections.defaultdict(set)
     cur = None
+    unresolved = set()
+    depth = 0
+    stack_pointers = {}
+    prologue = True
     for line in out.splitlines():
         m = re.match(r"^([0-9a-f]+) <([^>]+)>:", line)
         if m:
             cur = m.group(2)
             frames[cur] = 0
+            depth = 0
+            stack_pointers = {}
+            prologue = True
             continue
         if cur is None:
             continue
-        m = re.search(r"addi\s+sp,sp,-(\d+)", line)
-        if m:
-            frames[cur] = max(frames[cur], int(m.group(1)))
+        instruction = re.match(r"\s*[0-9a-f]+:\s+(\S+)\s*(.*)", line)
+        if not instruction:
+            continue
+        op, operands = instruction.groups()
+        args = [arg.strip() for arg in operands.split("#", 1)[0].split(",")]
+        def immediate(value):
+            return int(value, 16 if value.lower().lstrip("-").startswith("0x") else 10)
+        address = int(line.strip().split(":", 1)[0], 16)
+        controls = op in BRANCH_OPS or op in {"j", "jr", "ret", "jal", "jalr", "call", "tail"}
+        if controls:
+            prologue = False
+        # 只认入口直线段建立的帧指针；后续写该寄存器即失效。
+        if not controls and op not in {"sb", "sh", "sw", "sd", "fsw", "fsd", "fence", "nop"}:
+            stack_pointers.pop(args[0], None)
+        if prologue and op == "addi" and len(args) == 3 and args[1] == "sp" and args[0] == "s0":
+            try:
+                stack_pointers[args[0]] = -depth + immediate(args[2])
+            except ValueError:
+                pass
+        if args[0] == "sp" and op in {"addi", "add", "sub"} and len(args) == 3:
+            delta = None
+            if op == "addi":
+                try:
+                    delta = immediate(args[2])
+                    if args[1] != "sp":
+                        delta += stack_pointers[args[1]] + depth
+                except (KeyError, ValueError):
+                    delta = None
+            elif args[1] == "sp":
+                values = inputs.get(cur, {}).get(address, {}).get(args[2])
+                if values:
+                    # 多条可达路径的常量取更大的向下调整，避免静默低估。
+                    delta = min(-v if op == "sub" else v for v in values)
+            if delta is None:
+                unresolved.add(cur)
+                delta = 0
+            depth = max(0, depth - delta)
+            frames[cur] = max(frames[cur], depth)
+        elif args[0] == "sp" and not controls and op not in {"sb", "sh", "sw", "sd", "fsw", "fsd", "fence", "nop"}:
+            if op == "mv" and len(args) == 2 and args[1] in stack_pointers:
+                depth = max(0, -stack_pointers[args[1]])
+            else:
+                unresolved.add(cur)
+        if op in {"ret", "jr", "tail"}:
+            depth = 0
         m = re.search(r"\b(jal|call)\s+[0-9a-f]+ <([^>+]+)", line)
         if m and m.group(2) != cur:
             calls[cur].add(m.group(2))
+    for name in unresolved:
+        frames[name] = -1  # 未知动态帧；不能作为零帧给检查入口放行。
     add_cpp_aliases(frames, calls)
     return frames, calls
 
@@ -122,6 +281,8 @@ def worst(frames, calls, root):
     best = (0, [])
     def dfs(node, path, total, seen):
         nonlocal best
+        if frames.get(node, 0) < 0:
+            raise ValueError(f"{node}: 调用树含无法静态解析的栈调整")
         if total > best[0]:
             best = (total, list(path))
         for c in calls.get(node, ()):
@@ -157,7 +318,16 @@ def main():
     if missing:
         print("栈检查失败：缺少任务入口 " + ", ".join(missing), file=sys.stderr)
         return 2
+    try:
+        for entry in list(ROOTS) + CALLBACK_TARGETS:
+            worst(frames, calls, entry)
+    except ValueError as error:
+        print(f"栈检查未判定：{error}", file=sys.stderr)
+        return 2
     print(f"{os.path.relpath(a.elf, REPO)}：{len(frames)} 个函数\n")
+    unknown = sum(value < 0 for value in frames.values())
+    if unknown:
+        print(f"另有 {unknown} 个函数含未知栈调整，未在上述任务/显式回调的静态调用树内；不属于本门已测范围。\n")
 
     cb_depth = {}
     for t in CALLBACK_TARGETS:

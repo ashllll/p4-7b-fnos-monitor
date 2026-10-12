@@ -25,9 +25,29 @@ import subprocess
 import sys
 import time
 
-import serial
 
 CAPTURE = os.environ.get("FNOS_CAPTURE_BOARD", "capture-board")
+
+
+def capture_photo():
+    """Validate capture evidence before reporting an image (no device selection here)."""
+    try:
+        result = subprocess.run([CAPTURE], capture_output=True, text=True, timeout=180)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError("拍照命令失败：%s" % type(exc).__name__) from exc
+    if result.returncode != 0:
+        raise RuntimeError("拍照命令返回非零：%d" % result.returncode)
+    try:
+        info = json.loads(result.stdout.strip().splitlines()[-1])
+        image = info["image"]
+        if not isinstance(image, str) or not os.path.isabs(image):
+            raise ValueError("invalid image path")
+        with open(image, "rb") as src:
+            if src.read(8) != b"\x89PNG\r\n\x1a\n":
+                raise ValueError("not a PNG")
+    except (IndexError, KeyError, TypeError, ValueError, OSError) as exc:
+        raise RuntimeError("拍照结果无效：缺少可读取的 PNG 或 JSON 不合法") from exc
+    return info
 
 
 def main(void=None):
@@ -41,6 +61,8 @@ def main(void=None):
     args = ap.parse_args()
     if not args.port:
         ap.error("set --port or FNOS_SERIAL_PORT to the identified board serial port")
+
+    import serial
 
     ser = serial.Serial(args.port, 115200, timeout=0.3)
     ser.dtr = False          # IO0 = 高 → 正常启动而不是下载模式
@@ -70,9 +92,11 @@ def main(void=None):
         if not ok:
             print("!! 没在串口回显里看到切页确认，照片可能还是上一页", file=sys.stderr)
         print("拍照中（端口保持打开，避免复位）…", flush=True)
-        out = subprocess.run([CAPTURE], capture_output=True, text=True, timeout=180)
-        tail = out.stdout.strip().splitlines()[-1] if out.stdout.strip() else "{}"
-        info = json.loads(tail)
+        try:
+            info = capture_photo()
+        except RuntimeError as exc:
+            print("!! %s" % exc, file=sys.stderr)
+            return 1
         print("PAGE=%d IMAGE=%s resumed_camera=%s" % (args.page, info.get("image"), info.get("resumed_camera")))
         if not ok:
             return 2

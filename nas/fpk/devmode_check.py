@@ -37,13 +37,23 @@ def free_port():
 
 
 def main():
-    rounds = int(sys.argv[1]) if len(sys.argv) > 1 else 40
+    try:
+        rounds = int(sys.argv[1]) if len(sys.argv) > 1 else 40
+        if rounds <= 0:
+            raise ValueError("rounds must be positive")
+    except ValueError:
+        print("轮数必须是正整数", file=sys.stderr)
+        return 2
     pkg = DEFAULT_PKG
     if not os.path.isdir(pkg):
         print(f"找不到 {pkg}")
         return 2
 
-    work = tempfile.mkdtemp(prefix="nsc-devmode-")
+    with tempfile.TemporaryDirectory(prefix="nsc-devmode-") as work:
+        return check_service(pkg, rounds, work)
+
+
+def check_service(pkg, rounds, work):
     stage = os.path.join(work, "target")
     var = os.path.join(work, "var")
     etc = os.path.join(work, "etc")
@@ -63,14 +73,22 @@ def main():
                wizard_port=str(port), wizard_bind="local", wizard_auth="pairing",
                wizard_docker="false", wizard_interval="0.2", wizard_tls="true",
                PYTHONDONTWRITEBYTECODE="1")
-    subprocess.run([os.path.join(work, "cmd", "install_callback")], env=env,
-                   capture_output=True)
+    ic = subprocess.run([os.path.join(work, "cmd", "install_callback")], env=env,
+                        capture_output=True, text=True)
+    if ic.returncode != 0:
+        # 以前这里 discard 了 returncode/stderr：安装回调失败时服务起不来，
+        # 检查只会说"服务端中途退出了"，看不出真正原因（审计 M55）。
+        print(f"  ✗ install_callback 返回 {ic.returncode}（dev 模式检查的前提没建立）")
+        for line in (ic.stdout + ic.stderr).strip().splitlines()[-6:]:
+            print(f"      {line}")
+        return 1
 
     log = os.path.join(work, "server.log")
-    srv = subprocess.Popen([sys.executable, "-X", "dev",
-                            os.path.join(stage, "server", "nas_companion_server.py"),
-                            "--serve"], env=env,
-                           stdout=open(log, "w"), stderr=subprocess.STDOUT)
+    with open(log, "w") as output:
+        srv = subprocess.Popen([sys.executable, "-X", "dev",
+                                os.path.join(stage, "server", "nas_companion_server.py"),
+                                "--serve"], env=env,
+                               stdout=output, stderr=subprocess.STDOUT)
     try:
         sock = os.path.join(stage, "app.sock")
         for _ in range(50):
@@ -86,15 +104,19 @@ def main():
                 self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                 self.sock.connect(sock)
 
+        probe_failed = False
         for i in range(rounds):
+            c = None
             try:
-                c = UnixConn("x")
+                c = UnixConn("x", timeout=3)
                 c.request("GET", "/app/nasscreencompanion/api/state",
                           headers={"X-Trim-Userid": "1000", "X-Trim-Isadmin": "1"})
                 c.getresponse().read()
-                c.close()
-            except OSError:
-                pass
+            except (OSError, http.client.HTTPException):
+                probe_failed = True
+            finally:
+                if c is not None:
+                    c.close()
             for url in (f"https://127.0.0.1:{port}/api/v1/identity",
                         f"http://127.0.0.1:{port}/api/v1/identity"):
                 try:
@@ -102,22 +124,27 @@ def main():
                     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
                     ctx.check_hostname = False
                     ctx.verify_mode = ssl.CERT_NONE
-                    urllib.request.urlopen(url, timeout=3,
-                                           context=ctx if url.startswith("https") else None).read()
+                    with urllib.request.urlopen(url, timeout=3,
+                            context=ctx if url.startswith("https") else None) as response:
+                        response.read()
+                except http.client.HTTPException:
+                    probe_failed = True
                 except (urllib.error.URLError, OSError, ValueError):
                     pass
         time.sleep(1)
         alive = srv.poll() is None
     finally:
-        srv.send_signal(signal.SIGTERM)
+        if srv.poll() is None:
+            srv.send_signal(signal.SIGTERM)
         try:
             srv.wait(timeout=5)
         except subprocess.TimeoutExpired:
             srv.kill()
+            srv.wait(timeout=5)
 
-    out = open(log, encoding="utf-8", errors="replace").read()
+    with open(log, encoding="utf-8", errors="replace") as output:
+        out = output.read()
     warns = [l for l in out.splitlines() if "Warning" in l]
-    shutil.rmtree(work, ignore_errors=True)
 
     print(f"打了 {rounds} 轮（管理面 + TLS 面 + 明文引导面）")
     if not alive:
@@ -125,12 +152,15 @@ def main():
         for l in out.strip().splitlines()[-6:]:
             print("   ", l[:160])
         return 1
+    if probe_failed:
+        print("✗ 管理面或 HTTP 协议探针失败，不能判定开发模式通过。")
+        return 1
     if warns:
         print(f"✗ 开发模式下报了 {len(warns)} 条警告（长跑时这类东西会累积）：")
         for w in warns[:8]:
             print("   ", w.strip()[:160])
         return 1
-    print("✓ 开发模式下零警告（没有未关闭的 socket/文件、没有弃用调用）")
+    print("✓ 本轮开发模式未观察到资源或弃用警告")
     return 0
 
 

@@ -27,17 +27,20 @@ EXTRA_SOURCES = ["fnos_snapshot.c"]
 # 按名字抠函数体：名字在哪个源里都能找到（找不到就报错，不静默跳过）。
 FUNCS = [
     # fnos_data.c：薄壳 + 历史回填
-    "parse_status", "parse_history", "commit_status", "fnos_data_hist_read",
+    "parse_status", "history_row_values", "history_alloc", "history_reset", "parse_history", "commit_status", "fnos_data_hist_seq", "fnos_data_hist_read_ex", "fnos_data_hist_read",
     # fnos_snapshot.c：字符串 arena + 字段解析
     "snapshot_malloc", "owned_alloc",
     "fnos_status_create", "fnos_status_release", "fnos_status_copy", "fnos_status_text",
-    "item", "number", "string", "array", "count",
+    # 类型化数值钳制（M03）：number 之后新加的这五个必须一起抠，否则
+    # fnos_status_parse 里调 clampd()/inum()/… 时这里会缺定义，报出来的
+    # 错却是"编译失败"，看着像别的问题。
+    "item", "number", "clampd", "inum", "unum", "lnum", "fnum", "string", "array", "count",
     "temp_cmp",                          # 温度行的固定排序（fnos_status_parse 调它）
     "fnos_status_parse",
 ]
 
 # 函数体要用到的**类型**也照抠（单行 typedef），免得手抄一份迟早跟源码脱节。
-TYPES = ["block_t", "storage_t"]
+TYPES = ["block_t", "storage_t", "history_record_t"]
 
 
 def grab(src, name):
@@ -81,7 +84,11 @@ def main():
         return 1
     src_path, out_path = sys.argv[1], sys.argv[2]
     sources = [src_path] + [os.path.join(os.path.dirname(src_path), n) for n in EXTRA_SOURCES]
-    texts = [(p, io.open(p, encoding="utf-8").read()) for p in sources if os.path.exists(p)]
+    texts = []
+    for path in sources:
+        if os.path.exists(path):
+            with io.open(path, encoding="utf-8") as source:
+                texts.append((path, source.read()))
 
     parts, types = [], []
     for fn in FUNCS:
@@ -109,7 +116,9 @@ def main():
 
     header = f'''/* 本文件由 tools/parsecheck/extract.py 从 {os.path.relpath(src_path)} 等源文件自动生成，不要手改。
  * 里面是 fnos_data.c / fnos_snapshot.c 里解析状态帧那几个函数的原文（sha256 {digest}）。 */
+#include <float.h>
 #include <limits.h>
+#include <math.h>
 #include <stdarg.h>
 #include <stdatomic.h>
 #include <stdbool.h>
@@ -130,6 +139,10 @@ char s_conn_err[24];
 float s_h_cpu[FNOS_HIST_MAX], s_h_mem[FNOS_HIST_MAX];
 float s_h_rx[FNOS_HIST_MAX], s_h_tx[FNOS_HIST_MAX];
 int64_t s_seq;
+int64_t s_h_ts[FNOS_HIST_MAX];
+int s_hist_count;
+int64_t s_hist_reset_seq=-1;
+bool s_hist_backfilled;
 fnos_status_t s_status;
 bool s_valid;
 #define esp_timer_get_time() 1000000
@@ -159,7 +172,8 @@ int s_lock = 1;                      /* 非 NULL：真机上 s_lock 是个已创
 {blob}
 #undef static
 '''
-    io.open(out_path, "w", encoding="utf-8").write(header)
+    with io.open(out_path, "w", encoding="utf-8") as output:
+        output.write(header)
     print(f"抠出 {len(FUNCS)} 个函数 + {len(TYPES)} 个类型：{len(blob)} 字节，sha256 {digest[:16]}…")
     return 0
 

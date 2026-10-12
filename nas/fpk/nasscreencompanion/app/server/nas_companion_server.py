@@ -8,8 +8,8 @@ NAS 屏幕伴侣 —— 飞牛应用中心版后端服务（nasscreencompanion�
   1. 管理面（Unix Socket，默认 ${TRIM_APPDEST}/app.sock）
      对接飞牛统一网关。浏览器从 fnOS 桌面点开应用后，网关校验登录态再把
      请求转发到这个 Socket，并带上 X-Trim-Userid / X-Trim-Isadmin /
-     X-Trim-Username。Socket 权限 0600，只有网关（root）能连，
-     所以"能连上"本身已等价于"经过了网关鉴权"。
+     X-Trim-Username。Socket 权限 0600，root 与所属用户可以连接；
+     管理头信任依赖安装用户与父目录权限，不能抵御同用户进程伪造。
      网关会带前缀 /app/nasscreencompanion，这里做前缀归一化。
 
   2. 遥测面（TCP，默认 0.0.0.0:8798）
@@ -30,18 +30,24 @@ NAS 屏幕伴侣 —— 飞牛应用中心版后端服务（nasscreencompanion�
 
 import argparse
 import base64
+import copy
+import contextlib
 import errno
+import fcntl
 import hashlib
 import hmac
 import json
 import os
 import secrets
 import shutil
+import signal
 import socket
 import socketserver
 import ssl
+import stat
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.parse
@@ -62,6 +68,18 @@ APPVER = os.environ.get("TRIM_APPVER") or "1.2.5"   # manifest 里的 version �
 GATEWAY_PREFIX = "/app/" + APPNAME
 SOCKET_NAME = "app.sock"                 # 必须位于 target 目录（网关要求）
 LOG_TAIL = 400                           # 内存里保留的日志行数（供管理页看）
+
+
+class BadRequest(Exception):
+    """请求体本身不合法（缺 Content-Length / 超限 / 不是 JSON 对象）。
+
+    以前 `_read_json()` 把这些情况一律当成 `{}`，于是 `/api/config` 回
+    `{"ok":true,"changed":[]}`（管理页打印"已保存"、实际一条没改），
+    `/api/collector/docker` 更是把容器采集**静默关掉并持久化**还回 ok ——
+    失败报成功比报错更难查（审计 M33）。坏请求是客户端错误，走 400。
+    """
+
+
 class ConfigError(Exception):
     """配置校验没过。
 
@@ -76,6 +94,7 @@ PAIR_ATTEMPT_LIMIT = 5                   # 每 IP 每窗口的配对尝试次数
 PAIR_ATTEMPT_WINDOW = 300.0
 
 DEFAULT_CONFIG = {
+    "_revision": 0,
     "bind": "0.0.0.0",
     "port": 8798,
     "interval": 1.0,
@@ -227,42 +246,85 @@ def _local_ips():
 
 
 def generate_self_signed():
-    """生成自签证书，返回 (ok, message)。"""
+    """Validate a private candidate, then replace with recoverable old files.
+
+    The lock serializes cooperating generators. Two file replacements are not
+    a power-loss transaction; a failed rollback retains private backups.
+    """
     exe = _openssl_bin()
     if not exe:
         return False, "系统里找不到 openssl，无法生成自签证书"
+    stage = None
+    keep_backup = False
     try:
         os.makedirs(tls_dir(), exist_ok=True)
         os.chmod(tls_dir(), 0o700)
-    except OSError as exc:
-        return False, "创建 %s 失败：%s" % (tls_dir(), exc)
-
-    host = (socket.gethostname() or "nas").strip() or "nas"
-    cn = host.replace("/", "_").replace(" ", "_")
-    san = ["DNS:%s" % cn, "DNS:localhost", "IP:127.0.0.1", "IP:::1"]
-    san += ["IP:%s" % ip for ip in _local_ips()]
-    base = [exe, "req", "-x509", "-newkey", "rsa:2048", "-nodes",
-            "-keyout", tls_key_path(), "-out", tls_cert_path(),
-            "-days", str(CERT_DAYS), "-subj", "/CN=%s" % cn]
-    # -addext 需要 openssl 1.1.1+；老版本去掉它再试一次（没有 SAN 只影响浏览器
-    # 和 curl 的域名校验，板子认的是指纹，不受影响）
-    last = "openssl 生成失败"
-    for cmd in (base + ["-addext", "subjectAltName=" + ",".join(san)], base):
-        try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
-        except Exception as exc:                   # noqa: BLE001
-            last = "%s: %s" % (type(exc).__name__, exc)
-            continue
-        if proc.returncode == 0 and os.path.exists(tls_cert_path()) and os.path.exists(tls_key_path()):
+        with open(os.path.join(tls_dir(), ".generate.lock"), "a+b") as lock:
+            os.chmod(lock.name, 0o600)
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            stage = tempfile.mkdtemp(prefix=".candidate-", dir=tls_dir())
+            cert = os.path.join(stage, "server.crt")
+            key = os.path.join(stage, "server.key")
+            host = (socket.gethostname() or "nas").strip() or "nas"
+            cn = host.replace("/", "_").replace(" ", "_")
+            san = ["DNS:%s" % cn, "DNS:localhost", "IP:127.0.0.1", "IP:::1"]
+            san += ["IP:%s" % ip for ip in _local_ips()]
+            base = [exe, "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+                    "-keyout", key, "-out", cert,
+                    "-days", str(CERT_DAYS), "-subj", "/CN=%s" % cn]
+            # Older openssl may lack -addext. Both attempts remain private.
+            valid = False
+            for cmd in (base + ["-addext", "subjectAltName=" + ",".join(san)], base):
+                for candidate in (cert, key):
+                    if os.path.exists(candidate):
+                        os.unlink(candidate)
+                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
+                if proc.returncode != 0:
+                    continue
+                os.chmod(key, 0o600)
+                os.chmod(cert, 0o644)
+                ctx, error = load_ssl_context({"cert": cert, "key": key})
+                _, _, expiry = read_cert_meta(cert)
+                if ctx is not None and pem_fingerprint(cert) and expiry is not None and expiry > time.time():
+                    valid = True
+                    break
+            if not valid:
+                return False, "候选证书或私钥校验失败"
+            pairs = [(cert, tls_cert_path()), (key, tls_key_path())]
+            backups = {}
+            for index, (_, target) in enumerate(pairs):
+                if os.path.lexists(target):
+                    if not stat.S_ISREG(os.lstat(target).st_mode):
+                        raise OSError("TLS target is not a regular file")
+                    backup = os.path.join(stage, "backup-%d" % index)
+                    shutil.copy2(target, backup)
+                    backups[target] = backup
+            replaced = []
             try:
-                os.chmod(tls_key_path(), 0o600)
-                os.chmod(tls_cert_path(), 0o644)
+                for candidate, target in pairs:
+                    os.replace(candidate, target)
+                    replaced.append(target)
+            except BaseException:
+                for target in reversed(replaced):
+                    try:
+                        if target in backups:
+                            os.replace(backups[target], target)
+                        else:
+                            os.unlink(target)
+                    except OSError:
+                        keep_backup = True
+                if keep_backup:
+                    return False, "TLS替换及恢复失败，私有候选目录保留，需检查恢复"
+                raise
+            return True, "已生成并校验自签证书"
+    except Exception as exc:
+        return False, "TLS生成或替换失败（%s）" % type(exc).__name__
+    finally:
+        if stage is not None and not keep_backup:
+            try:
+                shutil.rmtree(stage)
             except OSError:
-                pass
-            return True, "已生成自签证书（CN=%s，%d 天，SAN=%s）" % (cn, CERT_DAYS, ",".join(san))
-        tail = [ln for ln in (proc.stderr or proc.stdout or "").strip().splitlines() if ln.strip()]
-        last = tail[-1].strip() if tail else "openssl 退出码 %d" % proc.returncode
-    return False, last
+                return False, "TLS私有候选目录清理失败，需检查"
 
 
 def prepare_tls(regen=False):
@@ -278,15 +340,8 @@ def prepare_tls(regen=False):
         "generated": False,
         "error": None,
     }
-    if regen:
-        for p in (tls_cert_path(), tls_key_path()):
-            try:
-                os.unlink(p)
-            except OSError:
-                pass
-
     missing = not (os.path.exists(tls_cert_path()) and os.path.exists(tls_key_path()))
-    if missing:
+    if regen or missing:
         ok, msg = generate_self_signed()
         info["generated"] = ok
         if not ok:
@@ -305,6 +360,10 @@ def prepare_tls(regen=False):
             return info
         subject, not_after, epoch = read_cert_meta(tls_cert_path())
 
+    ctx, error = load_ssl_context(info)
+    if ctx is None:
+        info["error"] = "证书与私钥校验失败"
+        return info
     fp = pem_fingerprint(tls_cert_path())
     if not fp:
         info["error"] = "证书文件存在但读不出指纹（%s）" % tls_cert_path()
@@ -325,6 +384,37 @@ def load_ssl_context(info):
         return None, "%s: %s" % (type(exc).__name__, exc)
 
 
+def load_active_tls(info):
+    """Capture the public identity under the cooperating generator's lock.
+
+    Keep this immutable snapshot alongside the context; disk regeneration is
+    pending until the service restarts. Non-cooperating writers are not covered.
+    """
+    try:
+        if not all(os.path.isfile(info[p]) for p in ("cert", "key")):
+            return None, "TLS材料不存在"
+        with open(os.path.join(os.path.dirname(info["cert"]), ".generate.lock"), "a+b") as lock:
+            os.chmod(lock.name, 0o600)
+            fcntl.flock(lock.fileno(), fcntl.LOCK_SH)
+            ctx, error = load_ssl_context(info)
+            if ctx is None:
+                return None, "TLS证书对加载失败"
+            with open(info["cert"], "r", encoding="ascii") as cert:
+                pem = cert.read(64 * 1024 + 1)
+            if len(pem) > 64 * 1024:
+                return None, "TLS证书超过身份预算"
+            der = ssl.PEM_cert_to_DER_cert(pem)
+            fingerprint = ":".join("%02X" % b for b in hashlib.sha256(der).digest())
+            subject, not_after, expiry = read_cert_meta(info["cert"])
+            if expiry is None or expiry <= time.time():
+                return None, "TLS证书有效期不可用"
+            info.update(cert_pem=pem, fingerprint=fingerprint,
+                        subject=subject, not_after=not_after)
+            return ctx, None
+    except Exception as exc:                       # noqa: BLE001
+        return None, "TLS身份快照失败（%s）" % type(exc).__name__
+
+
 # ---------------------------------------------------------------- 日志
 
 class Log:
@@ -335,6 +425,7 @@ class Log:
         self.tail = tail
         self._lines = []
         self._lock = threading.Lock()
+        self.stop_requested = threading.Event()
 
     def __call__(self, fmt, *args):
         msg = fmt % args if args else fmt
@@ -366,62 +457,133 @@ log = Log(os.path.join(pkg_var(), "service.log"))
 
 # ---------------------------------------------------------------- 配置
 
+def _config_bool(value, key):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (str, int)) and not isinstance(value, bool):
+        text = str(value).strip().lower()
+        if text in ("1", "true", "yes", "on"):
+            return True
+        if text in ("0", "false", "no", "off"):
+            return False
+    raise ConfigError("%s 取值非法" % key)
+
+
+def _validate_startup_config(cfg):
+    """Validate before constructing collectors/listeners; never repair bad auth/TLS."""
+    for key, cast, lo, hi in (("interval", float, 0.2, 60.0),
+                              ("hist_len", int, 30, 3600),
+                              ("port", int, 1, 65535)):
+        value = cfg[key]
+        try:
+            if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+                raise ValueError
+            result = cast(value)
+            if cast is int and isinstance(value, float) and result != value:
+                raise ValueError
+            if not lo <= result <= hi:
+                raise ValueError
+        except (TypeError, ValueError, OverflowError):
+            raise ConfigError("%s 取值非法或超出范围" % key) from None
+        cfg[key] = result
+    for key in ("tls_enabled", "docker_enabled"):
+        cfg[key] = _config_bool(cfg[key], key)
+    if not isinstance(cfg["bind"], str) or not cfg["bind"].strip() or "\0" in cfg["bind"]:
+        raise ConfigError("bind 取值非法")
+    cfg["bind"] = cfg["bind"].strip()
+    if cfg["auth_mode"] not in ("pairing", "lan"):
+        raise ConfigError("auth_mode 取值非法")
+    if not isinstance(cfg["devices"], list):
+        raise ConfigError("devices 必须是数组")
+    for device in cfg["devices"]:
+        if not isinstance(device, dict):
+            raise ConfigError("devices 成员必须是对象")
+        digest = device.get("sha256")
+        if (not isinstance(digest, str) or len(digest) != 64 or
+                any(c not in "0123456789abcdef" for c in digest)):
+            raise ConfigError("devices 令牌哈希非法")
+        if any(k in device and not isinstance(device[k], str) for k in ("name", "last4", "last_ip")):
+            raise ConfigError("devices 元数据非法")
+    revision = cfg.get("_revision", 0)
+    if type(revision) is not int or revision < 0:
+        raise ConfigError("配置修订号非法")
+    return cfg
+
+
 def load_config():
-    cfg = dict(DEFAULT_CONFIG)
+    cfg = copy.deepcopy(DEFAULT_CONFIG)
     try:
         with open(cfg_path(), "r", encoding="utf-8") as f:
             stored = json.load(f)
         if not isinstance(stored, dict):
-            raise ValueError("config.json 必须是 JSON 对象")
+            raise ConfigError("config.json 必须是 JSON 对象")
         for k, v in stored.items():
-            if k in DEFAULT_CONFIG and k != "devices":
+            if k in DEFAULT_CONFIG:
                 cfg[k] = v
-        if isinstance(stored.get("devices"), list):
-            cfg["devices"] = stored["devices"]
     except FileNotFoundError:
         pass
-    except Exception as exc:                       # noqa: BLE001
-        log("配置读取失败，保留原文件并停止启动：%s: %s", type(exc).__name__, exc)
+    except (OSError, ValueError) as exc:
+        # Do not include configuration values or JSON snippets in diagnostics.
+        message = "配置读取失败，保留原文件并停止启动（%s）" % type(exc).__name__
+        log(message)
+        raise ConfigError(message) from None
+    # Explicit environment overrides are validated too; invalid/empty is not unset.
+    for env, key in (("TRIM_SERVICE_PORT", "port"), ("NSC_BIND", "bind"),
+                     ("NSC_INTERVAL", "interval"), ("NSC_HIST", "hist_len"),
+                     ("NSC_AUTH", "auth_mode"), ("NSC_DOCKER", "docker_enabled"),
+                     ("NSC_TLS", "tls_enabled")):
+        if env in os.environ:
+            cfg[key] = os.environ[env]
+    try:
+        return _validate_startup_config(cfg)
+    except ConfigError as exc:
+        log("配置校验失败，保留原文件并停止启动：%s", exc)
         raise
-    # 环境变量（生命周期脚本传入）优先级最高，但只覆盖"可被安装向导指定"的项
-    if os.environ.get("TRIM_SERVICE_PORT"):
-        try:
-            cfg["port"] = int(os.environ["TRIM_SERVICE_PORT"])
-        except ValueError:
-            pass
-    for env, key, cast in (("NSC_BIND", "bind", str), ("NSC_INTERVAL", "interval", float),
-                           ("NSC_HIST", "hist_len", int), ("NSC_AUTH", "auth_mode", str)):
-        if os.environ.get(env):
-            try:
-                cfg[key] = cast(os.environ[env])
-            except ValueError:
-                pass
-    if os.environ.get("NSC_DOCKER") in ("1", "true", "yes", "on"):
-        cfg["docker_enabled"] = True
-    # TLS 默认是开，所以这个环境变量要能两个方向都表达（不能只认"开"）
-    if os.environ.get("NSC_TLS") is not None:
-        cfg["tls_enabled"] = os.environ["NSC_TLS"].strip().lower() in ("1", "true", "yes", "on")
-    return cfg
+
+
+@contextlib.contextmanager
+def config_write_lock(path):
+    fd = os.open(path + ".lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "a") as lock:
+        if not stat.S_ISREG(os.fstat(lock.fileno()).st_mode):
+            raise ConfigError("配置锁不是普通文件")
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        yield
 
 
 def save_config(cfg):
-    """原子写 + 0600：配置里有设备令牌哈希，不能让别的用户读。"""
+    """Cooperative revision CAS plus a private atomic replacement candidate."""
     path = cfg_path()
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".tmp"
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, ensure_ascii=False, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
-    except Exception:
+    with config_write_lock(path):
+        expected = cfg.get("_revision", 0)
         try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
-    os.replace(tmp, path)
+            with open(path, "r", encoding="utf-8") as f:
+                current = json.load(f)
+        except FileNotFoundError:
+            current = {}
+        revision = current.get("_revision", 0) if isinstance(current, dict) else None
+        if type(expected) is not int or expected < 0 or type(revision) is not int or revision < 0:
+            raise ConfigError("配置修订号非法")
+        if revision != expected:
+            raise ConfigError("配置已由其他写入者更新，请重新加载后重试")
+        candidate = dict(cfg, _revision=revision + 1)
+        fd, tmp = tempfile.mkstemp(prefix=".config-", suffix=".tmp", dir=os.path.dirname(path))
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                fd = None  # The stream now owns the descriptor.
+                json.dump(candidate, f, ensure_ascii=False, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, path)
+        finally:
+            if fd is not None:
+                os.close(fd)
+            try:
+                os.unlink(tmp)
+            except FileNotFoundError:
+                pass
+        cfg["_revision"] = candidate["_revision"]
 
 
 # ---------------------------------------------------------------- 运行状态
@@ -460,6 +622,7 @@ class State:
         self.socket_error = None               # 管理面 Socket 绑定失败时的原因
         self.tls = {}                          # prepare_tls() 的结果，绑定后填充
         self._lock = threading.Lock()
+        self.stop_requested = threading.Event()
 
     # ---- 配对
     def new_pair_code(self, ttl=300):
@@ -494,9 +657,10 @@ class State:
             if time.time() > pend["expires"]:
                 self.pending_pair = None
                 return None, "配对码已过期，请重新生成"
-            if not hmac.compare_digest(str(code), pend["code"]):
+            if (not isinstance(code, str) or len(code) != 6 or
+                    not all("0" <= c <= "9" for c in code) or
+                    not hmac.compare_digest(code, pend["code"])):
                 return None, "配对码不正确"
-            self.pending_pair = None          # 一次性
             token = secrets.token_urlsafe(24)
             dev = {
                 "name": (name or "未命名设备")[:40],
@@ -506,19 +670,26 @@ class State:
                 "last_seen": 0,
                 "last_ip": ip,
             }
-            self.cfg["devices"].append(dev)
-            save_config(self.cfg)
+            candidate = dict(self.cfg)
+            candidate["devices"] = self.cfg["devices"] + [dev]
+            save_config(candidate)
+            self.cfg.update(candidate)
+            self.pending_pair = None          # 持久化成功后一次性消费
         log("新设备已配对：%s（%s）", dev["name"], ip)
         return token, None
 
     def revoke(self, last4_or_name):
-        before = len(self.cfg["devices"])
-        self.cfg["devices"] = [d for d in self.cfg["devices"]
-                               if not (d.get("last4") == last4_or_name
-                                       or d.get("name") == last4_or_name)]
-        removed = before - len(self.cfg["devices"])
+        with self._lock:
+            before = len(self.cfg["devices"])
+            devices = [d for d in self.cfg["devices"]
+                       if not (d.get("last4") == last4_or_name or d.get("name") == last4_or_name)]
+            removed = before - len(devices)
+            if removed:
+                candidate = dict(self.cfg)
+                candidate["devices"] = devices
+                save_config(candidate)
+                self.cfg.update(candidate)
         if removed:
-            save_config(self.cfg)
             log("已撤销 %d 个设备令牌", removed)
         return removed
 
@@ -526,26 +697,41 @@ class State:
         if not token:
             return False, None
         h = _token_hash(token)
-        for d in self.cfg["devices"]:
-            if hmac.compare_digest(d.get("sha256", ""), h):
-                d["last_seen"] = int(time.time())
-                return True, d
+        with self._lock:
+            for d in self.cfg["devices"]:
+                if hmac.compare_digest(d.get("sha256", ""), h):
+                    d["last_seen"] = int(time.time())
+                    return True, d
         return False, None
 
     def note_seen(self, device, ip):
-        if device is None:
-            return
-        device["last_ip"] = ip
-        # 只更新内存即可，避免每个采样都写盘；退出时统一落盘
-        device["_dirty"] = True
+        with self._lock:
+            # A request authenticated before revoke must not resurrect its detached record.
+            if device is not None and any(d is device for d in self.cfg["devices"]):
+                device["last_ip"] = ip
+                device["_dirty"] = True
+
+    def management_snapshot(self):
+        with self._lock:
+            return ({k: copy.deepcopy(v) for k, v in self.cfg.items() if k not in ("devices", "_revision")},
+                    [{k: copy.deepcopy(v) for k, v in d.items() if k not in ("sha256", "_dirty")}
+                     for d in self.cfg["devices"]],
+                    dict(self.pending_pair) if self.pending_pair else None)
 
     def flush(self):
         try:
-            for d in self.cfg["devices"]:
-                d.pop("_dirty", None)
-            save_config(self.cfg)
+            with self._lock:
+                candidate = dict(self.cfg)
+                candidate["devices"] = [{k: v for k, v in d.items() if k != "_dirty"}
+                                        for d in self.cfg["devices"]]
+                save_config(candidate)
+                self.cfg["_revision"] = candidate.get("_revision", 0)
+                for d in self.cfg["devices"]:
+                    d.pop("_dirty", None)
+            return True
         except Exception as exc:                   # noqa: BLE001
             log("配置落盘失败：%s: %s", type(exc).__name__, exc)
+            return False
 
 
 # ---------------------------------------------------------------- HTTP
@@ -566,8 +752,11 @@ class Handler(BaseHTTPRequestHandler):
             return "-"                             # AF_UNIX 的 client_address 是空串
 
     def log_message(self, fmt, *args):
-        # 采样请求太频繁，不进日志文件，只留在内存尾巴里（便于管理页排查）
-        log("%s %s", self.address_string(), fmt % args)
+        # Never log query credentials; routine polling does not need an access entry.
+        path = urllib.parse.urlsplit(getattr(self, "path", "")).path
+        if path in ("/api/v1/status", "/api/v1/history") and len(args) > 1 and str(args[1]) == "200":
+            return
+        log("%s %s %s", self.address_string(), getattr(self, "command", "-"), path)
 
     @property
     def is_unix(self):
@@ -607,6 +796,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
+        if getattr(self, "close_connection", False):
+            self.send_header("Connection", "close")
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         for k, v in (extra or {}).items():
@@ -621,19 +812,50 @@ class Handler(BaseHTTPRequestHandler):
     def _err(self, code, msg):
         self._send(code, {"ok": False, "error": msg})
 
-    def _read_json(self, limit=64 * 1024):
-        try:
-            n = int(self.headers.get("Content-Length") or 0)
-        except ValueError:
-            n = 0
-        if n <= 0 or n > limit:
-            return {}
-        try:
-            return json.loads(self.rfile.read(n).decode("utf-8")) or {}
-        except Exception:                          # noqa: BLE001
-            return {}
+    def _body_length(self, limit):
+        """Only an unambiguous decimal Content-Length is supported."""
+        if self.headers.get_all("Transfer-Encoding"):
+            raise BadRequest("不支持 Transfer-Encoding")
+        lengths = self.headers.get_all("Content-Length", [])
+        if len(lengths) > 1:
+            raise BadRequest("Content-Length 不得重复")
+        if not lengths:
+            return 0
+        raw = lengths[0].strip()
+        if not raw or any(c < "0" or c > "9" for c in raw):
+            raise BadRequest("Content-Length 必须为十进制非负整数")
+        # Avoid unbounded integer conversion, including long zero prefixes.
+        digits = raw.lstrip("0") or "0"
+        if len(digits) > len(str(limit)):
+            raise BadRequest("请求体过大")
+        n = int(digits)
+        if n > limit:
+            raise BadRequest("请求体过大")
+        return n
 
-    # ---- 网关鉴权：能连上 0600 的 Socket 就已经过了网关，但仍校验身份头
+    def _read_json(self, limit=64 * 1024, allow_empty=False):
+        """读 JSON 请求体；坏输入抛 BadRequest（do_POST 统一回 400，见 M33）。
+
+        allow_empty=True 只给"请求体可选"的端点用（/api/pairing/new 的 ttl 有默认值）：
+        没有体是合法的，但**有体却是坏的**仍然是 400。
+        """
+        n = self._body_length(limit)
+        if n == 0:
+            if allow_empty:
+                return {}
+            raise BadRequest("缺少请求体")
+        data = self.rfile.read(n)
+        if len(data) != n:
+            raise BadRequest("请求体不完整（读到 %d / 声明 %d 字节）" % (len(data), n))
+        try:
+            body = json.loads(data.decode("utf-8"))
+        except Exception:                          # noqa: BLE001
+            raise BadRequest("请求体不是合法 JSON")
+        if not isinstance(body, dict):
+            raise BadRequest("请求体必须是 JSON 对象")
+        return body
+
+    # ---- 管理鉴权：0600 限 root/所属用户；身份头仍依赖安装身份和目录信任。
     def _gateway_user(self):
         uid = (self.headers.get("X-Trim-Userid") or "").strip()
         isadmin = (self.headers.get("X-Trim-Isadmin") or "").strip().lower()
@@ -654,7 +876,8 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---- 遥测鉴权
     def _telemetry_ok(self):
-        mode = self.server.state.cfg.get("auth_mode", "pairing")
+        with self.server.state._lock:
+            mode = self.server.state.cfg.get("auth_mode", "pairing")
         if mode == "lan":
             ok = is_private_ip(self.address_string())
             return ok, "仅允许内网地址访问" if not ok else None, None
@@ -702,6 +925,11 @@ class Handler(BaseHTTPRequestHandler):
         return True
 
     def do_GET(self):
+        try:
+            self._body_length(0)
+        except BadRequest as exc:
+            self.close_connection = True
+            return self._err(400, str(exc))
         path, q = self._normalize()
         if self._bootstrap_guard(path):
             return
@@ -712,11 +940,21 @@ class Handler(BaseHTTPRequestHandler):
             self._err(500, "%s: %s" % (type(exc).__name__, exc))
 
     def do_POST(self):
+        # Auth/unknown/no-body routes may leave bytes unread. Never reinterpret
+        # those bytes as a subsequent request, including after an early error.
+        self.close_connection = True
+        try:
+            self._body_length(64 * 1024)
+        except BadRequest as exc:
+            return self._err(400, str(exc))
         path, q = self._normalize()
         if self._bootstrap_guard(path):
             return
         try:
             self._route_post(path, q)
+        except BadRequest as exc:
+            # 请求体的问题 = 客户端的问题（审计 M33）
+            self._err(400, str(exc))
         except Exception as exc:                   # noqa: BLE001
             log("处理 %s 出错：%s: %s", path, type(exc).__name__, exc)
             self._err(500, "%s: %s" % (type(exc).__name__, exc))
@@ -727,7 +965,8 @@ class Handler(BaseHTTPRequestHandler):
         coll = st.collector
 
         if path in ("/api/v1/health", "/healthz"):
-            snap = coll.snapshot
+            with coll.lock:
+                snap = copy.deepcopy(coll.snapshot)
             return self._send(200, {
                 "ok": True, "app": APPNAME, "ver": APPVER,
                 "ts": int(time.time()),
@@ -745,18 +984,16 @@ class Handler(BaseHTTPRequestHandler):
             # SHA-256 再显示给用户。如果板子直接显示 JSON 里的 tls_fingerprint，
             # 中间人只要同时伪造证书和这个字段就能骗过肉眼比对。
             tls = getattr(st, "tls", {}) or {}
-            cert_pem = None
-            if tls.get("enabled") and tls.get("cert"):
-                try:
-                    with open(tls["cert"], "r") as fp:
-                        cert_pem = fp.read()
-                except OSError:
-                    cert_pem = None
+            # Same generation as the active SSLContext, never reread disk.
+            cert_pem = tls.get("cert_pem") if tls.get("enabled") else None
+            with st._lock:
+                auth_mode = st.cfg.get("auth_mode")
+                paired_count = len(st.cfg["devices"])
             payload = {
                 "app": APPNAME, "ver": APPVER, "proto": PROTO_VERSION,
                 "host": coll.hostname, "uid": os.getuid(),
-                "auth_mode": st.cfg.get("auth_mode"),
-                "paired_devices": len(st.cfg.get("devices", [])),
+                "auth_mode": auth_mode,
+                "paired_devices": paired_count,
                 "tls": bool(tls.get("enabled")),
                 "tls_fingerprint": tls.get("fingerprint") if tls.get("enabled") else None,
                 "cert_pem": cert_pem,
@@ -784,7 +1021,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(401, {"ok": False, "error": why,
                                             "how": "POST /api/v1/pair {\"code\":\"123456\",\"name\":\"lcd\"}"})
             if path == "/api/v1/status":
-                snap = dict(coll.snapshot)
+                with coll.lock:
+                    snap = copy.deepcopy(coll.snapshot)
                 snap["age_s"] = round(max(0.0, time.time() - snap.get("ts", 0)), 1) if snap.get("ts") else None
                 snap["app"] = APPNAME
                 snap["app_ver"] = APPVER
@@ -816,7 +1054,11 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/state":
             if self._require_admin() is None:
                 return
-            snap = coll.snapshot
+            cfg, devices, pending = st.management_snapshot()
+            with coll.lock:
+                snap = copy.deepcopy(coll.snapshot)
+                samples = len(coll.history)
+                interval, hist_len = coll.interval, coll.hist_len
             return self._send(200, {
                 "ok": True,
                 "app": APPNAME, "ver": APPVER, "proto": PROTO_VERSION,
@@ -827,15 +1069,14 @@ class Handler(BaseHTTPRequestHandler):
                     "ready": bool(snap.get("ready")), "seq": snap.get("seq", 0),
                     "ts": snap.get("ts", 0),
                     "age_s": round(max(0.0, time.time() - snap.get("ts", 0)), 1) if snap.get("ts") else None,
-                    "interval": coll.interval, "hist_len": coll.hist_len,
-                    "samples": len(coll.history),
+                    "interval": interval, "hist_len": hist_len,
+                    "samples": samples,
                 },
-                "config": {k: v for k, v in st.cfg.items() if k != "devices"},
-                "devices": [{k: v for k, v in d.items() if k not in ("sha256", "_dirty")}
-                            for d in st.cfg.get("devices", [])],
-                "pairing": ({"expires_in": int(st.pending_pair["expires"] - time.time())}
-                            if st.pending_pair else None),
-                "listen": {"socket": socket_path(), "tcp": "%s:%s" % (st.cfg["bind"], st.cfg["port"])},
+                "config": cfg,
+                "devices": devices,
+                "pairing": ({"expires_in": int(pending["expires"] - time.time())}
+                            if pending else None),
+                "listen": {"socket": socket_path(), "tcp": "%s:%s" % (cfg["bind"], cfg["port"])},
                 "tls": {k: v for k, v in (getattr(st, "tls", {}) or {}).items() if k != "key"},
                 "paths": {"appdest": app_dest(), "pkgvar": pkg_var(), "pkgetc": pkg_etc()},
             })
@@ -859,7 +1100,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/status-now":
             if self._require_admin() is None:
                 return
-            return self._send(200, coll.snapshot)
+            with coll.lock:
+                snap = copy.deepcopy(coll.snapshot)
+            return self._send(200, snap)
 
         return self._err(404, "not found: " + path)
 
@@ -896,7 +1139,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/pairing/new":
             if self._require_admin() is None:
                 return
-            body = self._read_json()
+            body = self._read_json(allow_empty=True)     # ttl 有默认值，体可以不给
             try:
                 ttl = max(60, min(1800, int(body.get("ttl") or 300)))
             except (TypeError, ValueError):
@@ -922,10 +1165,26 @@ class Handler(BaseHTTPRequestHandler):
             if self._require_admin() is None:
                 return
             body = self._read_json()
-            on = bool(body.get("enabled"))
-            st.cfg["docker_enabled"] = on
-            st.collector.docker_enabled = on
-            save_config(st.cfg)
+            # enabled 必须**明确给出**（审计 M33）：以前 body.get("enabled") 缺字段就是
+            # False，于是"请求体坏了"会被当成"用户要关掉容器采集"，还持久化下去。
+            if "enabled" not in body:
+                return self._err(400, "缺少 enabled 字段（true / false）")
+            raw = body["enabled"]
+            if isinstance(raw, bool):
+                on = raw
+            elif isinstance(raw, (int, float)) and raw in (0, 1):
+                on = bool(raw)
+            elif isinstance(raw, str) and raw.strip().lower() in (
+                    "1", "true", "yes", "on", "0", "false", "no", "off"):
+                on = raw.strip().lower() in ("1", "true", "yes", "on")
+            else:
+                return self._err(400, "enabled 取值非法：%r" % (raw,))
+            with st._lock:
+                candidate = dict(st.cfg)
+                candidate["docker_enabled"] = on
+                save_config(candidate)
+                st.cfg.update(candidate)
+                st.collector.docker_enabled = on
             log("容器采集已%s", "开启" if on else "关闭")
             return self._send(200, {"ok": True, "docker_enabled": on})
 
@@ -934,7 +1193,7 @@ class Handler(BaseHTTPRequestHandler):
             if self._require_admin() is None:
                 return
             self._send(200, {"ok": True})
-            threading.Thread(target=self.server.shutdown, daemon=True).start()
+            st.stop_requested.set()
             return
 
         return self._err(404, "not found: " + path)
@@ -942,6 +1201,12 @@ class Handler(BaseHTTPRequestHandler):
     # ---- 配置写入
     def _apply_config(self, body):
         st = self.server.state
+        with st._lock:
+            return self._apply_config_locked(body)
+
+    def _apply_config_locked(self, body):
+        st = self.server.state
+        candidate = dict(st.cfg)
         changed, restart = [], []
         for key, cast, lo, hi in (("interval", float, 0.2, 60.0),
                                   ("hist_len", int, 30, 3600),
@@ -949,20 +1214,20 @@ class Handler(BaseHTTPRequestHandler):
             if key in body:
                 try:
                     val = cast(body[key])
-                except (TypeError, ValueError):
+                except (TypeError, ValueError, OverflowError):
                     raise ConfigError("%s 取值非法" % key)
                 if not (lo <= val <= hi):
                     raise ConfigError("%s 必须在 %s~%s 之间" % (key, lo, hi))
-                if st.cfg.get(key) != val:
-                    st.cfg[key] = val
+                if candidate.get(key) != val:
+                    candidate[key] = val
                     changed.append(key)
                     if key == "port":
                         restart.append(key)
         if "bind" in body:
             b = str(body["bind"]).strip()
             if b in ("0.0.0.0", "127.0.0.1", "::"):
-                if st.cfg.get("bind") != b:
-                    st.cfg["bind"] = b
+                if candidate.get("bind") != b:
+                    candidate["bind"] = b
                     changed.append("bind")
                     restart.append("bind")
             else:
@@ -971,20 +1236,25 @@ class Handler(BaseHTTPRequestHandler):
             m = str(body["auth_mode"]).strip()
             if m not in ("pairing", "lan"):
                 raise ConfigError("auth_mode 只允许 pairing / lan")
-            if st.cfg.get("auth_mode") != m:
-                st.cfg["auth_mode"] = m
+            if candidate.get("auth_mode") != m:
+                candidate["auth_mode"] = m
                 changed.append("auth_mode")
         if "tls_enabled" in body:
             v = body["tls_enabled"]
-            v = v if isinstance(v, bool) else str(v).strip().lower() in ("1", "true", "yes", "on")
-            if bool(st.cfg.get("tls_enabled", True)) != v:
-                st.cfg["tls_enabled"] = v
+            if not isinstance(v, bool):
+                text = str(v).strip().lower()
+                if text not in ("1", "true", "yes", "on", "0", "false", "no", "off"):
+                    raise ConfigError("tls_enabled 取值非法")
+                v = text in ("1", "true", "yes", "on")
+            if bool(candidate.get("tls_enabled", True)) != v:
+                candidate["tls_enabled"] = v
                 changed.append("tls_enabled")
                 restart.append("tls_enabled")     # 换/停 TLS 必须重新绑定监听套接字
         if changed:
+            save_config(candidate)
+            st.cfg.update(candidate)
             st.collector.interval = float(st.cfg["interval"])
             st.collector.set_hist_len(int(st.cfg["hist_len"]))   # 会顺手截断已有历史
-            save_config(st.cfg)
             log("配置已更新：%s", ", ".join(changed))
         return changed, restart
 
@@ -1069,45 +1339,203 @@ def _port_busy(host, port, timeout=1.0):
 
 # ---------------------------------------------------------------- 服务器
 
+# accept 线程里的等待上界（审计 H12）。首字节给得很短：正常客户端 connect 之后
+# 立刻就会把 ClientHello / 请求行写出去；握手给得宽一些，因为远端要算密码学。
+TLS_PEEK_TIMEOUT_S = 3.0
+TLS_HANDSHAKE_TIMEOUT_S = 10.0
+HTTP_IDLE_TIMEOUT_S = 15.0
+# cmd/main currently waits 40 * .25s before SIGKILL; share one drain deadline.
+SHUTDOWN_DRAIN_BUDGET_S = 8.0
+
+
+def _close_quietly(conn):
+    try:
+        conn.close()
+    except OSError:
+        pass
+
+
 class ThreadedHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
     daemon_threads = True
     allow_reuse_address = True
     request_queue_size = 64
     is_tls = False
     ssl_context = None
+    # 整个连接生命周期上限，先占槽再创建线程，明文和Unix管理面也适用。
+    # 保留probe_limit名称兼容已有检查；HTTP空闲超时不等于慢滴请求总时限。
+    probe_limit = 32
+    connection_timeout_s = 30.0
+    drain_timeout_s = 10.0
+
+    def __init__(self, *args, **kwargs):
+        self._probe_slots = threading.BoundedSemaphore(self.probe_limit)
+        self._requests_done = threading.Condition()
+        self._requests = {}
+        self._closing = False
+        self._probe_rejected = 0
+        self._probe_last_log = 0.0
+        super().__init__(*args, **kwargs)
 
     def get_request(self):
-        """accept 一条连接，按首字节决定走 TLS 还是明文。
+        """只做 accept —— 首字节判定与 TLS 握手都挪到连接线程里（审计 H12）。
 
-        为什么不在监听套接字上直接 wrap：开发板首次连接时还不知道该信任哪张
-        证书，没法建 TLS，而 ESP-IDF 的 esp-tls 在没有任何 CA 来源时会**直接
-        拒绝连接**（"No server verification option set"，除非全局打开
-        ESP_TLS_INSECURE）。与其让板子全局放宽校验，不如让这里多收一种明文
-        连接、只用来发证书——板子的 TLS 配置保持严格。
+        为什么这里要多收一种明文连接：开发板首次连接时还不知道该信任哪张证书，
+        没法建 TLS，而 ESP-IDF 的 esp-tls 在没有任何 CA 来源时会**直接拒绝连接**
+        （"No server verification option set"，除非全局打开 ESP_TLS_INSECURE）。
+        与其让板子全局放宽校验，不如让服务多收一种明文连接、只用来发证书，
+        板子的 TLS 配置保持严格。分派依据是 TLS 记录头第一个字节 0x16。
 
-        分派依据是 TLS 记录头第一个字节 0x16（handshake）。用 MSG_PEEK 而不是
-        recv：真正建 TLS 时这一个字节必须还在缓冲区里，否则握手会因为记录被
-        截断而失败。
+        **为什么 probe 不在这里做（审计 H12）**：accept 线程一旦阻塞，堵住的是
+        整个服务的入口。1.2.5 里 recv(1, MSG_PEEK)（默认无限等）和 wrap_socket
+        （10 秒）都在这一层，于是几个"连上不说话"或"握手打一半"的客户端就能把
+        accept 循环钉死：板子的遥测请求排在后面进不来，屏上数据停更，而服务日志
+        里一个字都没有（表现为"NAS 那边好好的，板子就是不刷新"）。
+        现在这一层只有 accept()，probe 在 process_request_thread（每连接一个线程）
+        里做，各自有超时；创建线程前占槽，直到HTTP连接结束才释放。
+        HTTP空闲超过HTTP_IDLE_TIMEOUT_S会关闭；这不是请求总时限。
         """
         conn, addr = self.socket.accept()
-        if self.ssl_context is None:
-            return conn, addr
         try:
-            head = conn.recv(1, socket.MSG_PEEK)
+            conn.settimeout(None)
         except OSError:
-            head = b""
-        if head[:1] == b"\x16":
+            pass
+        return conn, addr
+
+    def process_request(self, request, client_address):
+        # Reserve and register before spawning; close cannot miss an accepted worker.
+        with self._requests_done:
+            if self._closing:
+                self.shutdown_request(request)
+                return
+            if not self._probe_slots.acquire(blocking=False):
+                self._probe_rejected += 1
+                now = time.monotonic()
+                if now - self._probe_last_log >= 5.0:
+                    self._probe_last_log = now
+                    log("连接并发已达上限 %d，关闭连接（累计拒绝 %d）",
+                        self.probe_limit, self._probe_rejected)
+                self.shutdown_request(request)
+                return
+            self._requests[request] = request
             try:
-                conn = self.ssl_context.wrap_socket(conn, server_side=True)
-            except OSError:
-                # 握手失败的连接没人接手，这里自己关掉（socketserver 只在
-                # get_request 成功后才会接管生命周期）
+                super().process_request(request, client_address)
+            except Exception:
+                # Interrupts may arrive after the worker starts: keep ownership
+                # for worker/drain rather than releasing a live connection twice.
+                del self._requests[request]
+                self._probe_slots.release()
+                self._requests_done.notify_all()
+                self.shutdown_request(request)
+                raise
+
+    def process_request_thread(self, request, client_address):
+        original = request
+        timer = None
+
+        def expire():
+            # TLS wrapping detaches the raw fd. Resolve the registered live socket
+            # under the same lock as wrap/publication and shutdown.
+            with self._requests_done:
+                live = self._requests.get(original)
+                if live is not None:
+                    try:
+                        live.shutdown(socket.SHUT_RDWR)
+                    except OSError:
+                        pass
+
+        try:
+            # Absolute connection lifetime, including peek/handshake/HTTP; bytes
+            # do not reset it. OS scheduling/backend waits are not hard realtime.
+            timer = threading.Timer(self.connection_timeout_s, expire)
+            timer.daemon = True
+            timer.start()
+            if self.ssl_context is not None:
+                request = self._tls_probe(request, client_address)
+                if request is None:
+                    return
+            request.settimeout(HTTP_IDLE_TIMEOUT_S)
+            self.finish_request(request, client_address)
+        except Exception:
+            self.handle_error(request, client_address)
+        finally:
+            try:
+                if timer is not None:
+                    timer.cancel()
+                    if timer.ident is not None:
+                        timer.join()
+            finally:
                 try:
-                    conn.close()
+                    with self._requests_done:
+                        live = self._requests.get(original, request)
+                    if live is not None:
+                        self.shutdown_request(live)
+                finally:
+                    with self._requests_done:
+                        self._requests.pop(original, None)
+                        self._probe_slots.release()
+                        self._requests_done.notify_all()
+
+    def server_close(self):
+        # Stop admission and interrupt socket reads, then wait for application writers.
+        # A blocked filesystem/backend is not cancellable; report failed drain instead
+        # of claiming a final flush while a daemon worker can still modify state.
+        with self._requests_done:
+            self._closing = True
+            for request in self._requests.values():
+                try:
+                    request.shutdown(socket.SHUT_RDWR)
                 except OSError:
                     pass
-                raise
-        return conn, addr
+        super().server_close()
+        deadline = min(time.monotonic() + self.drain_timeout_s,
+                       getattr(self, "shutdown_deadline", float("inf")))
+        with self._requests_done:
+            while self._requests:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("请求线程未在停止预算内退出")
+                self._requests_done.wait(remaining)
+
+    def _tls_probe(self, conn, addr):
+        """首字节 0x16 → 真握手；否则按明文放行。任何失败都自己关掉并返回 None。"""
+        try:
+            conn.settimeout(TLS_PEEK_TIMEOUT_S)
+            head = conn.recv(1, socket.MSG_PEEK)
+        except socket.timeout:
+            _close_quietly(conn)
+            log("连接 %s 在 %.1fs 内没有发出任何字节（扫描器或半开连接），已关闭",
+                addr, TLS_PEEK_TIMEOUT_S)
+            return None
+        except OSError as exc:
+            _close_quietly(conn)
+            log("连接 %s 在首字节之前断开（%s），已关闭", addr, exc)
+            return None
+        if not head:
+            _close_quietly(conn)          # EOF/RST：对端什么都没说就关了
+            return None
+        if head[:1] == b"\x16":
+            try:
+                conn.settimeout(TLS_HANDSHAKE_TIMEOUT_S)
+                original = conn
+                # Publish the SSLSocket before handshake detaches the raw fd from
+                # the old object, so shutdown can interrupt a partial handshake.
+                with self._requests_done:
+                    if self._closing:
+                        _close_quietly(conn)
+                        return None
+                    conn = self.ssl_context.wrap_socket(
+                        conn, server_side=True, do_handshake_on_connect=False)
+                    self._requests[original] = conn
+                conn.do_handshake()
+            except OSError as exc:
+                _close_quietly(conn)
+                log("连接 %s 的 TLS 握手失败（%s），已关闭", addr, exc)
+                return None
+        try:
+            conn.settimeout(HTTP_IDLE_TIMEOUT_S)  # HTTP阶段仍有空闲上界
+        except OSError:
+            pass
+        return conn
 
     def handle_error(self, request, client_address):
         # 握手/读写中途的 TLS 错误是正常的网络噪音（扫描器、明文探测），不该把
@@ -1123,18 +1551,45 @@ class UnixHTTPServer(ThreadedHTTPServer):
     is_unix = True
 
     def server_bind(self):
-        if os.path.exists(self.server_address):
-            os.unlink(self.server_address)
+        # Never take ownership of a pre-existing path, including a symlink.
+        self._unix_identity = None
         socketserver.TCPServer.server_bind(self)
+        info = os.lstat(self.server_address)
+        if not stat.S_ISSOCK(info.st_mode):
+            raise OSError("绑定后的路径不是Socket")
+        self._unix_identity = (info.st_dev, info.st_ino)
         self.server_name = "nasscreencompanion"
         self.server_port = 0
+        # Constructor failure calls server_close, including chmod/listen errors.
+        os.chmod(self.server_address, 0o600)
 
     def server_activate(self):
         socketserver.TCPServer.server_activate(self)
+
+    def _cleanup_unix_path(self):
+        identity = getattr(self, "_unix_identity", None)
+        if identity is None:
+            return
         try:
-            os.chmod(self.server_address, 0o600)
-        except OSError as exc:
-            log("Socket 权限设置失败（%s），继续启动", exc)
+            info = os.lstat(self.server_address)
+        except FileNotFoundError:
+            self._unix_identity = None
+            return
+        if not stat.S_ISSOCK(info.st_mode) or (info.st_dev, info.st_ino) != identity:
+            # A later instance/file now owns the name; retain it on all exits.
+            self._unix_identity = None
+            return
+        try:
+            os.unlink(self.server_address)
+        except FileNotFoundError:
+            pass
+        self._unix_identity = None
+
+    def server_close(self):
+        try:
+            super().server_close()
+        finally:
+            self._cleanup_unix_path()
 
 
 def make_servers(state, cfg, bind_socket=True):
@@ -1147,128 +1602,176 @@ def make_servers(state, cfg, bind_socket=True):
     servers = []
     problems = []
 
-    if bind_socket:
-        try:
-            srv = UnixHTTPServer(socket_path(), Handler)
-            srv.state = state
-            servers.append(srv)
-        except OSError as exc:
-            problems.append(("管理面 Unix Socket", socket_path(), exc))
-
-    # TLS 只包遥测面：管理面走的是 Unix Socket，外面已经有飞牛的网关会话，
-    # 再套一层 TLS 没有意义（网关到 Socket 是本机通信）。
-    tls_info = {"configured": bool(cfg.get("tls_enabled", True)), "enabled": False,
-                "cert": tls_cert_path(), "key": tls_key_path(),
-                "fingerprint": None, "subject": None, "not_after": None,
-                "generated": False, "error": None}
-    ssl_ctx = None
-    if tls_info["configured"]:
-        tls_info = prepare_tls()
-        if tls_info["enabled"]:
-            ssl_ctx, why = load_ssl_context(tls_info)
-            if ssl_ctx is None:
-                tls_info["enabled"] = False
-                tls_info["error"] = "加载证书失败：%s" % why
-    state.tls = tls_info
-
     try:
-        tcp = ThreadedHTTPServer((cfg["bind"], int(cfg["port"])), Handler)
-        tcp.state = state
-        tcp.is_unix = False
-        tcp.is_tls = bool(ssl_ctx)
-        # 不在这里 wrap 监听套接字：改成每条连接在 get_request() 里按首字节
-        # 分派，好让板子用一次明文 GET 取走证书（见 ThreadedHTTPServer）。
-        tcp.ssl_context = ssl_ctx
-        servers.append(tcp)
-    except OSError as exc:
-        problems.append(("遥测面 TCP", "%s:%s" % (cfg["bind"], cfg["port"]), exc))
+        if bind_socket:
+            try:
+                srv = UnixHTTPServer(socket_path(), Handler)
+                srv.state = state
+                servers.append(srv)
+            except OSError as exc:
+                problems.append(("管理面 Unix Socket", socket_path(), exc))
 
-    return servers, problems
+        # TLS 只包遥测面：管理面走的是 Unix Socket，外面已经有飞牛的网关会话，
+        # 再套一层 TLS 没有意义（网关到 Socket 是本机通信）。
+        tls_info = {"configured": bool(cfg.get("tls_enabled", True)), "enabled": False,
+                    "cert": tls_cert_path(), "key": tls_key_path(),
+                    "fingerprint": None, "subject": None, "not_after": None,
+                    "generated": False, "error": None}
+        ssl_ctx = None
+        if tls_info["configured"]:
+            tls_info = prepare_tls()
+            if tls_info["enabled"]:
+                ssl_ctx, why = load_active_tls(tls_info)
+                if ssl_ctx is None:
+                    tls_info["enabled"] = False
+                    tls_info["error"] = "加载证书失败：%s" % why
+        state.tls = tls_info
+        if tls_info["configured"] and ssl_ctx is None:
+            problems.append(("遥测面 TCP", "%s:%s" % (cfg["bind"], cfg["port"]),
+                             RuntimeError("TLS 已配置但不可用：%s" % (tls_info.get("error") or "证书不可用"))))
+            return servers, problems
+
+        try:
+            tcp = ThreadedHTTPServer((cfg["bind"], int(cfg["port"])), Handler)
+            tcp.state = state
+            tcp.is_unix = False
+            tcp.is_tls = bool(ssl_ctx)
+            # 不在这里 wrap 监听套接字：改成每条连接在 get_request() 里按首字节
+            # 分派，好让板子用一次明文 GET 取走证书（见 ThreadedHTTPServer）。
+            tcp.ssl_context = ssl_ctx
+            servers.append(tcp)
+        except OSError as exc:
+            problems.append(("遥测面 TCP", "%s:%s" % (cfg["bind"], cfg["port"]), exc))
+
+        return servers, problems
+    except BaseException:
+        # Ownership has not yet been returned to run; unwind every bound listener.
+        for srv in servers:
+            try:
+                srv.server_close()
+            except Exception as exc:               # noqa: BLE001
+                log("绑定失败后的监听器清理失败：%s", exc)
+        raise
 
 
 def run(cfg):
     state = State(cfg)
-    servers, problems = make_servers(state, cfg)
-
-    if not any(not getattr(s, "is_unix", False) for s in servers):
-        # 遥测端口起不来才是真正的致命错误：开发板什么也读不到
-        detail = ""
-        for what, where, exc in problems:
-            if what == "遥测面 TCP":
-                detail = "%s（%s）" % (exc, where)
-                break
-        if "Address already in use" in detail or (problems and
-                                                  getattr(problems[-1][2], "errno", None) == errno.EADDRINUSE):
-            msg = ("遥测端口 %s:%s 已被占用。为避免影响正在运行的服务，"
-                   "本应用不会结束该进程。请改端口，或先确认占用者是谁。" % (cfg["bind"], cfg["port"]))
-        else:
-            msg = "遥测端口 %s:%s 无法监听：%s" % (cfg["bind"], cfg["port"], detail or "未知错误")
-        log("启动失败：%s", msg)
-        print(msg, file=sys.stderr)
-        return 3
-
-    log("启动：app=%s ver=%s proto=%d uid=%d", APPNAME, APPVER, PROTO_VERSION, os.getuid())
-    state.socket_error = None
-    for what, where, exc in problems:
-        state.socket_error = "%s 绑定失败：%s（%s）" % (what, exc, where)
-        log("警告：%s——管理页会打不开，遥测面不受影响", state.socket_error)
-    if any(getattr(s, "is_unix", False) for s in servers):
-        log("管理面 Socket：%s（0600，走飞牛统一网关）", socket_path())
-    if state.tls.get("enabled"):
-        log("遥测面 TLS：已启用（%s，指纹 SHA256 %s，到期 %s）",
-            state.tls.get("subject") or "自签证书", state.tls.get("fingerprint"),
-            state.tls.get("not_after") or "未知")
-        log("首次取证书通道：同一个端口上另收明文连接，但只放行 /api/v1/identity"
-            "（开发板在固定证书之前建不了 TLS，靠它把证书取回去比对指纹）")
-    elif state.tls.get("configured"):
-        log("遥测面 TLS：未能启用（%s）——本次为明文 HTTP，配对令牌仍然必需。"
-            "管理页「诊断」里可以看到详情。", state.tls.get("error") or "未知原因")
-    else:
-        log("遥测面 TLS：配置里被关闭（tls_enabled=false）——明文 HTTP，仅限排障")
-    log("遥测面 TCP：%s:%s（auth_mode=%s，docker=%s，tls=%s）",
-        cfg["bind"], cfg["port"], cfg["auth_mode"], cfg["docker_enabled"],
-        "on" if state.tls.get("enabled") else "off")
-
-    state.collector.start()
-    # 先绑定再等首帧：端口早一刻可用，板子不会连不上
-    deadline = time.time() + 5.0
-    while time.time() < deadline and not state.collector.snapshot.get("ready"):
-        time.sleep(0.1)
-
-    threads = []
-    for srv in servers:
-        t = threading.Thread(target=srv.serve_forever, kwargs={"poll_interval": 0.5},
-                             name="http", daemon=True)
-        t.start()
-        threads.append(t)
-
-    log("就绪：seq=%s ready=%s", state.collector.snapshot.get("seq"),
-        state.collector.snapshot.get("ready"))
+    servers, started_servers, threads = [], [], []
+    cleanup_failed = False
+    exit_code = 0
+    previous_term = signal.getsignal(signal.SIGTERM)
+    # Event-only handler also covers startup and cannot interrupt cleanup a second time.
+    signal.signal(signal.SIGTERM, lambda *_: state.stop_requested.set())
     try:
-        while any(t.is_alive() for t in threads):
-            time.sleep(0.5)
-    except KeyboardInterrupt:
-        log("收到中断信号，正在停止")
+        servers, problems = make_servers(state, cfg)
+        if not any(not getattr(s, "is_unix", False) for s in servers):
+            # 遥测端口起不来才是真正的致命错误：开发板什么也读不到
+            detail = ""
+            for what, where, exc in problems:
+                if what == "遥测面 TCP":
+                    detail = "%s（%s）" % (exc, where)
+                    break
+            if "Address already in use" in detail or (problems and
+                                                      getattr(problems[-1][2], "errno", None) == errno.EADDRINUSE):
+                msg = ("遥测端口 %s:%s 已被占用。为避免影响正在运行的服务，"
+                       "本应用不会结束该进程。请改端口，或先确认占用者是谁。" % (cfg["bind"], cfg["port"]))
+            else:
+                msg = "遥测端口 %s:%s 无法监听：%s" % (cfg["bind"], cfg["port"], detail or "未知错误")
+            log("启动失败：%s", msg)
+            print(msg, file=sys.stderr)
+            exit_code = 3
+        else:
+            log("启动：app=%s ver=%s proto=%d uid=%d", APPNAME, APPVER, PROTO_VERSION, os.getuid())
+            state.socket_error = None
+            for what, where, exc in problems:
+                state.socket_error = "%s 绑定失败：%s（%s）" % (what, exc, where)
+                log("警告：%s——管理页会打不开，遥测面不受影响", state.socket_error)
+            if any(getattr(s, "is_unix", False) for s in servers):
+                log("管理面 Socket：%s（0600，走飞牛统一网关）", socket_path())
+            if state.tls.get("enabled"):
+                log("遥测面 TLS：已启用（%s，指纹 SHA256 %s，到期 %s）",
+                    state.tls.get("subject") or "自签证书", state.tls.get("fingerprint"),
+                    state.tls.get("not_after") or "未知")
+                log("首次取证书通道：同一个端口上另收明文连接，但只放行 /api/v1/identity"
+                    "（开发板在固定证书之前建不了 TLS，靠它把证书取回去比对指纹）")
+            elif state.tls.get("configured"):
+                log("遥测面 TLS：未能启用（%s）——本次为明文 HTTP，配对令牌仍然必需。"
+                    "管理页「诊断」里可以看到详情。", state.tls.get("error") or "未知原因")
+            else:
+                log("遥测面 TLS：配置里被关闭（tls_enabled=false）——明文 HTTP，仅限排障")
+            log("遥测面 TCP：%s:%s（auth_mode=%s，docker=%s，tls=%s）",
+                cfg["bind"], cfg["port"], cfg["auth_mode"], cfg["docker_enabled"],
+                "on" if state.tls.get("enabled") else "off")
+
+            if not state.stop_requested.is_set():
+                state.collector.start()
+            # 先绑定再等首帧：端口早一刻可用，板子不会连不上
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                with state.collector.lock:
+                    ready = state.collector.snapshot.get("ready")
+                if ready or state.stop_requested.wait(0.1):
+                    break
+
+            for srv in servers:
+                if state.stop_requested.is_set():
+                    break
+                t = threading.Thread(target=srv.serve_forever, kwargs={"poll_interval": 0.5},
+                                     name="http", daemon=True)
+                t.start()
+                threads.append(t)
+                started_servers.append(srv)
+
+            if not state.stop_requested.is_set():
+                with state.collector.lock:
+                    seq, ready = state.collector.snapshot.get("seq"), state.collector.snapshot.get("ready")
+                log("就绪：seq=%s ready=%s", seq, ready)
+            while not state.stop_requested.wait(0.5) and any(t.is_alive() for t in threads):
+                pass
+    except (KeyboardInterrupt, SystemExit):
+        state.stop_requested.set()
+        log("收到停止信号，正在停止")
+    except Exception as exc:                       # noqa: BLE001
+        exit_code = 1
+        log("服务启动/运行失败：%s: %s", type(exc).__name__, exc)
     finally:
+        shutdown_deadline = time.monotonic() + SHUTDOWN_DRAIN_BUDGET_S
         for srv in servers:
+            srv.shutdown_deadline = shutdown_deadline
+        # Stop every accept loop before waiting for either listener's workers.
+        for srv in started_servers:
             try:
                 srv.shutdown()
+            except Exception as exc:               # noqa: BLE001
+                cleanup_failed = True
+                log("监听器停止失败：%s: %s", type(exc).__name__, exc)
+        drained = True
+        for srv in servers:
+            try:
                 srv.server_close()
-            except Exception:                      # noqa: BLE001
-                pass
-        state.collector.stop()
-        state.flush()
+            except Exception as exc:               # noqa: BLE001
+                cleanup_failed = True
+                drained = False
+                log("监听器关闭/请求排空失败：%s: %s", type(exc).__name__, exc)
         try:
-            os.unlink(socket_path())
-        except OSError:
-            pass
-        log("已停止")
-    return 0
+            state.collector.stop(timeout=max(0.0, shutdown_deadline - time.monotonic()))
+        except Exception as exc:                   # noqa: BLE001
+            cleanup_failed = True
+            drained = False
+            log("采集器停止失败：%s: %s", type(exc).__name__, exc)
+        if drained:
+            if not state.flush():
+                cleanup_failed = True
+        else:
+            log("后台线程未排空，跳过最终落盘")
+        log("停止收尾失败" if cleanup_failed else "已停止")
+        signal.signal(signal.SIGTERM, previous_term)
+    return 1 if cleanup_failed else exit_code
 
 
 def selftest():
     cfg = load_config()
-    print(json.dumps({"config": {k: v for k, v in cfg.items() if k != "devices"},
+    print(json.dumps({"config": {k: v for k, v in cfg.items() if k not in ("devices", "_revision")},
                       "devices": len(cfg["devices"]),
                       "paths": {"appdest": app_dest(), "pkgvar": pkg_var(),
                                 "socket": socket_path()}},
@@ -1313,7 +1816,9 @@ def main(argv=None):
                     help="检测端口是否被占用（占用则退出码 1），不做任何改动")
     args = ap.parse_args(argv)
 
-    if args.check_port:
+    if args.check_port is not None:
+        if not 1 <= args.check_port <= 65535:
+            ap.error("--check-port 必须在 1~65535 内")
         cfg = load_config()
         host = cfg["bind"] if cfg["bind"] != "0.0.0.0" else "127.0.0.1"
         if _port_busy(host, args.check_port):
@@ -1330,5 +1835,35 @@ def main(argv=None):
     return run(load_config())
 
 
+def main_with_exit_receipt(argv=None):
+    args = list(sys.argv[1:] if argv is None else argv)
+    serving = not args or "--serve" in args
+    result = 1
+    try:
+        result = main(args)
+        return result
+    except SystemExit as exc:
+        result = exc.code if type(exc.code) is int else 1
+        raise
+    finally:
+        if serving:
+            target = os.path.join(os.path.dirname(cfg_path()), "service-exit.json")
+            fd, candidate = tempfile.mkstemp(prefix=".service-exit-", dir=os.path.dirname(target))
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                    fd = None
+                    json.dump({"pid": os.getpid(), "code": result}, stream)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(candidate, target)
+            finally:
+                if fd is not None:
+                    os.close(fd)
+                try:
+                    os.unlink(candidate)
+                except FileNotFoundError:
+                    pass
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main_with_exit_receipt())

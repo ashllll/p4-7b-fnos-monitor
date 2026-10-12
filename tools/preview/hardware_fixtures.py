@@ -3,10 +3,12 @@
 import argparse
 import json
 from pathlib import Path
-CASES = {"empty": (0,0,0,0,0,0), "compact": (1,0,1,4,1,1),
-         "mixed": (7,3,14,72,32,5), "dense": (24,12,64,192,96,12)}
-def fixture(counts):
-    vols, raids, disks, temps, docker, nets = counts
+CASES = {"empty":   {"counts": (0,0,0,0,0,0),      "dropped": {}},
+         "compact": {"counts": (1,0,1,4,1,1),      "dropped": {}},
+         "mixed":   {"counts": (7,3,14,72,32,5),   "dropped": {"temps": 8, "docker": 3}},
+         "dense":   {"counts": (24,12,64,192,96,12),"dropped": {"temps": 16, "docker": 9, "alerts": 2}}}
+def fixture(case):
+    vols, raids, disks, temps, docker, nets = case["counts"]
     ports = [{"if":"enp%ds0-vlan-backup"%i,"rx_kbs":1250*(i+1),"tx_kbs":250*(i+1),
               "rx_total_gb":900*(i+1),"tx_total_gb":400*(i+1),"state":"up" if i%3 else "down",
               "speed_mbps":1000*(i+1),"physical":True} for i in range(nets)]
@@ -23,15 +25,19 @@ def fixture(counts):
                  "c":35+(i%20)*.6} for i in range(temps)],
        "docker":[{"n":"application-worker-%03d-with-a-long-unique-service-name"%i,"s":"Up 12 days (healthy)" if i%5 else "Exited (137) 3 hours ago","up":bool(i%5)} for i in range(docker)],
        "alerts":[],"modules":{name:{"status":"ok"} for name in ("cpu","mem","net","vols","raid","disks","temps","docker")},
-       "trunc":{"limits":{},"dropped":{}}}
+       # trunc.dropped 以前恒为 {}（审计 M35）：解析层把它的**值**累加进 source_dropped，
+       # 于是"采集端省略 N 项"这条提示在任何一份夹具里都渲染不到 —— 它是控制器上唯一的
+       # 运行期 %d 提示，格式残留审计也就永远看不到它。
+       "trunc":{"limits":{},"dropped":dict(case.get("dropped") or {})}}
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument("directory",type=Path)
     args=parser.parse_args()
     args.directory.mkdir(parents=True,exist_ok=True)
-    for name, counts in CASES.items():
+    for name, case in CASES.items():
         path=args.directory/(name+".json")
-        path.write_text(json.dumps(fixture(counts),ensure_ascii=False),encoding="utf-8")
-        print("%s: %s, %d bytes"%(name,counts,path.stat().st_size))
+        path.write_text(json.dumps(fixture(case),ensure_ascii=False),encoding="utf-8")
+        dropped=sum((case.get("dropped") or {}).values())
+        print("%s: %s dropped=%d, %d bytes"%(name,case["counts"],dropped,path.stat().st_size))
 if __name__ == "__main__":
     main()

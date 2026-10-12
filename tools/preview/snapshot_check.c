@@ -48,6 +48,9 @@ int main(void)
         cJSON_AddStringToObject(v,"mnt",path); cJSON_AddItemToArray(vols,v);
     }
     char *json=cJSON_PrintUnformatted(root);
+    /* 分配失败时 json 是 NULL：以前这里直接 strlen(NULL)（审计 M16）。
+       这条路径跑在 ASan/UBSan 下，崩溃点会落在 cJSON 里，看着像库坏了。 */
+    if (!json) { fprintf(stderr,"cJSON_PrintUnformatted 返回 NULL（内存不够）\n"); return 1; }
     const char *reason=NULL;
     assert(strlen(json)>24*1024);
     assert(fnos_status_parse(json,&shared,&reason));

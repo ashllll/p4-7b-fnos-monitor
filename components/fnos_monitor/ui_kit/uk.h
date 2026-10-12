@@ -83,12 +83,24 @@ void uk_card_flex(lv_obj_t *card, int32_t grow);
 /* ── 文本 ─────────────────────────────────────────────────────────── */
 /* 常用组合：主文本 / 次文本 / 行标签 / 轴标签 / 数字。 */
 lv_obj_t *uk_label(lv_obj_t *parent, const lv_font_t *font, uint32_t hex, const char *txt);
-void uk_set_text(lv_obj_t *label, const char *fmt, ...);   /* printf 风格，自动 lv_label_set_text */
+/* printf 风格，自动 lv_label_set_text。格式串交给编译器核（审计 M12）：少写参数、
+   类型对不上以前只能等真机上屏幕出乱码/豆腐块。 */
+#if defined(__GNUC__)
+void uk_set_text(lv_obj_t *label, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
+#else
+void uk_set_text(lv_obj_t *label, const char *fmt, ...);
+#endif
 /* Numeric labels retain the lv_label API. Explicit opt-in prevents animating IDs/input. */
 lv_obj_t *uk_number_label_create(lv_obj_t *parent);
 void uk_number_set_text(lv_obj_t *label, const char *text, bool animate);
 void uk_number_settle(lv_obj_t *label);
 void uk_number_motion_enable(bool enabled);
+/* Snapshot/reset-free counters; call only on the LVGL thread while holding its lock. */
+typedef struct {
+    size_t bytes, peak_bytes;
+    uint32_t budget_fallbacks, allocation_fallbacks, mask_fallbacks, animation_fallbacks;
+} uk_number_stats_t;
+void uk_number_stats(uk_number_stats_t *out);
 #ifdef FNOS_UI_TESTING
 void uk_number_selfcheck(lv_obj_t *parent);
 #endif
@@ -113,20 +125,18 @@ uk_row_t *uk_row_create(lv_obj_t *parent, bool with_led, bool with_bar);
 /* 填一行；pct < 0 表示不画条；led_hex = 0 表示点用 UK_OFF。 */
 void uk_row_set(uk_row_t *r, const char *l1, const char *l2,
                 const char *val, const char *unit, int32_t pct, uint32_t led_hex);
-void uk_row_show(uk_row_t *r, bool show);   /* data-fit：装不下就隐藏（不销毁） */
+void uk_row_show(uk_row_t *r, bool show);   /* 显式显示/隐藏（不销毁）；清单适配不靠隐藏尾项。 */
 
 /* ── 自适应池（核心） ─────────────────────────────────────────────── */
-/* 池：flex row，内部按需切成 N 列 .uk-col（每列 flex column）。
-   条目先全部挂到池上（uk_row_create/uk_pool_add），最后调一次 uk_pool_relayout()：
-     1) 量"自然行高"（最大条目高，两行行 > 一行行）；
-     2) cols = ceil(n / floor(poolH / rowH))，再被 floor(poolW / min_col_w) 封顶；
-     3) 收敛：列变窄会让设备名换行（行变高）→ 用"列内高度总和"判超，超了就少一列；
-     4) 重挂进各列；行 flex-grow 1 ⇒ 余量平均变成行高（不留白、不出滚动条）。
-   data_fit=true 时：仍装不下的条目不显示（uk_row_show(false)），
-   并把"显示 N / M"写进 note_label（传 NULL 就不写），对应 HTML 原型的 data-fit。 */
+/* 池：横向 flex 换行；条目是池的直接子对象。
+   条目先全部挂到池上（uk_row_create/uk_pool_add），最后调 uk_pool_relayout()：
+   按可用宽度、最小列宽和内容实测宽度决定初始列数；逐次量换行后的行高，
+   尝试增加列数使一屏可容纳更多完整行。仍放不下时通过纵向滚动访问全部条目。
+   data_fit 为保留兼容的参数，当前不参与裁剪；note_label 非 NULL 时显示 N / N。
+   不因设备数量或屏幕高度隐藏清单尾项。 */
 void uk_pool_relayout(lv_obj_t *pool, int32_t min_col_w, bool data_fit, lv_obj_t *note_label);
 lv_obj_t *uk_pool_create(lv_obj_t *parent, int32_t min_col_w);
-void       uk_pool_stretch(lv_obj_t *pool, bool on);   /* false = 条目按自然高紧凑排，不平分余量 */
+void       uk_pool_stretch(lv_obj_t *pool, bool on);   /* 兼容旧调用；当前布局始终使用条目自然高度。 */
 void uk_pool_add(lv_obj_t *pool, lv_obj_t *child);
 int32_t uk_pool_shown(lv_obj_t *pool);
 int32_t uk_pool_cols(lv_obj_t *pool);

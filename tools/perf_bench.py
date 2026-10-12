@@ -16,12 +16,12 @@
 import argparse
 import csv
 import os
+import math
 import re
 import statistics as st
 import sys
 import time
 
-import serial
 
 FIELDS = ["kind", "page", "cycles", "misses",
           "p2f_n", "p2f_p50_us", "p2f_p95_us", "p2f_max_us",
@@ -43,13 +43,25 @@ def parse_bench(line):
     row = {}
     for k, v in KV.findall(line):
         if k in FIELDS:
+            if k in row:
+                raise ValueError("bench 字段重复：" + k)
             if k == "kind":
                 row[k] = v
             elif k in INT_FIELDS:
-                row[k] = int(float(v))
+                value = float(v)
+                if not math.isfinite(value) or value < 0 or not value.is_integer():
+                    raise ValueError("无效 bench 整数：%s" % k)
+                row[k] = int(value)
             else:
                 row[k] = float(v)
-    return row if "kind" in row else None
+                if not math.isfinite(row[k]) or row[k] < 0:
+                    raise ValueError("无效 bench 数值：%s" % k)
+    missing = set(FIELDS) - row.keys()
+    if missing:
+        raise ValueError("bench 记录不完整，缺少：" + ", ".join(sorted(missing)))
+    if row["kind"] not in {"tap", "swipe", "idle"}:
+        raise ValueError("无效 bench kind")
+    return row
 
 
 def case_to_cmd(case):
@@ -102,10 +114,15 @@ def run_case(ser, case, timeout):
         chunk = ser.read(4096).decode("utf-8", "replace")
         if chunk:
             buf += chunk
-            for line in buf.splitlines():
+            # 只消费换行结束的记录；跨 read 的半行留待下次拼接。
+            while "\n" in buf:
+                line, buf = buf.split("\n", 1)
                 line = line.strip()
                 if line.startswith("[bench]"):
-                    return parse_bench(line), buf
+                    row = parse_bench(line)
+                    if row["kind"] != case.split(":", 1)[0]:
+                        raise ValueError("bench kind 与请求用例不符")
+                    return row, line
                 # 只把"针对本命令"的报错当失败；冷启动那条杂散字节的报错不算
                 bad = ("认不出" in line and first in line) or ("bench" in line and "认不出" in line) \
                       or (first in line and "不认识的命令" in line and len(line) > 12)
@@ -131,6 +148,10 @@ def main():
     if not args.port:
         ap.error("set --port or FNOS_SERIAL_PORT to the board serial port")
 
+    if (args.repeat <= 0 or args.warmup < 0 or args.boot < 0 or args.timeout <= 0
+            or not math.isfinite(args.boot) or not math.isfinite(args.timeout)):
+        ap.error("repeat/timeout 必须为正，warmup/boot 不得为负")
+    import serial
     ser = serial.Serial(args.port, 115200, timeout=0.3)
     ser.dtr = False
     ser.rts = False

@@ -90,9 +90,17 @@
 #define UK_NUMBER_BEZIER_X2 .58f
 #ifndef CONFIG_FNOS_UI_NUMBER_MS
 #define CONFIG_FNOS_UI_NUMBER_MS 250
+#endif
+#ifndef CONFIG_FNOS_UI_NUMBER_STAGGER_MS
 #define CONFIG_FNOS_UI_NUMBER_STAGGER_MS 50
+#endif
+#ifndef CONFIG_FNOS_UI_NUMBER_MAX_STAGGER_MS
 #define CONFIG_FNOS_UI_NUMBER_MAX_STAGGER_MS 100
+#endif
+#ifndef CONFIG_FNOS_UI_NUMBER_TRAVEL_PCT
 #define CONFIG_FNOS_UI_NUMBER_TRAVEL_PCT 25
+#endif
+#ifndef CONFIG_FNOS_UI_NUMBER_BLUR_PCT
 #define CONFIG_FNOS_UI_NUMBER_BLUR_PCT 6
 #endif
 #ifndef CONFIG_FNOS_UI_NUMBER_BUDGET_BYTES
@@ -142,7 +150,7 @@
 
 #include "fnos_fonts.h"   /* LV_FONT_DECLARE(ui_font_*) */
 
-/* ── 运行时配色（预置表见 uk_theme.c：graphite / abyss / phosphor） ── */
+/* ── 运行时配色（预置表见 uk_theme.c：device / graphite / abyss / phosphor） ── */
 typedef struct {
     uint32_t bg, s0, s1, surf_t, s2, s3, off, line;
     uint32_t t1, t2, t3, t4;

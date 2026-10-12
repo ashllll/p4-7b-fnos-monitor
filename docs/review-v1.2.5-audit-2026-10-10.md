@@ -24,11 +24,12 @@
 | §1 版本事实 | 公开 main 固定于 d84039f、manifest 仍 1.2.4、无 v1.2.5 标签 | **成立**（`git ls-remote` 复核） |
 | §7 | 原 `collector_check` / `contract_check` 通过 | **成立**，两项在本机独立跑通 |
 
-**无法复核**（本机与公开树中都找不到产物）：
+**无法复核**（审计当时：本机与公开树中都找不到产物）：
 
-- `v1.2.5-candidate.patch` 与 `tools/audit125/{soak72,test_raid,test_pair_nvs,test_diag,test_soak72}.py` **在目标仓库、本机 `~/code/esp`、`~/Downloads`、`~/Desktop`、`/tmp` 中均不存在**（公开树亦无 `tools/audit125/`）。
+- （审计当时的记录，保留不改）`v1.2.5-candidate.patch` 与 `tools/audit125/{soak72,test_raid,test_pair_nvs,test_diag,test_soak72}.py` **在目标仓库、本机 `~/code/esp`、`~/Downloads`、`~/Desktop`、`/tmp` 中均不存在**（当时的公开树亦无 `tools/audit125/`）。
 - 因此 §3 的补丁文件清单、§7 的"RAID 20 项 / NVS 主机 C 测试 17 个注入点 / soak 自测 14 项 / 诊断回调 C++ 测试通过"、§4 验收判据的**实现**、§6 中除两项既有检查外的全部命令，**只能视为报告自述，不是本机可复现的绿灯**。S1 的 72h 脚本与实机结果同理。
 - 报告 §7 已如实标注"ESP-IDF 构建 / 静态栈检查 / 主机预览 / 字体重建 / 实机 72h 未完成"，这部分与本次观察一致，不构成隐瞒。
+- **2026-10-11 更正**：上面那条"取不到"只对审计当时的那棵树成立，不是对今天仓库的论断。这些产物现在都在本仓库：`v1.2.5-candidate.patch`（182537 字节）、`v1.2.5-candidate-on-perf.patch`（210070 字节）在仓库根目录，`tools/audit125/{README.md,soak72.py,test_raid.py,test_pair_nvs.py,test_diag.py,test_soak72.py}` 已存在且可本机运行。因此 §3 的补丁清单与 §7 的 RAID/NVS/诊断条目**现在有对应的可复核物**，需要按 `tools/audit125/README.md` 里的对应表重跑并更新结论。
 
 **需要修正或补充**：R3 的触发可达性缺证据；R5 与 §4 验收表自相矛盾；N3 三个子问题可达性差异大；R1 的告警字节预算结论应写出来（结论是安全的）；HWM 单位结论应绑定"用的是 IDF FreeRTOS"这一前提（本工程成立）。
 
@@ -228,7 +229,7 @@ nvs_commit(h);
 
 ```sh
 git archive d84039f6f8538d47c4eacda80f26e1e8ebe8772c | tar -x -C /tmp/p4-audit-d84039f
-git -C /Users/llll/code/esp/p4-7b-fnos-monitor ls-remote --tags --heads origin
+git -C /Users/<USER>/code/esp/p4-7b-fnos-monitor ls-remote --tags --heads origin
 cd /tmp/p4-audit-d84039f && python3 nas/fpk/collector_check.py && python3 nas/fpk/contract_check.py
 python3 /tmp/repro_r.py        # R1/R2/R3/R4/R5 合成 fixture 复现（本次新建，只读导入审计树）
 ```

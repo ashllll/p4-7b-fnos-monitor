@@ -1,9 +1,14 @@
 # tools/audit125 —— v1.2.5 候选专项审计的回归工具
 
 本目录是《v1.2.5 候选专项审计与整改》报告里那套补丁与测试的**本机可复现对应物**。
-报告 §3 声称的 `v1.2.5-candidate.patch` 与 `tools/audit125/*` 在公开仓库、本机任何位置都
-取不到（见 `docs/review-v1.2.5-audit-2026-10-10.md` §0），所以这里把它们按同一条目重新做出来：
-每个脚本要么驱动**真实生产文件**里抽出来的函数，要么对着固定判据做离线评价，不复制实现。
+
+> 2026-10-11 更正：审计当时（`d84039f` 那棵树 + 当时的公开 main）在仓库与公开树里都取不到
+> `v1.2.5-candidate.patch` 与 `tools/audit125/*`；现在它们都在本仓库里——`v1.2.5-candidate.patch`
+> 182537 字节、`v1.2.5-candidate-on-perf.patch` 210070 字节在仓库根目录，本目录下的脚本也已存在。
+> 见 `docs/review-v1.2.5-audit-2026-10-10.md` §0 的更正条目。
+
+本目录的脚本是按审计报告的条目重做的：每个脚本要么驱动**真实生产文件**里抽出来的函数，
+要么对着固定判据做离线评价，不复制实现。
 
 对应关系：
 
@@ -44,8 +49,8 @@ Windows PowerShell 同上，用 `python` 代替 `python3`；没有 `cc`/`c++` �
 `CONFIG_SLAVE_IDF_TARGET_*` 一族符号，`esp_hosted` 直接报 `#error "Unknown Slave Target"`：
 
 ```bash
-FNOS_IDF_ENV=/Users/llll/code/esp/use-esp-idf-5.5.3.sh ./idf.sh build          # 默认版
-FNOS_IDF_ENV=/Users/llll/code/esp/use-esp-idf-5.5.3.sh ./idf.sh \
+FNOS_IDF_ENV=/Users/<USER>/code/esp/use-esp-idf-5.5.3.sh ./idf.sh build          # 默认版
+FNOS_IDF_ENV=/Users/<USER>/code/esp/use-esp-idf-5.5.3.sh ./idf.sh \
     -B build_diag -D SDKCONFIG=$PWD/build_diag/sdkconfig build                 # 诊断版
 # 诊断版的 sdkconfig 是主 sdkconfig 的副本 + CONFIG_FNOS_SOAK_DIAG=y，不要手改主 sdkconfig
 python3 tools/stack_check.py --elf build_diag/fnos_monitor.elf

@@ -11,6 +11,9 @@ get_filename_component(REPO "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
 set(COMP "${REPO}/components/fnos_monitor")
 # Only export public UI configuration to the preview, never network credentials.
 set(UI_DEVICE_CONFIG "${REPO}/build/config/sdkconfig.h")
+if(NOT EXISTS "${UI_DEVICE_CONFIG}" OR NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/lv_kconfig_host.h")
+  message(FATAL_ERROR "Missing device/host LVGL config; build firmware, then run tools/preview/run.sh")
+endif()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${UI_DEVICE_CONFIG}")
 file(STRINGS "${UI_DEVICE_CONFIG}" UI_CONFIG REGEX "^#define CONFIG_FNOS_(UI_|CHART_WINDOW |STATUS_MAX_BYTES |SNAPSHOT_MAX_BYTES )")
 # 台架命令只在真机上编：它读触摸 indev、量任务 CPU，宿主没有这两样（也缺 freertos 桩）。
@@ -36,6 +39,8 @@ add_compile_options(
 )
 
 add_subdirectory("${REPO}/managed_components/lvgl__lvgl" lvgl)
+include("${COMP}/cmake/fnos_chart_math.cmake")
+fnos_use_safe_chart_map(lvgl)
 
 file(GLOB FONT_SRC "${COMP}/fonts/*.c")
 
@@ -64,6 +69,12 @@ target_include_directories(preview PRIVATE
 # 设备端真实 Kconfig（CONFIG_LV_*）已由上面的 add_compile_options 全局注入
 target_compile_options(preview PRIVATE
   -Wall -Wno-unused-parameter
+  # 这个可执行文件的 assert() 就是验收判据本身，不是"只在调试时帮忙"的检查。
+  # 默认构建类型是 Release（见文件头），CMake 会给 -O3 -DNDEBUG，于是**每一条断言
+  # 都被预处理掉**：验收照样打印 PASS、照样退出 0，而它什么都没验（审计 M17）。
+  # -UNDEBUG 必须**无条件**加，且要排在 CMAKE_C_FLAGS_RELEASE 之后（target 选项在后面，
+  # 后出现的宏定义生效）。下面 sanitize 分支里的 -UNDEBUG 因此是冗余的，留着无害。
+  -UNDEBUG
 )
 target_compile_definitions(preview PRIVATE FNOS_UI_TESTING=1)
 target_link_libraries(preview PRIVATE lvgl m)

@@ -83,9 +83,48 @@ resolve_python() {
   return 1
 }
 
-# connect 探测：不 bind、不占位、不 kill，只判断有没有人在听
+# 只读监听表，覆盖非 loopback/IPv6；不 bind、不占位、不 kill。
+# 返回 0=占用，1=未见监听，2=未能判定。调用方不能把 2 当空闲。
 port_busy() {
-  (exec 3<>"/dev/tcp/127.0.0.1/$1") >/dev/null 2>&1
+  local py
+  py=$(resolve_python) || return 2
+  "$py" - "$1" <<'PYEOF'
+import os, platform, subprocess, sys
+try:
+    port = int(sys.argv[1])
+    if not 1 <= port <= 65535:
+        raise ValueError("非法端口")
+    if platform.system() == "Linux":
+        busy = False
+        for path in ("/proc/net/tcp", "/proc/net/tcp6"):
+            if path.endswith("tcp6") and not os.path.exists(path):
+                continue  # IPv6 未启用
+            with open(path) as f:
+                if "local_address" not in f.readline():
+                    raise ValueError("监听表缺少表头")
+                for line in f:
+                    fields = line.split()
+                    if len(fields) < 4:
+                        raise ValueError("监听表记录不完整")
+                    local_port = int(fields[1].rsplit(":", 1)[1], 16)
+                    busy |= fields[3] == "0A" and local_port == port
+    elif platform.system() == "Darwin":
+        # 本机生命周期测试；NAS 使用上面的内核表。
+        result = subprocess.run(["/usr/sbin/lsof", "-w", "-nP", "-iTCP:%d" % port,
+                                 "-sTCP:LISTEN", "-F", "n"],
+                                capture_output=True, text=True, timeout=5)
+        if result.stderr or result.returncode not in (0, 1):
+            raise ValueError("lsof 未能读取监听表")
+        busy = any(line.startswith("n") for line in result.stdout.splitlines())
+        if (result.returncode == 0) != busy:
+            raise ValueError("lsof 返回值与监听记录不一致")
+    else:
+        raise ValueError("系统缺少受支持的只读监听表")
+except (OSError, ValueError, IndexError, subprocess.SubprocessError) as exc:
+    print("端口预检未判定：%s" % exc, file=sys.stderr)
+    sys.exit(2)
+sys.exit(0 if busy else 1)
+PYEOF
 }
 
 is_running() {
@@ -103,7 +142,9 @@ is_running() {
 }
 
 cleanup_socket() {
-  [ -S "$SOCK_FILE" ] && as_package rm -f "$SOCK_FILE"
+  if [ -S "$SOCK_FILE" ]; then
+    as_package rm -f "$SOCK_FILE" || return 1
+  fi
   return 0
 }
 
@@ -111,32 +152,53 @@ cleanup_socket() {
 apply_config() {
   local py="$1" port="$2" bind="$3" auth="$4" docker="$5" interval="$6" tls="${7:-true}"
   as_package "$py" - "$PKG_VAR/config.json" "$port" "$bind" "$auth" "$docker" "$interval" "$tls" <<'PYEOF'
-import json, os, sys
+import json, os, sys, tempfile, fcntl, stat
 path, port, bind, auth, docker, interval, tls = sys.argv[1:8]
-cfg = {}
-try:
-    with open(path, "r", encoding="utf-8") as f:
-        cfg = json.load(f)
-except FileNotFoundError:
-    pass
-if not isinstance(cfg, dict):
-    raise ValueError("config.json 必须是 JSON 对象，原文件未修改")
-devices = cfg.get("devices") if isinstance(cfg.get("devices"), list) else []
-cfg.update({
-    "port": int(port), "bind": bind, "auth_mode": auth,
-    "docker_enabled": (docker == "true"), "interval": float(interval),
-    "tls_enabled": (tls == "true"),
-})
-cfg.setdefault("hist_len", 300)
-cfg["devices"] = devices                     # 重新配置不能把开发板踢下线
 os.makedirs(os.path.dirname(path), exist_ok=True)
-tmp = path + ".tmp"
-fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-with os.fdopen(fd, "w", encoding="utf-8") as f:
-    json.dump(cfg, f, ensure_ascii=False, indent=2)
-os.replace(tmp, path)
-print("config.json: port=%s bind=%s auth=%s docker=%s interval=%s tls=%s devices=%d"
-      % (port, bind, auth, docker, interval, tls, len(devices)))
+lock_fd = os.open(path + ".lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+with os.fdopen(lock_fd, "a") as lock:
+    if not stat.S_ISREG(os.fstat(lock.fileno()).st_mode):
+        raise ValueError("配置锁不是普通文件")
+    fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+    cfg = {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+    except FileNotFoundError:
+        pass
+    if not isinstance(cfg, dict):
+        raise ValueError("config.json 必须是 JSON 对象，原文件未修改")
+    devices = cfg.get("devices") if isinstance(cfg.get("devices"), list) else []
+    cfg.update({
+        "port": int(port), "bind": bind, "auth_mode": auth,
+        "docker_enabled": (docker == "true"), "interval": float(interval),
+        "tls_enabled": (tls == "true"),
+    })
+    cfg.setdefault("hist_len", 300)
+    cfg["devices"] = devices                     # 重新配置不能把开发板踢下线
+    revision = cfg.get("_revision", 0)
+    if type(revision) is not int or revision < 0:
+        raise ValueError("配置修订号非法")
+    cfg["_revision"] = revision + 1
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".config-", suffix=".tmp", dir=os.path.dirname(path))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            fd = None
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    finally:
+        if fd is not None:
+            os.close(fd)
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+
+    print("config.json: port=%s bind=%s auth=%s docker=%s interval=%s tls=%s devices=%d"
+          % (port, bind, auth, docker, interval, tls, len(devices)))
 PYEOF
 }
 
@@ -145,8 +207,19 @@ norm_wizard() {
   # 端口优先级：向导里填的 > 系统分配的 TRIM_SERVICE_PORT > 8798。
   # 反过来会把用户在向导里的选择悄悄覆盖掉，所以向导优先。
   W_PORT="${wizard_port:-${TRIM_SERVICE_PORT:-8798}}"
-  case "$W_PORT" in ''|*[!0-9]*) W_PORT=8798 ;; esac
-  if ! { [ "$W_PORT" -ge 1 ] && [ "$W_PORT" -le 65535 ]; }; then W_PORT=8798; fi
+  case "$W_PORT" in
+    ''|*[!0-9]*)
+      # 不声不响地换掉用户填的值是最坏的一种"成功"（审计 M27）：界面上填了 abc，
+      # 安装说通过，实际监听 8798。回退照旧，但必须留下痕迹。
+      if [ -n "${wizard_port:-}" ]; then warn "端口 \"$wizard_port\" 不是纯数字，已回退到 8798"; fi
+      W_PORT=8798 ;;
+  esac
+  if ! { [ "$W_PORT" -ge 1 ] && [ "$W_PORT" -le 65535 ]; }; then
+    warn "端口 $W_PORT 超出 1~65535，已回退到 8798"
+    W_PORT=8798
+  fi
+  # 去掉前导零："08798" 和 "8798" 是同一个端口，后面要拿它跟 config.json 里的值比对
+  W_PORT=$((10#$W_PORT))
 
   case "${wizard_bind:-lan}" in
     local|localhost|127.0.0.1) W_BIND=127.0.0.1 ;;
@@ -170,8 +243,19 @@ norm_wizard() {
     *) W_TLS=true ;;
   esac
 
+  # 采样间隔：服务端认的合法区间是 0.2~60 秒（nas_companion_server.py:946 的同一组
+  # 上下限）。这里以前只挡了非数字，"0" 能一路写进 config.json —— 采集线程算出负的
+  # sleep 就干脆不睡，CPU 直接跑满（审计 M44）。范围外的值回退到 1.0 并留日志。
   W_INTERVAL="${wizard_interval:-1.0}"
-  case "$W_INTERVAL" in ''|*[!0-9.]*) W_INTERVAL=1.0 ;; esac
+  case "$W_INTERVAL" in
+    ''|*[!0-9.]*|*.*.*)
+      if [ -n "${wizard_interval:-}" ]; then warn "采样间隔 \"$wizard_interval\" 不是数字，已回退到 1.0"; fi
+      W_INTERVAL=1.0 ;;
+  esac
+  if ! awk -v v="$W_INTERVAL" 'BEGIN { exit !(v + 0 >= 0.2 && v + 0 <= 60.0) }'; then
+    warn "采样间隔 ${W_INTERVAL}s 不在 0.2~60s 内，已回退到 1.0"
+    W_INTERVAL=1.0
+  fi
 }
 
 # 服务控制统一走 cmd/main：stop/start 的判定逻辑（PID 校验、端口冲突、

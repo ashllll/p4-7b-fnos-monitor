@@ -1,7 +1,7 @@
 /*******************************************************************************
  * Size: 16 px
  * Bpp: 2
- * Opts: --font NotoSansSC-Medium.ttf --size 16 --bpp 2 --format lvgl --no-compress --force-fast-kern-format -r 0x20-0x7E -r 0xB0 -r 0xB7 -r 0x2014 -r 0x2026 -r 0x2190-0x2193 -r 0x2264-0x2265 -r 0xA0-0x24F,0x370-0x52F,0x3000-0x301F,0x3040-0x30FF,0x4E00-0x9FFF --symbols …、。「」一三上下不与且严个中串为主么之也书了事于些交人什从令以件任会传但位低住体何你使保信修值停健储先入全共关内再写凭出分切列刚初删到制前功加务动化区半协卡却卷历原去参双发取受口句另只可台史叶号各合同名后吐向吞启告命和响器回因固在地址均基填增备多夜够大天太失头好始子字存完定审容密对将小少尚就屏展峰差己已常幕年并应底度康延建开张弱弹强当录待必志忘快忽态总息情感成或所手才打扫找把报拒指按换据掉探接描提握撤收改放效数整文断新方无日旧时明是显暂更最月有服期未本机权条来板构析染查栏样核格框检槽次正此步段每比求池没法注活流消清温渲源漏点热照版牌状率现理生用电画界留略白的盘直省看知码硬确磁示离种秒程空立端符第等算管系累级纹线细经给络绝统缓编网置翻考者耗能自至致色节藏行表被装要见览解警计认议记设证诊译试话询详误说请读调负败资走起超足路转轮载辑输边过运近返还这进连迟退送逐通速遍道那部都配采里重量针钟钮销错键长闭间闻队阵阶降限除隐集需露非面页顶项须预高默龄（），：；？｜ --lv-include lvgl.h -o /Users/llll/code/esp/p4-7b-fnos-monitor/components/fnos_monitor/fonts/ui_font_cjk_16.c
+ * Opts: --font NotoSansSC-Medium.ttf --size 16 --bpp 2 --format lvgl --no-compress --force-fast-kern-format -r 0x20-0x7E -r 0xB0 -r 0xB7 -r 0x2014 -r 0x2026 -r 0x2190-0x2193 -r 0x2264-0x2265 -r 0xA0-0x24F,0x370-0x52F,0x3000-0x301F,0x3040-0x30FF,0x4E00-0x9FFF --symbols …、。「」一三上下不与专且严个中串为主么之也书了事于些交产人什仍从令以件任会传但位低住体何余作你使保信修值停健储先光入全共关具内再写准几凭出分切列刚创初删到制前剩功加务动化区半协单卡却卷历原去参双发取受口句另只可台史叶号各合同名后吐向吞含启告周命和响器回因固在地址均基堆填增处备复外多夜够大天太失头夹好始子字存完定实审容密对将小少尚就屏展峰差己已帧常幕年并应底度康延建开式张弱弹强当录待必志快忽态性总恢情感成或截所手才打扫找把报拒拿指按换据掉排探接控描提握撤操收改放效数整文断新方无日旧时明是显暂更最月有服望期未本机权条来板构析查标栏样核格框检槽次正此步段每比求池没法注活流测消清温源滚漏点热照版牌状率现理生用电画界留略白的监盘直省看知码硬确磁示离种秒程空立端符第等签算管系累级纹线细终经给络绝统继续维缀缓编网置翻考背能自至致色节藏行表被装要见观规览解警计认议记设证诊译试话询详误说请读调负败资走起超足距路转轮载辑输过运近返还这进违连迟退送适逐通速遍道那部都配采里重量针钟钮销锁错键长闭间闻队阵际降限除隐集需露非面页顶项须预首高默龄（），：；？ --lv-include lvgl.h -o ../../components/fnos_monitor/fonts/ui_font_cjk_16.c
  ******************************************************************************/
 
 #ifdef LV_LVGL_H_INCLUDE_SIMPLE
@@ -214179,11 +214179,7 @@ static LV_ATTRIBUTE_LARGE_CONST const uint8_t glyph_bitmap[] = {
     0x0, 0x0, 0x1f, 0xf4, 0x3d, 0xbc, 0x10, 0x1d,
     0x0, 0x1d, 0x0, 0x3c, 0x0, 0xf0, 0x3, 0xc0,
     0x3, 0x80, 0x0, 0x0, 0x0, 0x0, 0x7, 0xc0,
-    0x3, 0xc0, 0x0, 0x0,
-
-    /* U+FF5C "｜" */
-    0x2, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22,
-    0x20
+    0x3, 0xc0, 0x0, 0x0
 };
 
 
@@ -235762,8 +235758,7 @@ static const lv_font_fmt_txt_glyph_dsc_t glyph_dsc[] = {
     {.bitmap_index = 1321788, .adv_w = 256, .box_w = 4, .box_h = 6, .ofs_x = 2, .ofs_y = -2},
     {.bitmap_index = 1321794, .adv_w = 256, .box_w = 4, .box_h = 12, .ofs_x = 2, .ofs_y = -1},
     {.bitmap_index = 1321806, .adv_w = 256, .box_w = 4, .box_h = 14, .ofs_x = 2, .ofs_y = -3},
-    {.bitmap_index = 1321820, .adv_w = 256, .box_w = 8, .box_h = 14, .ofs_x = 0, .ofs_y = -1},
-    {.bitmap_index = 1321848, .adv_w = 256, .box_w = 2, .box_h = 17, .ofs_x = 7, .ofs_y = -2}
+    {.bitmap_index = 1321820, .adv_w = 256, .box_w = 8, .box_h = 14, .ofs_x = 0, .ofs_y = -1}
 };
 
 /*---------------------
@@ -235783,7 +235778,7 @@ static const uint16_t unicode_list_10[] = {
 };
 
 static const uint16_t unicode_list_96[] = {
-    0x0, 0x1, 0x4, 0x12, 0x13, 0x17, 0x54
+    0x0, 0x1, 0x4, 0x12, 0x13, 0x17
 };
 
 /*Collect the unicode lists and glyph_id offsets*/
@@ -236174,8 +236169,8 @@ static const lv_font_fmt_txt_cmap_t cmaps[] =
         .unicode_list = NULL, .glyph_id_ofs_list = NULL, .list_length = 0, .type = LV_FONT_FMT_TXT_CMAP_FORMAT0_TINY
     },
     {
-        .range_start = 65288, .range_length = 85, .glyph_id_start = 21565,
-        .unicode_list = unicode_list_96, .glyph_id_ofs_list = NULL, .list_length = 7, .type = LV_FONT_FMT_TXT_CMAP_SPARSE_TINY
+        .range_start = 65288, .range_length = 24, .glyph_id_start = 21565,
+        .unicode_list = unicode_list_96, .glyph_id_ofs_list = NULL, .list_length = 6, .type = LV_FONT_FMT_TXT_CMAP_SPARSE_TINY
     }
 };
 
@@ -238883,7 +238878,7 @@ static const uint8_t kern_left_class_mapping[] =
     0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0
+    0, 0, 0
 };
 
 /*Map glyph_ids to kern right classes*/
@@ -241585,7 +241580,7 @@ static const uint8_t kern_right_class_mapping[] =
     0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 215,
-    0, 0, 0, 0
+    0, 0, 0
 };
 
 /*Kern values between classes*/
@@ -248057,4 +248052,3 @@ lv_font_t ui_font_cjk_16 = {
 
 
 #endif /*#if UI_FONT_CJK_16*/
-

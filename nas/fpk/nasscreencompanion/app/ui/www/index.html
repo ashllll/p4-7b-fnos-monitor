@@ -208,14 +208,72 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const num = (v,d=0) => (v==null||isNaN(v)) ? '—' : Number(v).toFixed(d);
 
-async function get(p){ const r = await fetch(api(p), {headers:{'Accept':'application/json'}});
-  const t = await r.text(); let j=null; try{ j=JSON.parse(t);}catch(e){ j={error:t.slice(0,300)}; }
-  if(!r.ok && j && !j.error) j.error = 'HTTP '+r.status; return j; }
-async function post(p, body){ const r = await fetch(api(p), {method:'POST',
-  headers:{'Content-Type':'application/json','Accept':'application/json'},
-  body: JSON.stringify(body||{})});
-  const t = await r.text(); let j=null; try{ j=JSON.parse(t);}catch(e){ j={error:t.slice(0,300)}; }
-  if(!r.ok && j && !j.error) j.error = 'HTTP '+r.status; return j; }
+// One finite deadline covers fetch and response-body decoding. Response/error
+// text from a gateway is never echoed: it may contain credentials or a login page.
+const REQUEST_TIMEOUT_MS = 10000;
+const activeRequests = new Set();
+let requestEpoch = 0, pageStopped = false;
+const isObject = value => !!value && typeof value === 'object' && !Array.isArray(value);
+function validResponse(p, value, method){
+  if(method === 'POST' && value.ok !== true) return false;
+  switch(p){
+    case '/api/state': return isObject(value.config) && isObject(value.collector) && Array.isArray(value.devices) && isObject(value.tls);
+    case '/api/status-now': return ['vols','raid','temps','disks','docker'].every(k => value[k] == null || Array.isArray(value[k]));
+    case '/api/probe': return isObject(value.modules) && Array.isArray(value.sources);
+    case '/api/diagnostics': return Array.isArray(value.checks) && value.checks.every(isObject);
+    case '/api/logs': return Array.isArray(value.lines) && value.lines.every(v => typeof v === 'string');
+    case '/api/pairing/new': return typeof value.code === 'string' && /^[0-9]{6}$/.test(value.code) && Number.isFinite(value.ttl) && value.ttl > 0;
+    case '/api/pairing/cancel': return typeof value.cancelled === 'boolean';
+    case '/api/devices/revoke': return Number.isInteger(value.removed) && value.removed >= 0;
+    case '/api/config': return Array.isArray(value.changed) && Array.isArray(value.restart_required);
+    case '/api/collector/docker': return typeof value.docker_enabled === 'boolean';
+    default: return true;
+  }
+}
+async function request(p, method, body){
+  const epoch = requestEpoch;
+  if(pageStopped) return {error:'页面已停止请求',cancelled:true};
+  const controller = new AbortController();
+  activeRequests.add(controller);
+  let timer;
+  try {
+    const deadline = new Promise((_, reject) => {
+      timer = setTimeout(() => { controller.abort(); reject(new Error('timeout')); }, REQUEST_TIMEOUT_MS);
+    });
+    const work = (async () => {
+      const options = {method, signal:controller.signal, redirect:'error', cache:'no-store',
+        headers:{'Accept':'application/json'}};
+      if(method === 'POST') {
+        options.headers['Content-Type'] = 'application/json';
+        options.body = JSON.stringify(body || {});
+      }
+      const response = await fetch(api(p), options);
+      if(!response.ok){
+        if(response.body) await response.body.cancel();
+        return {error:'HTTP ' + response.status};
+      }
+      let value;
+      try { value = JSON.parse(await response.text()); }
+      catch(_) { return {error:'服务响应不是有效 JSON'}; }
+      if(!value || typeof value !== 'object' || Array.isArray(value))
+        return {error:'服务响应不是对象'};
+      if(value.error || value.ok === false) return {error:'服务未完成请求，请检查诊断与日志'};
+      if(!validResponse(p, value, method)) return {error:'服务响应缺少有效字段'};
+      return value;
+    })();
+    const result = await Promise.race([work, deadline]);
+    return pageStopped || epoch !== requestEpoch
+      ? {error:'请求已取消',cancelled:true} : result;
+  } catch(_) {
+    return pageStopped || epoch !== requestEpoch
+      ? {error:'请求已取消',cancelled:true}
+      : {error:'请求未完成或超时，请刷新核对服务状态'};
+  } finally {
+    clearTimeout(timer);controller.abort();activeRequests.delete(controller);
+  }
+}
+async function get(p){ return request(p, 'GET'); }
+async function post(p, body){ return request(p, 'POST', body); }
 
 const ST = {ok:['ok','ok'],stale:['warn','旧值'],missing:['dim','无来源'],
   denied:['err','权限不足'],error:['err','读取失败'],disabled:['dim','已关闭'],partial:['warn','部分可读']};
@@ -245,9 +303,9 @@ function renderCards(s){
        ['累计收',num(net.rx_total_gb,2)+' GB'],['累计发',num(net.tx_total_gb,2)+' GB']]],
     ['存储'+ (vols.length? ' · '+vols.length+' 卷':''), vols.length? num(worstVol.pct,1)+'<span style="font-size:13px;color:var(--dim)"> % 最高</span>' : '—',
       vols.length? bar(worstVol.pct||0) : '',
-      vols.slice(0,4).map(v=>[v.mnt, num(v.pct,1)+'%'])],
+      vols.map(v=>[v.mnt, num(v.pct,1)+'%'])],
     ['阵列', raid.length? (raidBad.length? raidBad.length+' 个异常' : '全部正常') : '—', '',
-      raid.slice(0,4).map(r=>[r.dev, (r.ok?'正常':(r.state||'异常'))+(r.sync_pct!=null&&r.sync_pct<100?' '+num(r.sync_pct,0)+'%':'')])],
+      raid.map(r=>[r.dev, (r.ok?'正常':(r.state||'异常'))+(r.sync_pct!=null&&r.sync_pct<100?' '+num(r.sync_pct,0)+'%':'')])],
     ['运行时长', esc(fmtDur(c.uptime_s)), '',
       [['主机名',esc(c.host||'—')],['采样序号',c.seq],['协议版本','proto '+(c.proto||'—')],
        ['磁盘', (c.disks||[]).length+' 项'],['容器', (c.docker||[]).length+' 项']]],
@@ -289,7 +347,7 @@ function renderTls(s){
   } else {
     $('tlsline').innerHTML = t.configured === false
       ? '已关闭（config.json 里 tls_enabled=false）——遥测面是<b>明文 HTTP</b>，仅限排障。'
-      : '未能启用：' + esc(t.error || '未知原因') + '——遥测面当前是<b>明文 HTTP</b>，配对令牌仍然必需。';
+      : '未能启用：' + esc(t.error || '未知原因') + '——遥测面已停止监听，请修复证书配置后重启应用。';
     $('tlsfpwrap').style.display = 'none';
   }
 }
@@ -324,7 +382,8 @@ function renderState(s){
   $('devrows').querySelectorAll('[data-revoke]').forEach(b =>
     b.onclick = async () => { if(!confirm('撤销后该设备必须重新配对才能读取状态。继续？')) return;
       const r = await post('/api/devices/revoke', {id: b.dataset.revoke});
-      hint('cfghint', r.removed? '已撤销 '+r.removed+' 个设备':'未找到该设备', !!r.error); refresh(); });
+      if(r.error) return hint('cfghint', '撤销失败：'+r.error, true);
+      hint('cfghint', r.removed? '已撤销 '+r.removed+' 个设备':'未找到该设备'); refresh(); });
 
   const p = s.paths||{};
   $('paths').innerHTML = [['安装目录',p.appdest],['配置目录',p.pkgetc],['数据目录',p.pkgvar],
@@ -350,30 +409,42 @@ function renderCaps(p){
 }
 
 function renderDiag(d){
+  if(d.error){ $('diagrows').innerHTML = '<tr><td colspan="3" class="hint">诊断读取失败：'+esc(d.error)+'</td></tr>'; return; }
   const map = {ok:['ok','正常'],warn:['warn','注意'],error:['err','失败'],info:['info','信息']};
   $('diagrows').innerHTML = (d.checks||[]).map(c => { const m = map[c.status]||['dim',c.status];
-    return '<tr><td>'+esc(c.name)+'</td><td><span class="pill '+m[0]+'">'+m[1]+'</span></td><td class="mono">'+
+    return '<tr><td>'+esc(c.name)+'</td><td><span class="pill '+m[0]+'">'+esc(m[1])+'</span></td><td class="mono">'+
       esc(c.detail)+'</td></tr>'; }).join('');
 }
 
 function hint(id, msg, bad){ const e=$(id); e.textContent = msg||''; e.style.color = bad? 'var(--err)':'var(--dim)'; }
 
 // ---------------------------------------------------------------- 刷新
-let refreshing = false;
+let refreshing = false, refreshSerial = 0;
 async function refresh(){
-  if(refreshing) return; refreshing = true;
+  if(refreshing || pageStopped || configSaving) return; refreshing = true;
+  const serial = ++refreshSerial, epoch = requestEpoch;
+  const current = () => !pageStopped && epoch === requestEpoch && serial === refreshSerial && !configSaving;
   try{
     const s = await get('/api/state');
+    if(!current()) return;
     if(s.error){ $('hdot').className='dot err'; $('hhint').textContent = s.error; return; }
     renderState(s);
     const [st, pr, dg] = await Promise.all([get('/api/status-now'), get('/api/probe'), get('/api/diagnostics')]);
+    if(!current()) return;
     if(!st.error){ s.snapshot = st; renderCards(s); renderModules(s); }
+    else { $('hdot').className='dot err'; $('hhint').textContent = '状态取不到：'+st.error; }
     renderCaps(pr); renderDiag(dg);
+  } catch(e) {
+    /* 渲染期间的异常也必须显示出来（审计 M24）：2 秒一次的重试会一直复现，
+       但页面不能只在控制台里报错、看起来像"卡住了"。 */
+    if(current()){ $('hdot').className='dot err';
+      $('hhint').textContent = '页面刷新失败，请检查诊断与日志'; }
   } finally { refreshing = false; }
 }
 
 async function loadLogs(){ const r = await get('/api/logs');
-  $('logs').textContent = (r.lines||[]).join('\n') || (r.error||'（无日志）'); }
+  if(r.cancelled) return;
+  $('logs').textContent = (r.lines||[]).join('\n') || (r.error ? ('读取日志失败：'+r.error) : '（无日志）'); }
 
 // ---------------------------------------------------------------- 交互
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
@@ -406,6 +477,7 @@ $('gencode').onclick = async () => {
   refresh();
 };
 $('cancelcode').onclick = async () => { const r = await post('/api/pairing/cancel',{});
+  if(r.error) return hint('codehint', '作废配对码失败：'+r.error, true);
   $('codewrap').style.display='none'; hint('codehint', r.cancelled? '已作废':'当前没有待用的配对码'); refresh(); };
 
 const configControls = document.querySelectorAll('#s-cfg input, #s-cfg select');
@@ -420,13 +492,14 @@ $('savecfg').onclick = async () => {
     auth_mode: $('c-auth').value, tls_enabled: $('c-tls').value === '1' };
   const dockerEnabled = $('c-docker').value === '1';
   configSaving = true;
+  ++refreshSerial; // Invalidate reads started before this save.
   $('savecfg').disabled = true;
   configControls.forEach(e => e.disabled = true);
   try {
     const r = await post('/api/config', body);
     if(r.error) return hint('cfghint', r.error, true);
     const d = await post('/api/collector/docker', {enabled: dockerEnabled});
-    if(d.error) return hint('cfghint', d.error, true);
+    if(d.error) return hint('cfghint', '服务配置已保存；容器采集结果未确认，请刷新后核对。'+d.error, true);
     configDirty = false;
     hint('cfghint', '已保存；容器采集已' + (dockerEnabled ? '开启' : '关闭')
       + (r.restart_required&&r.restart_required.length? '（' + r.restart_required.join('、') + ' 需重启应用生效）':''), false);
@@ -439,11 +512,26 @@ $('savecfg').onclick = async () => {
   }
   refresh();
 };
-$('rundiag').onclick = async () => { renderDiag(await get('/api/diagnostics')); loadLogs(); };
+$('rundiag').onclick = async () => { const d = await get('/api/diagnostics');
+  if(d.error){ $('diagrows').innerHTML = '<tr><td colspan="3" class="hint">诊断没跑起来：'+esc(d.error)+'</td></tr>';
+    $('logs').textContent = '读取日志失败：'+d.error; return; }
+  renderDiag(d); loadLogs(); };
 $('reloadlogs').onclick = loadLogs;
 
+let refreshTimer;
+function stopPage(){
+  pageStopped = true; ++requestEpoch; ++refreshSerial;
+  clearInterval(refreshTimer);
+  activeRequests.forEach(controller => controller.abort());
+}
+window.addEventListener('pagehide', stopPage);
+window.addEventListener('pageshow', () => {
+  if(!pageStopped) return;
+  pageStopped = false;
+  refreshTimer = setInterval(refresh, 2000);refresh();
+});
 refresh();
-setInterval(refresh, 2000);
+refreshTimer = setInterval(refresh, 2000);
 </script>
 </body>
 </html>

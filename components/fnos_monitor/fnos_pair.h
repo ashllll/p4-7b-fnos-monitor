@@ -60,24 +60,42 @@ typedef struct {
 void fnos_pair_init(void);
 
 bool     fnos_pair_provisioned(void);
-// 生效参数每变化一次 +1（配对成功 / 撤销）。数据层用它决定要不要重建 HTTP 客户端。
+// 生效参数每变化一次 +1（配对成功 / 撤销）；跳过 0。
+// 0 表示尚未初始化、锁不可用或保存配置读取/校验失败，调用方必须停用当前连接。
+// 存储配置失败时允许重新配对/清除，成功后恢复非零代次。
 uint32_t fnos_pair_generation(void);
-// 复制当前生效参数。永远成功。
+// 复制当前生效参数；不可用时清零 out。需要区分失败的调用方使用 active_gen。
 void     fnos_pair_active(fnos_pair_cfg_t *out);
+// 同上，但把"这份参数属于哪一代"用**同一次加锁读**一起返回。数据层必须成对地拿
+// 参数和代次：分两次读时，若中间刚好完成一次配对，它会拿到新参数却记下旧代次，
+// 于是下一轮又把刚建好的 HTTP 客户端拆掉重建（审计 M01）。
+// 返回 0 时 out 清零；不可据此回落明文或继续旧客户端。
+uint32_t fnos_pair_active_gen(fnos_pair_cfg_t *out);
 // 读一次状态快照给 UI 用。
 void     fnos_pair_view(fnos_pair_view_t *out);
 
+// 兼容旧诊断符号：仅配对 worker 内可借用，至下一次 HTTP 请求前有效，不得保存或跨任务传递。
+// 其他任务及 worker 未发布时返回静态空串；UI/串口应使用 fnos_pair_view 的加锁消息副本。
+const char *fnos_pair_last_http_diag(void);
+
 // 开始一次配对：先明文取证书 → 算出指纹 → 进入 FNOS_PAIR_CONFIRM 等用户表决。
-// code 是用户在 NAS 管理页生成的 6 位配对码。整条流程在内部任务里跑，不阻塞调用方。
+// code 是用户在 NAS 管理页生成的 6 位配对码。整条流程在内部任务里跑。
+// 非六位 ASCII 数字码或请求槽/worker 忙时忽略新 begin/forget；新 begin 立即失效旧确认。
 void fnos_pair_begin(const char *code);
-// 用户对指纹的表决。accept=false 直接放弃（不会发出配对请求）。
+// 用户对当前待确认指纹的表决；仅 CONFIRM 状态且无进行中动作时接受。
+// accept=false 也可取消进行中的操作；worker 在网络前/返回后/持久化前检查。
+// 已发出的请求无法撤回，NAS 可能已生成设备令牌，需在管理页核对/撤销。
+// 取消先于提交锁检查时不保存；已经完成提交的配置保留。其他状态的确认忽略。
 void fnos_pair_confirm(bool accept);
 // 忘掉本机保存的配对（清 NVS，退回编译期默认）。NAS 侧的设备记录要在管理页撤销。
 void fnos_pair_forget(void);
 
 // 串口自检：真跑一次 HTTPS（先明文取 identity，再用那张证书探 /api/v1/health）。
-// **不碰配对码、不改 NVS、不改配对状态** —— 换 NAS、换证书、TLS 握手出问题时用它，
-// 比在配对流程里猜快得多。异步版自己起一个 PSRAM 栈任务（mbedTLS 握手吃栈）。
+// 仅 GET identity/health，不提交配对码、不写本机 NVS/配对状态。
+// identity 来自明文，仅验证所取证书能否握手，不替代用户核对可信指纹。
+// 有效输出缓冲必须非空且容量大于 0。
+// 并发探针返回 false/busy；配置锁不可用时拒绝访问网络。
+// 异步版最多排队一个 PSRAM 栈任务（mbedTLS 握手吃栈）。
 bool     fnos_pair_tls_probe(char *out, size_t out_cap);
 void     fnos_pair_tls_probe_async(void);
 

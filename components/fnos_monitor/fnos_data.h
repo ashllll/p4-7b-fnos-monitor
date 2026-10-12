@@ -83,7 +83,7 @@ typedef struct {
 
     // 历史回填的时间语义：曲线横轴是"多少次采集"，用户要看的是"多长时间"。
     // 用首尾样本的 ts 相减（差值不受板子/NAS 时钟不同步影响），
-    // hist_ts_ok=false 表示应用没给可用的 ts（旧版应用），界面退回按次数说。
+    // hist_ts_ok=false 表示有效行的ts缺失/非法/不递增，或跨度/间隔不可表示；界面退回按次数说。
     bool hist_ts_ok;
     int  hist_span_s;                       // 回填的历史覆盖的秒数
     int  hist_avg_gap_x10;                  // 平均采样间隔 ×10 秒（判断中间有没有断流）
@@ -91,8 +91,16 @@ typedef struct {
 
 /* Count is data, byte budget is a configurable resource policy. */
 typedef struct { int vols, raid, disks, temps, docker, alerts, mods, nets; } fnos_counts_t;
+/* 格式串由编译器核（审计 M12）：少写一个 %s 的参数、把 int 交给 %s，
+   以前只能等真机上屏幕出乱码才发现。 */
+#if defined(__GNUC__)
+#define FNOS_PRINTF_LIKE(fmt_idx, arg_idx) __attribute__((format(printf, fmt_idx, arg_idx)))
+#else
+#define FNOS_PRINTF_LIKE(fmt_idx, arg_idx)
+#endif
 bool fnos_status_create(fnos_status_t *out, const fnos_counts_t *counts);
-bool fnos_status_text(fnos_status_t *out, const char **field, const char *format, ...);
+bool fnos_status_text(fnos_status_t *out, const char **field, const char *format, ...)
+    FNOS_PRINTF_LIKE(3, 4);
 bool fnos_status_parse(const char *json, fnos_status_t *out, const char **reason);
 void fnos_status_copy(fnos_status_t *out, const fnos_status_t *source);
 void fnos_status_release(fnos_status_t *out);
@@ -103,19 +111,24 @@ typedef struct { float cpu, mem, rx_kbs, tx_kbs; } fnos_sample_t;
 void fnos_data_start(void);
 // 网络状态变化（断线/重连）：丢弃 HTTP 长连接与会话，避免继续用失效 socket。
 void fnos_data_network_changed(void);
-// 复制当前快照（线程安全）。返回 false 表示还没有任何有效数据。
+// 复制当前快照；out须{0}初始化或为调用者独占的有效快照，禁止并发共用out。
+// 取锁失败保留out，返回其ever_ok；false不表示其他消费者也未取得过数据。
 bool fnos_data_get(fnos_status_t *out);
 // 增量读取曲线样本：取 seq > 起始序号（since_seq 传 0 表示从头）的最多 max 个样本，
 // 并把下一个游标写回 *next_seq。返回写入 out 的样本数。UI 侧每帧调用一次即可。
 int  fnos_data_hist_read(int64_t since_seq, fnos_sample_t *out, int max, int64_t *next_seq);
-// 当前已产生的样本总数（用于判断有无新数据）。
+/* Reset-aware reader: reset=true means discard the consumer window before adding
+   this batch, including an empty batch on endpoint changes. Keep next_seq even
+   when zero rows are returned. The original reader ABI remains available. */
+int fnos_data_hist_read_ex(int64_t since_seq, fnos_sample_t *out, int max, int64_t *next_seq, bool *reset);
+// Opaque monotonic cursor, not a sample count; -1 if the lock is unavailable.
 int64_t fnos_data_hist_seq(void);
 
 /* ── 只读诊断（72h 长测采集用）──────────────────────────────────────────
    这几个接口只读、不加锁以外的工作、不改轮询节奏，也不参与任何控制路径：
    打开 CONFIG_FNOS_SOAK_DIAG 后由 LVGL 事件循环每 10 秒抄一份打到串口。
    时间戳单位是 esp_timer 毫秒（不是 epoch）；source_ts 是 NAS 那侧的采集时间
-   （epoch 秒，0 = 还没有成功帧）。p95_ms 是最近 64 次请求耗时的 P95——
+   （epoch 秒，0 = 尚未成功或成功帧缺失 ts 或返回 0；应结合 ok_count 判断）。p95_ms 是最近 64 次请求耗时的 P95——
    失败也计入，因为"连不上"同样属于用户看到的延迟。 */
 typedef struct {
     uint32_t ok_count, fail_count;

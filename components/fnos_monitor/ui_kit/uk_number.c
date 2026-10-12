@@ -23,6 +23,27 @@ typedef struct {
 } number_label_t;
 static bool motion_enabled = true;
 static size_t layer_bytes;
+static uk_number_stats_t stats;
+#ifdef FNOS_UI_TESTING
+/* Exercise the caller's NULL-return contract; this does not disable LVGL's
+   allocator assertion or simulate recoverable allocator exhaustion. */
+static bool test_animation_failure;
+static lv_anim_t *number_anim_start(const lv_anim_t *a)
+{
+    if (test_animation_failure) { test_animation_failure=false; return NULL; }
+    return lv_anim_start(a);
+}
+#else
+#define number_anim_start lv_anim_start
+#endif
+void uk_number_stats(uk_number_stats_t *out)
+{
+    if (out) { *out=stats; out->bytes=layer_bytes; }
+}
+static void count_fallback(uint32_t *counter)
+{
+    if (*counter != UINT32_MAX) (*counter)++;
+}
 static void number_event(const lv_obj_class_t *cls, lv_event_t *e);
 static void number_destroy(const lv_obj_class_t *cls, lv_obj_t *obj);
 static void number_step(void *obj, int32_t elapsed);
@@ -90,6 +111,7 @@ void uk_number_motion_enable(bool enabled) { motion_enabled=enabled; }
 lv_obj_t *uk_number_label_create(lv_obj_t *parent)
 {
     lv_obj_t *obj=lv_obj_class_create_obj(&number_class,parent);
+    if (!obj) return NULL;
     lv_obj_class_init_obj(obj);
     return obj;
 }
@@ -121,10 +143,14 @@ static int char_count(const char *text)
 }
 static glyph_layer_t *add_layer(number_label_t *n, int key, uint32_t cp, float x, float y, float alpha)
 {
-    if (layer_bytes+sizeof(glyph_layer_t)>UK_NUMBER_BUDGET_BYTES) return NULL;
+    if (sizeof(glyph_layer_t)>UK_NUMBER_BUDGET_BYTES ||
+        layer_bytes>UK_NUMBER_BUDGET_BYTES-sizeof(glyph_layer_t)) {
+        count_fallback(&stats.budget_fallbacks); return NULL;
+    }
     glyph_layer_t *g=uk_alloc(sizeof *g);
-    if (!g) return NULL;
+    if (!g) { count_fallback(&stats.allocation_fallbacks); return NULL; }
     layer_bytes+=sizeof *g;
+    stats.peak_bytes=LV_MAX(stats.peak_bytes,layer_bytes);
     *g=(glyph_layer_t){.next=n->layers,.key=key,.cp=cp,
         .x=x,.y=y,.alpha=alpha,.to_x=x,.to_y=y,.to_alpha=alpha};
     n->layers=g;
@@ -169,10 +195,11 @@ void uk_number_set_text(lv_obj_t *obj, const char *text, bool animate)
     lv_text_get_size(&new_size,text,font,spacing,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
     /* Wrapped/ellipsized text and shrinking content-sized masks use native text.
        A smaller mask cannot retain all outgoing digits without painting over units. */
-    if ((lv_obj_get_style_width(obj,0)==LV_SIZE_CONTENT && char_count(text)<char_count(old)) ||
+    if ((lv_obj_get_style_width(obj,0)==LV_SIZE_CONTENT && new_size.x<old_size.x) ||
         old_size.x>lv_obj_get_content_width(obj) || old_size.y>lv_font_get_line_height(font) ||
         (lv_obj_get_style_width(obj,0)!=LV_SIZE_CONTENT && !obj->w_layout &&
          new_size.x>lv_obj_get_content_width(obj))) {
+        count_fallback(&stats.mask_fallbacks);
         clear_layers(obj); lv_label_set_text(obj,text); return;
     }
     lv_area_t old_content; lv_obj_get_content_coords(obj,&old_content);
@@ -230,7 +257,10 @@ void uk_number_set_text(lv_obj_t *obj, const char *text, bool animate)
     lv_anim_t a; lv_anim_init(&a); lv_anim_set_var(&a,obj);
     lv_anim_set_values(&a,0,(int32_t)n->span); lv_anim_set_duration(&a,n->span);
     lv_anim_set_exec_cb(&a,number_step); lv_anim_set_path_cb(&a,lv_anim_path_linear);
-    lv_anim_start(&a);
+    if (!number_anim_start(&a)) {
+        count_fallback(&stats.animation_fallbacks);
+        clear_layers(obj); /* Native label already has the latest reading. */
+    }
 }
 static void number_draw(lv_event_t *e)
 {
@@ -286,13 +316,23 @@ static void number_event(const lv_obj_class_t *cls, lv_event_t *e)
 }
 #ifdef FNOS_UI_TESTING
 #include <assert.h>
+static bool test_proportional_glyph(const lv_font_t *font, lv_font_glyph_dsc_t *out,
+                                    uint32_t letter, uint32_t next)
+{
+    (void)font;
+    if (!lv_font_get_glyph_dsc(UK_FONT_NUM_32,out,letter,next)) return false;
+    if (letter=='8') out->adv_w+=8;
+    return true;
+}
 void uk_number_selfcheck(lv_obj_t *parent)
 {
     assert(apple_ease(0)==0 && apple_ease(1)==1);
     assert(fabsf(apple_ease(.5f)-.6846432f)<.0001f);
     if (UK_NUMBER_REDUCED || UK_NUMBER_MS==0) return;
     lv_obj_t *o=uk_number_label_create(parent);
+    assert(o);
     lv_obj_set_style_text_font(o,UK_FONT_NUM_32,0);
+    lv_obj_set_width(o,200); /* Retarget continuity uses a stable mask. */
     uk_number_set_text(o,"65%",false); lv_obj_update_layout(o);
     uk_number_set_text(o,"66%",true);
     number_label_t *n=(number_label_t *)o;
@@ -305,18 +345,47 @@ void uk_number_selfcheck(lv_obj_t *parent)
     assert(fabsf(before->y-y)<.001f && fabsf(before->alpha-alpha)<.001f);
     uint32_t began=n->started; uk_number_set_text(o,"67%",true); assert(n->started==began);
     uk_number_set_text(o,"--",false); assert(!n->active && !n->layers);
+    lv_obj_set_width(o,LV_SIZE_CONTENT);
     uk_number_set_text(o,"99",false); lv_obj_update_layout(o);
     uk_number_set_text(o,"100",true); assert(n->active);
     uk_number_settle(o); assert(!n->active && !strcmp(lv_label_get_text(o),"100"));
     uk_number_set_text(o,"99",true); assert(!n->active && !strcmp(lv_label_get_text(o),"99"));
+    lv_obj_set_width(o,200);
     uk_number_set_text(o,"100",false);
     uk_test_alloc_fail_after(0); uk_number_set_text(o,"101",true);
     assert(uk_test_alloc_was_triggered() && !n->active && !strcmp(lv_label_get_text(o),"101"));
     uk_test_alloc_fail_after(-1); uk_alloc_reset();
     uk_number_set_text(o,"102",true); assert(n->active);
+    uk_number_settle(o);
+    size_t before_bytes=layer_bytes;
+    uint32_t before_animation_fallbacks=stats.animation_fallbacks;
+    test_animation_failure=true;
+    uk_number_set_text(o,"103",true);
+    assert(!test_animation_failure && !n->active && !n->layers);
+    assert(layer_bytes==before_bytes && !strcmp(lv_label_get_text(o),"103"));
+    assert(stats.animation_fallbacks==before_animation_fallbacks+1);
+    uk_number_set_text(o,"104",true); assert(n->active);
     uk_number_set_text(o,"1 GB",true); assert(!n->active);
     uk_number_motion_enable(false); uk_number_set_text(o,"2 GB",true); assert(!n->active);
     uk_number_motion_enable(true); uk_number_set_text(o,"3 GB",true); assert(n->active);
+    uk_number_settle(o);
+    lv_obj_set_width(o,LV_SIZE_CONTENT);
+    lv_font_t proportional=*UK_FONT_NUM_32;
+    proportional.get_glyph_dsc=test_proportional_glyph;
+    lv_obj_set_style_text_font(o,&proportional,0);
+    uk_number_set_text(o,"88",false); lv_obj_update_layout(o);
+    uk_number_stats_t before_stats; uk_number_stats(&before_stats);
+    uk_number_set_text(o,"11",true);
+    assert(!n->active && !strcmp(lv_label_get_text(o),"11"));
+    assert(stats.mask_fallbacks>before_stats.mask_fallbacks);
+    lv_obj_set_style_text_font(o,UK_FONT_NUM_32,0);
+    /* Fill the configured layer budget, then prove clean fallback and recovery. */
+    while (add_layer(n,0,'1',0,0,1)) {}
+    assert(stats.budget_fallbacks>before_stats.budget_fallbacks);
+    assert(layer_bytes<=UK_NUMBER_BUDGET_BYTES);
+    uk_number_settle(o); assert(layer_bytes==before_stats.bytes);
+    uk_number_set_text(o,"3 GB",false); uk_number_set_text(o,"4 GB",true);
+    assert(n->active);
     size_t used=layer_bytes;
     lv_obj_delete(o); assert(layer_bytes<used); /* Destructor must remove in-flight callbacks and layers. */
     uk_test_alloc_fail_after(0);

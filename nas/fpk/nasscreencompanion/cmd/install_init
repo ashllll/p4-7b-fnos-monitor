@@ -4,19 +4,31 @@
 rc=0
 say "安装前检查"
 
-PY=$(resolve_python) && say "Python 运行时：$PY" \
-  || { warn "未找到 python312 运行时（依赖应用可能还没装好）。"; rc=1; }
+if PY=$(resolve_python); then
+  say "Python 运行时：$PY"
+else
+  warn "未找到 python312 运行时（依赖应用可能还没装好）。"; rc=1
+fi
 
 norm_wizard
 say "计划监听：$W_BIND:${W_PORT}（鉴权 ${W_AUTH}，容器采集 ${W_DOCKER}，间隔 ${W_INTERVAL}s）"
 say "管理服务使用非 root 包用户；生命周期使用 root 启动独立的固定 GET 容器读取器。"
 
-if port_busy "$W_PORT"; then
-  fail "端口 $W_PORT 已被占用。请回到向导换一个端口再安装；本应用不会结束占用该端口的进程。"
+if [ "$W_PORT" = "$DEV_AGENT_PORT" ]; then
+  # 8799 是开发版采集器（nas/fnos-agent.py + install.sh）的专用端口，_common.sh 开头
+  # 就写明"不触碰 8799"。可向导允许填 8799，装上去就会把开发版采集器顶掉（审计 M54）。
+  fail "端口 $DEV_AGENT_PORT 是开发版采集器的专用端口，本应用不会占用它。请回到向导换一个端口（例如 8798）。"
   rc=1
+else
+  port_busy "$W_PORT"; port_rc=$?
+  case "$port_rc" in
+    0) fail "端口 $W_PORT 已被占用。请回到向导换一个端口再安装；本应用不会结束占用该端口的进程。"; rc=1 ;;
+    1) ;;
+    *) fail "无法判定端口 $W_PORT 是否空闲，拒绝安装；请检查运行时及监听表读取权限。"; rc=1 ;;
+  esac
 fi
 
-if port_busy "$DEV_AGENT_PORT"; then
+if [ "$W_PORT" != "$DEV_AGENT_PORT" ] && port_busy "$DEV_AGENT_PORT"; then
   say "检测到 $DEV_AGENT_PORT 上有服务（应为开发版采集器）。两者可以并存：本应用用 ${W_PORT}，安装和运行都不会改动它。"
 fi
 
@@ -28,5 +40,9 @@ if [ "$W_DOCKER" = "true" ]; then
   warn "你开启了容器采集：由独立受限进程读取固定的容器 GET 接口，管理服务仍使用普通包用户。"
 fi
 
-[ "$rc" = 0 ] && say "检查通过，可以安装" || say "检查未通过，请先处理上面的问题"
+if [ "$rc" = 0 ]; then
+  say "检查通过，可以安装"
+else
+  say "检查未通过，请先处理上面的问题"
+fi
 exit $rc

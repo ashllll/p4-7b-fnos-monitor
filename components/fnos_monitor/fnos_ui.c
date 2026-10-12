@@ -10,6 +10,7 @@
 #include <stdarg.h>
 #include <math.h>
 #include <stdint.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -243,9 +244,10 @@ static const char *mod_status_cn(const char *s)
 /* ── 运行时状态 ───────────────────────────────────────────────────── */
 static bool          s_created;
 static int           s_page;
-static bool          s_night, s_night_req;
-static volatile int  s_page_req = -1;   /* 串口 'page n' 只置标志，落地在 ui_tick */
-static volatile int  s_temp_expand_req = -1;  /* 串口 'temp n'：切温度页并展开第 n 台设备 */
+static bool          s_night;
+static atomic_bool   s_night_req;
+static atomic_int    s_page_req = -1;   /* 串口 'page n' 只置标志，落地在 ui_tick */
+static atomic_int    s_temp_expand_req = -1;  /* 串口 'temp n'：切温度页并展开第 n 台设备 */
 static bool          s_diagnostics;
 static fnos_status_t s_st = { .host="", .net={ .ifname="", .state="" } };
 static int64_t       s_seq;
@@ -282,6 +284,8 @@ static uint32_t      s_pair_alert = 0xE79913;
 /* 配对面板的定义在文件后半（挨着 digit 键盘那一片），建树在 build_rail/build_p3 里，
    所以先声明。 */
 static void motion_init(void);
+static void motion_poll_start(void);
+static lv_timer_t *s_motion_poll;   /* 8ms 手势轮询：只在按下期间跑，空闲即暂停 */
 static bool motion_busy(void);
 static void pages_warm(void);
 static bool s_refresh_pending;
@@ -376,7 +380,16 @@ static lv_obj_t *mk_page(lv_obj_t *content)
 
 
 /* 容量 / 速率 / 时长 / 数据年龄 */
-static const char *fmt_cap(char *b, size_t n, float gb)
+/* Progress coordinates are bounded by the existing 0..100 bar range. Keep
+   original measurements in labels; reject nonfinite coordinates before casts. */
+static int32_t gauge_value(double value)
+{
+    if (!isfinite(value) || value < 0) return -1;
+    if (value >= 100) return 100;
+    return (int32_t)value;
+}
+
+static const char *fmt_cap(char *b, size_t n, double gb)
 {
     if (gb >= 1024.0f)     snprintf(b, n, "%.1f TB", gb / 1024.0f);
     else if (gb >= 100.0f) snprintf(b, n, "%.0f GB", gb);
@@ -435,6 +448,16 @@ static void ui_page(lv_obj_t *page)
    uk.h 里没有"列"这一层，但在 flex 里它就是 lv_obj + FLOW_COLUMN + flex_grow。 */
 /* 卡片统一从这里建：uk_card 是 ui_kit 的，不认识本文件的"卡片表"，
    而夜间模式要把所有卡面压暗（旧实现靠 mk_card 登记，迁移后得补上这一步）。 */
+/* Reserve the themed scrollbar column plus the standard content gap. */
+static void reserve_scrollbar_gutter(lv_obj_t *obj)
+{
+    int32_t width = lv_obj_get_style_width(obj, LV_PART_SCROLLBAR);
+    if (width <= 0) return;
+    int32_t reserve = lv_obj_get_style_pad_right(obj, LV_PART_SCROLLBAR) + width + UK_S2;
+    if (lv_obj_get_style_pad_right(obj, 0) < reserve)
+        lv_obj_set_style_pad_right(obj, reserve, 0);
+}
+
 static lv_obj_t *ui_card(lv_obj_t *parent, const char *title, const char *note)
 {
     lv_obj_t *c = uk_card(parent, title, note);
@@ -856,9 +879,12 @@ static void build_header(lv_obj_t *h)
     lv_obj_set_height(s_ui.h_ep, lv_font_get_line_height(UK_FONT_CJK_12));
     not_clickable(hostcol);
 
+    /* 量文字宽度必须和真正画它的字体一致（审计 M19）：这两颗按钮渲染用 CJK_12，
+       以前却按 CJK_16 量宽，白占十几像素，顶栏主机名那一列跟着变窄。
+       flex_btn 的左右内边距正好是 UK_S2，所以宽度 = 文本宽 + 2*UK_S2。 */
     lv_point_t wifi_size, diagnostics_size;
-    lv_text_get_size(&wifi_size, "Wi-Fi 未配置", UK_FONT_CJK_16, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-    lv_text_get_size(&diagnostics_size, "设置", UK_FONT_CJK_16, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    lv_text_get_size(&wifi_size, "Wi-Fi 未配置", UK_FONT_CJK_12, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    lv_text_get_size(&diagnostics_size, "设置", UK_FONT_CJK_12, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
     /* 顶栏这两颗是"随时可按的入口"，不是状态，用幽灵档（无底无框）。
        这样顶栏唯一的高饱和元素就只剩状态胶囊（在线/离线）。 */
     s_ui.wifi_btn = flex_btn(h, "Wi-Fi 未配置", BTN_GHOST, UK_FONT_CJK_12, wifi_size.x + 2 * UK_S2);
@@ -872,7 +898,7 @@ static void build_header(lv_obj_t *h)
     /* 配对入口：原先是 dock 里的第七格（与六页导航并列，等于告诉用户"配对也是一页"），
        现在收进顶栏 = 设备域入口。标签保持"配对"，预览断言与用户话术都不用改。 */
     lv_point_t pair_size;
-    lv_text_get_size(&pair_size, "配对", UK_FONT_CJK_16, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    lv_text_get_size(&pair_size, "配对", UK_FONT_CJK_12, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
     s_ui.pair_btn = flex_btn(h, "配对", BTN_GHOST, UK_FONT_CJK_12, pair_size.x + UK_DOT + 4 * UK_S2);
     s_ui.pair_btn_lbl = lv_obj_get_child(s_ui.pair_btn, 0);
     lv_obj_set_style_pad_column(s_ui.pair_btn, UK_S2, 0);
@@ -944,6 +970,20 @@ static lv_obj_t *hero_bar(lv_obj_t *parent)
 /* ── 图表读数 ────────────────────────────────────────────────────────
    uk_trend 是原生 lv_chart，只负责画；"峰值"这类业务读数得自己遍历序列。
    未写入的点是 LV_CHART_POINT_NONE(=INT32_MAX)，不能当数据参与比较。 */
+/* Data-driven scale with headroom, bounded before conversion. The range cap
+   limits the axis only; it does not turn an unrepresentable sample into data. */
+static int32_t network_chart_max(int32_t peak_a, int32_t peak_b,
+                                 float rx, float tx, int32_t minimum)
+{
+    double top = peak_a > peak_b ? peak_a : peak_b;
+    if (isfinite(rx) && rx > top) top = rx;
+    if (isfinite(tx) && tx > top) top = tx;
+    top *= 1.2;
+    if (top < minimum) return minimum;
+    if (top >= (double)(INT32_MAX - 1)) return INT32_MAX - 1;
+    return (int32_t)ceil(top);
+}
+
 static int32_t chart_peak(lv_obj_t *chart, int32_t idx)
 {
     if (!chart) return 0;
@@ -1193,8 +1233,8 @@ static void build_p0(lv_obj_t *page)
     lv_obj_set_style_min_height(s_ui.overview_volumes, list_min, 0);
     uk_list_mark_one(s_ui.overview_volumes);
     lv_obj_set_style_pad_row(s_ui.overview_volumes, UK_S1, 0);
-    lv_obj_set_style_pad_right(s_ui.overview_volumes, UK_SCROLL_W + UK_S1, 0);
     lv_obj_set_style_width(s_ui.overview_volumes, UK_SCROLL_W, LV_PART_SCROLLBAR);
+    reserve_scrollbar_gutter(s_ui.overview_volumes);
     lv_obj_add_flag(s_ui.overview_volumes, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scroll_dir(s_ui.overview_volumes, LV_DIR_VER);
     s_ui.storage_note = uk_label(body, UK_FONT_CJK_12, UK_T3, "");
@@ -2141,6 +2181,17 @@ static void wifi_apply_layer(void)
     }
 }
 
+static void wifi_clear_password(void)
+{
+    memset(s_wifi_pw, 0, sizeof s_wifi_pw);
+    s_wifi_pw_n = 0;
+    s_wifi_reveal = false;
+    // 隐藏标签也要替换；只清输入数组不会清掉标签持有的那份文本。
+    // 使用静态占位串，不依赖一次可能失败的新分配来撤下明文。
+    if (s_ui.wifi_pw_lbl) lv_label_set_text_static(s_ui.wifi_pw_lbl, "口令");
+    if (s_ui.wifi_eye_lbl) lv_label_set_text_static(s_ui.wifi_eye_lbl, "显示");
+}
+
 static void wifi_render_input(void)
 {
     /* 手动模式两行都能编辑；扫描模式只编辑口令。正在编辑的那一行描边高亮。 */
@@ -2152,6 +2203,9 @@ static void wifi_render_input(void)
         field_focus(s_ui.wifi_ssid_box, manual && s_wifi_field == 0);
     }
     if (s_ui.wifi_pw_lbl) {
+        // 撤下明文不依赖新分配；掩码分配失败时保留无敏感内容的占位串。
+        if (!s_wifi_reveal || s_wifi_pw_n == 0)
+            lv_label_set_text_static(s_ui.wifi_pw_lbl, "口令");
         if (s_wifi_reveal || s_wifi_pw_n == 0) {
             set_txt(s_ui.wifi_pw_lbl, "%s", s_wifi_pw_n ? s_wifi_pw : "口令");
         } else {
@@ -2165,7 +2219,7 @@ static void wifi_render_input(void)
                                     uk_c(s_wifi_pw_n ? UK_T1 : UK_T3), 0);
         field_focus(s_ui.wifi_pw_box, !manual || s_wifi_field == 1);
     }
-    if (s_ui.wifi_eye_lbl) set_txt(s_ui.wifi_eye_lbl, "%s", s_wifi_reveal ? "隐藏" : "显示");
+    if (s_ui.wifi_eye_lbl) lv_label_set_text_static(s_ui.wifi_eye_lbl, s_wifi_reveal ? "隐藏" : "显示");
 }
 
 static lv_obj_t *wifi_field_box(lv_obj_t *parent, int32_t grow, lv_obj_t **out_lbl)
@@ -2205,6 +2259,11 @@ static void field_focus(lv_obj_t *box, bool on)
 
 static void wifi_set_stage(int st)
 {
+    if (st == WIFI_ST_SCAN) wifi_clear_password();
+    if (st == WIFI_ST_LINK) {
+        s_wifi_reveal = false;
+        wifi_render_input();
+    }
     s_wifi_stage = st;
     s_wifi_err[0] = 0;
     bool scan = (st == WIFI_ST_SCAN), pass = (st == WIFI_ST_PASS), link = (st == WIFI_ST_LINK);
@@ -2235,6 +2294,7 @@ static void wifi_build(lv_obj_t *page)
     lv_obj_set_style_pad_row(body, UK_S1, 0);   /* 这张卡的正文行距紧一档，省给键盘 */
     lv_obj_add_flag(body, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scroll_dir(body, LV_DIR_VER);
+    reserve_scrollbar_gutter(body);
 
     s_ui.wifi_hint = uk_label(body, UK_FONT_CJK_12, UK_T3, NULL);
     lv_obj_set_width(s_ui.wifi_hint, LV_PCT(100));
@@ -2341,6 +2401,7 @@ static void wifi_build(lv_obj_t *page)
 
 static void wifi_show(bool on)
 {
+    if (!on) wifi_clear_password();
     if (on) fnos_ui_motion_settle();
     s_wifi_open = on;
     if (!s_ui.wifi_card) return;
@@ -2460,17 +2521,25 @@ static void wifi_refresh(void)
     /* 顶栏那颗常驻按钮：任何时候都要说清"板子现在有没有网"。
        没配置 = 橙色（要去处理）；配了但没连上 = 普通色 + "连接中"；连上了 = 亮色 SSID。 */
     if (s_ui.wifi_btn_lbl) {
-        char b[WIFI_SSID_MAX + sizeof("连接中 · ")];
-        const char *ssid = fnos_net_ssid();
-        if (!fnos_net_configured())       snprintf(b, sizeof b, "Wi-Fi 未配置");
-        else if (fnos_net_online())       snprintf(b, sizeof b, "%s", ssid[0] ? ssid : "已连接");
-        else if (fnos_net_state() == FNOS_NET_FAILED) snprintf(b, sizeof b, "Wi-Fi 未连接");
+        /* SSID 最长 32 字符（802.11 上限）**再加一个结尾 NUL**：以前按 WIFI_SSID_MAX
+           开缓冲，32 字符的合法 SSID 会被 snprintf 砍掉最后一个字符——主机预览的
+           assert_ellipsized_source 实测到 "…12345" ≠ "…123456"（审计 M19 同一片区域）。 */
+        char b[WIFI_SSID_MAX + 1 + sizeof("连接中 · ")];
+        char ssid[WIFI_SSID_MAX + 1];           // 各自一份：与串口 CLI 抢同一个静态缓冲会互相截断
+        fnos_net_ssid_r(ssid, sizeof ssid);
+        fnos_net_state_t ns = fnos_net_state(); // 含"本轮配网提交"的状态（审计 M04 + M05）
+        /* 顶栏只说 fnos_net_state() 这一个事实源，不再另外问 configured/online：
+           否则"在线改密码"的那一小段时间里，state 已经是 CONNECTING（提交中），
+           而 online 还是 true，两句话会互相打架。 */
+        if (ns == FNOS_NET_UNCONFIGURED)  snprintf(b, sizeof b, "Wi-Fi 未配置");
+        else if (ns == FNOS_NET_ONLINE)   snprintf(b, sizeof b, "%s", ssid[0] ? ssid : "已连接");
+        else if (ns == FNOS_NET_FAILED)   snprintf(b, sizeof b, "Wi-Fi 未连接");
         else if (ssid[0])                 snprintf(b, sizeof b, "连接中 · %s", ssid);
         else                              snprintf(b, sizeof b, "连接中…");
         set_txt(s_ui.wifi_btn_lbl, "%s", b);
         lv_obj_set_style_text_color(s_ui.wifi_btn_lbl,
-                                    uk_c(!fnos_net_configured() ? UK_WARN
-                                        : fnos_net_online()     ? UK_T1 : UK_T2), 0);
+                                    uk_c(ns == FNOS_NET_UNCONFIGURED || ns == FNOS_NET_FAILED
+                                        ? UK_WARN : ns == FNOS_NET_ONLINE ? UK_T1 : UK_T2), 0);
     }
 
     if (!s_wifi_open) return;
@@ -2493,13 +2562,16 @@ static void wifi_refresh(void)
         }
         if (s_ui.wifi_link_sub) {
             char b[220];
+            char st[160];
+            char sr[128] = "";
+            fnos_net_state_str_r(st, sizeof st);    // 不用共享静态缓冲（审计 M09）
+            fnos_net_submit_reason_r(sr, sizeof sr); // 这一轮提交自己的原因（更准）
             if (on) {
                 snprintf(b, sizeof b, "%s · 信号 %d dBm\n板子已经记住这个网络，下次开机自动连。",
-                         fnos_net_state_str(), (int)fnos_net_rssi());
+                         st, (int)fnos_net_rssi());
             } else {
                 snprintf(b, sizeof b,
-                         "%s\n连接失败可点「修改密码」重试：口令区分大小写，"
-                         "也确认一下这个网络是不是 2.4G。", fnos_net_state_str());
+                         "%s\n请按原因排查后重试；要更换口令，可点「修改密码」。", sr[0] ? sr : st);
             }
             set_txt(s_ui.wifi_link_sub, "%s", b);
         }
@@ -2515,9 +2587,7 @@ static void wifi_pick(const fnos_ap_t *a)
     snprintf(s_wifi_ssid, sizeof s_wifi_ssid, "%s", a->ssid);
     s_wifi_manual = false;
     s_wifi_field  = 1;
-    s_wifi_pw[0]  = 0;
-    s_wifi_pw_n   = 0;
-    s_wifi_reveal = false;
+    wifi_clear_password();
     s_wifi_layer  = 0;
     s_wifi_shift  = false;
     if (!a->secure) {
@@ -2545,6 +2615,10 @@ static void wifi_key_cb(lv_event_t *e)
     int i = (int)(intptr_t)lv_event_get_user_data(e);
     if (i < 0 || i >= WIFI_KB_KEYS) return;
     s_wifi_err[0] = 0;                       /* 用户一动键盘，刚才那句错误就该消失 */
+    /* 同理清掉上一轮配网提交的结论（审计 M04 + M05）：用户正在重新输入，
+       屏幕上不该还挂着上一轮的"没连上"；提交进行中时不清（fnos_net_submit_clear
+       自己会跳过去），免得"正在连接"被抹掉。 */
+    fnos_net_submit_clear();
     const wifi_key_t k = (s_wifi_layer ? WIFI_KB_SYMBOLS : WIFI_KB_LETTERS)[i];
 
     bool edit_ssid = (s_wifi_manual && s_wifi_field == 0);
@@ -2600,9 +2674,7 @@ static void wifi_manual_cb(lv_event_t *e)
     s_wifi_sel    = -1;
     s_wifi_field  = 0;
     s_wifi_ssid[0] = 0;
-    s_wifi_pw[0]   = 0;
-    s_wifi_pw_n    = 0;
-    s_wifi_reveal  = false;
+    wifi_clear_password();
     s_wifi_layer   = 0;
     s_wifi_shift   = false;
     wifi_set_stage(WIFI_ST_PASS);
@@ -2615,6 +2687,8 @@ static void wifi_close_cb(lv_event_t *e)
     /* 关掉 = 这次开机不再自动弹（用户明确表示"我知道，先不看"），
        但入口一直在顶栏上，橙色提醒也一直在。 */
     s_wifi_dismissed = true;
+    /* 关掉就不把口令留在内存/输入框里：关掉再打开，上一次输了一半的口令还在框里，
+       而且可能是明文态（审计 M19）。凭据这时已经在 NVS 里，界面不需要它。 */
     wifi_show(false);
 }
 
@@ -2639,7 +2713,6 @@ static void wifi_eye_cb(lv_event_t *e)
 {
     (void)e;
     s_wifi_reveal = !s_wifi_reveal;
-    if (s_ui.wifi_eye_lbl) set_txt(s_ui.wifi_eye_lbl, "%s", s_wifi_reveal ? "隐藏" : "显示");
     wifi_render_input();
 }
 
@@ -2673,9 +2746,6 @@ static void wifi_connect_cb(lv_event_t *e)
 static void wifi_again_cb(lv_event_t *e)
 {
     (void)e;
-    s_wifi_pw[0]  = 0;
-    s_wifi_pw_n   = 0;
-    s_wifi_reveal = false;
     wifi_set_stage(WIFI_ST_SCAN);
     fnos_net_scan_clear();
     fnos_net_scan_request();
@@ -3064,11 +3134,11 @@ static const char *hist_span_text(char *b, size_t cap, const fnos_status_t *st)
     }
     /* 说的是"这张图上这一段有多宽"：窗口里的点数 × 平均采样间隔。
        用平均间隔而不是历史总跨度——总跨度含了窗口之外的时间，说出去对不上图。 */
-    int sec = st->hist_avg_gap_x10 > 0
-                  ? (int)((int64_t)(UI_HIST - 1) * st->hist_avg_gap_x10 / 10)
+    int64_t sec = st->hist_avg_gap_x10 > 0
+                  ? (int64_t)(UI_HIST - 1) * st->hist_avg_gap_x10 / 10
                   : st->hist_span_s;
-    if (sec < 90)         snprintf(b, cap, "最近 %d 秒", sec);
-    else if (sec < 5400)  snprintf(b, cap, "最近 %d 分钟", (sec + 30) / 60);
+    if (sec < 90)         snprintf(b, cap, "最近 %d 秒", (int)sec);
+    else if (sec < 5400)  snprintf(b, cap, "最近 %d 分钟", (int)((sec + 30) / 60));
     else                  snprintf(b, cap, "最近 %.1f 小时", sec / 3600.0);
     size_t n = strlen(b);
     if (st->hist_avg_gap_x10 >= 20 && n + 16 < cap) {
@@ -3637,20 +3707,16 @@ static void overview_refresh(const fnos_status_t *st)
         const char *state = overview_module_state(st, "net");
         set_num(s_ui.overview_net_context, "%s", st->ever_ok && state ? mod_status_cn(state) : "等待网络数据");
     } else {
-        float top = chart_peak(s_ui.overview_net, 0);
-        if (top < chart_peak(s_ui.overview_net, 1)) top = chart_peak(s_ui.overview_net, 1);
-        if (top < st->net.rx_kbs) top = st->net.rx_kbs;
-        if (top < st->net.tx_kbs) top = st->net.tx_kbs;
-        top = top > 0 ? top * 1.2f : 1;  /* Zero is valid; never collapse the scale. */
-        int32_t ymax = (int32_t)top;
-        if ((float)ymax < top) ymax++;
+        int32_t ymax = network_chart_max(chart_peak(s_ui.overview_net, 0),
+                                         chart_peak(s_ui.overview_net, 1),
+                                         st->net.rx_kbs, st->net.tx_kbs, 1);
         uk_trend_set_range(s_ui.overview_net, 0, ymax);
         if (!net_live) set_num(s_ui.overview_net_context, "旧历史 · 暂停更新");
         else if (!chart_sample_count(s_ui.overview_net)) set_num(s_ui.overview_net_context, "等待历史采样");
         else set_num(s_ui.overview_net_context, "%d 次采集 · 0-%s", chart_sample_count(s_ui.overview_net), fmt_rate(b, sizeof b, ymax));
     }
 
-    float used = 0, total = 0, free_gb = 0;
+    double used = 0, total = 0, free_gb = 0;
     int healthy_raid = 0;
     for (int i = 0; i < st->nvols; i++) {
         used += st->vols[i].used_gb; total += st->vols[i].total_gb; free_gb += st->vols[i].free_gb;
@@ -3663,16 +3729,23 @@ static void overview_refresh(const fnos_status_t *st)
     if (storage) set_num(s_ui.capacity_detail, "已用 / 总计 %s · 可用 %s", fmt_cap(c1, sizeof c1, total), fmt_cap(c2, sizeof c2, free_gb));
     else set_num(s_ui.capacity_detail, "%s", st->ever_ok ? "没有可用容量数据" : "等待存储数据");
     show(s_ui.capacity_bar, storage);
-    uk_bar_set(s_ui.capacity_bar, total > 0 ? (int32_t)(used / total * 100) : 0);
+    uk_bar_set(s_ui.capacity_bar, total > 0 ? gauge_value(used / total * 100) : 0);
     lv_obj_set_style_bg_color(s_ui.capacity_bar, uk_c(storage_live ? UK_S_CPU : UK_OFF), LV_PART_INDICATOR);
     int count = storage ? st->nvols : 0;
     if (count > s_ui.overview_volume_capacity) {
         overview_volume_t *grown = uk_realloc(s_ui.overview_volume, (size_t)count * sizeof *grown);
-        if (!grown) return;
-        memset(grown + s_ui.overview_volume_capacity, 0,
-               (count - s_ui.overview_volume_capacity) * sizeof *grown);
-        s_ui.overview_volume = grown;
-        s_ui.overview_volume_capacity = count;
+        if (grown) {
+            memset(grown + s_ui.overview_volume_capacity, 0,
+                   (count - s_ui.overview_volume_capacity) * sizeof *grown);
+            s_ui.overview_volume = grown;
+            s_ui.overview_volume_capacity = count;
+        } else {
+            /* 分配失败就只画装得下的那几行（uk_realloc 失败时旧块还在，缩容量是安全的）。
+               以前这里直接 return：容量数字已经刷成新的一代、下面的卷行还是旧的，
+               同一帧里两代数据，而且没有 OOM 提示（审计 M19）。
+               少画的行会被 uk 的分配失败提示兜住，不是静默少设备。 */
+            count = s_ui.overview_volume_capacity;
+        }
     }
     for (int i = 0; i < count; i++) {
         overview_volume_t *row = &s_ui.overview_volume[i];
@@ -3692,9 +3765,9 @@ static void overview_refresh(const fnos_status_t *st)
         set_txt(row->name, "%s", vol->mnt);
         (storage_live ? set_num : set_txt)(row->value, vol->total_gb > 0 ? "%.0f%%" : "--", vol->pct);
         show(row->bar, vol->total_gb > 0);
-        uk_bar_set(row->bar, (int32_t)vol->pct);
+        uk_bar_set(row->bar, gauge_value(vol->pct));
         lv_obj_set_style_bg_color(row->bar, uk_c(storage_live ? UK_S_CPU : UK_OFF), LV_PART_INDICATOR);
-        lv_obj_set_style_text_color(row->value, uk_c(storage_live ? uk_pct_color((int32_t)vol->pct) : UK_T3), 0);
+        lv_obj_set_style_text_color(row->value, uk_c(storage_live ? uk_pct_color(gauge_value(vol->pct)) : UK_T3), 0);
         not_clickable(row->box);
     }
     for (int i = count; i < s_ui.overview_volume_made; i++) {
@@ -3958,20 +4031,20 @@ static void refresh(void)
     if (page_on(0)) overview_refresh(st);
 
     if (page_on(1)) {
-        float used = 0, total = 0, free_gb = 0;
+        double used = 0, total = 0, free_gb = 0;
         for (int i = 0; i < st->nvols; i++) {
             used += st->vols[i].used_gb;
             total += st->vols[i].total_gb;
             free_gb += st->vols[i].free_gb;
         }
-        float capacities[] = { used, total, free_gb };
+        double capacities[] = { used, total, free_gb };
         for (int i = 0; i < 3; i++)
             set_num(s_ui.storage_value[i], "%s", st->ever_ok && st->nvols ? fmt_cap(b, sizeof b, capacities[i]) : "-");
         /* P1 的容量条与上面的三栏数字同源：一眼看出"还剩多少"。 */
         if (s_ui.storage_bar) {
-            int32_t pct = (st->ever_ok && st->nvols && total > 0) ? (int32_t)(used / total * 100.0f + 0.5f) : 0;
+            int32_t pct = (st->ever_ok && st->nvols && total > 0) ? gauge_value(used / total * 100.0 + 0.5) : 0;
             uk_bar_set(s_ui.storage_bar, pct);
-            lv_obj_set_style_bg_color(s_ui.storage_bar, uk_c(uk_pct_color((float)pct)), LV_PART_INDICATOR);
+            lv_obj_set_style_bg_color(s_ui.storage_bar, uk_c(uk_pct_color(pct)), LV_PART_INDICATOR);
         }
     }
     if (page_on(0)) {
@@ -4042,8 +4115,8 @@ static void refresh(void)
            "54%" 这个**整串**在屏幕上，拆成两个 label 就找不到了。 */
         /* 副行交给 uk_row_set（它会把 name2 也走数字过渡）；再 set_txt 覆盖一遍
            会把这层动效按静态文本写掉。 */
-        uk_row_set(row, v->mnt, b, c1, NULL, (int32_t)v->pct, 0);
-        lv_obj_set_style_text_color(row->val, uk_c(uk_pct_color((int32_t)v->pct)), 0);
+        uk_row_set(row, v->mnt, b, c1, NULL, gauge_value(v->pct), 0);
+        lv_obj_set_style_text_color(row->val, uk_c(uk_pct_color(gauge_value(v->pct))), 0);
     }
     pool_layout(&s_p1_vol_n, &s_p1_vol_w, &s_p1_vol_h, nvol, s_ui.vol_pool, UK_LIST_MIN_WIDTH, false, NULL);
 
@@ -4133,12 +4206,10 @@ static void refresh(void)
     {
         int32_t peak_tx = chart_peak(s_ui.tr_net, 0);
         int32_t peak_rx = chart_peak(s_ui.tr_net, 1);
-        float top = (peak_rx > peak_tx ? peak_rx : peak_tx) * 1.2f;
-        if (top < st->net.rx_kbs * 1.2f) top = st->net.rx_kbs * 1.2f;
-        if (top < st->net.tx_kbs * 1.2f) top = st->net.tx_kbs * 1.2f;
-        if (top < 20) top = 20;
-        uk_trend_set_range(s_ui.tr_net, 0, (int32_t)top);
-        set_num(s_ui.net_axis, "量程 0 - %s", fmt_rate(b, sizeof b, top));
+        int32_t ymax = network_chart_max(peak_tx, peak_rx,
+                                         st->net.rx_kbs, st->net.tx_kbs, 20);
+        uk_trend_set_range(s_ui.tr_net, 0, ymax);
+        set_num(s_ui.net_axis, "量程 0 - %s", fmt_rate(b, sizeof b, ymax));
         set_num(s_ui.tr_tx_lbl, "%s · 峰 %s",
                 fmt_rate(c1, sizeof c1, st->net.tx_kbs), fmt_rate(c2, sizeof c2, peak_tx));
         set_num(s_ui.tr_rx_lbl, "%s · 峰 %s",
@@ -4271,7 +4342,7 @@ static void refresh(void)
         else snprintf(sub, sizeof sub, "%d 路", g->count);
         const char *nm = g0->dn[0] ? g0->dn : g0->dev;
         snprintf(vb, sizeof vb, "%.1f", g->max_c);
-        uk_row_set(r, nm, sub, vb, "°C", (int32_t)g->max_c, 0);
+        uk_row_set(r, nm, sub, vb, "°C", gauge_value(g->max_c), 0);
         /* 原来这里再 set_txt(name2, 与 sub 同文) 覆盖一遍：文本一样，却把
            uk_row_set 里刚起的数字过渡清掉，副行永远是静态的。删掉即可。 */
         uint32_t tc = st->online ? uk_temp_color(g->max_c) : UK_T3;
@@ -4488,20 +4559,31 @@ static void refresh(void)
 }
 
 /* ── tick / 生命周期 ──────────────────────────────────────────────── */
+/* LVGL reserves INT32_MAX for a gap. Preserve missing/unrepresentable samples
+   as gaps rather than overflowing a coordinate or inventing a clipped value.
+   Compare in double: (float)INT32_MAX rounds up to 2^31. */
+static int32_t history_chart_value(float value)
+{
+    double v = value;
+    if (!isfinite(v) || v < (double)INT32_MIN || v >= (double)LV_CHART_POINT_NONE)
+        return LV_CHART_POINT_NONE;
+    return (int32_t)v;
+}
+
 static void ui_tick(lv_timer_t *t)
 {
     (void)t;
     int64_t t_bench = esp_timer_get_time();   /* 台架：这一次 tick 的总耗时（关配置时零成本） */
     uk_alloc_reset();
-    if (s_night_req != s_night) {
-        s_night = s_night_req;
+    const bool night = atomic_load_explicit(&s_night_req, memory_order_relaxed);
+    if (night != s_night) {
+        s_night = night;
         night_apply();
     }
     /* 串口 'page n' 的落地点：别的任务只能置标志（本板规矩：LVGL 只许在 LVGL 任务里调）。
        实机验收靠它——板上没有触摸自动化，不这样切页就只能拍到开机那一页。 */
-    int want = s_page_req;
+    int want = atomic_exchange_explicit(&s_page_req, -1, memory_order_relaxed);
     if (want >= 0) {
-        s_page_req = -1;
         fnos_ui_set_page(want);
     }
     /* 串口 'temp n' 的落地点挪到本函数末尾的 refresh() 之后（见那里）。 */
@@ -4513,7 +4595,7 @@ static void ui_tick(lv_timer_t *t)
        判据必须是**存储本身**（fnos_wifi_store_load，跟 `wifi show` 同源），不能问
        fnos_net_configured()：那个标志由网络层读完 NVS 才置真，而这里到点就往弹，
        于是 NVS 稍慢一步就误判成"没凭据"——实机上真出现过：凭据明明在（wifi show
-       回显 凭据：有 / 已连接 llll），系统页却被配网卡盖住，还自动起了一次扫描。 */
+       回显 凭据：有 / 已连接 Demo），系统页却被配网卡盖住，还自动起了一次扫描。 */
     static int boot_ticks;
     if (boot_ticks >= 0 && ++boot_ticks > 6) {
         boot_ticks = -1;
@@ -4541,8 +4623,9 @@ static void ui_tick(lv_timer_t *t)
        所以放 static 而不是压在栈上 —— 又是 1 KB。 */
     static fnos_sample_t smp[64];
     int64_t next = s_seq;
-    int n = s_st.ever_ok ? fnos_data_hist_read(s_seq, smp, 64, &next) : 0;
-    if (!s_st.ever_ok) {
+    bool history_reset=false;
+    int n = s_st.ever_ok ? fnos_data_hist_read_ex(s_seq, smp, 64, &next, &history_reset) : 0;
+    if (!s_st.ever_ok || history_reset) {
         /* uk_trend 自己持有数据（原生 lv_chart），没有中转环要清 */
         chart_clear(s_ui.overview_resource[0].chart, 1);
         chart_clear(s_ui.overview_resource[1].chart, 1);
@@ -4559,7 +4642,7 @@ static void ui_tick(lv_timer_t *t)
         for (int k = 0; k < 2; k++) if (live[k]) {
             lv_obj_t *chart = s_ui.overview_resource[k].chart;
             if (s_overview_gap[k]) uk_trend_push(chart, 0, LV_CHART_POINT_NONE);
-            uk_trend_push(chart, 0, (int32_t)(k == 0 ? smp[i].cpu : smp[i].mem));
+            uk_trend_push(chart, 0, history_chart_value(k == 0 ? smp[i].cpu : smp[i].mem));
             s_overview_gap[k] = false;
         }
         if (live[2]) {
@@ -4567,14 +4650,14 @@ static void ui_tick(lv_timer_t *t)
                 uk_trend_push(s_ui.overview_net, 0, LV_CHART_POINT_NONE);
                 uk_trend_push(s_ui.overview_net, 1, LV_CHART_POINT_NONE);
             }
-            uk_trend_push(s_ui.overview_net, 0, smp[i].rx_kbs);
-            uk_trend_push(s_ui.overview_net, 1, smp[i].tx_kbs);
+            uk_trend_push(s_ui.overview_net, 0, history_chart_value(smp[i].rx_kbs));
+            uk_trend_push(s_ui.overview_net, 1, history_chart_value(smp[i].tx_kbs));
             s_overview_gap[2] = false;
         }
-        uk_trend_push(s_ui.tr_net, 0, smp[i].tx_kbs);
-        uk_trend_push(s_ui.tr_net, 1, smp[i].rx_kbs);
+        uk_trend_push(s_ui.tr_net, 0, history_chart_value(smp[i].tx_kbs));
+        uk_trend_push(s_ui.tr_net, 1, history_chart_value(smp[i].rx_kbs));
     }
-    if (n > 0) s_seq = next;
+    if (n > 0 || history_reset) s_seq = next;
 
     /* Consume real samples even during a long drag. Only the expensive text and
        pool refresh waits for the transition to finish. */
@@ -4592,8 +4675,7 @@ static void ui_tick(lv_timer_t *t)
        一致，别再写第二套）。**必须排在 refresh() 之后**：温度块是 refresh 里建的
        （temp_blk_build），开机后 p4 从未布局过时这里才拿得到 box。请求是一次性的：
        索引越界/没有数据/这台设备只有一路通道，都直接作废，不留悬着的状态。 */
-    int expand = s_temp_expand_req;
-    s_temp_expand_req = -1;
+    int expand = atomic_exchange_explicit(&s_temp_expand_req, -1, memory_order_relaxed);
     if (expand >= 0 && expand < s_tgrp_n && s_tgrp[expand].count > 1 &&
         s_ui.temp_blk && expand < s_ui.temp_blk_made && s_ui.temp_blk[expand].box) {
         s_ui.temp_blk[expand].collapsed = false;
@@ -4622,9 +4704,26 @@ static lv_obj_t *build_page(lv_obj_t *content, int idx)
     return p;
 }
 
+/* Display-lock protected: retry only a missing tick, never rebuild an existing tree. */
+static lv_timer_t *s_ui_tick;
+static void ui_tick_start(void)
+{
+    if (!s_ui_tick) s_ui_tick = lv_timer_create(ui_tick, 500, NULL);
+    if (!s_ui_tick) ESP_LOGE(TAG, "UI refresh timer allocation failed: display is stale");
+}
+
+bool fnos_ui_ready(void)
+{
+    return s_created && s_ui_tick != NULL && s_motion_poll != NULL;
+}
+
 void fnos_ui_create(void)
 {
-    if (s_created) return;
+    if (s_created) {
+        ui_tick_start();
+        motion_poll_start();
+        return;
+    }
 
     fnos_status_release(&s_st);
 
@@ -4658,7 +4757,7 @@ void fnos_ui_create(void)
     overview_layout(); /* Measure placeholder content before the first data tick. */
     night_apply();
 
-    lv_timer_create(ui_tick, 500, NULL);
+    ui_tick_start();
     motion_init();
     fnos_perf_init();   /* 台架：CONFIG_FNOS_UI_PERF_BENCH=n 时是空函数 */
     ESP_LOGI(TAG, "ui created (pages=%d)", FNOS_UI_PAGE_COUNT);
@@ -4691,7 +4790,61 @@ bool fnos_ui_swipe_point(int dir, int32_t *x, int32_t *y)
 /* 自描述：把已建好的卡片几何按行吐给主机工具。看门狗（tools/preview/scroll_gap.js）
    的卡片表以前是手抄的，抄错一次就报 15 处假不合格 —— 现在几何只有这一处来源。
    p=0 对页面没意义（建树时四页都建），看门狗是按尺寸与自己的表对上号的。 */
-void fnos_ui_dump_card_map(void)
+/* 一个滚动区的事实：drawn 来自 lv_obj_get_scrollbar_area()（绘制时用的同一个函数），
+   over 来自真实滚动余量，mode/dir/t/rs/ls/opa 是主机复算那一列需要的全部样式量。
+   主列表（d=0）与嵌套滚动区（d>=1）共用这一段，免得两处格式漂移。 */
+static void dump_bar_facts(FILE *fp, lv_obj_t *sc, int pg, int depth)
+{
+    lv_area_t sa, ver, hor;
+    lv_obj_get_coords(sc, &sa);
+    lv_obj_get_scrollbar_area(sc, &hor, &ver);
+    int32_t st = lv_obj_get_scroll_top(sc), sb = lv_obj_get_scroll_bottom(sc);
+    lv_area_t clip = sa;
+    bool visible = lv_obj_area_is_visible(sc, &clip);
+    bool paint = lv_obj_get_style_bg_opa(sc, LV_PART_SCROLLBAR) > LV_OPA_MIN ||
+                 lv_obj_get_style_border_opa(sc, LV_PART_SCROLLBAR) > LV_OPA_MIN;
+    int drawn = (lv_area_get_width(&ver) > 0 && lv_area_get_height(&ver) > 0) ? 1 : 0;
+    fprintf(fp,
+            "[bar] p=%d d=%d lx=%d ly=%d lw=%d lh=%d drawn=%d over=%d mode=%d dir=%d "
+            "t=%d rs=%d ls=%d opa=%d x=%d y=%d w=%d h=%d "
+            "vis=%d paint=%d cx=%d cy=%d cw=%d ch=%d\n",
+            pg, depth, (int)sa.x1, (int)sa.y1, (int)(sa.x2 - sa.x1 + 1), (int)(sa.y2 - sa.y1 + 1),
+            drawn, (st > 0 || sb > 0) ? 1 : 0,
+            (int)lv_obj_get_scrollbar_mode(sc), (int)lv_obj_get_scroll_dir(sc),
+            (int)lv_obj_get_style_width(sc, LV_PART_SCROLLBAR),
+            (int)lv_obj_get_style_pad_right(sc, LV_PART_SCROLLBAR),
+            (int)lv_obj_get_style_pad_left(sc, LV_PART_SCROLLBAR),
+            (int)lv_obj_get_style_bg_opa(sc, LV_PART_SCROLLBAR),
+            (int)ver.x1, (int)ver.y1,
+            drawn ? (int)lv_area_get_width(&ver) : 0, drawn ? (int)lv_area_get_height(&ver) : 0,
+            visible ? 1 : 0, paint ? 1 : 0, (int)clip.x1, (int)clip.y1,
+            visible ? (int)lv_area_get_width(&clip) : 0, visible ? (int)lv_area_get_height(&clip) : 0);
+}
+
+/* 卡片里的**嵌套**滚动区：温度页展开的通道网格就是卡片 → 容器 → 网格这种结构，
+   它不在卡片的直接子对象里，只看一层就会漏掉"真的在滚的那个"（审计 H14 的覆盖面）。
+   返回嵌套可滚动对象的总数（分母）；其中真的溢出或真的画了条的逐条吐 [bar]，
+   剩下的（LVGL 的普通 lv_obj 默认就带 SCROLLABLE）只计数 —— 全吐出来就是噪声。 */
+static int dump_nested_bars(FILE *fp, lv_obj_t *o, int pg, int depth, lv_obj_t *skip)
+{
+    int total = 0;
+    uint32_t n = lv_obj_get_child_count(o);
+    for (uint32_t i = 0; i < n; i++) {
+        lv_obj_t *ch = lv_obj_get_child(o, i);
+        if (ch != skip && lv_obj_has_flag(ch, LV_OBJ_FLAG_SCROLLABLE)) {
+            total++;
+            lv_area_t ver, hor;
+            lv_obj_get_scrollbar_area(ch, &hor, &ver);
+            int32_t st = lv_obj_get_scroll_top(ch), sb = lv_obj_get_scroll_bottom(ch);
+            if (fp && ((lv_area_get_width(&ver) > 0 && lv_area_get_height(&ver) > 0) || st > 0 || sb > 0))
+                dump_bar_facts(fp, ch, pg, depth);
+        }
+        total += dump_nested_bars(fp, ch, pg, depth + 1, skip);
+    }
+    return total;
+}
+
+void fnos_ui_dump_card_map_fp(FILE *fp)
 {
     lv_obj_update_layout(lv_screen_active());   /* 不跑一次布局，coords 全是 0 */
     /* 页面对象自身也要报一句：卡片 coords 是**屏幕绝对**坐标，页对象一旦被挪动，
@@ -4701,7 +4854,7 @@ void fnos_ui_dump_card_map(void)
         if (!s_ui.page[k]) continue;
         lv_area_t pa;
         lv_obj_get_coords(s_ui.page[k], &pa);
-        fprintf(stdout, "[page] k=%d x=%d y=%d w=%d h=%d hidden=%d\n", k,
+        fprintf(fp, "[page] k=%d x=%d y=%d w=%d h=%d hidden=%d\n", k,
                 (int)pa.x1, (int)pa.y1, (int)(pa.x2 - pa.x1 + 1), (int)(pa.y2 - pa.y1 + 1),
                 lv_obj_has_flag(s_ui.page[k], LV_OBJ_FLAG_HIDDEN) ? 1 : 0);
     }
@@ -4714,18 +4867,40 @@ void fnos_ui_dump_card_map(void)
            注意不能拿 scroll_bottom>0 判断 —— 预览里列表全是空态（行池都当空行），
            内容并不溢出，但它照样是列表卡。看门狗再用像素去确认条子在不在。 */
         bool scrolls = false;
+        lv_obj_t *sc = NULL;
         int n = (int)lv_obj_get_child_count(c);
         for (int k = 0; k < n; k++) {
             lv_obj_t *ch = lv_obj_get_child(c, k);
-            if (lv_obj_has_flag(ch, LV_OBJ_FLAG_SCROLLABLE)) { scrolls = true; break; }
+            if (lv_obj_has_flag(ch, LV_OBJ_FLAG_SCROLLABLE)) { scrolls = true; sc = ch; break; }
         }
         int pg = -1;
-        for (int k = 0; k < FNOS_UI_PAGE_COUNT; k++)
-            if (s_ui.page[k] && lv_obj_get_parent(c) == s_ui.page[k]) pg = k;
-        fprintf(stdout, "[card] p=%d x=%d y=%d w=%d h=%d list=%d\n", pg, a.x1, a.y1,
-                a.x2 - a.x1 + 1, a.y2 - a.y1 + 1, scrolls ? 1 : 0);
+        /* 沿祖先链找页：卡片不一定直接挂在页下面（有的先包一层行/列容器）。
+           以前只看直接父对象，这类卡片 p 报 -1，scroll_gap.js 按 `c.p === page`
+           过滤时就把它整张跳过 —— 看门狗静默少审一张卡（审计 M19）。 */
+        for (lv_obj_t *p = lv_obj_get_parent(c); p && pg < 0; p = lv_obj_get_parent(p)) {
+            for (int k = 0; k < FNOS_UI_PAGE_COUNT; k++)
+                if (s_ui.page[k] && p == s_ui.page[k]) { pg = k; break; }
+        }
+        /* 先只数不打印（nest 是覆盖面分母），打完 [card] 行再吐嵌套 [bar]：
+           主机侧按"最近一条 [card]"归属，顺序反了嵌套条会挂到上一张卡上。 */
+        int nest = sc ? dump_nested_bars(NULL, c, pg, 1, sc) : 0;
+        fprintf(fp, "[card] p=%d x=%d y=%d w=%d h=%d list=%d nest=%d\n", pg, a.x1, a.y1,
+                a.x2 - a.x1 + 1, a.y2 - a.y1 + 1, scrolls ? 1 : 0, nest);
+        if (sc) dump_nested_bars(fp, c, pg, 1, sc);
+        /* 滚动条"该不该有、在哪一列"不能在 PNG 上猜（审计 H14：像素启发式把卡片右缘
+           的 4px 灰条当成滚动条，报出 18 处假不合格，另外 215 处"没找到轨道"根本分不清
+           "内容不溢出"和"检测失灵"）。这里直接把 LVGL 自己的判定依据吐出来：
+           drawn 来自 lv_obj_get_scrollbar_area()（它就是绘制时用的那个函数），
+           over 来自真实滚动余量，mode/dir/t/rs/opa 是复算那一列所需的全部样式量。
+           主机工具用这些量做判定，像素只用来确认"说画了，画面上真的有"。 */
+        if (sc) dump_bar_facts(fp, sc, pg, 0);
     }
-    fflush(stdout);
+    fflush(fp);
+}
+/* 默认写 stdout —— 预览器的 PREVIEW_CARDMAP 老用法不变。 */
+void fnos_ui_dump_card_map(void)
+{
+    fnos_ui_dump_card_map_fp(stdout);
 }
 
 /* Page translation is confined to an opaque viewport. Invalidate it on every
@@ -4744,7 +4919,6 @@ static struct {
     lv_indev_t *pointer;
 } s_motion;
 
-static lv_timer_t *s_motion_poll;   /* 8ms 手势轮询：只在按下期间跑，空闲即暂停 */
 
 /* 8ms 的手势轮询即使什么都不做，也在每 8ms 唤醒一次 LVGL 任务（空闲时它本该睡到
    下一帧）。只在"按下→松手"这段开，平时暂停。注意别放进 MOTION_STATS 的 #ifdef 里：
@@ -4982,7 +5156,10 @@ static void motion_snap(bool commit)
     lv_anim_set_exec_cb(&a, motion_exec);
     lv_anim_set_path_cb(&a, lv_anim_path_linear);
     lv_anim_set_completed_cb(&a, motion_done);
-    lv_anim_start(&a);
+    if (!lv_anim_start(&a)) {
+        ESP_LOGE(TAG, "Page animation allocation failed: completing transition immediately");
+        motion_finish();
+    }
 }
 
 static void motion_prepare(int from, int to, int direction)
@@ -5138,6 +5315,18 @@ static void motion_tick(lv_timer_t *timer)
     motion_paint();
 }
 
+/* Display-lock protected. Retry only the missing timer, never register callbacks twice. */
+static void motion_poll_start(void)
+{
+    if (s_motion_poll) return;
+    s_motion_poll = lv_timer_create(motion_tick, UK_GESTURE_POLL_MS, NULL);
+    if (!s_motion_poll) {
+        ESP_LOGE(TAG, "Gesture polling timer allocation failed: UI input is degraded");
+        return;
+    }
+    motion_poll_set(s_motion.tracking);
+}
+
 static void motion_init(void)
 {
 #ifdef CONFIG_FNOS_UI_MOTION_STATS
@@ -5153,8 +5342,7 @@ static void motion_init(void)
         lv_timer_t *read = lv_indev_get_read_timer(indev);
         if (read) lv_timer_set_period(read, 8);
     }
-    s_motion_poll = lv_timer_create(motion_tick, UK_GESTURE_POLL_MS, NULL);
-    motion_poll_set(false);
+    motion_poll_start();
 }
 
 int fnos_ui_page(void)
@@ -5164,17 +5352,17 @@ int fnos_ui_page(void)
 
 void fnos_ui_set_night(bool on)
 {
-    s_night_req = on;                            // 只置标志，落地在 ui_tick
+    atomic_store_explicit(&s_night_req, on, memory_order_relaxed);                            // 只置标志，落地在 ui_tick
 }
 
 void fnos_ui_request_page(int idx)
 {
     if (idx < 0 || idx >= FNOS_UI_PAGE_COUNT) return;
-    s_page_req = idx;                            // 只置标志，落地在 ui_tick
+    atomic_store_explicit(&s_page_req, idx, memory_order_relaxed);                            // 只置标志，落地在 ui_tick
 }
 
 void fnos_ui_request_temp_expand(int idx)
 {
     if (idx < 0) return;
-    s_temp_expand_req = idx;                     // 只置标志，落地在 ui_tick
+    atomic_store_explicit(&s_temp_expand_req, idx, memory_order_relaxed);                     // 只置标志，落地在 ui_tick
 }

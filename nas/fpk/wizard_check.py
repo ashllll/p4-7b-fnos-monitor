@@ -24,6 +24,7 @@
 """
 
 import json
+import math
 import os
 import re
 import sys
@@ -46,8 +47,8 @@ def check_file(path, problems):
         problems.append(f"{name}: 读不了或 JSON 不合法：{e}")
         return set()
 
-    if not isinstance(data, list):
-        problems.append(f"{name}: 顶层必须是「步骤数组」，实际是 {type(data).__name__}")
+    if not isinstance(data, list) or not data:
+        problems.append(f"{name}: 顶层必须是非空「步骤数组」，实际是 {type(data).__name__}")
         return set()
 
     fields, seen = set(), {}
@@ -131,6 +132,8 @@ def check_file(path, problems):
                                         f"{sorted(RULE_KEYS)}）")
                     if not r.get("message"):
                         problems.append(f"{wr}: 缺 message（校验失败时用户看不到原因）")
+                    if not _numeric_rule_ok(r):
+                        problems.append(f"{wr}: 数值规则不是有限有效边界")
                     if "pattern" in r:
                         try:
                             re.compile(r["pattern"])
@@ -144,20 +147,64 @@ def check_file(path, problems):
     return fields
 
 
+def _numeric_rule_ok(rule):
+    try:
+        for key in ("min", "max", "len"):
+            if key in rule and (isinstance(rule[key], bool) or not math.isfinite(float(rule[key]))):
+                return False
+        if "min" in rule and "max" in rule and float(rule["min"]) > float(rule["max"]):
+            return False
+        if "len" in rule and (float(rule["len"]) < 0 or float(rule["len"]) != int(rule["len"])):
+            return False
+    except (TypeError, ValueError, OverflowError):
+        return False
+    return True
+
+
 def _rule_ok(rule, value):
+    """校验规则的语义必须与 cmd/ 里真正的判断一致，判不了就报错（审计 M42）。
+
+    以前 min/max 一律按 `len(str(value))` 比：对端口、间隔这类**数值**字段，
+    那等于"位数不能少于 N"，与"值不能小于 N"完全是两回事（端口 0 有 1 位、
+    规则 min=1 照样通过）；而规则本身写坏时 `except ... return True` 把
+    "判不了"当成了"满足"。"""
     try:
         if rule.get("required") and not value:
             return False
-        if "min" in rule and len(value) < int(rule["min"]):
+        num = None                       # 能当数就读成数
+        if isinstance(value, bool):
+            num = None
+        elif isinstance(value, (int, float)):
+            num = float(value)
+        elif isinstance(value, str):
+            try:
+                num = float(value.strip())
+            except ValueError:
+                num = None
+        # NaN defeats both comparisons; infinities are not usable form values.
+        if ("min" in rule or "max" in rule) and num is not None and not math.isfinite(num):
             return False
-        if "max" in rule and len(value) > int(rule["max"]):
+        if not _numeric_rule_ok(rule):
             return False
+        if "min" in rule:
+            if num is not None:
+                if num < float(rule["min"]):
+                    return False
+            elif len(value) < int(rule["min"]):
+                return False
+        if "max" in rule:
+            if num is not None:
+                if num > float(rule["max"]):
+                    return False
+            elif len(value) > int(rule["max"]):
+                return False
         if "len" in rule and len(value) != int(rule["len"]):
             return False
-        if "pattern" in rule and not re.search(rule["pattern"], value):
+        if "pattern" in rule and not re.search(rule["pattern"], str(value)):
             return False
-    except (TypeError, ValueError):
-        return True
+    except (TypeError, ValueError, OverflowError, re.error) as exc:
+        print(f"✗ 这条校验规则判不了，按「不通过」处理：{rule}（值 {value!r}）—— {exc}")
+        return False
     return True
 
 
@@ -169,10 +216,8 @@ def script_vars(pkg):
         p = os.path.join(cmd, fn)
         if not os.path.isfile(p):
             continue
-        try:
-            txt = open(p, encoding="utf-8").read()
-        except OSError:
-            continue
+        with open(p, encoding="utf-8") as f:
+            txt = f.read()
         found |= set(re.findall(r"\$\{?(wizard_[A-Za-z0-9_]+)", txt))
     return found
 
@@ -188,15 +233,21 @@ def main():
     for name in FILES:
         path = os.path.join(pkg, "wizard", name)
         if not os.path.exists(path):
-            # upgrade/uninstall 是可选的：没有就跳过，但要说一声
-            print(f"  （没有 wizard/{name}，跳过）")
+            if name in ("install", "config"):
+                problems.append(f"缺少必需的 wizard/{name}")
+            else:
+                print(f"  （没有可选 wizard/{name}，跳过）")
             continue
         got = check_file(path, problems)
         print(f"  wizard/{name}: {len(got)} 个字段 {sorted(got)}")
         defined |= got
 
     # 缺字段的向导文件也要能被脚本读到默认值：这里只检查"脚本读了但没人定义"
-    read = script_vars(pkg)
+    try:
+        read = script_vars(pkg)
+    except (OSError, UnicodeError) as exc:
+        print(f"生命周期变量检查未完成：{exc}")
+        return 2
     print(f"\n脚本读到的向导变量：{sorted(read)}")
     print(f"向导文件定义的字段：{sorted(defined)}")
     for v in sorted(read - defined):

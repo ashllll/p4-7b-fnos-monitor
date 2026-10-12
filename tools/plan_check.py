@@ -57,7 +57,8 @@ def check_doc(doc, problems):
     if not os.path.exists(doc):
         problems.append(f"找不到文档 {os.path.relpath(doc, REPO)}")
         return notes
-    text = io.open(doc, encoding="utf-8").read()
+    with io.open(doc, encoding="utf-8") as src:
+        text = src.read()
     name = os.path.relpath(doc, REPO)
 
     # ── 1. 路径
@@ -94,42 +95,68 @@ def check_doc(doc, problems):
         if p.startswith(("@appdata/", "@appcenter/", "@appconf/", "target/", "etc/", "var/")):
             continue
         checked += 1
-        if any(os.path.exists(os.path.join(r, p)) for r in ROOTS):
+        # ROOTS 是相对仓库根的（审计 M48）：不拼 REPO 时结果取决于"从哪个目录运行"，
+        # 而这份脚本是被 test_report.sh 从仓库根调的 —— 换个 cwd 就全是误报。
+        if any(os.path.exists(os.path.join(REPO, r, p)) for r in ROOTS):
             continue
-        if any(ch in p for ch in "*{") and any(brace_glob(p, r) for r in ROOTS):
+        if any(ch in p for ch in "*{") and any(brace_glob(p, os.path.join(REPO, r))
+                                              for r in ROOTS):
+            continue
+        # fnos_config.h 是本地文件：README 教用户从 .example.h 复制出来，仓库里永远没有它
+        # （release_check.sh 还在正式构建前把它挪开）。认它的模板，别把"本地文件"误报成
+        # "文档写错了路径"——但模板也不在时就照样报错。
+        if p.endswith("fnos_config.h") and os.path.exists(
+                os.path.join(REPO, p[:-len("fnos_config.h")] + "fnos_config.example.h")):
             continue
         problems.append(f"文档引用的路径不存在：{p}")
     notes.append(f"路径：{name} 检查 {checked} 个片段")
 
     # ── 2. 字段数
     if os.path.exists(FIELD_MANIFEST):
-        data = json.load(io.open(FIELD_MANIFEST, encoding="utf-8"))
+        with io.open(FIELD_MANIFEST, encoding="utf-8") as src:
+            data = json.load(src)
         # board_fields.json 是 {"note":…, "source":…, "fields":[…]}，不是裸数组
-        fields = data.get("fields", data) if isinstance(data, dict) else data
+        fields = data.get("fields") if isinstance(data, dict) else data
+        if (not isinstance(fields, list) or not fields or
+                any(not isinstance(row, list) or len(row) != 2 or
+                    any(not isinstance(value, str) or not value for value in row)
+                    for row in fields) or len({tuple(row) for row in fields}) != len(fields)):
+            raise ValueError("字段清单必须是非空、无重复的二列字符串数组")
         n = len(fields)
         claimed = {int(x) for x in re.findall(r"(\d+)\s*个字段", text)}
         for c in sorted(claimed):
             if c != n:
                 problems.append(f"文档写「{c} 个字段」，board_fields.json 实际是 {n}")
         notes.append(f"字段数：{name} 提到 {sorted(claimed) or '（没提）'}，实际 {n}")
+    else:
+        # 缺文件不是"这项跳过"，而是这个数字再也没人能核对（审计 M48）
+        problems.append(f"找不到 {os.path.relpath(FIELD_MANIFEST, REPO)}——"
+                        f"{name} 里写的字段数无法核对")
 
     # ── 3. 包大小
-    if os.path.exists(FPK):
+    if os.path.isfile(FPK):
         size = os.path.getsize(FPK)
         claimed = {int(x) for x in re.findall(r"（(\d{5,7})\s*字节）", text)}
         for c in sorted(claimed):
             if c != size:
                 problems.append(f"文档写「{c} 字节」，.fpk 实际是 {size} 字节")
         notes.append(f"包大小：{name} 提到 {sorted(claimed) or '（没提）'}，实际 {size}")
+    else:
+        problems.append(f"找不到 {os.path.relpath(FPK, REPO)}——{name} 里写的包大小无法核对"
+                        f"（先跑 nas/fpk/build.sh 打包）")
 
     # ── 4. 断言条数必须和测试报告里那次真实运行一致
     #      （报告是 tools/test_report.sh 跑出来的，里面是当次的真实结果）
     report = os.path.join(REPO, "docs", "fnos-companion-test-report.md")
-    if True:
-        rtext = io.open(report, encoding="utf-8").read()
-        m = re.search(r"(\d+)\s*项通过，\s*(\d+)\s*项失败", rtext)
-        if m:
-            real, failed = int(m.group(1)), int(m.group(2))
+    if os.path.exists(report):
+        with io.open(report, encoding="utf-8") as src:
+            rtext = src.read()
+        summaries = {(int(a), int(b)) for a, b in re.findall(
+            r"(\d+)\s*项通过，\s*(\d+)\s*项失败", rtext)}
+        if len(summaries) == 1:
+            real, failed = next(iter(summaries))
+            if real == 0:
+                problems.append("测试报告没有任何通过断言，不能作为已执行证据")
             claimed = set()
             for pat in (r"本地端到端测试\s*(\d+)\s*项", r"走完整生命周期（(\d+)\s*项）",
                         r"本地端到端断言\s*(\d+)\s*项"):
@@ -140,6 +167,14 @@ def check_doc(doc, problems):
             notes.append(f"断言条数：{name} 提到 {sorted(claimed) or '（没提）'}，报告 {real} 项通过/{failed} 项失败")
             if failed:
                 problems.append(f"测试报告显示有 {failed} 项失败——先把它跑绿再谈文档")
+        else:
+            problems.append(f"{os.path.relpath(report, REPO)} 里找不到"
+                            f"唯一一致的「N 项通过，M 项失败」——{name} 的断言条数无法核对")
+    else:
+        # 以前是 `if True:` + 直接 open：报告不在时抛 FileNotFoundError 被上层吞掉，
+        # 于是"没核对"看起来像"通过了"（审计 M48）。
+        problems.append(f"找不到 {os.path.relpath(report, REPO)}——"
+                        f"{name} 里的断言条数无法核对（先跑 tools/test_report.sh）")
 
     # ── 4b. 目录里的链接必须真的有对应标题（目录最容易悄悄烂掉）
     heads = re.findall(r"^#{2,3}\s+(.+?)\s*$", text, re.M)
@@ -167,8 +202,9 @@ def check_doc(doc, problems):
             for dp, _, fns in os.walk(os.path.join(REPO, root)):
                 for fn in fns:
                     if fn.endswith((".sh", ".py")) or "." not in fn:
-                        srcs.append(io.open(os.path.join(dp, fn), encoding="utf-8",
-                                            errors="replace").read())
+                        with io.open(os.path.join(dp, fn), encoding="utf-8",
+                                     errors="replace") as src:
+                            srcs.append(src.read())
         blob = "\n".join(srcs)
         blob_norm = re.sub(r"[0-9]+", "", blob)
         quoted = re.findall(r"「([^」]{8,})」", text)
@@ -203,7 +239,10 @@ def main():
     problems = []
     notes = []
     for doc in DOCS:
-        notes += check_doc(doc, problems)
+        try:
+            notes += check_doc(doc, problems)
+        except (OSError, ValueError, TypeError) as exc:
+            problems.append(f"无法核对 {os.path.relpath(doc, REPO)}（{type(exc).__name__}）")
     for n in notes:
         print(n)
 
@@ -212,7 +251,7 @@ def main():
         for p in problems:
             print("  ✗", p)
         return 1
-    print("\n被核的文档里，路径、字段数、包大小、断言条数都与仓库现状一致 ✓")
+    print("\n本检查提取到的路径、字段数、包大小、断言条数一致；不证明文档全部声明、产物新鲜度或设备验收 ✓")
     return 0
 
 

@@ -1,0 +1,20 @@
+# Scope the redirection to LVGL's chart translation unit. Other widgets and
+# lv_math.c keep the original lv_map; no managed source is modified.
+set(FNOS_CHART_MATH_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../fnos_chart_math.c")
+function(fnos_use_safe_chart_map lvgl_target)
+    if(CMAKE_VERSION VERSION_LESS 3.18)
+        message(FATAL_ERROR "Chart mapping integration requires CMake >= 3.18")
+    endif()
+    if(NOT TARGET ${lvgl_target})
+        message(FATAL_ERROR "Missing LVGL target for chart mapping: ${lvgl_target}")
+    endif()
+    get_target_property(lvgl_dir ${lvgl_target} SOURCE_DIR)
+    set(chart_source "${lvgl_dir}/src/widgets/chart/lv_chart.c")
+    get_target_property(lvgl_sources ${lvgl_target} SOURCES)
+    if(NOT EXISTS "${chart_source}" OR NOT "${chart_source}" IN_LIST lvgl_sources)
+        message(FATAL_ERROR "LVGL chart source layout changed; mapping hook needs review")
+    endif()
+    target_sources(${lvgl_target} PRIVATE "${FNOS_CHART_MATH_SOURCE}")
+    set_property(SOURCE "${chart_source}" DIRECTORY "${lvgl_dir}"
+                 APPEND PROPERTY COMPILE_DEFINITIONS "lv_map=fnos_chart_map")
+endfunction()

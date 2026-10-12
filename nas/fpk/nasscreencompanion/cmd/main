@@ -3,12 +3,19 @@
 # ---------------------------------------------------------------- start
 start_process() {
   prepare_package_data || return 1
-  as_package mkdir -p "$PKG_VAR" "$PKG_ETC" 2>/dev/null
+  as_package mkdir -p "$PKG_VAR" "$PKG_ETC" 2>/dev/null || { fail "无法准备服务数据目录"; return 1; }
   if is_running; then
-    say "已在运行（pid $(as_package cat "$PID_FILE")）"
-    return 0
+    local current_py current_port
+    current_py=$(resolve_python) || { fail "进程存在，但无法执行就绪检查"; return 1; }
+    current_port=$(effective_port "$current_py")
+    if http_health "$current_py" "$current_port"; then
+      say "已在运行（pid $(as_package cat "$PID_FILE")）"
+      return 0
+    fi
+    fail "已有进程存在但服务未就绪，PID 记录保留；请先停止或检查该实例，不启动第二个实例"
+    return 1
   fi
-  as_package rm -f "$PID_FILE"
+  as_package rm -f "$PID_FILE" || { fail "无法清除旧 PID 记录，拒绝启动"; return 1; }
 
   local py
   py=$(resolve_python) || { fail "找不到 Python 运行时：依赖应用 python312 是否已安装？"; return 1; }
@@ -18,16 +25,29 @@ start_process() {
   local port
   port=$(effective_port "$py")
 
+  if [ "$port" = "$DEV_AGENT_PORT" ]; then
+    # config.json 里存着 8799（手工改的、或旧版本向导写进去的）时绝不能启动：
+    # 本应用会直接去 bind 开发版采集器的端口（审计 M54）。
+    fail "配置里的端口 $DEV_AGENT_PORT 是开发版采集器的专用端口，本应用拒绝使用它；请在应用设置里换一个端口（例如 8798）。"
+    return 1
+  fi
+
   # 端口冲突：只判断、只报错，绝不结束占用者（8799 上的开发版采集器尤其不能碰）
-  if port_busy "$port"; then
+  local port_rc
+  port_busy "$port"; port_rc=$?
+  if [ "$port_rc" = 0 ]; then
     fail "端口 $port 已被占用。本应用不会结束占用它的进程——请在应用设置里换一个端口，或先自行确认占用者是谁。"
+    return 1
+  elif [ "$port_rc" != 1 ]; then
+    fail "无法判定端口 $port 是否空闲，拒绝启动；请检查运行时及监听表读取权限。"
     return 1
   fi
   if port_busy "$DEV_AGENT_PORT"; then
     say "提示：$DEV_AGENT_PORT 上有服务在运行（开发版采集器）。本应用使用 ${port}，互不影响。"
   fi
 
-  cleanup_socket
+  cleanup_socket || { fail "无法清除旧 Socket，拒绝启动"; return 1; }
+  as_package rm -f "$PKG_VAR/service-exit.json" || { fail "无法清除旧服务退出收据，拒绝启动"; return 1; }
   export TRIM_APPDEST="$TARGET" TRIM_PKGVAR="$PKG_VAR" TRIM_PKGETC="$PKG_ETC"
   say "启动服务：$py $SERVER --serve（端口 ${port}，uid $(id -u)）"
   cd "$APP_ROOT" || return 1
@@ -49,12 +69,19 @@ start_process() {
     PYTHONDONTWRITEBYTECODE=1 nohup "$py" "$SERVER" --serve < /dev/null >> "$INFO_LOG" 2>&1 &
   fi
   local pid=$!
-  as_package /bin/bash -c 'printf "%s\n" "$1" > "$2"' bash "$pid" "$PID_FILE"
+  if ! as_package /bin/bash -c 'printf "%s\n" "$1" > "$2"' bash "$pid" "$PID_FILE"; then
+    if abort_started "$pid"; then
+      fail "无法保存 PID 记录，已结束本次启动的进程（pid ${pid}）"
+    else
+      fail "无法保存 PID 记录，进程 ${pid} 未能确认结束；请先处理该进程，拒绝报告启动成功"
+    fi
+    return 1
+  fi
 
   local i
   for i in $(seq 1 40); do
     if ! kill -0 "$pid" 2>/dev/null; then
-      as_package rm -f "$PID_FILE"
+      as_package rm -f "$PID_FILE" || warn "进程已退出，但无法清除 PID 记录：$PID_FILE"
       fail "服务进程启动后立即退出，请看 ${INFO_LOG}（常见原因：端口被占用、依赖缺失）"
       return 1
     fi
@@ -62,7 +89,15 @@ start_process() {
     sleep 0.25
   done
   if ! http_health "$py" "$port"; then
-    fail "服务已启动但 $port 端口在 10 秒内没有响应，请看 $INFO_LOG"
+    # 就绪超时也要收尾（审计 M21）：以前这里只 fail + return 1，刚拉起来的进程活着
+    # 占着端口、PID 文件还在，应用中心却显示"启动失败"；用户再点 start 会走进
+    # is_running 分支报"已在运行"并返回 0，状态就彻底对不上了。
+    # 只结束**本次启动的这个 pid**（绝不碰别的占用者），再删 PID/socket。
+    if abort_started "$pid"; then
+      fail "服务已启动但 $port 端口在启动探测窗口内没有响应（已结束本次启动的进程，详见 ${INFO_LOG}）"
+    else
+      fail "服务已启动但 $port 端口在启动探测窗口内没有响应；本次启动的进程 ${pid} 没能结束，PID 记录已保留（详见 ${INFO_LOG}）"
+    fi
     return 1
   fi
 
@@ -85,16 +120,70 @@ start_process() {
   return 0
 }
 
+# 本次启动失败时的收尾：结束我们自己刚拉起来的 pid，再删 PID 文件与 socket。
+abort_started() {
+  local pid="$1" i
+  as_package kill -TERM "$pid" 2>/dev/null
+  for i in $(seq 1 20); do
+    as_package kill -0 "$pid" 2>/dev/null || break
+    sleep 0.25
+  done
+  if as_package kill -0 "$pid" 2>/dev/null; then
+    as_package kill -KILL "$pid" 2>/dev/null
+    sleep 0.5
+  fi
+  # 发信号之后要看一眼（审计 M21/M26）：以前不管死没死都删 PID/socket，于是"启动
+  # 失败"之后记录消失而进程还在——用户再点一次 start，is_running 看到的是"没在跑"，
+  # 真的又拉起一个实例，两个进程抢同一个端口。
+  if as_package kill -0 "$pid" 2>/dev/null; then
+    if [ -s "$PID_FILE" ]; then
+      warn "本次启动的进程 ${pid} 在 SIGKILL 之后仍然存在：PID 记录保留在 ${PID_FILE}（未删）。"
+    else
+      warn "本次启动的进程 ${pid} 在 SIGKILL 之后仍然存在，且没有可用的 PID 记录；请先处理该进程。"
+    fi
+    return 1
+  fi
+  as_package rm -f "$PID_FILE" || return 1
+  cleanup_socket || return 1
+  return 0
+}
+
+# The stop command is not the service's parent and cannot wait for its status.
+# Accept only a bounded receipt belonging to the PID that just terminated.
+service_exit_result() {
+  as_package "$1" - "$PKG_VAR/service-exit.json" "$2" <<'PYEOF'
+import json, sys
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as f:
+        raw = f.read(4097)
+    if len(raw) > 4096:
+        raise ValueError()
+    value = json.loads(raw)
+    if (not isinstance(value, dict) or type(value.get("pid")) is not int or
+            value["pid"] != int(sys.argv[2]) or type(value.get("code")) is not int or
+            not 0 <= value["code"] <= 255):
+        raise ValueError()
+except (OSError, ValueError, UnicodeError):
+    print("服务退出结果缺失或不匹配，不能确认收尾成功", file=sys.stderr)
+    sys.exit(2)
+if value["code"]:
+    print("服务退出码 %d：收尾未成功，请检查服务日志" % value["code"], file=sys.stderr)
+    sys.exit(1)
+PYEOF
+}
+
 # ---------------------------------------------------------------- stop
 stop_process() {
   if ! is_running; then
-    as_package rm -f "$PID_FILE"
-    cleanup_socket
+    as_package rm -f "$PID_FILE" || { fail "进程未运行，但无法清除 PID 记录"; return 1; }
+    cleanup_socket || { fail "进程未运行，但无法清除 Socket"; return 1; }
     say "未在运行"
     return 0
   fi
   local pid
   pid=$(as_package cat "$PID_FILE")
+  local port
+  port="$(effective_port "$(resolve_python 2>/dev/null || printf python3)")"
   say "停止服务（pid ${pid}）"
   as_package kill -TERM "$pid" 2>/dev/null
   local i
@@ -111,14 +200,24 @@ stop_process() {
   # 一眼再说"已停止"——否则卸载说成功、进程还在跑，而它可能正占着端口。
   # （SIGKILL 之后还活着通常只有两种可能：D 状态（卡在不可中断的系统调用）或权限。）
   if kill -0 "$pid" 2>/dev/null; then
+    # 消息先打出来（审计 M21）：这条路径以前引用未定义的 ${port}，
+    # set -u 会在这里直接中止，两条 warn 一个字都看不到。
     warn "进程 ${pid} 在 SIGKILL 之后仍然存在——它可能卡在不可中断状态（D state）。"
-    warn "端口 ${port} 可能仍被占用。用 ps -p ${pid} -o pid,stat,cmd 看它的状态。"
-    as_package rm -f "$PID_FILE"
-    cleanup_socket
+    warn "端口 ${port:-未知} 可能仍被占用。用 ps -p ${pid} -o pid,stat,cmd 看它的状态。"
+    # **PID 文件与 Socket 都留着**（审计 M21/M26）：进程还活着就删记录，等于把
+    # "还有一个进程在跑"从记录里抹掉——紧接着的卸载/重装会 is_running=false，
+    # 于是报"已释放端口与 Socket"（假绿），而端口明明被占着。记录留到进程真的没了为止。
+    warn "PID 记录保留在 ${PID_FILE}（未删）：下一个 stop/status/卸载还能看到这个进程。"
     return 1
   fi
-  as_package rm -f "$PID_FILE"
-  cleanup_socket
+  as_package rm -f "$PID_FILE" || { fail "进程已结束，但无法清除 PID 记录"; return 1; }
+  cleanup_socket || { fail "进程已结束，但无法清除 Socket"; return 1; }
+  local exit_py
+  exit_py=$(resolve_python) || { fail "进程已结束，但无法读取退出结果"; return 1; }
+  if ! service_exit_result "$exit_py" "$pid"; then
+    fail "进程已结束并清理 PID/Socket，但服务收尾结果未通过"
+    return 1
+  fi
   say "已停止"
   return 0
 }
@@ -144,7 +243,7 @@ case "${1:-}" in
       warn "进程存在（pid $(as_package cat "$PID_FILE")）但端口 $port 无响应"
       exit 1
     fi
-    cleanup_socket
+    cleanup_socket || { fail "进程未运行，但无法清除 Socket"; exit 1; }
     say "未运行"
     exit 3
     ;;

@@ -5,14 +5,28 @@ norm_wizard
 say "将应用设置：端口 ${W_PORT}，监听 ${W_BIND}，鉴权 ${W_AUTH}，容器采集 ${W_DOCKER}，间隔 ${W_INTERVAL}s"
 
 rc=0
-if port_busy "$W_PORT"; then
-  # 端口被自己占着是正常的（改的是别的项）；被别的东西占着才是问题
-  if is_running; then
+if [ "$W_PORT" = "$DEV_AGENT_PORT" ]; then
+  # 8799 是开发版采集器的专用端口（_common.sh 开头写明"不触碰"）。改设置时填 8799，
+  # 重启后本应用会去抢它的端口（审计 M54）。
+  fail "端口 $DEV_AGENT_PORT 是开发版采集器的专用端口，本应用不使用它。请换一个端口（例如 8798）。"
+  rc=1
+fi
+port_busy "$W_PORT"; port_rc=$?
+if [ "$port_rc" = 0 ]; then
+  # 端口被自己占着是正常的（改的是别的项）；被别的东西占着才是问题。
+  # "自己占着"要两头都对上（审计 M43）：以前只问 is_running —— 服务在 8798 上跑着、
+  # 用户把端口改成别的**已被占用**的端口时，也会被当成"本应用占用"，配置照写，
+  # 重启后新端口起不来，服务就躺下了。
+  cur_port="$(effective_port "$(resolve_python 2>/dev/null || printf python3)")"
+  if is_running && [ "$cur_port" = "$W_PORT" ]; then
     say "端口 $W_PORT 当前由本应用占用，配置变更会重启服务，正常。"
   else
     fail "端口 $W_PORT 已被其他服务占用，请换一个端口。"
     rc=1
   fi
+elif [ "$port_rc" != 1 ]; then
+  fail "无法判定端口 $W_PORT 是否空闲，拒绝应用设置；请检查运行时及监听表读取权限。"
+  rc=1
 fi
 if [ "$W_AUTH" = "lan" ]; then
   warn "「内网免令牌」会让内网里任何设备都能读状态，仅建议排障时临时使用。"

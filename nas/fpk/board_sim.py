@@ -63,6 +63,23 @@ def check(cond, msg, detail=""):
     (ok if cond else bad)(msg if cond or not detail else f"{msg}（{detail}）")
 
 
+def jload(data, what):
+    """把响应体当 JSON 读；读不出来时给一句人能看的话，而不是 traceback。
+
+    审计 M41：服务端 500 时 body 是 HTML 错误页，裸 json.loads 会甩出
+    "Expecting value: line 1 column 1" 的调用栈，把整场验收淹掉 —— 看起来
+    像脚本坏了，实际是"被验收的那一端返回了非 JSON"。
+    """
+    try:
+        value = json.loads(data)
+        if not isinstance(value, dict):
+            raise ValueError("object required")
+        return value
+    except (ValueError, TypeError):
+        bad(f"{what} 的响应不是有效 JSON 对象")
+        return None
+
+
 def pem_fingerprint(pem):
     """与固件 fnos_pair.c 的 pem_fingerprint() 同一套算法：取 PEM 第一段证书的
     base64 正文，解码后算 SHA-256，输出大写冒号分隔。**不读服务器给的
@@ -100,11 +117,15 @@ def req(host, port, path, ctx=None, token=None, method="GET", body=None, timeout
         headers["Authorization"] = "Bearer " + token
     if body is not None:
         headers["Content-Type"] = "application/json"
-    conn.request(method, path, body=body, headers=headers)
-    r = conn.getresponse()
-    data = r.read()
-    conn.close()
-    return r.status, data
+    try:
+        conn.request(method, path, body=body, headers=headers)
+        r = conn.getresponse()
+        data = r.read(16 * 1024 * 1024 + 1)
+        if len(data) > 16 * 1024 * 1024:
+            raise ValueError("response exceeds simulator budget")
+        return r.status, data
+    finally:
+        conn.close()
 
 
 def make_impostor_cert(dirpath):
@@ -115,7 +136,8 @@ def make_impostor_cert(dirpath):
                     "-keyout", key, "-out", crt, "-days", "1",
                     "-subj", "/CN=definitely-not-the-nas"],
                    check=True, capture_output=True)
-    return open(crt, encoding="utf-8").read()
+    with open(crt, encoding="utf-8") as f:
+        return f.read()
 
 
 def code_from_socket(path):
@@ -125,14 +147,22 @@ def code_from_socket(path):
         def connect(self):
             self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             self.sock.connect(path)
-    c = UnixConn("x")
-    c.request("POST", "/app/nasscreencompanion/api/pairing/new", body="{}",
-              headers={"X-Trim-Userid": "1000", "X-Trim-Isadmin": "1",
-                       "Content-Type": "application/json"})
-    r = c.getresponse()
-    data = json.loads(r.read())
-    c.close()
-    return data["code"]
+    c = UnixConn("x", timeout=5)
+    try:
+        c.request("POST", "/app/nasscreencompanion/api/pairing/new", body="{}",
+                  headers={"X-Trim-Userid": "1000", "X-Trim-Isadmin": "1",
+                           "Content-Type": "application/json"})
+        r = c.getresponse()
+        raw = r.read(1024 * 1024 + 1)
+        if len(raw)>1024*1024:
+            raise ValueError("pairing-code response exceeds budget")
+        data = jload(raw, "管理面配对码")
+        code = data.get("code") if data else None
+        if r.status != 200 or not isinstance(code, str) or len(code)!=6 or any(c not in "0123456789" for c in code):
+            raise ValueError("invalid pairing-code response")
+        return code
+    finally:
+        c.close()
 
 
 def main():
@@ -153,7 +183,9 @@ def main():
         bad(f"明文取 identity 失败：{e}")
         return 1
     check(status == 200, "① 明文 GET /api/v1/identity 返回 200", f"实际 {status}")
-    ident = json.loads(data)
+    ident = jload(data, "① GET /api/v1/identity")
+    if ident is None:
+        return 1
     check("cert_pem" in ident and ident["cert_pem"], "① 响应里带 cert_pem")
     tls_on = bool(ident.get("tls"))
     check("uid" not in ident and "auth_mode" not in ident,
@@ -164,16 +196,24 @@ def main():
         bad("NAS 未启用 TLS：未验证 TLS 固定，配对验收未完成")
         return 3
     else:
-        pem = ident["cert_pem"]
+        pem = ident.get("cert_pem")
+        if not isinstance(pem,str) or not pem:
+            bad("缺少有效证书，停止配对"); return 1
 
     # ── 2. 自己算指纹
     if pem:
         fp = pem_fingerprint(pem)
-        ok(f"② 从 cert_pem 自算指纹 {fp[:23]}…")
         if ident.get("tls_fingerprint"):
+            ok(f"② 从 cert_pem 自算指纹 {fp[:23]}…")
             check(fp == ident["tls_fingerprint"].upper(),
                   "② 自算指纹与 NAS 报告的指纹一致（不一致用户会看到两张不同的表）",
                   f"自算 {fp} vs 报告 {ident['tls_fingerprint']}")
+        else:
+            # 审计 H16：以前这里是**无条件**打 ✓，可 NAS 不报指纹时根本没有"对过"这回事，
+            # 板子上那一步只能靠用户肉眼比 —— 验收脚本不能说它过了。
+            bad("② NAS 没报 tls_fingerprint：自算的指纹无从对照，指纹固定未验收")
+    else:
+        bad("② /api/v1/identity 没给 cert_pem：没东西可固定，配对验收未完成")
 
     ctx = pinned_ctx(pem) if pem else None
 
@@ -217,28 +257,40 @@ def main():
     except OSError as e:
         bad(f"③ 明文读 status 出错：{e}")
 
+    # Trust and negative assertions must pass before this simulator creates a device.
+    if FAIL:
+        return 1
+
     # ── 4. 配对换令牌
     code = a.pair_code
     if not code and a.socket:
         code = code_from_socket(a.socket)
-        print(f"  （从管理面 Socket 取到配对码 {code}）")
+        print("  （已从管理面 Socket 取得配对码）")
     if not code:
         bad("④ 没有配对码（用 --pair-code 或 --socket）")
         return 1
+    if not isinstance(code,str) or len(code)!=6 or any(c not in "0123456789" for c in code):
+        bad("④ 配对码必须为六位ASCII数字"); return 1
     body = json.dumps({"code": code, "name": a.device_name})
     try:
         status, data = req(a.host, a.port, "/api/v1/pair", ctx=ctx, method="POST", body=body)
     except ssl.SSLError as e:
         bad(f"④ 配对请求握手失败：{e}")
         return 1
-    reply = json.loads(data) if data else {}
+    reply = jload(data, "④ POST /api/v1/pair")
+    if reply is None:
+        return 1
     token = reply.get("token", "")
-    check(status == 200 and token, "④ 配对换到令牌", f"HTTP {status} {reply}")
+    if not isinstance(token,str): token = ""
+    check(status == 200 and token, "④ 配对换到令牌", f"HTTP {status}，令牌存在={bool(token)}")
+
+    if status != 200 or not token:
+        return 1
 
     # ── 否定断言：错误配对码必须被拒
     try:
         status2, _ = req(a.host, a.port, "/api/v1/pair", ctx=ctx, method="POST",
-                          body=json.dumps({"code": "000000", "name": "x"}))
+                          body=json.dumps({"code": "invalid", "name": "x"}))
         check(status2 in (400, 403), "④ 错误配对码被拒", f"实际 {status2}")
     except ssl.SSLError as e:
         bad(f"④ 错误配对码请求握手失败，未验证拒绝行为：{e}")
@@ -251,7 +303,8 @@ def main():
         status, _ = req(a.host, a.port, "/api/v1/status", ctx=ctx)
         check(status == 401, "⑤ 不带令牌读 status 被拒（401）", f"实际 {status}")
         status, data = req(a.host, a.port, "/api/v1/status", ctx=ctx, token=token)
-        st = json.loads(data) if data else {}
+        st = jload(data, "⑤ GET /api/v1/status")
+        if st is None: return 1
         check(status == 200 and st.get("ready") is not None,
               "⑤ 带令牌读 status 成功且 ready 字段在", f"HTTP {status}")
         status, _ = req(a.host, a.port, "/api/v1/history", ctx=ctx, token=token)
@@ -269,24 +322,25 @@ def main():
             if status == 200 and data:
                 # （tempfile 在模块顶部已经 import；这里再写一次会让它变成函数局部名，
                 #   上面早先那段 with tempfile.TemporaryDirectory() 就会 UnboundLocalError）
-                with tempfile.NamedTemporaryFile("wb", suffix=".json", delete=False) as f:
-                    f.write(data)
-                    tmp = f.name
-                checker = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                       "contract_check.py")
-                r = subprocess.run([sys.executable, checker, "--status", tmp],
-                                   capture_output=True, text=True)
-                tail = [l for l in r.stdout.strip().splitlines() if l.strip()]
-                if r.returncode == 0:
-                    verdict = next((l for l in reversed(tail) if "判定" in l or "容量上限" in l), "")
-                    ok("真 NAS 的响应里，板子读的字段全在" + (f"（{verdict}）" if verdict else ""))
-                else:
-                    bad("字段契约没过——下面这些是板子会读、而这台 NAS 没给的：")
-                    for l in tail[-8:]:
-                        print("      " + l)
-                os.unlink(tmp)
-        except (OSError, ValueError) as e:
-            bad(f"字段契约核对失败：{e}")
+                with tempfile.TemporaryDirectory(prefix="fnos-board-contract-") as work:
+                    tmp = os.path.join(work,"status.json")
+                    with open(tmp,"wb") as f:
+                        f.write(data)
+                    checker = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                           "contract_check.py")
+                    r = subprocess.run([sys.executable, checker, "--status", tmp],
+                                       capture_output=True, text=True, timeout=60)
+                    tail = [l for l in r.stdout.strip().splitlines() if l.strip()]
+                    if r.returncode == 0:
+                        verdict = next((l for l in reversed(tail) if "判定" in l or "容量上限" in l), "")
+                        ok("响应字段契约核对通过" + (f"（{verdict}）" if verdict else ""))
+                    else:
+                        bad("字段契约检查失败；详见本地主机契约检查")
+
+            else:
+                bad(f"字段契约缺少成功响应：HTTP {status}")
+        except (OSError, ValueError, subprocess.TimeoutExpired) as e:
+            bad(f"字段契约核对失败：{type(e).__name__}")
 
     print(f"\n结果：{PASS} 项通过，{FAIL} 项失败")
     if FAIL == 0:
@@ -296,4 +350,9 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        result = main()
+    except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as e:
+        bad(f"模拟器未完成：{type(e).__name__}")
+        result = 1
+    sys.exit(result)

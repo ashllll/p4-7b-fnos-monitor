@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include <atomic>
 
 #include "bsp/esp-bsp.h"
 #include "esp_log.h"
@@ -18,6 +19,8 @@
 #include "esp_heap_caps.h"
 #include "nvs_flash.h"
 #include "sdkconfig.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 #include "fnos_net.h"
 #include "fnos_data.h"
@@ -117,6 +120,8 @@ static void diag_timer_cb(lv_timer_t *t)
         if (nm) snprintf(ev_name, sizeof(ev_name), "%s", nm);
     }
 
+    uk_number_stats_t motion;
+    uk_number_stats(&motion);
     fnos_data_diag_t d;
     fnos_data_diag(&d);
     int64_t age_s = d.recv_ms ? (now_us / 1000 - d.recv_ms) / 1000 : -1;
@@ -131,12 +136,16 @@ static void diag_timer_cb(lv_timer_t *t)
              "FNOS_DIAG {\"n\":%u,\"up\":%lld,\"hz\":10,\"fw\":\"%s\",\"rst\":%d,\"ev\":[%s],"
              "\"io\":{\"ok\":%u,\"fail\":%u,\"age\":%lld,\"p95\":%d,\"src\":%lld},"
              "\"ui\":{\"age\":%lld},"
+             "\"motion\":{\"bytes\":%u,\"peak\":%u,\"budget\":%u,\"alloc\":%u,\"mask\":%u,\"anim\":%u},"
              "\"mem\":{\"ifree\":%u,\"imin\":%u,\"imax\":%u,\"dfree\":%u,\"dmin\":%u,"
              "\"pfree\":%u,\"pmin\":%u},"
              "\"stk\":{\"lvgl\":%u,\"poll\":%u,\"pair\":%u}}",
              (unsigned)n, (long long)(now_us / 1000), fw, (int)esp_reset_reason(), ev_field,
              (unsigned)d.ok_count, (unsigned)d.fail_count, (long long)age_s, d.p95_ms,
              (long long)(d.source_ts ? d.source_ts : -1), (long long)gap_s,
+             (unsigned)motion.bytes, (unsigned)motion.peak_bytes,
+             (unsigned)motion.budget_fallbacks, (unsigned)motion.allocation_fallbacks,
+             (unsigned)motion.mask_fallbacks, (unsigned)motion.animation_fallbacks,
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
              (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
@@ -150,6 +159,90 @@ static void diag_timer_cb(lv_timer_t *t)
     ESP_LOGI(TAG, "%s", line);
 }
 #endif
+
+/* ── 界面到底起来没有（审计 M11）───────────────────────────────────────────
+   以前拿不到显示锁只留一句 display lock failed：屏幕永远黑的，而日志里没有一条
+   持续存在的"这台板子现在处于降级状态"的标记，长测看起来一切正常。这条路真的会
+   被走到（见下面 DOUBLE_DIRECT 的注释：适配器 LVGL 任务持锁等 VSYNC 就是这个症状）。
+   现在：初次 3 次尝试 → 失败置降级标志 → 一个重试任务按退避最多再试五轮；
+   期间数据采集与串口 CLI 照常，日志与启动收尾行都带着 degraded 状态。 */
+// Only this status bit is shared; it does not publish UI objects or other state.
+static std::atomic_bool s_ui_degraded{false};
+
+static bool start_periodic_timer(const esp_timer_create_args_t *args, uint64_t period_us)
+{
+    esp_timer_handle_t timer = NULL;
+    esp_err_t err = esp_timer_create(args, &timer);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "%s timer create failed: %s", args->name, esp_err_to_name(err));
+        return false;
+    }
+    err = esp_timer_start_periodic(timer, period_us);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "%s timer start failed: %s", args->name, esp_err_to_name(err));
+        const esp_err_t cleanup_err = esp_timer_delete(timer);
+        if (cleanup_err != ESP_OK)
+            ESP_LOGE(TAG, "%s timer cleanup failed: %s", args->name, esp_err_to_name(cleanup_err));
+        return false;
+    }
+    return true;
+}
+
+static bool ui_build_locked(void)
+{
+    for (int i = 0; i < 3; i++) {
+        /* 不能用 try-lock（0 超时）：LVGL 正在首刷时"忙"会被误判成"失败"，
+           UI 一次都建不出来。2026-10-10 的矩阵旋转与绘制切片两次实验都撞在这上面
+           （改成 2s 后立刻通过，见 docs/perf-report-2026-10-10.md 第 12/18 条）。 */
+        if (!bsp_display_lock(2000)) {
+            ESP_LOGW(TAG, "display lock failed（第 %d/3 次，2 秒超时）", i + 1);
+            vTaskDelay(pdMS_TO_TICKS(300));
+            continue;
+        }
+        fnos_ui_create();
+        if (!fnos_ui_ready()) {
+            bsp_display_unlock();
+            ESP_LOGE(TAG, "UI refresh unavailable（第 %d/3 次）", i + 1);
+            vTaskDelay(pdMS_TO_TICKS(300));
+            continue;
+        }
+#if CONFIG_FNOS_SOAK_DIAG
+        // 长测心跳：建在 LVGL 任务里，所以它活着 = LVGL 事件循环还在跑。
+        if (lv_timer_create(diag_timer_cb, 10 * 1000, NULL))
+            ESP_LOGW(TAG, "SOAK DIAG: 每 10 秒一行 FNOS_DIAG（长测专用，生产版请关掉）");
+        else
+            ESP_LOGE(TAG, "SOAK DIAG timer allocation failed: no FNOS_DIAG heartbeat");
+#endif
+#if CONFIG_FNOS_AUTO_PAGE_SEC > 0
+        if (lv_timer_create(auto_page_cb, CONFIG_FNOS_AUTO_PAGE_SEC * 1000, NULL))
+            ESP_LOGW(TAG, "VERIFY MODE: auto page every %d s", CONFIG_FNOS_AUTO_PAGE_SEC);
+        else
+            ESP_LOGE(TAG, "VERIFY MODE timer allocation failed: no auto page");
+#endif
+        bsp_display_unlock();
+        return true;
+    }
+    return false;
+}
+
+/* 降级后的后台恢复：不阻塞开机，按 5/10/20/40/60 秒退避重试 5 轮（退避共 2 分 15 秒，另计每轮锁等待）。
+   拿不到锁的板子重启后会再走一遍这条路；重试期间数据采集与串口 CLI 都照常。 */
+static void ui_retry_task(void *arg)
+{
+    (void)arg;
+    static const int delays_s[] = { 5, 10, 20, 40, 60 };
+    for (int i = 0; i < (int)(sizeof delays_s / sizeof delays_s[0]); i++) {
+        vTaskDelay(pdMS_TO_TICKS(delays_s[i] * 1000));
+        if (ui_build_locked()) {
+            s_ui_degraded.store(false, std::memory_order_relaxed);
+            ESP_LOGW(TAG, "界面恢复：第 %d 次重试完成建树并启动刷新", i + 1);
+            vTaskDelete(NULL);
+            return;
+        }
+    }
+    ESP_LOGE(TAG, "界面始终不可用（显示锁或刷新定时器失败）：只剩数据采集与串口 CLI，重启后才会再试");
+    vTaskDelete(NULL);
+}
 
 extern "C" void app_main(void)
 {
@@ -192,35 +285,30 @@ extern "C" void app_main(void)
             .mirror_y = 0,
         },
     };
-    if (!bsp_display_start_with_config(&cfg)) {
-        ESP_LOGE(TAG, "display start failed");
+    if (bsp_display_start_with_config(&cfg)) {
+        bsp_display_backlight_on();               // 先点亮（这时是 100%）
+        bsp_display_brightness_set(APP_BL_PCT);   // 再压到配置值
+    } else {
+        /* 显示起不来就别再往下走了：LVGL 任务不存在，建 UI/持显示锁都没有意义。
+           但要说清后果，别只留一句 failed（审计 M11）——这台板子现在是"没屏幕、
+           也没数据采集"的状态，串口是唯一出口。 */
+        ESP_LOGE(TAG, "display start failed：本次开机没有界面，不会启动数据采集；已启动的网络与串口 CLI 保持原状态");
         return;
     }
-    bsp_display_backlight_on();               // 先点亮（这时是 100%）
-    bsp_display_brightness_set(APP_BL_PCT);   // 再压到配置值
     log_heap("display");
 
     /* 配色在**建任何构件之前**定下来：颜色令牌是运行时读调色板的，
        建完之后再换，已经建好的对象还留着旧颜色（LVGL 样式是拷贝语义）。 */
     fnos_ui_theme_use(CONFIG_FNOS_PALETTE);
 
-    /* 不能用 try-lock（0 超时）：LVGL 正在首刷时"忙"会被误判成"失败"，UI 一次都建不出来，
-       日志只留一句 display lock failed。2026-10-10 的矩阵旋转与绘制切片两次实验都撞在这上面
-       （改成 2s 后立刻通过，见 docs/perf-report-2026-10-10.md 第 12/18 条）。 */
-    if (bsp_display_lock(2000)) {
-        fnos_ui_create();
-#if CONFIG_FNOS_SOAK_DIAG
-        // 长测心跳：建在 LVGL 任务里，所以它活着 = LVGL 事件循环还在跑。
-        lv_timer_create(diag_timer_cb, 10 * 1000, NULL);
-        ESP_LOGW(TAG, "SOAK DIAG: 每 10 秒一行 FNOS_DIAG（长测专用，生产版请关掉）");
-#endif
-#if CONFIG_FNOS_AUTO_PAGE_SEC > 0
-        lv_timer_create(auto_page_cb, CONFIG_FNOS_AUTO_PAGE_SEC * 1000, NULL);
-        ESP_LOGW(TAG, "VERIFY MODE: auto page every %d s", CONFIG_FNOS_AUTO_PAGE_SEC);
-#endif
-        bsp_display_unlock();
+    if (ui_build_locked()) {
+        ESP_LOGI(TAG, "界面已建起来");
     } else {
-        ESP_LOGE(TAG, "display lock failed");
+        s_ui_degraded.store(true, std::memory_order_relaxed);
+        ESP_LOGE(TAG, "界面不可用（显示锁或刷新定时器失败）：数据照采，已启动的串口 CLI 保留，后台继续重试");
+        if (xTaskCreate(ui_retry_task, "ui_retry", 16 * 1024, NULL, 3, NULL) != pdPASS) {
+            ESP_LOGE(TAG, "重试任务也起不来（内存不足）：本次开机不会有界面");
+        }
     }
     log_heap("ui");
 
@@ -228,17 +316,14 @@ extern "C" void app_main(void)
     log_heap("polling");
 
     const esp_timer_create_args_t night_args = { .callback = night_timer_cb, .name = "night" };
-    esp_timer_handle_t night_timer = NULL;
-    if (esp_timer_create(&night_args, &night_timer) == ESP_OK) {
-        night_timer_cb(NULL);
-        esp_timer_start_periodic(night_timer, 60ULL * 1000 * 1000);
-    }
+    night_timer_cb(NULL);
+    if (!start_periodic_timer(&night_args, 60ULL * 1000 * 1000))
+        ESP_LOGE(TAG, "夜间背光不会自动更新：保留本次应用值");
 #if CONFIG_FNOS_HEAP_DEBUG
     const esp_timer_create_args_t heap_args = { .callback = heap_timer_cb, .name = "heap" };
-    esp_timer_handle_t heap_timer = NULL;
-    if (esp_timer_create(&heap_args, &heap_timer) == ESP_OK) {
-        esp_timer_start_periodic(heap_timer, 10ULL * 1000 * 1000);
-    }
+    if (!start_periodic_timer(&heap_args, 10ULL * 1000 * 1000))
+        ESP_LOGE(TAG, "周期 heap 日志不可用（长测少一路观测）");
 #endif
-    ESP_LOGI(TAG, "boot complete");
+    /* 这里只汇总建树与刷新timer；created 不代表所有控件/诊断通道或实机验收通过。 */
+    ESP_LOGI(TAG, "boot complete (ui=%s)", s_ui_degraded.load(std::memory_order_relaxed) ? "degraded" : "created");
 }

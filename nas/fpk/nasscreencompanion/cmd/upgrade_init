@@ -1,22 +1,48 @@
 #!/bin/bash
 . "$(dirname "$0")/_common.sh"
-# 升级前：停服务、备份配置。升级要能失败后回退，所以顺序是"先备份再停"。
+# 升级前先保留原配置回退点，再记录恢复意图并停服；任一步失败都拒绝升级。
 prepare_package_data || exit 1
-as_package mkdir -p "$PKG_VAR" 2>/dev/null
+as_package mkdir -p "$PKG_VAR" 2>/dev/null || { fail "无法准备升级数据目录"; exit 1; }
 FLAG="$PKG_VAR/upgrade.was_running"
-as_package rm -f "$FLAG"
-
-if is_running; then
-  as_package touch "$FLAG"
-  say "升级前停止正在运行的服务"
-  service_stop || warn "停止服务未成功，升级过程可能会覆盖正在运行的代码"
-else
-  say "升级前服务未在运行"
+if [ -L "$FLAG" ] || { [ -e "$FLAG" ] && [ ! -f "$FLAG" ]; }; then
+  fail "升级恢复标志不是普通文件"; exit 1
 fi
 
-if [ -f "$PKG_VAR/config.json" ]; then
-  as_package cp -f "$PKG_VAR/config.json" "$PKG_VAR/config.json.pre-${TRIM_OLD_APPVER:-old}" 2>/dev/null \
-    && say "已备份配置为 config.json.pre-${TRIM_OLD_APPVER:-old}" \
-    || warn "配置备份失败（不影响升级，但升级后无法回退配置）"
+OLD="${TRIM_OLD_APPVER:-old}"
+case "$OLD" in *[!A-Za-z0-9._+-]*) fail "旧版本号包含非法路径字符"; exit 1 ;; esac
+if [ -e "$PKG_VAR/config.json" ] || [ -L "$PKG_VAR/config.json" ]; then
+  PY=$(resolve_python) || { fail "找不到 Python，无法安全备份配置"; exit 1; }
+  as_package "$PY" - "$PKG_VAR/config.json" "$PKG_VAR/config.json.pre-$OLD" <<'PYEOF'
+import os, shutil, stat, sys, tempfile
+source, backup = sys.argv[1:]
+if not stat.S_ISREG(os.lstat(source).st_mode):
+    raise ValueError("配置不是普通文件，拒绝备份")
+if os.path.lexists(backup):
+    if not stat.S_ISREG(os.lstat(backup).st_mode):
+        raise ValueError("回退点不是普通文件")
+    print("保留已有配置回退点")
+else:
+    fd, temporary = tempfile.mkstemp(prefix=".upgrade-backup-", dir=os.path.dirname(backup))
+    try:
+        with os.fdopen(fd, "wb") as out, open(source, "rb") as original:
+            shutil.copyfileobj(original, out)
+            out.flush()
+            os.fsync(out.fileno())
+        # link 原子地发布完整副本；已有回退点绝不覆盖。
+        os.link(temporary, backup)
+    finally:
+        os.unlink(temporary)
+    print("已备份配置")
+PYEOF
+  if [ $? -ne 0 ]; then fail "配置备份失败，已停止升级且未停服"; exit 1; fi
+fi
+
+if is_running; then
+  as_package touch "$FLAG" || { fail "无法保存升级后恢复标志，未停服"; exit 1; }
+  say "升级前停止正在运行的服务"
+  service_stop || { fail "停止服务失败，拒绝覆盖运行中的代码；保留恢复标志"; exit 1; }
+else
+  # 上次尝试可能已经停服；保留尚未完成的恢复意图，重试不能抹掉它。
+  say "升级前服务未在运行，保留已有恢复标志"
 fi
 exit 0

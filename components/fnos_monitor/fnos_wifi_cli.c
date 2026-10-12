@@ -14,6 +14,9 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
+#include <errno.h>
+#include <limits.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -40,52 +43,74 @@ static void cmd_show(void)
     bool ok = fnos_wifi_store_load(ssid, sizeof ssid, NULL, 0);
     printf("凭据：%s\n", ok ? "有" : "没有（未配网）");
     if (ssid[0]) printf("SSID：%s\n", ssid);
-    printf("状态：%s\n", fnos_net_state_str());
+    char st[160];
+    fnos_net_state_str_r(st, sizeof st);        // 本地缓冲：不跟 UI 抢静态串（审计 M09）
+    printf("状态：%s\n", st);
 }
 
 static void cmd_set(char *args)
 {
-    while (*args == ' ') args++;
+    while (*args == ' ' || *args == '\t') args++;
     if (!*args) { usage(); return; }
-    char *sp = strchr(args, ' ');
+    char *sp = strpbrk(args, " \t");
     if (!sp) {
         printf("缺少口令：wifi set <SSID> <口令>（开放网络就写 wifi set <SSID> \"\"）\n");
         return;
     }
     *sp = 0;
     char *pass = sp + 1;
-    while (*pass == ' ') pass++;
+    while (*pass == ' ' || *pass == '\t') pass++;
+    if (!strcmp(pass, "\"\"")) pass = "";
     fnos_net_set_credentials(args, pass);
-    printf("已写入并开始重连：%s\n（口令不在此回显）\n", args);
+    /* 入队即返回（审计 M05）：落 NVS 与重连由网络任务做，成功与否用 wifi show 看——
+       所以这里只能说"已提交"，不能说"已写入"。 */
+    printf("已提交，正在重连：%s\n（口令不在此回显；用 wifi show 看结果）\n", args);
+}
+
+static bool command_is(const char *line, const char *command)
+{
+    size_t n = strlen(command);
+    return !strncmp(line, command, n) &&
+           (!line[n] || line[n] == ' ' || line[n] == '\t');
+}
+
+static int command_index(const char *arg)
+{
+    while (*arg == ' ' || *arg == '\t') arg++;
+    if (*arg < '0' || *arg > '9') return -1;
+    errno = 0;
+    char *end;
+    long value = strtol(arg, &end, 10);
+    while (*end == ' ' || *end == '\t') end++;
+    if (errno == ERANGE || value > INT_MAX || *end) return -1;
+    return (int)value;
+}
+
+static void clear_line(char *line, size_t size)
+{
+    volatile unsigned char *p = (volatile unsigned char *)line;
+    while (size--) *p++ = 0;
 }
 
 static void handle(char *line)
 {
     while (*line == ' ' || *line == '\t') line++;
     size_t n = strlen(line);
-    while (n && (line[n - 1] == '\n' || line[n - 1] == '\r' || line[n - 1] == ' ')) line[--n] = 0;
+    while (n && (line[n - 1] == '\n' || line[n - 1] == '\r' || line[n - 1] == ' ' || line[n - 1] == '\t')) line[--n] = 0;
     if (!n) return;
 
     if (!strcmp(line, "help") || !strcmp(line, "?")) { usage(); return; }
-    if (!strncmp(line, "page", 4)) {
-        const char *arg = line + 4;
-        while (*arg == ' ') arg++;
-        int n = (*arg >= '0' && *arg <= '9') ? *arg - '0' : -1;
+    if (command_is(line, "page")) {
+        int n = command_index(line + 4);
         if (n < 0 || n >= FNOS_UI_PAGE_COUNT) { printf("用法：page <0-%d>\n", FNOS_UI_PAGE_COUNT - 1); return; }
         fnos_ui_request_page(n);
         printf("切到第 %d 页（下一跳生效，动画照常）\n", n);
         return;
     }
-    if (!strncmp(line, "temp", 4)) {
+    if (command_is(line, "temp")) {
         /* 温度块的展开态本来只能靠手指点，而实机验收时人不在板子跟前、
            又没有触摸自动化 —— 这条命令是"12 路网格"进实机照片的唯一通道。 */
-        const char *arg = line + 4;
-        while (*arg == ' ') arg++;
-        int n = -1;
-        if (*arg >= '0' && *arg <= '9') {
-            n = 0;
-            while (*arg >= '0' && *arg <= '9') n = n * 10 + (*arg++ - '0');
-        }
+        int n = command_index(line + 4);
         if (n < 0) { printf("用法：temp <设备序号，0 起>（切到温度页并展开该设备的通道网格）\n"); return; }
         fnos_ui_request_page(4);                 /* 4 = 温度页（页序见 fnos_ui.h） */
         fnos_ui_request_temp_expand(n);
@@ -93,28 +118,42 @@ static void handle(char *line)
         return;
     }
     if (!strcmp(line, "tls")) {
-        /* 只读自检：开详细日志 → 跑一次真 HTTPS → 关回去。
-           mbedTLS/esp-tls 的失败原因只有 DEBUG 级别才打得出来，而这条命令
-           正是为"配对握手失败"准备的，所以在这里临时抬高日志级别。 */
-        esp_log_level_set("esp-tls", ESP_LOG_DEBUG);
-        esp_log_level_set("mbedtls", ESP_LOG_DEBUG);
-        esp_log_level_set("HTTP_CLIENT", ESP_LOG_DEBUG);
+        /* 只读自检：跑一次真 HTTPS。mbedTLS/esp-tls 的失败原因只有 DEBUG 级别
+           才打得出来，而这条命令正是为"配对握手失败"准备的——抬高级别的窗口
+           由 fnos_pair_tls_probe() 自己开关（审计 M08：以前抬了不关）。 */
         printf("正在跑 HTTPS 自检（下面几行是 mbedTLS/esp-tls 的细节）…\n");
         fnos_pair_tls_probe_async();
         return;
     }
-    if (!strncmp(line, "wifi", 4)) {
+    if (command_is(line, "wifi")) {
         char *sub = line + 4;
-        while (*sub == ' ') sub++;
+        while (*sub == ' ' || *sub == '\t') sub++;
+        /* 先把子命令切出来做**整词**比较：以前用 strncmp(sub,"set",3)/"clear",5，
+           于是 `wifi clearing` 会去清 NVS、`wifi setfoo bar` 会写 SSID=foo
+           （审计 M06）。切完 token 后 rest 指向参数部分。 */
+        char *arg = sub;
+        while (*arg && *arg != ' ' && *arg != '\t') arg++;
+        char sep = *arg;
+        *arg = 0;
+        char *rest = sep ? arg + 1 : arg;
+        while (*rest == ' ' || *rest == '\t') rest++;
+        if (*rest && strcmp(sub, "set")) { usage(); return; }
         if (!*sub || !strcmp(sub, "show")) { cmd_show(); return; }
-        if (!strncmp(sub, "set", 3))       { cmd_set(sub + 3); return; }
-        if (!strncmp(sub, "clear", 5))     { fnos_wifi_store_clear(); printf("凭据已清除，重启后生效（或再 wifi set 一次）\n"); return; }
+        if (!strcmp(sub, "set"))           { cmd_set(rest); return; }
+        if (!strcmp(sub, "clear")) {
+            if (fnos_wifi_store_clear()) {
+                printf("凭据已清除，重启后生效（或再 wifi set 一次）\n");
+            } else {
+                printf("凭据清除失败（NVS 写入错误），保存状态未确定，请重试\n");
+            }
+            return;
+        }
         usage();
         return;
     }
     /* 台架命令放在最后兜底之前：它自成一套（bench …），认不出来会返回 false 交给下面报错。 */
     if (fnos_perf_cli(line)) return;
-    printf("不认识的命令：%s（输入 help 看用法）\n", line);
+    printf("不认识的命令（输入 help 看用法）\n");
 }
 
 static void cli_task(void *arg)
@@ -124,8 +163,21 @@ static void cli_task(void *arg)
     vTaskDelay(pdMS_TO_TICKS(3000));
     printf("\n[串口] 命令可用：wifi set <SSID> <口令> / wifi show / page <0-5> / temp <n> / tls（HTTPS 自检）/ help\n");
     for (;;) {
-        if (!fgets(line, sizeof line, stdin)) { vTaskDelay(pdMS_TO_TICKS(200)); continue; }
+        if (!fgets(line, sizeof line, stdin)) { clear_line(line, sizeof line); vTaskDelay(pdMS_TO_TICKS(200)); continue; }
+        size_t len = strlen(line);
+        /* 缓冲区被填满 ⇒ 这行被 fgets 截断。剩下的半条绝不能当第二条命令执行
+           （审计 M07：以前 `wifi set <109 字节以上的 SSID> …` 会被拆成
+           "写一半的 SSID" + "把口令当命令解析"）。丢弃整行并如实报错。 */
+        if (len == sizeof line - 1 && line[len - 1] != '\n') {
+            int c;
+            while ((c = fgetc(stdin)) != EOF && c != '\n') { }
+            clear_line(line, sizeof line);
+            printf("命令太长（上限 %d 字节），整行已忽略\n> ", CLI_LINE_MAX - 1);
+            fflush(stdout);
+            continue;
+        }
         handle(line);
+        clear_line(line, sizeof line);
         printf("> ");
         fflush(stdout);
     }

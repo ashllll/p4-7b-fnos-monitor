@@ -55,7 +55,7 @@ cc -fsanitize=address,undefined -fno-omit-frame-pointer -I"$MB/include" \
    "$OUT/base64.o" "$OUT/sha256.o" "$OUT/platform_util.o"
 "$OUT/malformed"
 
-# ── 4. 三方对照（指纹 + CN/到期）
+# ── 4. 三方对照（仅指纹；CN/到期见tools/test_cert_info.py）
 FIRMWARE=$("$OUT/fp" "$PEM")
 OPENSSL=$(openssl x509 -in "$PEM" -noout -fingerprint -sha256 | sed 's/.*=//' | tr -d ':' | tr 'a-f' 'A-F' \
           | sed 's/\(..\)/\1:/g;s/:$//')

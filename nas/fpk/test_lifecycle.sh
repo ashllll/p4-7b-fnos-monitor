@@ -11,18 +11,26 @@
 #
 # 测不到的部分：Linux 包用户身份、/proc 与 /sys 的实际可读性、systemd 环境。
 # 那些必须在真 NAS 上用 `python3 fnos_collector.py --probe` 复核。
-set -u
+set -uo pipefail
 
 PKG="$(cd "$(dirname "$0")/nasscreencompanion" && pwd)"
 PORT="${1:-8797}"
+case "$PORT" in ''|*[!0-9]*) echo "起始端口必须为整数" >&2; exit 2;; esac
+[ "${#PORT}" -le 5 ] && [ "$PORT" -ge 1024 ] && [ "$PORT" -le 65515 ] || { echo "起始端口须在1024~65515" >&2; exit 2; }
+PORT=$((10#$PORT))
 PORT2=$((PORT + 1))
-WORK="$(mktemp -d)"
+WORK="$(mktemp -d)" || exit 1
+[ -d "$WORK" ] || exit 1
 STAGE="$WORK/apps/nasscreencompanion"     # 模拟 /var/apps/{appname}
 CMD="$STAGE/cmd"
 TARGET="$STAGE/target"
 PASS=0
 # 见文件末尾那段说明：这是"有用例根本没跑"的唯一独立证据
 EXPECTED_MIN=142
+# 因**缺工具**而合法跳过的断言数：下限必须跟着降，否则"这台机器没装 fnpack/node"
+# 会被报成"有用例没跑"（审计 M46）。数字 = 各跳过分支里 ok/bad 的条数，
+# 改了那些分支就要一起改这里。
+SKIPPED=0
 FAIL=0
 
 ok()    { printf '  \033[32m✓\033[0m %s\n' "$*"; PASS=$((PASS + 1)); }
@@ -30,44 +38,130 @@ bad()   { printf '  \033[31m✗\033[0m %s\n' "$*"; FAIL=$((FAIL + 1)); }
 step()  { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 check() { if [ "$1" = "$2" ]; then ok "$3"; else bad "$3（期望 $2，实际 $1）"; fi; }
 
+DIRECT_CHILDREN=""
+SERVICE_RECEIPT="$WORK/service-owned.pid"
+is_direct_child() {
+  local child
+  for child in $(jobs -pr); do [ "$child" = "$1" ] && return 0; done
+  return 1
+}
+service_pid_owned() {
+  local pid="$1" receipt args
+  case "$pid" in ''|*[!0-9]*) return 1;; esac
+  [ "$pid" -gt 1 ] || return 1
+  receipt=$(cat "$SERVICE_RECEIPT" 2>/dev/null) || return 1
+  [ "$receipt" = "$pid" ] || return 1
+  args=$(ps -p "$pid" -o args= 2>/dev/null) || return 1
+  case "$args" in *"$TARGET/server/nas_companion_server.py --serve"*) return 0;; esac
+  return 1
+}
+safe_stop() {
+  local pid
+  [ -x "$CMD/main" ] || return 0
+  if [ -f "$STAGE/var/app.pid" ]; then
+    pid=$(cat "$STAGE/var/app.pid") || return 1
+    case "$pid" in ''|*[!0-9]*) return 1;; esac
+    [ "$pid" -gt 1 ] || return 1
+    if kill -0 "$pid" 2>/dev/null; then
+      service_pid_owned "$pid" || is_direct_child "$pid" || {
+        echo "拒绝按身份不符的PID停止进程" >&2; return 1;
+      }
+    fi
+  fi
+  "$CMD/main" stop >/dev/null 2>&1
+}
+cleanup_children() {
+  local pid rc=0
+  for pid in $DIRECT_CHILDREN; do
+    if is_direct_child "$pid"; then
+      /bin/kill -9 "$pid" 2>/dev/null || { rc=1; continue; }
+    fi
+    wait "$pid" 2>/dev/null || true
+  done
+  # Independent fixture receipt survives deletion/corruption of app.pid.
+  if [ -f "$SERVICE_RECEIPT" ]; then
+    pid=$(cat "$SERVICE_RECEIPT") || return 1
+    case "$pid" in ''|*[!0-9]*) return 1;; esac
+    if kill -0 "$pid" 2>/dev/null; then
+      if service_pid_owned "$pid"; then /bin/kill -9 "$pid" 2>/dev/null || rc=1
+      else echo "服务收据身份不符，拒绝发送信号" >&2; rc=1; fi
+    fi
+  fi
+  return "$rc"
+}
 cleanup() {
-  [ -x "$CMD/main" ] && "$CMD/main" stop >/dev/null 2>&1
-  rm -rf "$WORK"
+  local rc=$?
+  trap - EXIT
+  [ "$FAIL" = 0 ] || rc=1
+  safe_stop || rc=1
+  cleanup_children || rc=1
+  if [ "$rc" = 0 ] && [ "$FAIL" = 0 ]; then
+    rm -rf -- "$WORK" || rc=1
+  else
+    echo "本轮失败或未完成，证据目录保留：$WORK" >&2
+  fi
+  exit "$rc"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 CACERT="$STAGE/var/tls/server.crt"
 # 排障 CLI 要直接跑服务端脚本（与 cmd/main 里 resolve_python 的选择一致：优先 python312）
 PY="$(command -v python3)"
-# 遥测面默认是 HTTPS，自签证书就是唯一的 CA；证书还没生成时退回明文，
-# 这样"故意关掉 TLS"的用例也能用同一套辅助函数。
+# 遥测面默认是 HTTPS，自签证书就是唯一的 CA；只有明确关闭 TLS 的用例才走明文。
 curlv() { if [ -s "$CACERT" ]; then curl --cacert "$CACERT" "$@"; else curl "$@"; fi; }
 http_code() { curlv -s -o /dev/null -m 3 -w '%{http_code}' "$1" 2>/dev/null; }
 admin()     { curl -s -m 3 --unix-socket "$TARGET/app.sock" -H 'X-Trim-Userid: 1000' -H 'X-Trim-Isadmin: 1' "$@"; }
 
+assert_absent() {
+  local rc
+  grep -qE -- "$1" "$2" 2>/dev/null; rc=$?
+  case "$rc" in 1) ok "$3";; 0) bad "发现禁止内容：$3";; *) bad "无法读取检查输入：$3";; esac
+}
+require_uint() { case "$1" in ''|*[!0-9]*) echo "数字收据无效" >&2; return 1;; esac; }
+require_fingerprint() { [[ "$1" =~ ^([[:xdigit:]]{2}:){31}[[:xdigit:]]{2}$ ]]; }
+
+must() { "$@" || { echo "准备命令失败：$1；拒绝继续" >&2; exit 1; }; }
 step "0. 构建 .fpk 并按真机布局解开"
 # 打包前清掉 Python 字节码缓存：fnpack 会把包目录里的一切原样打进去，
 # __pycache__ 是本地跑测试时留下的构建产物（曾经真的进了 .fpk）。
-rm -rf "$PKG"/app/server/__pycache__
+must rm -rf "$PKG"/app/server/__pycache__
 if command -v fnpack >/dev/null 2>&1; then
-  ( cd "$WORK" && fnpack build --directory "$PKG" >/dev/null 2>&1 )
+  ( cd "$WORK" && fnpack build --directory "$PKG" >/dev/null 2>&1 ) || { echo "fnpack build失败" >&2; exit 1; }
   FPK="$WORK/$(basename "$PKG").fpk"
-  [ -f "$FPK" ] && ok "fnpack build 成功（$(du -h "$FPK" | cut -f1)）" || bad "fnpack build 失败"
+  [ -s "$FPK" ] || { echo "fnpack未产出非空包" >&2; exit 1; }
+  ok "fnpack build 成功"
 else
   FPK=""
-  printf '  \033[33m!\033[0m fnpack 不在 PATH，退化为直接读包目录\n'
+  # 跳过：步骤 0 的 1 条 + 0b 段的 10 条（2 条清单断言 + 7 项包内文件 + 1 条秘密扫描）
+  SKIPPED=$((SKIPPED + 11))
+  printf '  \033[33m!\033[0m fnpack 不在 PATH，退化为直接读包目录（11 条断言记为跳过）\n'
 fi
 
-mkdir -p "$STAGE/var" "$STAGE/etc" "$TARGET"
+must mkdir -p "$STAGE/var" "$STAGE/etc" "$TARGET"
 if [ -n "$FPK" ]; then
-  tar xzf "$FPK" -C "$WORK"
-  cp -R "$WORK/cmd" "$CMD"
-  tar xzf "$WORK/app.tgz" -C "$TARGET"
+  must tar xzf "$FPK" -C "$WORK"
+  must cp -R "$WORK/cmd" "$CMD"
+  must tar xzf "$WORK/app.tgz" -C "$TARGET"
 else
-  cp -R "$PKG/cmd" "$CMD"
-  cp -R "$PKG/app/." "$TARGET/"
+  must cp -R "$PKG/cmd" "$CMD"
+  must cp -R "$PKG/app/." "$TARGET/"
 fi
-chmod +x "$CMD"/*
+must chmod +x "$CMD"/*
+# Test-only wrapper records the child independently before executing real code.
+must mv "$TARGET/server/nas_companion_server.py" "$TARGET/server/nas_companion_server_real.py"
+cat > "$TARGET/server/nas_companion_server.py" <<'PYOWNED' || exit 1
+import os, pathlib, sys
+if "--serve" in sys.argv:
+    receipt = pathlib.Path(os.environ["FNOS_TEST_SERVICE_RECEIPT"])
+    with receipt.open("w", encoding="ascii") as output:
+        output.write(str(os.getpid()))
+real = pathlib.Path(__file__).with_name("nas_companion_server_real.py")
+exec(compile(real.read_bytes(), str(real), "exec"), globals())
+PYOWNED
+export FNOS_TEST_SERVICE_RECEIPT="$SERVICE_RECEIPT"
+
 
 # 真机上这些由 fnOS 注入；这里按 framework 文档的语义给出
 export TRIM_APPDEST="$TARGET"
@@ -85,11 +179,10 @@ export wizard_bind=0.0.0.0 wizard_auth=pairing wizard_docker=false wizard_interv
 step "0b. 包内容基线（构建产物、个人数据、清单）"
 if [ -n "$FPK" ]; then
   LIST="$WORK/pack-list.txt"
-  tar tzf "$FPK" > "$LIST"
-  tar tzf "$WORK/app.tgz" >> "$LIST"
-  ! grep -qE '__pycache__|\.py[co]$' "$LIST" && ok "包里没有 Python 字节码缓存" \
-    || bad "包里带了 __pycache__/.pyc（打包前要清掉）"
-  ! grep -qE '(^|/)\.DS_Store$' "$LIST" && ok "包里没有 .DS_Store" || bad "包里带了 .DS_Store"
+  must tar tzf "$FPK" > "$LIST"
+  must tar tzf "$WORK/app.tgz" >> "$LIST"
+  assert_absent '__pycache__|\.py[co]$' "$LIST" "包里没有Python字节码缓存"
+  assert_absent '(^|/)\.DS_Store$' "$LIST" "包里没有.DS_Store"
   for need in manifest config/privilege config/resource ICON.PNG ICON_256.PNG cmd/main wizard/install; do
     grep -qx "$need" "$LIST" && ok "包内有 $need" || bad "包内缺少 $need"
   done
@@ -97,10 +190,12 @@ if [ -n "$FPK" ]; then
   # 注意这条只扫"本机实际值"，不是通用规则——换机器上跑要按当地情况补。
   HITS=""
   for pat in '192\.168\.0\.119' 'APP_WIFI_PASS' 'fnos_config' "$(id -un)"; do
-    found=$(grep -rIl -- "$pat" "$WORK/cmd" "$TARGET" "$WORK/config" "$WORK/wizard" 2>/dev/null | head -3)
-    [ -n "$found" ] && HITS="$HITS ${pat}→$found"
+    found=$(grep -rIl -- "$pat" "$WORK/cmd" "$TARGET" "$WORK/config" "$WORK/wizard" 2>/dev/null)
+    scan_rc=$?
+    [ "$scan_rc" -le 1 ] || bad "秘密扫描读取失败"
+    [ -n "$found" ] && HITS=present
   done
-  [ -z "$HITS" ] && ok "秘密扫描：包内没有 NAS 地址/口令/用户名" || bad "包内出现本机标识：$HITS"
+  [ -z "$HITS" ] && ok "秘密扫描：包内没有 NAS 地址/口令/用户名" || bad "包内出现本机标识（内容不回显）"
 fi
 
 step "0c. 向导表单（用户看到的第一屏）"
@@ -152,7 +247,7 @@ check "$?" 0 "随包的 Python 兼容 python312（NAS 上的运行时，本地�
 # 扫的范围不只是一套随包脚本：这个坑在 cmd/、构建脚本、报告脚本、certcheck 里
 # 各踩过一次，所以把所有 shell 脚本一起扫（tools/ 与 nas/fpk/ 下的）。
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-MB=$(REPO_ROOT="$REPO_ROOT" python3 - "$CMD" "$REPO_ROOT/tools" "$(dirname "$PKG")" <<'PY'
+MB=$(REPO_ROOT="$REPO_ROOT" python3 - "$CMD" "$REPO_ROOT/tools" "$(dirname "$PKG")" "$REPO_ROOT/nas" "$REPO_ROOT" <<'PY'
 import io, os, re, sys
 bad = []
 pat = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)(?=[^\x00-\x7f])")
@@ -162,14 +257,17 @@ for fn in sorted(os.listdir(d0)):                 # cmd/ 下所有文件（含�
     p = os.path.join(d0, fn)
     if os.path.isfile(p):
         files.append(p)
-for d in sys.argv[2:]:                            # 其余目录只看 *.sh
+SKIP = ("build", "managed_components", ".git", "out", "node_modules", "__pycache__")
+for d in sys.argv[2:]:                            # 其余目录只看 *.sh（递归，跳过产物目录）
     if not os.path.isdir(d):
         continue
-    for fn in sorted(os.listdir(d)):
-        if fn.endswith(".sh"):
-            files.append(os.path.join(d, fn))
+    for dirpath, dirnames, filenames in os.walk(d, onerror=lambda error: (_ for _ in ()).throw(error)):
+        dirnames[:] = [x for x in dirnames if not x.startswith(SKIP)]
+        for fn in sorted(filenames):
+            if fn.endswith(".sh"):
+                files.append(os.path.join(dirpath, fn))
 for p in files:
-    for i, line in enumerate(io.open(p, encoding="utf-8", errors="replace"), 1):
+    for i, line in enumerate(io.open(p, encoding="utf-8"), 1):
         if line.lstrip().startswith("#"):         # 注释不执行，不算问题
             continue
         for m in pat.finditer(line):
@@ -178,16 +276,23 @@ for p in files:
 print("\n".join(bad))
 PY
 )
-if [ -n "$MB" ]; then
+MB_RC=$?
+if [ "$MB_RC" != 0 ]; then
+  bad "shell扫描执行失败"
+elif [ -n "$MB" ]; then
   bad "shell 脚本里有 \$VAR 紧跟多字节字符：$(echo "$MB" | head -3 | tr '\n' ' ')"
 else
   ok "所有 shell 脚本里都没有 \$VAR 紧跟多字节字符（UTF-8 locale 下会被吞进变量名）"
 fi
 
-if grep -qE "sed -i ''|stat -f|date -r|date -v|readlink -f|shasum|base64 -D|mktemp -t" "$CMD"/*; then
+grep -qE "sed -i ''|stat -f|date -r|date -v|readlink -f|shasum|base64 -D|mktemp -t" "$CMD"/*
+BSD_RC=$?
+if [ "$BSD_RC" = 0 ]; then
   bad "cmd/ 里有 BSD/macOS 专有写法（NAS 上是 GNU 工具链）：$(grep -lE "sed -i ''|stat -f|date -r|date -v|readlink -f|shasum|base64 -D|mktemp -t" "$CMD"/* | tr '\n' ' ')"
-else
+elif [ "$BSD_RC" = 1 ]; then
   ok "cmd/ 里没有 BSD/macOS 专有写法"
+else
+  bad "平台写法扫描读取失败"
 fi
 
 step "2. 服务路径解析"
@@ -211,7 +316,7 @@ step "3b. 依赖故障：依赖的 Python 不在时，用户能看到原因"
 # 要求不只是"退出码非 0"，而是**原因要写进应用中心给用户看的日志**
 # （$TRIM_TEMP_LOGFILE）——否则界面上只有一句笼统的"检查未通过"。
 NOPY="$WORK/nopython"
-mkdir -p "$NOPY/bin"
+must mkdir -p "$NOPY/bin"
 for f in /bin/* /usr/bin/*; do
   b=$(basename "$f")
   case "$b" in python|python3|python3.*) continue;; esac
@@ -304,21 +409,15 @@ try:
     assert info.get("error"), "失败原因必须写下来，否则用户只看到'没加密'不知道为什么"
     cfg = dict(m.DEFAULT_CONFIG); cfg.update(port=0, bind="127.0.0.1")
     st = m.State(cfg)
-    servers, _ = m.make_servers(st, cfg, bind_socket=False)
-    tcp = [s for s in servers if not getattr(s, "is_unix", False)]
-    assert tcp, "遥测面没起来：TLS 失败不该把整个服务拖下水"
-    tcp = tcp[0]
-    port = tcp.server_address[1]
-    threading.Thread(target=tcp.serve_forever, daemon=True).start(); time.sleep(0.3)
-    c = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
-    c.request("GET", "/api/v1/health"); r = c.getresponse(); r.read(); c.close()
-    assert r.status == 200, r.status
+    servers, problems = m.make_servers(st, cfg, bind_socket=False)
+    assert not servers, "TLS 配置启用但证书不可用时，不允许开启明文遥测"
+    assert problems, "必须向启动器报告 TLS 故障"
     assert st.tls.get("enabled") is False and st.tls.get("error"), st.tls
-    tcp.shutdown(); tcp.server_close()
 finally:
     m._openssl_bin = real
+    __import__("shutil").rmtree(tmp)
 PY
-check "$?" 0 "没有 openssl 时：prepare_tls 不抛异常、报告启用失败、遥测面照常起来（明文）"
+check "$?" 0 "没有 openssl 时：报告 TLS 故障且拒绝开启明文遥测"
 
 step "5. 启动幂等"
 wizard_port="$PORT" "$CMD/main" start >/dev/null 2>&1
@@ -331,8 +430,9 @@ step "5b. 被 SIGKILL 之后还能干净重启（残留 Socket 不挡路）"
 # 两层防线都要能挡住：cmd/main start 里的 cleanup_socket（只删真 socket），
 # 以及服务端 UnixHTTPServer.server_bind() 里的 unlink。这里从**用户路径**
 # （kill -9 之后照常点启动）验一遍。
-KILL_PID=$(cat "$TRIM_PKGVAR/app.pid" 2>/dev/null)
-kill -9 "$KILL_PID" 2>/dev/null
+KILL_PID=$(cat "$SERVICE_RECEIPT") || exit 1
+service_pid_owned "$KILL_PID" || { bad "强杀前无法核实本次服务身份"; exit 1; }
+must kill -9 "$KILL_PID"
 sleep 1
 kill -0 "$KILL_PID" 2>/dev/null && bad "SIGKILL 之后进程还在？" || ok "进程已被强杀"
 [ -S "$TARGET/app.sock" ] && ok "残留的 Socket 文件确实还在（这就是要测的前提）" \
@@ -344,7 +444,9 @@ check "$(curlv -s -o /dev/null -m 3 -w '%{http_code}' "https://127.0.0.1:$PORT/a
 
 step "6. 管理面（走 Unix Socket + 网关身份头）"
 check "$(admin -o /dev/null -w '%{http_code}' "http://x/app/nasscreencompanion/")" 200 "管理页可打开"
-admin "http://x/app/nasscreencompanion/" | grep -q '<meta charset' && ok "返回的是真管理页，不是兜底页" || bad "管理页内容是兜底页"
+admin "http://x/app/nasscreencompanion/" > "$WORK/admin-page.html"
+PAGE_RC=$?
+[ "$PAGE_RC" = 0 ] && grep -q '<meta charset' "$WORK/admin-page.html" && ok "返回的是真管理页，不是兜底页" || bad "管理页内容是兜底页"
 check "$(admin -o /dev/null -w '%{http_code}' "http://x/app/nasscreencompanion/api/state")" 200 "/api/state 可读"
 check "$(curl -s -o /dev/null -m 3 -w '%{http_code}' --unix-socket "$TARGET/app.sock" "http://x/app/nasscreencompanion/api/state")" 403 "无网关身份头时被拒"
 check "$(admin -o /dev/null -w '%{http_code}' "http://x/app/nasscreencompanion/api/probe")" 200 "/api/probe 可读（P0 权限矩阵）"
@@ -391,7 +493,9 @@ PY
   check "$?" 0 "管理页脚本全部路径跑通（$(tail -1 "$WORK/pagecheck.log" | tr -d '\r')）"
   grep -q '导航按钮切换正常' "$WORK/pagecheck.log" || bad "导航按钮没跑全"
 else
-  printf '  \033[33m!\033[0m 没有 node，跳过管理页 JS 体检\n'
+  # 跳过：page_check 的 1 条 + 导航按钮 1 条
+  SKIPPED=$((SKIPPED + 2))
+  printf '  \033[33m!\033[0m 没有 node，跳过管理页 JS 体检（2 条断言记为跳过）\n'
 fi
 
 step "6c. 管理页 ↔ 服务端：路径与请求体字段名"
@@ -428,7 +532,7 @@ NOAUTH_FAIL=0
 for ep in api/config api/pairing/new api/pairing/cancel api/devices/revoke api/collector/docker api/shutdown; do
   code=$(curl -s -o /dev/null -m 3 -w '%{http_code}' --unix-socket "$TARGET/app.sock" \
          -X POST -H 'Content-Type: application/json' -d '{}' "http://x/app/nasscreencompanion/$ep")
-  [ "$code" = "403" ] || { NOAUTH_FAIL=$((NOAUTH_FAIL + 1)); warn "  $ep 没有身份头时返回 ${code}（应为 403）"; }
+  [ "$code" = "403" ] || { NOAUTH_FAIL=$((NOAUTH_FAIL + 1)); printf '%s\n' "  $ep 没有身份头时返回 ${code}（应为 403）"; }
 done
 check "$NOAUTH_FAIL" 0 "六个管理 POST 在缺少网关身份头时全部 403"
 # 非管理员也必须被挡（网关会带 X-Trim-Isadmin: 0）
@@ -523,11 +627,12 @@ for k in ("ok", "ts", "age_s", "host"):
 print("; ".join(bad))
 PY
 )
-[ -z "$CONTRACT" ] && ok "status / history / health 契约未变（v=1 保留，新增字段齐全）" \
+CONTRACT_RC=$?
+[ "$CONTRACT_RC" = 0 ] && [ -z "$CONTRACT" ] && ok "status / history / health 契约未变（v=1 保留，新增字段齐全）" \
   || bad "契约破坏：$CONTRACT"
 python3 -c 'import json,sys;d=json.load(open(sys.argv[1]));assert len(d["devices"])==1' \
   "$TRIM_PKGVAR/config.json" 2>/dev/null && ok "设备已落盘" || bad "设备未落盘"
-grep -q "$TOK" "$TRIM_PKGVAR/config.json" 2>/dev/null && bad "明文令牌被写入配置" || ok "配置里不存明文令牌"
+[ -n "$TOK" ] && assert_absent "$TOK" "$TRIM_PKGVAR/config.json" "配置里不存明文令牌" || bad "令牌缺失，无法检查落盘"
 
 step "7c. 板子读的字段，NAS 必须都在（跨语言字段名核对）"
 # 板子用 cJSON 按字段名取值，取不到就是 0/空，不报错也不打日志。NAS 侧改个名字，
@@ -591,13 +696,15 @@ check "$(near "$(hfield "?n=abc" rows)" "$ALL" 3)" "OK" "?n 是垃圾值时退�
 # 连跑 7 次才逮到一次（`期望 …534，实际 …533`）。改成"必须是全量结果最后两行之一"，
 # 允许两次请求之间多出一行，就不再随采样节拍抖动。
 N1=$(hfield "?n=1" last_ts)
-case "$(curlv -s -m 5 -H "Authorization: Bearer $TOK" "https://127.0.0.1:$PORT/api/v1/history" \
+LAST_TWO=$(curlv -s -m 5 -H "Authorization: Bearer $TOK" "https://127.0.0.1:$PORT/api/v1/history" \
         | python3 -c '
 import json, sys
 rows = (json.load(sys.stdin).get("rows") or [])[-2:]
 print(" ".join(str(r[0]) for r in rows))
-' 2>/dev/null)" in
-  *"$N1"*) ok "?n=1 给的是最近那一行（${N1}，全量结果最后两行之内）" ;;
+' 2>/dev/null)
+LAST_RC=$?
+case " $LAST_TWO " in
+  *" $N1 "*) [ "$LAST_RC" = 0 ] && require_uint "$N1" && ok "?n=1 给的是最近那一行（${N1}，全量结果最后两行之内）" || bad "history最近时间收据无效" ;;
   *) bad "?n=1 给的是 ${N1}，不在全量结果最后两行里 —— 那它可能给的是最早的那一段" ;;
 esac
 
@@ -632,12 +739,14 @@ check "$?" 1 "--check-port 对已占用的端口返回 1"
 "$PY" "$TARGET/server/nas_companion_server.py" --check-port "$((PORT + 20))" >/dev/null 2>&1
 check "$?" 0 "--check-port 对空闲端口返回 0"
 
-cp "$CACERT" "$WORK/old.crt"
-cp "$STAGE/var/tls/server.key" "$WORK/old.key"
+must cp "$CACERT" "$WORK/old.crt"
+must cp "$STAGE/var/tls/server.key" "$WORK/old.key"
 FP_BEFORE=$(openssl x509 -in "$CACERT" -noout -fingerprint -sha256 | sed 's/.*=//')
+must require_fingerprint "$FP_BEFORE"
 "$PY" "$TARGET/server/nas_companion_server.py" --tls-regen >/dev/null 2>&1
 check "$?" 0 "--tls-regen 执行成功"
 FP_AFTER=$(openssl x509 -in "$CACERT" -noout -fingerprint -sha256 | sed 's/.*=//')
+must require_fingerprint "$FP_AFTER"
 [ "$FP_BEFORE" != "$FP_AFTER" ] && ok "重签之后磁盘上的指纹确实变了" \
                               || bad "重签之后指纹没变（--tls-regen 没干活）"
 # 生效时机：还没重启，进程手里是旧证书
@@ -645,7 +754,7 @@ check "$(curl -s -o /dev/null -m 3 -w '%{http_code}' --cacert "$WORK/old.crt" \
         "https://127.0.0.1:$PORT/api/v1/identity")" 200 \
       "重签后未重启：旧证书仍然连得上（证书是启动时加载的，没有热换）"
 # 重启之后换新：旧信任作废、新证书可用
-wizard_port="$PORT" "$CMD/main" stop >/dev/null 2>&1
+wizard_port="$PORT" safe_stop >/dev/null 2>&1
 wizard_port="$PORT" "$CMD/main" start >/dev/null 2>&1
 check "$(curl -s -o /dev/null -m 3 -w '%{http_code}' --cacert "$WORK/old.crt" \
         "https://127.0.0.1:$PORT/api/v1/identity")" 000 \
@@ -657,11 +766,12 @@ check "$(curl -s -o /dev/null -m 3 -w '%{http_code}' --cacert "$CACERT" \
 # **收尾必须还原**：这一段动的是整个套件共用的证书文件，后面的阶段（比如 8b
 # 的"关掉再打开 TLS 指纹不变"）拿 4b 时记下的指纹做比较，不还原就会在别处
 # 报红——而且报得让人完全看不懂（第一版就是这样）。
-cp "$WORK/old.crt" "$CACERT"
-cp "$WORK/old.key" "$STAGE/var/tls/server.key"
-wizard_port="$PORT" "$CMD/main" stop >/dev/null 2>&1
+must cp "$WORK/old.crt" "$CACERT"
+must cp "$WORK/old.key" "$STAGE/var/tls/server.key"
+wizard_port="$PORT" safe_stop >/dev/null 2>&1
 wizard_port="$PORT" "$CMD/main" start >/dev/null 2>&1
 FP_BACK=$(openssl x509 -in "$CACERT" -noout -fingerprint -sha256 | sed 's/.*=//')
+must require_fingerprint "$FP_BACK"
 [ "$FP_BACK" = "$FP_BEFORE" ] && ok "收尾已把证书还原（后面的阶段不受影响）" \
                              || bad "证书没还原干净：$FP_BACK"
 
@@ -798,29 +908,32 @@ s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 s.bind(("127.0.0.1", int(sys.argv[1]))); s.listen(1); time.sleep(25)
 ' "$PORT2" &
 BLOCKER=$!
+DIRECT_CHILDREN="$DIRECT_CHILDREN $BLOCKER"
 sleep 1
 wizard_port="$PORT2" "$CMD/install_init" >/dev/null 2>&1
 check "$?" 1 "端口被占用时安装前检查拒绝继续"
-kill "$BLOCKER" 2>/dev/null
+is_direct_child "$BLOCKER" && kill -0 "$BLOCKER" 2>/dev/null || { bad "端口占用者在测试清理前已退出"; exit 1; }
+must kill "$BLOCKER"
 wait "$BLOCKER" 2>/dev/null
 kill -0 "$BLOCKER" 2>/dev/null && bad "占用者没被本应用杀掉？" || ok "占用者由测试自己收尾，应用没有动它"
 # 只认本次测试这套目录下的实例：开发机上可能同时跑着别的副本（长测、手工起的），
 # 用一个泛化的进程名去匹配会把它们算成"残留"。
-pgrep -f "$TARGET/server/nas_companion_server.py --serve" >/dev/null 2>&1 \
-  && bad "有服务进程残留" || ok "没有残留进程"
+pgrep -f "$TARGET/server/nas_companion_server.py --serve" >/dev/null 2>&1
+PGREP_RC=$?
+case "$PGREP_RC" in 1) ok "没有残留进程";; 0) bad "有服务进程残留";; *) bad "无法检查残留进程";; esac
 
 step "12. 管理面 Socket 建不起来时，遥测面不受影响"
 # 真机上的对应故障：target 目录对包用户不可写。这里用一个同名目录让 bind 失败。
 # 卸载已删除配置；重新安装必须明确用本段随后检查的端口。
 wizard_port="$PORT2" "$CMD/install_callback" >/dev/null 2>&1
-mkdir -p "$TARGET/app.sock/blocker"
+must mkdir -p "$TARGET/app.sock/blocker"
 START_OUT=$("$CMD/main" start 2>&1)
 check "$?" 0 "Socket 失败时启动仍然成功（遥测面是开发板要的）"
 echo "$START_OUT" | grep -q "管理面 Socket 没有出现" && ok "启动时给出了 Socket 失败的警告" \
   || bad "Socket 失败被静默吞掉了"
 check "$(http_code "https://127.0.0.1:$PORT2/api/v1/health")" 200 "遥测面仍然可用"
-"$CMD/main" stop >/dev/null 2>&1
-rm -rf "$TARGET/app.sock"
+safe_stop >/dev/null 2>&1
+must rm -rf "$TARGET/app.sock"
 "$CMD/main" status >/dev/null 2>&1
 check "$?" 3 "收尾：服务已停"
 
@@ -834,21 +947,23 @@ with open(sys.argv[1], "a", encoding="utf-8") as f:
     f.write(("x" * 100 + "\n") * 22000)      # ~2.2MB
 PY
 BEFORE=$(wc -c < "$TRIM_PKGVAR/service.log" | tr -d ' ')
+must require_uint "$BEFORE"
 ok "先把 service.log 灌到 ${BEFORE} 字节（超过 2MB 的轮转线）"
 wizard_port="$PORT" "$CMD/main" start >/dev/null 2>&1
 check "$?" 0 "日志超限后服务照常启动"
 [ -f "$TRIM_PKGVAR/service.log.1" ] && ok "service.log 已轮转成 service.log.1" \
                                     || bad "日志没有轮转（.1 不存在）"
 AFTER=$(wc -c < "$TRIM_PKGVAR/service.log" | tr -d ' ')
+must require_uint "$AFTER"
 [ "$AFTER" -lt 262144 ] && ok "轮转后当前日志只有 ${AFTER} 字节（重新开始写）" \
                         || bad "轮转后当前日志仍有 ${AFTER} 字节，没截断"
-"$CMD/main" stop >/dev/null 2>&1
+safe_stop >/dev/null 2>&1
 
 # ② config.json 损坏。用户手工编辑、升级中途掉电、磁盘满，都可能留下半个文件。
 #    必须明确失败且保留原文件；启动默认服务会在后续 flush 时覆盖配对和设置。
-cp "$TRIM_PKGVAR/config.json" "$WORK/config.good" 2>/dev/null
+must cp "$TRIM_PKGVAR/config.json" "$WORK/config.good" 2>/dev/null
 printf '{ 这不是合法 JSON' > "$TRIM_PKGVAR/config.json"
-cp "$TRIM_PKGVAR/config.json" "$WORK/config.corrupt"
+must cp "$TRIM_PKGVAR/config.json" "$WORK/config.corrupt"
 if curlv -s -o /dev/null -m 2 "https://127.0.0.1:8798/api/v1/health" 2>/dev/null; then
   bad "8798 上已经有东西在跑，这一条测不了（先清掉再跑）"
 else
@@ -864,8 +979,8 @@ else
   grep -q '配置读取失败，保留原文件并停止启动' "$TRIM_PKGVAR/service.log" \
     && ok "日志写明启动失败及保留文件" || bad "日志未说明配置失败"
 fi
-[ -f "$WORK/config.good" ] && cp "$WORK/config.good" "$TRIM_PKGVAR/config.json"
-rm -f "$TRIM_PKGVAR/service.log.1"
+must cp "$WORK/config.good" "$TRIM_PKGVAR/config.json"
+must rm -f "$TRIM_PKGVAR/service.log.1"
 
 step "12b. 不理会 SIGTERM 的进程会被升级到 SIGKILL（用户验收问的正是"有没有残留进程"）"
 # 用户在验收第 5 步会亲自去看"有没有残留进程"。所以"发了信号"不等于"停掉了"，
@@ -877,17 +992,21 @@ step "12b. 不理会 SIGTERM 的进程会被升级到 SIGKILL（用户验收问�
 # 注意别写成 STUB=$(... & echo $!)：那个 $! 是**子 shell 的**后台作业号，
 # 而子 shell 立刻就退出了，拿到的要么是空的、要么是错的 pid（第一版就是这样，
 # 于是三条断言全变成空断言——只有最后那条"必须等够 8 秒"把它揪了出来）。
-bash -c 'trap "" TERM; sleep 300' &
+bash -c 'trap "" TERM; exec sleep 300' &
 STUB=$!
+DIRECT_CHILDREN="$DIRECT_CHILDREN $STUB"
 sleep 0.5
 kill -0 "$STUB" 2>/dev/null && ok "起了一个忽略 SIGTERM 的进程（pid ${STUB}）" \
                            || bad "造不出忽略 SIGTERM 的进程，这条测不到东西"
 echo "$STUB" > "$TRIM_PKGVAR/app.pid"
-START=$(date +%s)
-wizard_port="$PORT" "$CMD/main" stop >/dev/null 2>&1
+START=$(date +%s) || exit 1
+must require_uint "$START"
+wizard_port="$PORT" safe_stop >/dev/null 2>&1
 RC=$?
-ELAPSED=$(( $(date +%s) - START ))
-check "$RC" 0 "赖着不走的进程最终被停掉（stop 返回 0）"
+END=$(date +%s) || exit 1
+must require_uint "$END"
+ELAPSED=$((END - START))
+check "$RC" 1 "强杀进程已结束，但缺服务收尾收据，stop 返回失败"
 kill -0 "$STUB" 2>/dev/null && bad "进程 ${STUB} 还活着 —— 脚本却说了「已停止」" \
                              || ok "进程确实不在了（不是嘴上说说）"
 [ "$ELAPSED" -ge 8 ] && ok "确实走完了优雅等待（${ELAPSED}s ≥ 8s）才升级到 SIGKILL" \
@@ -901,9 +1020,13 @@ wait "$STUB" 2>/dev/null || true    # 收掉 shell 那句 "Killed: 9" 的作业�
 # 光比"汇总数 vs ✓ 个数"挡不住这种（两边一起少），所以这里钉一个独立的下限：
 # **加断言时把 EXPECTED_MIN 一起加**，它只在"有用例没跑"时才会不对。
 ASSERTIONS=$((PASS + FAIL))
-if [ "$ASSERTIONS" -lt "$EXPECTED_MIN" ]; then
-  bad "只跑了 $ASSERTIONS 条断言，少于预期的 $EXPECTED_MIN —— 有用例没执行（整段被挪走、被注释掉、或提前 return 都会这样）"
+if [ $((ASSERTIONS + SKIPPED)) -lt "$EXPECTED_MIN" ]; then
+  bad "只跑了 $ASSERTIONS 条断言（另有 $SKIPPED 条因缺工具合法跳过），合计 $((ASSERTIONS + SKIPPED)) 仍少于预期的 $EXPECTED_MIN —— 有用例没执行（整段被挪走、被注释掉、或提前 return 都会这样）"
+elif [ "$SKIPPED" -gt 0 ]; then
+  printf '  \033[33m!\033[0m 有 %d 条断言因缺工具跳过，已计入下限核对\n' "$SKIPPED"
 fi
 
 printf '\n\033[1m结果：%d 项通过，%d 项失败\033[0m\n' "$PASS" "$FAIL"
-[ "$FAIL" = 0 ]
+[ "$FAIL" = 0 ] || exit 1
+[ "$SKIPPED" = 0 ] || exit 2
+exit 0

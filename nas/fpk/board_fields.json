@@ -4,6 +4,10 @@
  "fields": [
   [
    "root",
+   "ready"
+  ],
+  [
+   "root",
    "host"
   ],
   [
@@ -93,6 +97,18 @@
   [
    "net",
    "tx_total_gb"
+  ],
+  [
+   "net",
+   "state"
+  ],
+  [
+   "net",
+   "speed_mbps"
+  ],
+  [
+   "net",
+   "physical"
   ],
   [
    "vols",

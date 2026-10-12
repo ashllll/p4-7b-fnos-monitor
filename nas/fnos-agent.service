@@ -9,6 +9,10 @@ After=docker.socket
 [Service]
 Type=simple
 User=root
+# 访问令牌从 0600 的环境文件读（nas/install-remote.sh 首次安装时生成，升级时原样保留）。
+# 前缀 "-" 表示文件缺失不算 systemd 失败 —— 让 fnos-agent.py 自己把"缺令牌"的
+# 拒绝原因打给用户看，而不是留一个含糊的 200/CHDIR 之类的失败（审计 M31）。
+EnvironmentFile=-/etc/fnos-agent.env
 ExecStart=/usr/bin/python3 /usr/local/bin/fnos-agent.py --bind 0.0.0.0 --port 8799 --interval 1.0
 Restart=always
 RestartSec=3

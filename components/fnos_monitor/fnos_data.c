@@ -20,6 +20,9 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <float.h>
+#include <limits.h>
+#include <math.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -62,7 +65,13 @@ static EXT_RAM_BSS_ATTR float s_h_mem[FNOS_HIST_MAX];
 static EXT_RAM_BSS_ATTR float s_h_rx[FNOS_HIST_MAX];
 static EXT_RAM_BSS_ATTR float s_h_tx[FNOS_HIST_MAX];
 
-static int64_t s_seq;                       // 已产生样本总数（单调递增）
+static EXT_RAM_BSS_ATTR int64_t s_h_ts[FNOS_HIST_MAX];
+static int s_hist_count;
+static int64_t s_hist_reset_seq = -1;
+static bool s_hist_backfilled;
+typedef struct { fnos_sample_t sample; int64_t ts; } history_record_t;
+
+static int64_t s_seq;                       // 单调递增的不透明游标；窗口重置可跳跃，不是样本计数
 static volatile bool s_valid;               // 是否拿到过有效帧（与 s_status 同锁维护）
 static SemaphoreHandle_t s_lock;
 static TaskHandle_t s_task;
@@ -84,7 +93,7 @@ static EXT_RAM_BSS_ATTR fnos_pair_cfg_t s_conn;
 static EXT_RAM_BSS_ATTR char s_cert_pem[FNOS_PAIR_PEM_MAX];
 static char s_token[80];
 static bool s_conn_tls;
-static bool s_conn_usable;             // false = 配了 HTTPS 却没有证书，拒绝连接
+static bool s_conn_usable;             // false = 参数不可用或 HTTPS 缺证书，拒绝连接
 static uint32_t s_conn_gen;
 /* 最近一次连接层失败归类（http_get 填，poll_task 拿它当 last_err）*/
 static char s_conn_err[24];
@@ -118,62 +127,108 @@ static bool parse_status(const char *js, fnos_status_t *st)
     return true;
 }
 
+static bool history_row_values(const cJSON *row, fnos_sample_t *out, int64_t *ts)
+{
+    if (!cJSON_IsArray(row)) return false;
+    float *fields[] = { &out->cpu, &out->mem, &out->rx_kbs, &out->tx_kbs };
+    for (int i=0; i<4; i++) {
+        const cJSON *v=cJSON_GetArrayItem(row,i+1);
+        if (!cJSON_IsNumber(v) || !isfinite(v->valuedouble) || fabs(v->valuedouble)>FLT_MAX) return false;
+        *fields[i]=(float)v->valuedouble;
+    }
+    const cJSON *t=cJSON_GetArrayItem(row,0);
+    *ts = cJSON_IsNumber(t) && isfinite(t->valuedouble) && t->valuedouble>1e9 &&
+          t->valuedouble<4e9 && floor(t->valuedouble)==t->valuedouble ? (int64_t)t->valuedouble : 0;
+    return true;
+}
+static void *history_alloc(size_t n)
+{
+#ifdef ESP_PLATFORM
+    return heap_caps_malloc(n,MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#else
+    return malloc(n);
+#endif
+}
+static void history_reset(void)
+{
+    if (!s_lock || xSemaphoreTake(s_lock,portMAX_DELAY)!=pdTRUE) return;
+    s_hist_count=0;
+    s_hist_reset_seq=s_seq;
+    s_hist_backfilled=false;
+    s_status.hist_ts_ok=false;
+    s_status.hist_span_s=s_status.hist_avg_gap_x10=0;
+    xSemaphoreGive(s_lock);
+}
 static bool parse_history(const char *js)
 {
-    cJSON *root = cJSON_Parse(js);
+    cJSON *root=cJSON_Parse(js);
     if (!root) return false;
-    const cJSON *rows = cJSON_GetObjectItemCaseSensitive(root, "rows");
-    const cJSON *row = NULL;
-    int n = 0;
-    if (!s_lock || xSemaphoreTake(s_lock, portMAX_DELAY) != pdTRUE) {
-        cJSON_Delete(root);
-        return false;
+    const cJSON *rows=cJSON_GetObjectItemCaseSensitive(root,"rows");
+    if (!cJSON_IsArray(rows) || !s_lock || xSemaphoreTake(s_lock,portMAX_DELAY)!=pdTRUE) {
+        cJSON_Delete(root); return false;
     }
-    int64_t seq = s_seq;                    // 接在已有样本之后：别把刚收到的实时样本冲掉
-    int64_t ts_first = 0, ts_last = 0;      // 第 0 列是采集端的 epoch 秒
-    cJSON_ArrayForEach(row, rows) {
-        const cJSON *t = cJSON_GetArrayItem(row, 0);
-        /* 时间戳只用来算"跨度"（首尾相减），绝对值和板子的时钟无关，
-           所以 SNTP 没同步也不影响；但明显不是 epoch 的值（0、负数、毫秒）要挡掉。 */
-        if (cJSON_IsNumber(t) && t->valuedouble > 1e9 && t->valuedouble < 4e9) {
-            if (!ts_first) ts_first = (int64_t)t->valuedouble;
-            ts_last = (int64_t)t->valuedouble;
-        }
-        const cJSON *v0 = cJSON_GetArrayItem(row, 1);
-        const cJSON *v1 = cJSON_GetArrayItem(row, 2);
-        const cJSON *v2 = cJSON_GetArrayItem(row, 3);
-        const cJSON *v3 = cJSON_GetArrayItem(row, 4);
-        if (!cJSON_IsNumber(v0) || !cJSON_IsNumber(v1) || !cJSON_IsNumber(v2) || !cJSON_IsNumber(v3)) {
-            continue;
-        }
-        int idx = (int)(seq % FNOS_HIST_MAX);
-        s_h_cpu[idx] = (float)v0->valuedouble;
-        s_h_mem[idx] = (float)v1->valuedouble;
-        s_h_rx[idx]  = (float)v2->valuedouble;
-        s_h_tx[idx]  = (float)v3->valuedouble;
-        seq++;
-        n++;
+    if (s_hist_backfilled) { xSemaphoreGive(s_lock); cJSON_Delete(root); return true; }
+    int live=s_hist_count, n=0;
+    int64_t cutoff=live ? s_h_ts[(s_seq-live)%FNOS_HIST_MAX] : 0;
+    /* No trustworthy ordering, or no room: keep real-time data and stop retrying. */
+    if (live && (!cutoff || live==FNOS_HIST_MAX)) {
+        s_hist_backfilled=true;
+        xSemaphoreGive(s_lock); cJSON_Delete(root); return true;
     }
-    if (n > 0) {
-        s_seq = seq;
-        /* 直接写进快照：fnos_data_get 是整份拷贝，UI 不用再多一个取数接口。
-           此刻已经持有 s_lock。 */
-        if (ts_first && ts_last > ts_first) {
-            s_status.hist_ts_ok = true;
-            s_status.hist_span_s = (int)(ts_last - ts_first);
-            s_status.hist_avg_gap_x10 = n > 1 ? (int)((ts_last - ts_first) * 10 / (n - 1)) : 0;
-        } else {
-            s_status.hist_ts_ok = false;
-            s_status.hist_span_s = 0;
-            s_status.hist_avg_gap_x10 = 0;
+    const cJSON *row=NULL;
+    fnos_sample_t sample; int64_t ts;
+    int64_t previous=0;
+    cJSON_ArrayForEach(row,rows) {
+        if (history_row_values(row,&sample,&ts) && (!live || (ts && ts<cutoff))) {
+            if (live && n && ts<=previous) { xSemaphoreGive(s_lock); cJSON_Delete(root); return false; }
+            previous=ts; n++;
         }
     }
-    xSemaphoreGive(s_lock);
-    cJSON_Delete(root);
-    if (n > 0) {
-        ESP_LOGI(TAG, "history backfilled: %d samples", n);
+    if (!n) { xSemaphoreGive(s_lock); cJSON_Delete(root); return false; }
+    int keep=live ? (n<FNOS_HIST_MAX-live ? n : FNOS_HIST_MAX-live) : n;
+    history_record_t *saved=live ? history_alloc((size_t)live*sizeof *saved) : NULL;
+    if ((live && !saved) || s_seq>INT64_MAX-FNOS_HIST_MAX-n-live) {
+        free(saved); xSemaphoreGive(s_lock); cJSON_Delete(root); return false;
     }
-    return n > 0;
+    for (int i=0;i<live;i++) {
+        int idx=(int)((s_seq-live+i)%FNOS_HIST_MAX);
+        saved[i]=(history_record_t){{s_h_cpu[idx],s_h_mem[idx],s_h_rx[idx],s_h_tx[idx]},s_h_ts[idx]};
+    }
+    int64_t seq=s_seq;
+    if (live) {
+        s_hist_reset_seq=s_seq;
+        seq+=FNOS_HIST_MAX; /* New opaque cursor range invalidates every old window. */
+    }
+    int skip=n-keep, accepted=0, count=0;
+    int64_t ts_first=0,ts_last=0; bool times_ok=true;
+    /* Historical rows first, retained live rows last. No partial publication. */
+    cJSON_ArrayForEach(row,rows) {
+        if (!history_row_values(row,&sample,&ts) || (live && (!ts || ts>=cutoff))) continue;
+        if (accepted++<skip) continue;
+        int idx=(int)(seq++%FNOS_HIST_MAX);
+        s_h_cpu[idx]=sample.cpu; s_h_mem[idx]=sample.mem;
+        s_h_rx[idx]=sample.rx_kbs; s_h_tx[idx]=sample.tx_kbs; s_h_ts[idx]=ts;
+        if (!ts || (count && ts<=ts_last)) times_ok=false;
+        if (!count) ts_first=ts;
+        ts_last=ts; count++;
+    }
+    for (int i=0;i<live;i++) {
+        int idx=(int)(seq++%FNOS_HIST_MAX); sample=saved[i].sample; ts=saved[i].ts;
+        s_h_cpu[idx]=sample.cpu; s_h_mem[idx]=sample.mem;
+        s_h_rx[idx]=sample.rx_kbs; s_h_tx[idx]=sample.tx_kbs; s_h_ts[idx]=ts;
+        if (!ts || (count && ts<=ts_last)) times_ok=false;
+        if (!count) ts_first=ts;
+        ts_last=ts; count++;
+    }
+    s_seq=seq; s_hist_count=count<FNOS_HIST_MAX ? count : FNOS_HIST_MAX;
+    s_hist_backfilled=true;
+    int64_t span=ts_last-ts_first, gap=count>1 ? span*10/(count-1) : 0;
+    s_status.hist_ts_ok=times_ok && count>1 && span>0 && span<=INT_MAX && gap<=INT_MAX;
+    s_status.hist_span_s=s_status.hist_ts_ok ? (int)span : 0;
+    s_status.hist_avg_gap_x10=s_status.hist_ts_ok ? (int)gap : 0;
+    xSemaphoreGive(s_lock); free(saved); cJSON_Delete(root);
+    ESP_LOGI(TAG,"history backfilled: %d samples, retained %d live",keep,live);
+    return true;
 }
 
 // ────────────────────────────── HTTP
@@ -193,8 +248,13 @@ static void http_drop_client(void)
 // 只在轮询任务里调用（s_url_* 是它自己读写的）。
 static void apply_endpoint(void)
 {
-    fnos_pair_active(&s_conn);
-    s_conn_gen = fnos_pair_generation();
+    s_conn_gen = fnos_pair_active_gen(&s_conn);
+    if (!s_conn_gen) {
+        s_conn_usable = false;
+        http_drop_client();
+        ESP_LOGW(TAG, "pair configuration unavailable, connection disabled");
+        return;
+    }
 
     snprintf(s_url_status, sizeof(s_url_status), "%s://%s:%d/api/v1/status",
              s_conn.tls ? "https" : "http", s_conn.host, s_conn.port);
@@ -240,7 +300,7 @@ static bool http_get(const char *url, char **buffer, size_t *capacity, size_t bu
 {
     s_conn_err[0] = 0;
     if (!s_conn_usable) {
-        snprintf(s_conn_err, sizeof s_conn_err, "%s", "no cert");
+        snprintf(s_conn_err, sizeof s_conn_err, "%s", s_conn_gen ? "no cert" : "read error");
         *out_status = 0;
         *out_len = 0;
         *out_ms = 0;
@@ -395,7 +455,9 @@ static void commit_status(const fnos_status_t *st, int http_ms, int status_code)
     s_h_mem[idx] = dst->mem.pct;
     s_h_rx[idx]  = dst->net.rx_kbs;
     s_h_tx[idx]  = dst->net.tx_kbs;
+    s_h_ts[idx] = dst->source_ts > 1000000000LL && dst->source_ts < 4000000000LL ? dst->source_ts : 0;
     s_seq++;
+    if (s_hist_count < FNOS_HIST_MAX) s_hist_count++;
     xSemaphoreGive(s_lock);
 }
 
@@ -436,9 +498,12 @@ static void poll_task(void *arg)
             }
         }
         fnos_net_service();                 // 重连 / 起站重试：同步 RPC 只能在普通任务里发
+        fnos_pair_init();                   // 配对初始化/建任务失败时重试；已就绪时立即返回
         if (fnos_pair_generation() != s_conn_gen) {
             ESP_LOGI(TAG, "连接参数已更新，重建 HTTP 客户端");
             apply_endpoint();               // 刚配对完 / 刚撤销：换到新端点
+            history_reset();
+            hist_done = false;
         }
         if (!fnos_net_online()) {
             mark_link_down();
@@ -536,7 +601,7 @@ bool fnos_data_get(fnos_status_t *out)
     if (!s_lock || xSemaphoreTake(s_lock, pdMS_TO_TICKS(50)) != pdTRUE) {
         // 拿不到锁：保留上一帧数值，并沿用上次的有效性——不能因为一次锁超时
         // 就把整屏数值刷成 "--"、状态丸刷成 NO DATA
-        return s_valid;
+        return out->ever_ok;
     }
     fnos_status_copy(out, &s_status);
     bool ok = s_status.ever_ok;
@@ -546,11 +611,15 @@ bool fnos_data_get(fnos_status_t *out)
 
 int64_t fnos_data_hist_seq(void)
 {
-    return s_seq;
+    if (!s_lock || xSemaphoreTake(s_lock,pdMS_TO_TICKS(50))!=pdTRUE) return -1;
+    int64_t seq=s_seq;
+    xSemaphoreGive(s_lock);
+    return seq;
 }
 
-int fnos_data_hist_read(int64_t since_seq, fnos_sample_t *out, int max, int64_t *next_seq)
+int fnos_data_hist_read_ex(int64_t since_seq, fnos_sample_t *out, int max, int64_t *next_seq, bool *reset)
 {
+    if (reset) *reset=false;
     if (!out || max <= 0 || !s_lock) {
         return 0;
     }
@@ -560,10 +629,13 @@ int fnos_data_hist_read(int64_t since_seq, fnos_sample_t *out, int max, int64_t 
         return 0;
     }
     int64_t seq = s_seq;
-    if (since_seq < 0) since_seq = 0;
-    if (seq - since_seq > FNOS_HIST_MAX) {  // 落后太多：只给最近一窗
-        since_seq = seq - FNOS_HIST_MAX;
+    bool changed=(s_hist_reset_seq>=0 && since_seq<=s_hist_reset_seq);
+    int64_t first=seq-s_hist_count;
+    if (changed || since_seq<first || since_seq>seq) {
+        since_seq=first;
+        changed=true;
     }
+    if (reset) *reset=changed;
     while (since_seq < seq && n < max) {
         int idx = (int)(since_seq % FNOS_HIST_MAX);
         out[n].cpu = s_h_cpu[idx];
@@ -576,6 +648,11 @@ int fnos_data_hist_read(int64_t since_seq, fnos_sample_t *out, int max, int64_t 
     if (next_seq) *next_seq = since_seq;
     xSemaphoreGive(s_lock);
     return n;
+}
+
+int fnos_data_hist_read(int64_t since_seq, fnos_sample_t *out, int max, int64_t *next_seq)
+{
+    return fnos_data_hist_read_ex(since_seq,out,max,next_seq,NULL);
 }
 
 // ────────────────────────────── 只读诊断（72h 长测）

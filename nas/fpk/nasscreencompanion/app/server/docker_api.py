@@ -45,6 +45,29 @@ def _receive(sock, size, deadline):
     return bytes(data)
 
 
+def row_from_container(c):
+    """容器 → 板上读的三个字段。容器名**不截断**（审计 H21）。
+
+    以前这里是 `…lstrip('/')[:23]`：共享前 23 个字符的两个容器在屏上同名，
+    而"这一行还是不是同一个容器"正是按名字比的 —— 截短名字就是把身份弄丢。
+    名字是身份；省略显示是**渲染端**的事（长名字走预览里的溢出/字形审计）。
+    `id` 只作稳定身份备用，板子不读它也不受影响。
+    """
+    return {'n': str((c.get('Names') or [str(c.get('Id', '?'))[:12]])[0]).lstrip('/'),
+            'id': str(c.get('Id') or '')[:12],
+            'up': c.get('State') == 'running',
+            's': str(c.get('Status') or '')[:39]}
+
+
+def rows_from(raw):
+    """Docker API 的原始列表 → 排序后的面板行。"""
+    if not isinstance(raw, list) or any(not isinstance(c, dict) for c in raw):
+        raise ValueError('Docker response is not a container list')
+    out = [row_from_container(c) for c in raw]
+    out.sort(key=lambda c: (not c['up'], c['n']))
+    return out
+
+
 def containers():
     global _reader, _broken
     fd = os.environ.get('NSC_DOCKER_READER_FD')
@@ -84,10 +107,5 @@ def containers():
     if len(body) > MAX_RESPONSE:
         raise ValueError('Docker response exceeds byte budget')
     rows = json.loads(body)
-    if not isinstance(rows, list) or any(not isinstance(c, dict) for c in rows):
-        raise ValueError('Docker response is not a container list')
-    result = [{'n': str((c.get('Names') or [str(c.get('Id', '?'))[:12]])[0]).lstrip('/')[:23],
-               'up': c.get('State') == 'running', 's': str(c.get('Status') or '')[:39]}
-              for c in rows]
-    result.sort(key=lambda c: (not c['up'], c['n']))
+    result = rows_from(rows)
     return {'rows': result, 'total': len(result), 'ts': int(time.time())}

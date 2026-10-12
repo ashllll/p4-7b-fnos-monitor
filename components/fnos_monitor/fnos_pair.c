@@ -3,12 +3,14 @@
 //
 // 线程模型：本模块自己起一个配对任务（栈在 PSRAM），UI 侧只调 fnos_pair_begin /
 // fnos_pair_confirm / fnos_pair_view —— 都是投递请求或加锁复制，不会阻塞 LVGL 任务
-// （一次 HTTP 最长 6 秒，放 UI 线程里就是整屏卡死）。
+// （一次 HTTP 最长 6 秒，放 UI 线程里就是整屏卡死）。NVS提交持状态锁，
+// getter可能等待低频存储操作；这部分延迟需设备验证，不能声称完全无阻塞。
 #include "fnos_pair.h"
 
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdatomic.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -54,6 +56,8 @@ static const char *TAG = "fnos_pair";
 #define KEY_TOKEN     "token"
 #define KEY_CERT      "cert"
 #define KEY_FP        "fp"
+#define KEY_TXN       "txn_v1"
+enum { NVS_TXN_DIRTY = 0, NVS_TXN_READY = 1, NVS_TXN_EMPTY = 2 };
 #define IDENT_PATH    "/api/v1/identity"
 #define PAIR_PATH     "/api/v1/pair"
 #define HTTP_TIMEOUT_MS 6000
@@ -81,13 +85,19 @@ static int  s_pend_port;        // 真正答对 identity 的端口；0 = 还没�
 
 static EXT_RAM_BSS_ATTR fnos_pair_view_t s_view;
 
-static SemaphoreHandle_t s_lock;
-static TaskHandle_t s_task;
+static _Atomic(SemaphoreHandle_t) s_lock;
+static atomic_flag s_init_guard = ATOMIC_FLAG_INIT;
+static bool s_loaded;  // 仅在初始化 guard 内访问；重试建任务不重新装载 NVS。
+static _Atomic(TaskHandle_t) s_task;
 
 // 请求槽：UI 侧写字段再置动作，任务侧在锁里取走并清零
 static int  s_act;
+static bool s_cancel_requested;  // 同锁投递；worker 在网络与持久化边界检查。
+static bool s_request_busy;  // 同锁保留单个请求直到 worker 完成，禁止覆盖进行中的动作。
 static bool s_accept;
 static char s_code[16];
+// 请求槽只在状态锁内访问；待确认码归配对任务独占，不能复用 UI 请求槽。
+static char s_pend_code[sizeof(s_code)];
 
 // ────────────────────────────── 小工具
 
@@ -189,11 +199,29 @@ static bool pair_state_busy(fnos_pair_state_t st)
     return st == FNOS_PAIR_FETCHING || st == FNOS_PAIR_CONFIRM || st == FNOS_PAIR_PAIRING;
 }
 
-static void set_view(fnos_pair_state_t state, const char *msg)
+// 仅配对 worker 调用；UI 请求槽与这些待确认材料互不复用。
+static void pending_clear(void)
 {
-    if (xSemaphoreTake(s_lock, portMAX_DELAY) != pdTRUE) {
-        return;
-    }
+    memset(s_pend_code, 0, sizeof s_pend_code);
+    memset(s_pend_pem, 0, sizeof s_pend_pem);
+    memset(s_pend_fp, 0, sizeof s_pend_fp);
+    memset(s_pend_cn, 0, sizeof s_pend_cn);
+    memset(s_pend_until, 0, sizeof s_pend_until);
+    s_pend_port = 0;
+    s_pend_tls = false;
+}
+
+static bool pair_cancelled(void)
+{
+    if (!s_lock || xSemaphoreTake(s_lock, portMAX_DELAY) != pdTRUE) return true;
+    bool cancelled = s_cancel_requested;
+    xSemaphoreGive(s_lock);
+    return cancelled;
+}
+
+// 调用方持状态锁；请求入队时也发布可达的忙状态与同源提示。
+static void set_view_locked(fnos_pair_state_t state, const char *msg)
+{
     s_view.state = state;
     snprintf(s_view.msg, sizeof(s_view.msg), "%s", msg ? msg : "");
     snprintf(s_view.fingerprint, sizeof(s_view.fingerprint), "%s", s_pend_fp);
@@ -202,6 +230,13 @@ static void set_view(fnos_pair_state_t state, const char *msg)
     snprintf(s_view.host, sizeof(s_view.host), "%s", s_cfg.host);
     s_view.port = (s_pend_port && pair_state_busy(state)) ? s_pend_port : s_cfg.port;
     s_view.tls = s_cfg.tls;
+}
+
+static void set_view(fnos_pair_state_t state, const char *msg)
+{
+    if (state == FNOS_PAIR_FAILED) pending_clear();
+    if (xSemaphoreTake(s_lock, portMAX_DELAY) != pdTRUE) return;
+    set_view_locked(state, msg);
     xSemaphoreGive(s_lock);
 }
 
@@ -217,11 +252,19 @@ static EXT_RAM_BSS_ATTR fnos_pair_cfg_t s_next;
 // "证书或网络问题"，既分不清是哪一步，也没有可上报的错误码 —— 现场排查全靠猜。
 static char s_http_diag[96];
 
-const char *fnos_pair_last_http_diag(void) { return s_http_diag; }
+const char *fnos_pair_last_http_diag(void)
+{
+    // 保留旧符号，但不能把 worker 正在改写的缓冲借给其他任务。
+    // 初始化尚未发布 worker 句柄时也拒绝借用。
+    TaskHandle_t owner = atomic_load(&s_task);
+    if (!owner || xTaskGetCurrentTaskHandle() != owner) return "";
+    return s_http_diag;
+}
 
 // 探针要先于定义处使用 http_oneshot（它在本文件后面）
 static bool http_oneshot(bool post, const char *url, const char *body, const char *cert_pem,
-                         char *rx, size_t rx_cap, int *out_status, int *out_len);
+                         char *rx, size_t rx_cap, int *out_status, int *out_len,
+                         char *diag, size_t diag_cap);
 
 /* ── 串口 / 屏幕都能用的 HTTPS 自检 ─────────────────────────────────────
    配对卡在"握手没完成"时，屏幕只有一句话，而真正的原因（mbedTLS/esp-tls）只在
@@ -230,17 +273,56 @@ static bool http_oneshot(bool post, const char *url, const char *body, const cha
    换 NAS、换证书、TLS 握手出问题时用它自检，比在配对流里猜快得多。 */
 #define PROBE_HEALTH_PATH "/api/v1/health"
 static EXT_RAM_BSS_ATTR char s_probe_pem[FNOS_PAIR_PEM_MAX];
+static EXT_RAM_BSS_ATTR fnos_pair_cfg_t s_probe_cfg;
+static atomic_flag s_probe_guard = ATOMIC_FLAG_INIT;
+static atomic_flag s_probe_async_guard = ATOMIC_FLAG_INIT;
 
+static bool tls_probe_body(char *out, size_t out_cap);
+
+/* 抬高三个 tag 的日志级别跑探针，**无论从哪条 return 出去都恢复**：
+   esp_log_level_set 是全局的，以前是串口 `tls` 命令抬到 DEBUG 之后没人关掉，
+   之后整条串口永久刷 DEBUG 日志（审计 M08）。放在这里而不是调用方，是为了让
+   同步/异步两条路都受同一道原子重入保护；共享探针暂存只由持有者访问。
+   配对任务使用独立的 HTTP 诊断缓冲，避免被探针请求覆盖。 */
 bool fnos_pair_tls_probe(char *out, size_t out_cap)
 {
-    if (out_cap) out[0] = 0;
+    if (!out || !out_cap) return false;
+    if (atomic_flag_test_and_set(&s_probe_guard)) {
+        snprintf(out, out_cap, "TLS probe busy");
+        return false;
+    }
+    if (!fnos_pair_active_gen(&s_probe_cfg)) {
+        snprintf(out, out_cap, "Pairing configuration unavailable");
+        atomic_flag_clear(&s_probe_guard);
+        return false;
+    }
+    esp_log_level_t lv_tls = esp_log_level_get("esp-tls");
+    esp_log_level_t lv_mbed = esp_log_level_get("mbedtls");
+    esp_log_level_t lv_http = esp_log_level_get("HTTP_CLIENT");
+    esp_log_level_set("esp-tls", ESP_LOG_DEBUG);
+    esp_log_level_set("mbedtls", ESP_LOG_DEBUG);
+    esp_log_level_set("HTTP_CLIENT", ESP_LOG_DEBUG);
+    bool ok = tls_probe_body(out, out_cap);
+    esp_log_level_set("esp-tls", lv_tls);
+    esp_log_level_set("mbedtls", lv_mbed);
+    esp_log_level_set("HTTP_CLIENT", lv_http);
+    memset(&s_probe_cfg, 0, sizeof s_probe_cfg);
+    memset(s_probe_pem, 0, sizeof s_probe_pem);
+    atomic_flag_clear(&s_probe_guard);
+    return ok;
+}
+
+static bool tls_probe_body(char *out, size_t out_cap)
+{
+    out[0] = 0;
+    char diag[96] = "";
     char *rx = heap_caps_malloc(RX_MAX, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!rx) rx = malloc(RX_MAX);
     if (!rx) { snprintf(out, out_cap, "内存不足（%d 字节）", (int)RX_MAX); return false; }
 
-    const char *host = s_cfg.host[0] ? s_cfg.host : "?";
-    int ports[2] = { PAIR_APP_PORT, s_cfg.port };
-    int nports = (s_cfg.port == PAIR_APP_PORT) ? 1 : 2;
+    const char *host = s_probe_cfg.host[0] ? s_probe_cfg.host : "?";
+    int ports[2] = { PAIR_APP_PORT, s_probe_cfg.port };
+    int nports = (s_probe_cfg.port == PAIR_APP_PORT) ? 1 : 2;
     char url[160];
     int status = 0, len = 0, port = 0;
     bool got = false;
@@ -248,15 +330,15 @@ bool fnos_pair_tls_probe(char *out, size_t out_cap)
     for (int i = 0; i < nports; i++) {
         snprintf(url, sizeof url, "http://%s:%d%s", host, ports[i], IDENT_PATH);
         status = 0; len = 0;
-        if (http_oneshot(false, url, NULL, NULL, rx, RX_MAX, &status, &len) && status == 200) {
+        if (http_oneshot(false, url, NULL, NULL, rx, RX_MAX, &status, &len, diag, sizeof diag) && status == 200) {
             port = ports[i];
             got = true;
             break;
         }
-        ESP_LOGW(TAG, "探针：明文 identity 没通 %s ok_status=%d diag=%s", url, status, s_http_diag);
+        ESP_LOGW(TAG, "探针：明文 identity 没通 %s ok_status=%d diag=%s", url, status, diag);
     }
     if (!got) {
-        snprintf(out, out_cap, "明文 identity 没通（%s）：%s", url, s_http_diag);
+        snprintf(out, out_cap, "明文 identity 没通（%s）：%s", url, diag);
         free(rx);
         return false;
     }
@@ -272,39 +354,28 @@ bool fnos_pair_tls_probe(char *out, size_t out_cap)
         return false;
     }
     /* 先拷出来再删 cJSON：jpem 的指针随 root 一起失效 */
+    if (strlen(jpem->valuestring) >= sizeof s_probe_pem) {
+        snprintf(out, out_cap, "Identity certificate exceeds probe capacity");
+        cJSON_Delete(root);
+        free(rx);
+        return false;
+    }
     snprintf(s_probe_pem, sizeof s_probe_pem, "%s", jpem->valuestring);
     if (root) cJSON_Delete(root);
     ESP_LOGI(TAG, "探针：identity 来自 %s:%d，证书 %d 字节", host, port, (int)strlen(s_probe_pem));
 
     snprintf(url, sizeof url, "https://%s:%d%s", host, port, PROBE_HEALTH_PATH);
     status = 0; len = 0;
-    bool replied = http_oneshot(false, url, NULL, s_probe_pem, rx, RX_MAX, &status, &len);
+    bool replied = http_oneshot(false, url, NULL, s_probe_pem, rx, RX_MAX, &status, &len, diag, sizeof diag);
     bool ok = replied && status == 200;
     snprintf(out, out_cap, "%s %s（ok=%d status=%d len=%d%s%s）",
              ok ? "HTTPS 通过" : "HTTPS 失败", url, (int)replied, status, len,
-             s_http_diag[0] ? " · " : "", s_http_diag);
+             diag[0] ? " · " : "", diag);
     if (!ok) { free(rx); return false; }
 
-    /* 再走一遍**真正会失败的那条路**：POST 一个假配对码。
-       期望服务端回 403 + {"error":"配对码不正确"} —— 这也算通过：说明请求体发出去了、
-       响应也收回来了（这一步以前必挂：body 根本没写出去，6 秒后超时）。 */
-    snprintf(url, sizeof url, "https://%s:%d%s", host, port, PAIR_PATH);
-    status = 0; len = 0;
-    bool posted = http_oneshot(true, url, "{\"code\":\"000000\",\"name\":\"probe\"}",
-                               s_probe_pem, rx, RX_MAX, &status, &len);
-    char body[96] = "";
-    if (posted && len > 0) {
-        cJSON *r = cJSON_Parse(rx);
-        const cJSON *je = r ? cJSON_GetObjectItemCaseSensitive(r, "error") : NULL;
-        if (cJSON_IsString(je) && je->valuestring) snprintf(body, sizeof body, "：%s", je->valuestring);
-        if (r) cJSON_Delete(r);
-    }
-    char tail[160];
-    snprintf(tail, sizeof tail, " ｜ POST %s ok=%d status=%d%s%s", PAIR_PATH, (int)posted, status,
-             body, s_http_diag[0] ? " · " : "");
-    strncat(out, tail, out_cap - strlen(out) - 1);
+    /* 只读自检到此结束。固定“假”配对码也可能有效，不能 POST /pair。 */
     free(rx);
-    return posted && status > 0;
+    return true;
 }
 
 /* 探针要跑 mbedTLS 握手，栈不能小；从串口命令里直接跑会撑爆命令任务的栈，
@@ -315,13 +386,19 @@ static void probe_task(void *arg)
     bool ok = fnos_pair_tls_probe(msg, sizeof msg);
     printf("\n[tls] %s%s\n> ", msg, ok ? "" : "  ← 见上面 mbedTLS/esp-tls 的详细日志");
     fflush(stdout);
+    atomic_flag_clear(&s_probe_async_guard);
     vTaskDelete(NULL);
 }
 
 void fnos_pair_tls_probe_async(void)
 {
+    if (atomic_flag_test_and_set(&s_probe_async_guard)) {
+        printf("\n[tls] TLS probe already queued\n> ");
+        return;
+    }
     if (xTaskCreatePinnedToCoreWithCaps(probe_task, "tls_probe", 8 * 1024, NULL, 4,
                                         NULL, tskNO_AFFINITY, MALLOC_CAP_SPIRAM) != pdPASS) {
+        atomic_flag_clear(&s_probe_async_guard);
         printf("\n[tls] 起不了探针任务（内存不足）\n> ");
     }
 }
@@ -329,8 +406,13 @@ void fnos_pair_tls_probe_async(void)
 
 // 一次性请求（配对是低频操作，不复用连接）。cert_pem 非空才走证书校验。
 static bool http_oneshot(bool post, const char *url, const char *body, const char *cert_pem,
-                         char *rx, size_t rx_cap, int *out_status, int *out_len)
+                         char *rx, size_t rx_cap, int *out_status, int *out_len,
+                         char *diag, size_t diag_cap)
 {
+    diag[0] = 0;
+    *out_status = 0;
+    *out_len = 0;
+    rx[0] = 0;
     esp_http_client_config_t cfg = {
         .url = url,
         .method = post ? HTTP_METHOD_POST : HTTP_METHOD_GET,
@@ -350,6 +432,7 @@ static bool http_oneshot(bool post, const char *url, const char *body, const cha
 
     esp_http_client_handle_t c = esp_http_client_init(&cfg);
     if (!c) {
+        snprintf(diag, diag_cap, "HTTP client allocation failed");
         *out_status = 0;
         return false;
     }
@@ -359,10 +442,10 @@ static bool http_oneshot(bool post, const char *url, const char *body, const cha
     }
 
     bool ok = false;
-    s_http_diag[0] = 0;
+    diag[0] = 0;
     esp_err_t oerr = esp_http_client_open(c, post && body ? (int)strlen(body) : 0);
     if (oerr != ESP_OK) {
-        snprintf(s_http_diag, sizeof s_http_diag, "open 失败 %s（errno %d）",
+        snprintf(diag, diag_cap, "open 失败 %s（errno %d）",
                  esp_err_to_name(oerr), esp_http_client_get_errno(c));
         ESP_LOGE(TAG, "http open failed: %s errno=%d internal_heap=%u", esp_err_to_name(oerr),
                  esp_http_client_get_errno(c),
@@ -380,7 +463,7 @@ static bool http_oneshot(bool post, const char *url, const char *body, const cha
         int blen = (int)strlen(body);
         int wrote = esp_http_client_write(c, body, blen);
         if (wrote != blen) {
-            snprintf(s_http_diag, sizeof s_http_diag, "写请求体失败 %d/%d（errno %d）",
+            snprintf(diag, diag_cap, "写请求体失败 %d/%d（errno %d）",
                      wrote, blen, esp_http_client_get_errno(c));
             ESP_LOGE(TAG, "http write body failed: %d/%d errno=%d", wrote, blen,
                      esp_http_client_get_errno(c));
@@ -391,7 +474,7 @@ static bool http_oneshot(bool post, const char *url, const char *body, const cha
         }
     }
     if (esp_http_client_fetch_headers(c) < 0) {
-        snprintf(s_http_diag, sizeof s_http_diag, "读响应头失败（errno %d）",
+        snprintf(diag, diag_cap, "读响应头失败（errno %d）",
                  esp_http_client_get_errno(c));
         ESP_LOGE(TAG, "http fetch_headers failed: errno=%d internal_heap=%u",
                  esp_http_client_get_errno(c),
@@ -415,7 +498,7 @@ static bool http_oneshot(bool post, const char *url, const char *body, const cha
         *out_len = total;
         ok = esp_http_client_is_complete_data_received(c);
         if (!ok) {
-            snprintf(s_http_diag, sizeof s_http_diag, "响应没收完（%d 字节，errno %d）",
+            snprintf(diag, diag_cap, "响应没收完（%d 字节，errno %d）",
                      total, esp_http_client_get_errno(c));
             ESP_LOGW(TAG, "response incomplete: %d bytes errno=%d", total,
                      esp_http_client_get_errno(c));
@@ -427,7 +510,21 @@ static bool http_oneshot(bool post, const char *url, const char *body, const cha
 
 // ────────────────────────────── NVS
 
-static void nvs_load(void)
+/* Stored certificate errors are configuration failures, never permission to use HTTP. */
+static bool stored_cert_valid(const char *pem)
+{
+    if (!has_cert(pem)) return false;
+    mbedtls_x509_crt *crt = heap_caps_calloc(1, sizeof(*crt), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!crt) crt = calloc(1, sizeof(*crt));
+    if (!crt) return false;
+    mbedtls_x509_crt_init(crt);
+    bool valid = mbedtls_x509_crt_parse(crt, (const unsigned char *)pem, strlen(pem) + 1) == 0;
+    mbedtls_x509_crt_free(crt);
+    free(crt);
+    return valid;
+}
+
+static bool nvs_load(void)
 {
     memset(&s_cfg, 0, sizeof(s_cfg));
     snprintf(s_cfg.host, sizeof(s_cfg.host), "%s", FNOS_HOST);
@@ -437,8 +534,15 @@ static void nvs_load(void)
     s_provisioned = false;
 
     nvs_handle_t h;
-    if (nvs_open(NVS_NS, NVS_READONLY, &h) != ESP_OK) {
-        return;
+    esp_err_t opened = nvs_open(NVS_NS, NVS_READONLY, &h);
+    if (opened == ESP_ERR_NVS_NOT_FOUND) return true; // Clean first boot.
+    if (opened != ESP_OK) goto failed;
+    int32_t txn = NVS_TXN_DIRTY;
+    esp_err_t em = nvs_get_i32(h, KEY_TXN, &txn);
+    if ((em != ESP_OK && em != ESP_ERR_NVS_NOT_FOUND) ||
+        (em == ESP_OK && txn != NVS_TXN_READY && txn != NVS_TXN_EMPTY)) {
+        nvs_close(h);
+        goto failed;
     }
     char host[sizeof(s_cfg.host)] = {0};
     size_t hlen = sizeof(host);
@@ -449,29 +553,52 @@ static void nvs_load(void)
     size_t clen = sizeof(cert);
     char fp[FNOS_PAIR_FP_MAX] = {0};
     size_t flen = sizeof(fp);
-
-    bool ok = (nvs_get_str(h, KEY_HOST, host, &hlen) == ESP_OK) &&
-              (nvs_get_i32(h, KEY_PORT, &port) == ESP_OK) &&
-              (nvs_get_str(h, KEY_TOKEN, token, &tlen) == ESP_OK);
-    if (ok) {
-        snprintf(s_cfg.host, sizeof(s_cfg.host), "%s", host);
-        s_cfg.port = (int)port;
-        snprintf(s_cfg.token, sizeof(s_cfg.token), "%s", token);
-        if (nvs_get_str(h, KEY_CERT, cert, &clen) == ESP_OK && has_cert(cert)) {
-            snprintf(s_cfg.cert_pem, sizeof(s_cfg.cert_pem), "%s", cert);
-            s_cfg.tls = true;
-            if (nvs_get_str(h, KEY_FP, fp, &flen) == ESP_OK) {
-                snprintf(s_cfg.fingerprint, sizeof(s_cfg.fingerprint), "%s", fp);
-            }
-        }
-        // 有证书才算"配对过"。NAS 关掉 TLS 时没有证书，但令牌仍然有效——
-        // 这种回落只在确实没有证书时才成立，且下面数据层不会静默降级。
-        s_provisioned = true;
-    }
+    esp_err_t eh = nvs_get_str(h, KEY_HOST, host, &hlen);
+    esp_err_t ep = nvs_get_i32(h, KEY_PORT, &port);
+    esp_err_t et = nvs_get_str(h, KEY_TOKEN, token, &tlen);
+    esp_err_t ec = nvs_get_str(h, KEY_CERT, cert, &clen);
+    esp_err_t ef = nvs_get_str(h, KEY_FP, fp, &flen);
     nvs_close(h);
-    s_generation++;
-    ESP_LOGI(TAG, "loaded: %s:%d tls=%d token=%s cert=%s", s_cfg.host, s_cfg.port,
-             (int)s_cfg.tls, s_cfg.token[0] ? "yes" : "no", has_cert(s_cfg.cert_pem) ? "yes" : "no");
+    if (eh == ESP_ERR_NVS_NOT_FOUND && ep == ESP_ERR_NVS_NOT_FOUND &&
+        et == ESP_ERR_NVS_NOT_FOUND && ec == ESP_ERR_NVS_NOT_FOUND &&
+        ef == ESP_ERR_NVS_NOT_FOUND) {
+        if (em == ESP_OK && txn != NVS_TXN_EMPTY) goto failed;
+        return true; // Legacy empty namespace or completed guarded erase.
+    }
+    if (em == ESP_OK && txn != NVS_TXN_READY) goto failed;
+    if (eh != ESP_OK || ep != ESP_OK || et != ESP_OK || !host[0] || !token[0] ||
+        port < 1 || port > 65535) goto failed;
+    bool tls = ec == ESP_OK;
+    if (tls) {
+        if (ef != ESP_OK || !fp[0] || !stored_cert_valid(cert)) goto failed;
+    } else if (ec != ESP_ERR_NVS_NOT_FOUND || ef != ESP_ERR_NVS_NOT_FOUND) {
+        goto failed; // An orphan fingerprint or an unreadable cert cannot become HTTP.
+    }
+    snprintf(s_cfg.host, sizeof(s_cfg.host), "%s", host);
+    s_cfg.port = (int)port;
+    snprintf(s_cfg.token, sizeof(s_cfg.token), "%s", token);
+    s_cfg.tls = tls;
+    if (tls) {
+        snprintf(s_cfg.cert_pem, sizeof(s_cfg.cert_pem), "%s", cert);
+        snprintf(s_cfg.fingerprint, sizeof(s_cfg.fingerprint), "%s", fp);
+    }
+    s_provisioned = true;
+    return true;
+failed:
+    /* Keep the address for recovery, but publish no usable generation or credential. */
+    memset(s_cfg.token, 0, sizeof(s_cfg.token));
+    ESP_LOGE(TAG, "stored pairing configuration unavailable; telemetry disabled");
+    return false;
+}
+
+/* IDF 5.5.3 writes keys immediately; commit is currently a no-op. Persist DIRTY
+ * before touching any configuration key. READY/EMPTY is published only after all
+ * key operations and their commit succeed. Never erase the barrier with the keys.
+ * Old unmarked stores are accepted for upgrade compatibility; their past coherence
+ * cannot be proved. Downgrading to firmware that ignores txn_v1 loses this guard. */
+static bool nvs_barrier(nvs_handle_t h, int32_t state)
+{
+    return nvs_set_i32(h, KEY_TXN, state) == ESP_OK && nvs_commit(h) == ESP_OK;
 }
 
 static bool nvs_save(const fnos_pair_cfg_t *c)
@@ -480,7 +607,8 @@ static bool nvs_save(const fnos_pair_cfg_t *c)
     if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) {
         return false;
     }
-    bool ok = nvs_set_str(h, KEY_HOST, c->host) == ESP_OK &&
+    bool ok = nvs_barrier(h, NVS_TXN_DIRTY) &&
+              nvs_set_str(h, KEY_HOST, c->host) == ESP_OK &&
               nvs_set_i32(h, KEY_PORT, c->port) == ESP_OK &&
               nvs_set_str(h, KEY_TOKEN, c->token) == ESP_OK;
     if (ok && has_cert(c->cert_pem)) {
@@ -500,7 +628,7 @@ static bool nvs_save(const fnos_pair_cfg_t *c)
         }
     }
     if (ok) {
-        ok = nvs_commit(h) == ESP_OK;
+        ok = nvs_commit(h) == ESP_OK && nvs_barrier(h, NVS_TXN_READY);
     }
     nvs_close(h);
     return ok;
@@ -512,16 +640,16 @@ static bool nvs_wipe(void)
     if (nvs_open(NVS_NS, NVS_READWRITE, &h) != ESP_OK) {
         return false;
     }
-    /* 以前两个返回值都丢掉、函数还是 void：擦除/提交失败时 do_forget 照样告诉用户
-       "已清除"，重启后旧配对原样回来（审计 N2）。失败必须一路传上去。 */
-    esp_err_t e1 = nvs_erase_all(h);
-    esp_err_t e2 = nvs_commit(h);
-    nvs_close(h);
-    if (e1 != ESP_OK || e2 != ESP_OK) {
-        ESP_LOGE(TAG, "清除配对失败：erase=%d commit=%d", (int)e1, (int)e2);
-        return false;
+    bool ok = nvs_barrier(h, NVS_TXN_DIRTY);
+    const char *keys[] = {KEY_HOST, KEY_PORT, KEY_TOKEN, KEY_CERT, KEY_FP};
+    for (size_t i = 0; ok && i < sizeof(keys) / sizeof(keys[0]); ++i) {
+        esp_err_t erased = nvs_erase_key(h, keys[i]);
+        ok = erased == ESP_OK || erased == ESP_ERR_NVS_NOT_FOUND;
     }
-    return true;
+    if (ok) ok = nvs_commit(h) == ESP_OK && nvs_barrier(h, NVS_TXN_EMPTY);
+    nvs_close(h);
+    if (!ok) ESP_LOGE(TAG, "清除配对失败：存储未完成");
+    return ok;
 }
 
 // ────────────────────────────── 配对流程（跑在配对任务里）
@@ -530,6 +658,7 @@ static void do_pair(void);
 
 static void do_fetch(const char *code)
 {
+    pending_clear();  // 即使新请求在分配/网络/解析之前失败，也不能确认旧证书。
     char *rx = heap_caps_malloc(RX_MAX, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!rx) {
         rx = malloc(RX_MAX);
@@ -550,7 +679,7 @@ static void do_fetch(const char *code)
         char url[128];
         snprintf(url, sizeof(url), "http://%s:%d%s", s_cfg.host, ports[i], IDENT_PATH);
         status = 0; len = 0;
-        bool ok = http_oneshot(false, url, NULL, NULL, rx, RX_MAX, &status, &len);
+        bool ok = http_oneshot(false, url, NULL, NULL, rx, RX_MAX, &status, &len, s_http_diag, sizeof s_http_diag);
         if (ok && status == 200) {
             s_pend_port = ports[i];
             ESP_LOGI(TAG, "identity 来自 %s:%d", s_cfg.host, ports[i]);
@@ -574,6 +703,7 @@ static void do_fetch(const char *code)
         return;
     }
 
+    if (pair_cancelled()) { free(rx); return; }
     cJSON *root = cJSON_Parse(rx);
     free(rx);
     if (!root) {
@@ -603,9 +733,9 @@ static void do_fetch(const char *code)
         s_pend_until[0] = 0;
         cJSON_Delete(root);
         ESP_LOGW(TAG, "NAS 未启用 TLS，将以明文配对");
-        snprintf(s_code, sizeof(s_code), "%s", code);
+        snprintf(s_pend_code, sizeof(s_pend_code), "%s", code);
         set_view(FNOS_PAIR_PAIRING, "NAS 未启用 HTTPS，正在配对…");
-        do_pair();
+        if (!pair_cancelled()) do_pair();
         return;
     }
 
@@ -630,8 +760,8 @@ static void do_fetch(const char *code)
     s_pend_tls = true;
 
     ESP_LOGI(TAG, "cert fp=%s cn=%s until=%s", s_pend_fp, s_pend_cn, s_pend_until);
-    snprintf(s_code, sizeof(s_code), "%s", code);
-    set_view(FNOS_PAIR_CONFIRM, "请把屏幕上的指纹与 NAS 管理页逐段比对");
+    snprintf(s_pend_code, sizeof(s_pend_code), "%s", code);
+    if (!pair_cancelled()) set_view(FNOS_PAIR_CONFIRM, "请把屏幕上的指纹与 NAS 管理页逐段比对");
 }
 
 /* 配对响应判定：只有"传输成功 + HTTP 200 + 非空且装得下的令牌"才算配对成功。
@@ -651,12 +781,13 @@ static bool pair_response_accept(bool transport_ok, int status, const char *toke
 
 static void do_pair(void)
 {
+    if (pair_cancelled()) return;
     char url[128];
     snprintf(url, sizeof(url), "%s://%s:%d%s", s_pend_tls ? "https" : "http", s_cfg.host,
              s_pend_port ? s_pend_port : s_cfg.port, PAIR_PATH);
 
     char body[128];
-    snprintf(body, sizeof(body), "{\"code\":\"%s\",\"name\":\"%s\"}", s_code,
+    snprintf(body, sizeof(body), "{\"code\":\"%s\",\"name\":\"%s\"}", s_pend_code,
              FNOS_PAIR_DEVICE_NAME);
 
     char *rx = heap_caps_malloc(2048, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -675,8 +806,11 @@ static void do_pair(void)
     }
 
     int status = 0, len = 0;
+    if (pair_cancelled()) { free(rx); return; }
     bool ok = http_oneshot(true, url, body, s_http_cert[0] ? s_http_cert : NULL, rx, 2048,
-                           &status, &len);
+                           &status, &len, s_http_diag, sizeof s_http_diag);
+
+    if (pair_cancelled()) { free(rx); return; }
 
     /* 服务端在非 200 时也会给 {"ok":false,"error":"…"}（比如"配对码已过期，请重新生成"）。
        只在 ok 时才解析，屏幕上就永远只有一句"HTTP 403"——把可执行的话丢掉了。
@@ -756,16 +890,27 @@ static void do_pair(void)
     }
     free(rx);
 
+    /* 先取得发布锁，再做持久化；不能保存成功后因锁失败跳过内存发布却报成功。
+       NVS 是低频配对任务中的同步操作；持锁期间 getter 会等待，设备延迟待实测。 */
+    if (!s_lock || xSemaphoreTake(s_lock, portMAX_DELAY) != pdTRUE) {
+        ESP_LOGE(TAG, "pair commit lock unavailable; NVS unchanged");
+        set_view(FNOS_PAIR_FAILED, "配对失败，请重试");
+        return;
+    }
+    if (s_cancel_requested) {
+        xSemaphoreGive(s_lock);
+        return;
+    }
     if (!nvs_save(next)) {
+        xSemaphoreGive(s_lock);
         set_view(FNOS_PAIR_FAILED, "配对成功但写入 NVS 失败");
         return;
     }
-    if (xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
-        s_cfg = *next;
-        s_provisioned = true;
-        s_generation++;
-        xSemaphoreGive(s_lock);
-    }
+    s_cfg = *next;
+    memset(s_pend_code, 0, sizeof s_pend_code);
+    s_provisioned = true;
+    if (++s_generation == 0) ++s_generation;  // 0 保留为不可用
+    xSemaphoreGive(s_lock);
     ESP_LOGI(TAG, "paired: %s:%d tls=%d fp=%s", s_cfg.host, s_cfg.port, (int)s_cfg.tls,
              s_cfg.fingerprint);
     set_view(FNOS_PAIR_PROVISIONED, "配对完成");
@@ -775,26 +920,90 @@ static void do_forget(void)
 {
     /* 擦除/提交失败就不能说"已清除"：用户会以为 NAS 上的设备记录也一并失效了，
        而重启后旧配对原样回来（审计 N2）。保持内存态不动，让界面如实显示失败。 */
+    if (!s_lock || xSemaphoreTake(s_lock, portMAX_DELAY) != pdTRUE) {
+        ESP_LOGE(TAG, "pair erase lock unavailable; NVS unchanged");
+        set_view(FNOS_PAIR_FAILED, "清除配对失败，请重试");
+        return;
+    }
     if (!nvs_wipe()) {
+        xSemaphoreGive(s_lock);
         set_view(FNOS_PAIR_FAILED, "清除配对失败（NVS 写入错误），请重试");
         return;
     }
-    if (xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
-        memset(&s_cfg, 0, sizeof(s_cfg));
-        snprintf(s_cfg.host, sizeof(s_cfg.host), "%s", FNOS_HOST);
-        s_cfg.port = FNOS_PORT;
-        s_cfg.tls = false;
-        snprintf(s_cfg.token, sizeof(s_cfg.token), "%s", FNOS_TOKEN);
-        s_provisioned = false;
-        s_generation++;
-        s_pend_pem[0] = 0;
-        s_pend_fp[0] = 0;
-        s_pend_cn[0] = 0;
-        s_pend_until[0] = 0;
-        xSemaphoreGive(s_lock);
-    }
+    memset(&s_cfg, 0, sizeof(s_cfg));
+    snprintf(s_cfg.host, sizeof(s_cfg.host), "%s", FNOS_HOST);
+    s_cfg.port = FNOS_PORT;
+    s_cfg.tls = false;
+    snprintf(s_cfg.token, sizeof(s_cfg.token), "%s", FNOS_TOKEN);
+    s_provisioned = false;
+    if (++s_generation == 0) ++s_generation;  // 0 保留为不可用
+    s_pend_pem[0] = 0;
+    s_pend_fp[0] = 0;
+    s_pend_cn[0] = 0;
+    s_pend_until[0] = 0;
+    s_pend_port = 0;
+    s_pend_tls = false;
+    memset(s_pend_code, 0, sizeof s_pend_code);
+    xSemaphoreGive(s_lock);
     ESP_LOGW(TAG, "配对已清除，退回编译期默认地址");
     set_view(FNOS_PAIR_UNPROVISIONED, "已清除本机配对（NAS 上的设备记录还没撤销）");
+}
+
+// 调用方持状态锁：取消处理与释放 busy 必须是同一次发布，不能丢失迟到取消。
+static void pair_finish_locked(void)
+{
+    if (s_cancel_requested) {
+        pending_clear();
+        if (s_view.state != FNOS_PAIR_PROVISIONED) {
+            if (s_provisioned) {
+                set_view_locked(FNOS_PAIR_PROVISIONED, "已取消本机配对操作");
+            } else {
+                set_view_locked(FNOS_PAIR_UNPROVISIONED, "已取消本机配对操作");
+            }
+            s_view.fingerprint[0] = s_view.subject[0] = s_view.not_after[0] = 0;
+        }
+    }
+    s_cancel_requested = false;
+    s_request_busy = false;
+}
+
+static void pair_process_action(void)
+{
+    int act;
+    bool accept;
+    char code[sizeof(s_code)];
+    if (xSemaphoreTake(s_lock, portMAX_DELAY) != pdTRUE) return;
+    act = s_act;
+    accept = s_accept;
+    memcpy(code, s_code, sizeof code);
+    memset(s_code, 0, sizeof s_code);
+    s_act = ACT_NONE;
+    if (act == ACT_NONE) pair_finish_locked();
+    xSemaphoreGive(s_lock);
+    if (act == ACT_NONE) return;  // 不可在解锁后清掉新入队请求的 busy。
+
+    if (pair_cancelled()) {
+        pending_clear();
+    } else if (act == ACT_FETCH) {
+        do_fetch(code);
+    } else if (act == ACT_CONFIRM) {
+        if (!accept) {
+            pending_clear();
+            set_view(FNOS_PAIR_UNPROVISIONED, "已取消本机配对操作");
+        } else if (s_pend_tls && has_cert(s_pend_pem) && s_pend_code[0]) {
+            set_view(FNOS_PAIR_PAIRING, "正在配对…");
+            do_pair();
+        } else {
+            set_view(FNOS_PAIR_FAILED, "没有待确认的证书，请重新发起配对");
+        }
+    } else if (act == ACT_FORGET) {
+        do_forget();
+    }
+    memset(code, 0, sizeof code);
+    if (xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
+        pair_finish_locked();
+        xSemaphoreGive(s_lock);
+    }
 }
 
 static void pair_task(void *arg)
@@ -802,34 +1011,7 @@ static void pair_task(void *arg)
     (void)arg;
     while (true) {
         ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(500));
-        int act;
-        bool accept;
-        char code[sizeof(s_code)];
-        if (xSemaphoreTake(s_lock, portMAX_DELAY) != pdTRUE) {
-            continue;
-        }
-        act = s_act;
-        accept = s_accept;
-        memcpy(code, s_code, sizeof(code));
-        s_act = ACT_NONE;
-        xSemaphoreGive(s_lock);
-
-        if (act == ACT_FETCH) {
-            do_fetch(code);
-        } else if (act == ACT_CONFIRM) {
-            if (!accept) {
-                s_pend_pem[0] = 0;
-                s_pend_fp[0] = 0;
-                set_view(FNOS_PAIR_UNPROVISIONED, "已取消：指纹没核对过，什么都没保存");
-            } else if (has_cert(s_pend_pem) || !s_pend_tls) {
-                set_view(FNOS_PAIR_PAIRING, "正在配对…");
-                do_pair();
-            } else {
-                set_view(FNOS_PAIR_FAILED, "没有待确认的证书，请重新发起配对");
-            }
-        } else if (act == ACT_FORGET) {
-            do_forget();
-        }
+        pair_process_action();
     }
 }
 
@@ -837,58 +1019,88 @@ static void pair_task(void *arg)
 
 void fnos_pair_init(void)
 {
+    if (atomic_flag_test_and_set_explicit(&s_init_guard, memory_order_acquire)) {
+        return;  // 初始化中的调用方稍后重试；不能看见半装载配置。
+    }
     if (s_task) {
+        atomic_flag_clear_explicit(&s_init_guard, memory_order_release);
         return;
     }
-    if (!s_lock) {
-        s_lock = xSemaphoreCreateMutex();
-        if (!s_lock) {
-            ESP_LOGE(TAG, "mutex alloc failed");
-            return;
-        }
+    SemaphoreHandle_t lock = s_lock;
+    bool created = !lock;
+    if (created) lock = xSemaphoreCreateMutex();
+    if (!lock || xSemaphoreTake(lock, portMAX_DELAY) != pdTRUE) {
+        if (created && lock) vSemaphoreDelete(lock);
+        ESP_LOGE(TAG, "pair initialization lock unavailable");
+        atomic_flag_clear_explicit(&s_init_guard, memory_order_release);
+        return;
     }
-    nvs_load();
-    memset(&s_view, 0, sizeof(s_view));
-    s_view.state = s_provisioned ? FNOS_PAIR_PROVISIONED : FNOS_PAIR_UNPROVISIONED;
-    snprintf(s_view.msg, sizeof(s_view.msg), "%s",
-             s_provisioned ? "已配对" : "未配对：用编译期默认地址");
-    snprintf(s_view.host, sizeof(s_view.host), "%s", s_cfg.host);
-    s_view.port = s_cfg.port;
-    s_view.tls = s_cfg.tls;
-
+    s_lock = lock;  // 持锁后发布；读者只能读完整装载结果。
+    if (!s_loaded) {
+        bool loaded = nvs_load();
+        if (loaded) {
+            if (++s_generation == 0) ++s_generation;
+        } else {
+            s_generation = 0;
+        }
+        memset(&s_view, 0, sizeof(s_view));
+        s_view.state = !loaded ? FNOS_PAIR_FAILED :
+                       (s_provisioned ? FNOS_PAIR_PROVISIONED : FNOS_PAIR_UNPROVISIONED);
+        snprintf(s_view.msg, sizeof(s_view.msg), "%s",
+                 !loaded ? "配对失败，请重试" :
+                 (s_provisioned ? "已配对" : "未配对：用编译期默认地址"));
+        snprintf(s_view.host, sizeof(s_view.host), "%s", s_cfg.host);
+        s_view.port = s_cfg.port;
+        s_view.tls = s_cfg.tls;
+        s_loaded = true;
+    }
+    TaskHandle_t task = NULL;
     BaseType_t rc = xTaskCreatePinnedToCoreWithCaps(pair_task, "fnos_pair", 7 * 1024, NULL, 4,
-                                                    &s_task, tskNO_AFFINITY, MALLOC_CAP_SPIRAM);
+                                                 &task, tskNO_AFFINITY, MALLOC_CAP_SPIRAM);
     if (rc != pdPASS) {
-        rc = xTaskCreatePinnedToCore(pair_task, "fnos_pair", 7 * 1024, NULL, 4, &s_task,
+        rc = xTaskCreatePinnedToCore(pair_task, "fnos_pair", 7 * 1024, NULL, 4, &task,
                                      tskNO_AFFINITY);
     }
     if (rc != pdPASS) {
-        s_task = NULL;
         ESP_LOGE(TAG, "pair task create failed");
+    } else {
+        s_task = task;
     }
+    xSemaphoreGive(lock);
+    atomic_flag_clear_explicit(&s_init_guard, memory_order_release);
 }
 
 bool fnos_pair_provisioned(void)
 {
-    return s_provisioned;
+    if (!s_lock || xSemaphoreTake(s_lock, portMAX_DELAY) != pdTRUE) return false;
+    bool provisioned = s_generation != 0 && s_provisioned;
+    xSemaphoreGive(s_lock);
+    return provisioned;
 }
 
 uint32_t fnos_pair_generation(void)
 {
-    return s_generation;
+    return fnos_pair_active_gen(NULL);
+}
+
+uint32_t fnos_pair_active_gen(fnos_pair_cfg_t *out)
+{
+    if (!s_lock || xSemaphoreTake(s_lock, portMAX_DELAY) != pdTRUE) {
+        if (out) memset(out, 0, sizeof(*out));
+        return 0;  // 失败不裸读、也不回退编译期 HTTP 参数。
+    }
+    uint32_t gen = s_generation;
+    if (out) {
+        if (gen) *out = s_cfg;
+        else memset(out, 0, sizeof(*out));
+    }
+    xSemaphoreGive(s_lock);
+    return gen;
 }
 
 void fnos_pair_active(fnos_pair_cfg_t *out)
 {
-    if (!out) {
-        return;
-    }
-    if (s_lock && xSemaphoreTake(s_lock, portMAX_DELAY) == pdTRUE) {
-        *out = s_cfg;
-        xSemaphoreGive(s_lock);
-    } else {
-        *out = s_cfg;
-    }
+    (void)fnos_pair_active_gen(out);
 }
 
 void fnos_pair_view(fnos_pair_view_t *out)
@@ -900,7 +1112,8 @@ void fnos_pair_view(fnos_pair_view_t *out)
         *out = s_view;
         xSemaphoreGive(s_lock);
     } else {
-        *out = s_view;
+        memset(out, 0, sizeof(*out));
+        out->state = FNOS_PAIR_FAILED;
     }
 }
 
@@ -912,6 +1125,12 @@ static void post_action(int act)
     if (xSemaphoreTake(s_lock, portMAX_DELAY) != pdTRUE) {
         return;
     }
+    if (s_request_busy || s_act != ACT_NONE) {
+        xSemaphoreGive(s_lock);
+        return;
+    }
+    s_request_busy = true;
+    s_cancel_requested = false;
     s_act = act;
     xSemaphoreGive(s_lock);
     xTaskNotifyGive(s_task);
@@ -919,14 +1138,27 @@ static void post_action(int act)
 
 void fnos_pair_begin(const char *code)
 {
+    // NAS 协议固定六位十进制码；拒绝截断或把任意字符串拼入 JSON。
+    if (!code || strlen(code) != 6) return;
+    for (size_t i = 0; i < 6; ++i) {
+        if (code[i] < '0' || code[i] > '9') return;
+    }
     if (!s_task || !s_lock) {
         return;
     }
     if (xSemaphoreTake(s_lock, portMAX_DELAY) != pdTRUE) {
         return;
     }
+    if (s_request_busy || s_act != ACT_NONE) {
+        xSemaphoreGive(s_lock);
+        return;
+    }
+    s_request_busy = true;
+    s_cancel_requested = false;
     snprintf(s_code, sizeof(s_code), "%s", code ? code : "");
     s_act = ACT_FETCH;
+    set_view_locked(FNOS_PAIR_FETCHING, "正在配对…");
+    s_view.fingerprint[0] = s_view.subject[0] = s_view.not_after[0] = 0;
     xSemaphoreGive(s_lock);
     xTaskNotifyGive(s_task);
 }
@@ -939,8 +1171,21 @@ void fnos_pair_confirm(bool accept)
     if (xSemaphoreTake(s_lock, portMAX_DELAY) != pdTRUE) {
         return;
     }
+    if (!accept && s_request_busy && pair_state_busy(s_view.state)) {
+        s_cancel_requested = true;  // 不覆盖进行中的请求槽；worker 在安全边界丢弃结果。
+        xSemaphoreGive(s_lock);
+        xTaskNotifyGive(s_task);
+        return;
+    }
+    if (s_request_busy || s_act != ACT_NONE || s_view.state != FNOS_PAIR_CONFIRM) {
+        xSemaphoreGive(s_lock);
+        return;
+    }
+    s_request_busy = true;
+    s_cancel_requested = !accept;
     s_accept = accept;
     s_act = ACT_CONFIRM;
+    s_view.state = accept ? FNOS_PAIR_PAIRING : FNOS_PAIR_UNPROVISIONED;
     xSemaphoreGive(s_lock);
     xTaskNotifyGive(s_task);
 }

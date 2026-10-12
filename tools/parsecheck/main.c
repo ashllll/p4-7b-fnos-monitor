@@ -23,19 +23,35 @@ static bool utf8_ok(const char *s)
 {
     const unsigned char *p = (const unsigned char *)s;
     while (*p) {
+        unsigned cp, min;
         int need;
-        if (*p < 0x80)                       { p++; continue; }
-        else if ((*p & 0xE0) == 0xC0) need = 1;
-        else if ((*p & 0xF0) == 0xE0) need = 2;
-        else if ((*p & 0xF8) == 0xF0) need = 3;
+        if (*p < 0x80) { p++; continue; }
+        if (*p >= 0xC2 && *p <= 0xDF) { need = 1; cp = *p & 0x1F; min = 0x80; }
+        else if (*p >= 0xE0 && *p <= 0xEF) { need = 2; cp = *p & 0x0F; min = 0x800; }
+        else if (*p >= 0xF0 && *p <= 0xF4) { need = 3; cp = *p & 7; min = 0x10000; }
         else return false;
         p++;
         while (need--) {
             if ((*p & 0xC0) != 0x80) return false;
-            p++;
+            cp = (cp << 6) | (*p++ & 0x3F);
         }
+        if (cp < min || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) return false;
     }
     return true;
+}
+
+/* 逐字段的 UTF-8 体检。NULL 当空串（有些字段采集端本来就不发）。 */
+static int bad, checked;
+static void u8(const char *label, const char *s)
+{
+    if (!s) s = "";
+    checked++;
+    if (utf8_ok(s)) return;
+    printf("BADUTF8 %s: ", label);
+    for (const unsigned char *p = (const unsigned char *)s; *p; p++)
+        printf("%02X ", *p);
+    printf("\n");
+    bad++;
 }
 
 int main(int argc, char **argv)
@@ -58,11 +74,13 @@ int main(int argc, char **argv)
     if (!buf) { fprintf(stderr, "内存不够：%ld 字节的样本\n", fsz); return 2; }
     size_t n = fread(buf, 1, (size_t)fsz, f);
     fclose(f);
+    if (n != (size_t)fsz) { free(buf); fprintf(stderr, "状态样本读短了\n"); return 2; }
     buf[n] = 0;
 
     static fnos_status_t st;                 /* 与固件一样放静态区，别压栈 */
     memset(&st, 0, sizeof st);
     bool ok = parse_status(buf, &st);
+    free(buf);
     printf("parse=%s bytes=%zu\n", ok ? "ok" : "FAIL", n);
     if (!ok) {
         fprintf(stderr, "parse_status 失败原因：%s\n",
@@ -114,22 +132,39 @@ int main(int argc, char **argv)
     if (st.nmods)    printf("mod0=%s/%s\n", st.mods[0].name, st.mods[0].status);
 
     /* 截断过的字符串必须是**合法 UTF-8**：半截字符在屏幕上是豆腐块或乱码，
-       而且看不出是"被截断"还是"数据本身坏了"。这里逐字段验一遍。 */
-    const char *fields[] = { st.host, st.net.ifname, st.last_err,
-                             (st.nvols ? st.vols[0].mnt : ""), (st.nraid ? st.raid[0].dev : ""), (st.nraid ? st.raid[0].state : ""),
-                             (st.ndocker ? st.docker[0].n : ""), (st.ndocker ? st.docker[0].s : ""), (st.ntemps ? st.temps[0].dev : ""), (st.ntemps ? st.temps[0].ch : ""),
-                             (st.nalerts ? st.alerts[0].lv : ""), (st.nalerts ? st.alerts[0].m : "") };
-    int bad = 0;
-    for (size_t i = 0; i < sizeof fields / sizeof fields[0]; i++) {
-        if (!utf8_ok(fields[i])) {
-            printf("BADUTF8 field#%zu: ", i);
-            for (const unsigned char *p = (const unsigned char *)fields[i]; *p; p++)
-                printf("%02X ", *p);
-            printf("\n");
-            bad++;
-        }
+       而且看不出是"被截断"还是"数据本身坏了"。这里逐字段验一遍 ——
+       范围必须是**所有会显示的字符串字段**（审计 M16）：早先只挑了每类第 0 个
+       元素的几个字段，于是 temps[].dn、mods[].name+status、raid[].health+what、
+       disks[].dev、vols[].fs、nets[].state 一直漏在覆盖面之外，"全字段已验证"
+       这句话并不成立。 */
+    for (int i = 0; i < st.nvols; i++) {
+        u8("vols[].mnt", st.vols[i].mnt); u8("vols[].fs", st.vols[i].fs);
     }
-    printf("utf8=%s\n", bad ? "FAIL" : "ok");
+    for (int i = 0; i < st.nraid; i++) {
+        u8("raid[].dev", st.raid[i].dev); u8("raid[].lvl", st.raid[i].lvl);
+        u8("raid[].state", st.raid[i].state); u8("raid[].health", st.raid[i].health);
+        u8("raid[].what", st.raid[i].what);
+    }
+    for (int i = 0; i < st.ndisks; i++)  u8("disks[].dev", st.disks[i].dev);
+    for (int i = 0; i < st.ntemps; i++) {
+        u8("temps[].dev", st.temps[i].dev); u8("temps[].ch", st.temps[i].ch);
+        u8("temps[].dn", st.temps[i].dn);
+    }
+    for (int i = 0; i < st.ndocker; i++) {
+        u8("docker[].n", st.docker[i].n); u8("docker[].s", st.docker[i].s);
+    }
+    for (int i = 0; i < st.nalerts; i++) {
+        u8("alerts[].lv", st.alerts[i].lv); u8("alerts[].m", st.alerts[i].m);
+    }
+    for (int i = 0; i < st.nmods; i++) {
+        u8("mods[].name", st.mods[i].name); u8("mods[].status", st.mods[i].status);
+    }
+    for (int i = 0; i < st.nnets; i++) {
+        u8("nets[].ifname", st.nets[i].ifname); u8("nets[].state", st.nets[i].state);
+    }
+    u8("host", st.host); u8("net.ifname", st.net.ifname);
+    u8("net.state", st.net.state); u8("last_err", st.last_err);
+    printf("utf8=%s（查了 %d 个字段）\n", bad ? "FAIL" : "ok", checked);
 
     /* 历史回填：同一份解析器在真机上只在开机那一次跑，之前从没在设备外执行过。
        断言的是"解析成功 + 时间语义算对了"——曲线横轴靠 hist_span_s 换算成分钟，
@@ -137,9 +172,20 @@ int main(int argc, char **argv)
     if (argc >= 3) {
         FILE *hf = fopen(argv[2], "rb");
         if (!hf) { perror(argv[2]); return 2; }
-        static char hbuf[512 * 1024];
-        size_t hn = fread(hbuf, 1, sizeof hbuf - 1, hf);
+        /* 按文件大小读，不再写死 512 KB（审计 M16）：写死时一份更大的历史样本会被
+           静悄悄截断，然后报成 `history parse=FAIL`，看着像解析器坏了。 */
+        if (fseek(hf, 0, SEEK_END) != 0) { perror("fseek"); return 2; }
+        long hsz = ftell(hf);
+        if (hsz < 0) { perror("ftell"); return 2; }
+        rewind(hf);
+        char *hbuf = malloc((size_t)hsz + 1);
+        if (!hbuf) { fprintf(stderr, "内存不够：%ld 字节的历史样本\n", hsz); return 2; }
+        size_t hn = fread(hbuf, 1, (size_t)hsz, hf);
         fclose(hf);
+        if (hn != (size_t)hsz) {
+            fprintf(stderr, "历史样本只读到 %zu / %ld 字节（读短了，不是解析器的错）\n", hn, hsz);
+            return 2;
+        }
         hbuf[hn] = 0;
         bool hok = parse_history(hbuf);
         printf("history parse=%s bytes=%zu n_seq=%lld ts_ok=%d span_s=%d gap_x10=%d\n",
@@ -165,14 +211,15 @@ int main(int argc, char **argv)
            这两头从来没在设备外跑过，也从来没一起跑过：写进去的值顺序对不对、
            窗口落后太多时会不会给错段，只有读回来才知道。 */
         if (argc >= 8) {
-            fnos_sample_t *sm = calloc(4096, sizeof *sm);
+            fnos_sample_t *sm = calloc(FNOS_HIST_MAX, sizeof *sm);
+            if (!sm) { free(hbuf); return 2; }
             int64_t next = 0;
-            int got = fnos_data_hist_read(0, sm, 4096, &next);
+            int got = fnos_data_hist_read(0, sm, FNOS_HIST_MAX, &next);
             int want_n = atoi(argv[5]);
             double w_cpu0 = atof(argv[6]), w_rx0 = atof(argv[7]);
             printf("history read=%d 行（写完应当是 %d），next_seq=%lld\n",
                    got, want_n, (long long)next);
-            if (got != want_n) { printf("BADHISTREAD 读回来的行数是 %d，应当是 %d\n", got, want_n); return 6; }
+            if (got <= 0 || got != want_n) { printf("BADHISTREAD 读回来的行数是 %d，应当是 %d\n", got, want_n); return 6; }
             /* 生成器写的是 cpu = 30.0 + i%50、rx = 1000.0 + i，所以第 0 行与
                最后一行是可以算出来的 —— 用生成器传进来的期望值比，别在这儿重算 */
             if (sm[0].cpu < w_cpu0 - 0.01 || sm[0].cpu > w_cpu0 + 0.01 ||
@@ -191,7 +238,7 @@ int main(int argc, char **argv)
             }
             /* 落后太多（since 远早于窗口）时只该给最后一窗，不该越界 */
             int64_t nx2 = 0;
-            int got2 = fnos_data_hist_read(next - 100000, sm, 4096, &nx2);
+            int got2 = fnos_data_hist_read(next - 100000, sm, FNOS_HIST_MAX, &nx2);
             if (got2 > FNOS_HIST_MAX) {
                 printf("BADHISTREAD 窗口外的请求要回了 %d 行，超过环形缓冲 %d\n", got2, FNOS_HIST_MAX);
                 return 6;
@@ -199,6 +246,7 @@ int main(int argc, char **argv)
             printf("history 回读：顺序正确、窗口夹取正确（落后 100000 时给 %d 行）\n", got2);
             free(sm);
         }
+        free(hbuf);
     }
     if (argc >= 5) {
         int span = s_status.hist_span_s, gap = s_status.hist_avg_gap_x10;

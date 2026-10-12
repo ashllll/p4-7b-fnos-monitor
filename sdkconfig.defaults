@@ -27,7 +27,11 @@ CONFIG_FREERTOS_HZ=1000
 CONFIG_FREERTOS_VTASKLIST_INCLUDE_COREID=y
 CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
 CONFIG_LV_OS_FREERTOS=y
-CONFIG_LV_USE_CLIB_MALLOC=y
+# 注意：LVGL v9.3 起 CLIB_MALLOC / BUILTIN_MALLOC / CUSTOM_MALLOC 是**同一个
+# choice**。这里以前还留着 `CONFIG_LV_USE_CLIB_MALLOC=y`（下面第 85 行才是
+# LV_USE_CUSTOM_MALLOC=y），同一份 defaults 里对 choice 赋两次值：kconfgen 只会
+# 报一句 override 警告然后取后者，本地改配置时看不出哪个才是本意（审计 M13）。
+# LVGL 的分配器归 components/lvgl_mem_psram/ 管，CLIB_* 只保留 string/sprintf。
 CONFIG_LV_USE_CLIB_STRING=y
 CONFIG_LV_USE_CLIB_SPRINTF=y
 CONFIG_LV_DEF_REFR_PERIOD=15

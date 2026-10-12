@@ -85,13 +85,17 @@ def main():
         if not os.path.exists(p):
             print(f"找不到 {os.path.relpath(p, REPO)}")
             return 2
-    prod = produced(io.open(DATA_C, encoding="utf-8").read())
-    tran = translated(io.open(UI_C, encoding="utf-8").read())
+    with io.open(DATA_C, encoding="utf-8") as source:
+        prod = produced(source.read())
+    with io.open(UI_C, encoding="utf-8") as source:
+        tran = translated(source.read())
 
     print(f"fnos_data.c 会写出的原因标签（{len(prod)} 个）：{sorted(prod)}")
     print(f"fnos_ui.c   link_reason 认得（{len(tran)} 个）：{sorted(tran)}")
 
     problems = []
+    if not prod or not tran:
+        problems.append("原因标签提取结果为空：源码或提取规则已变化，不能判通过")
     for t in sorted(prod - tran):
         problems.append(f"`{t}` 会被写进 last_err，但 link_reason() 不认得它 —— "
                         f"那种失败下总览页那行字会整个消失，用户看不到原因")

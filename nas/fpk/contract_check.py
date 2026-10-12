@@ -29,6 +29,7 @@
 退出码非 0 表示有字段对不上。
 """
 
+import ast
 import io
 import json
 import os
@@ -54,6 +55,9 @@ COLLECTOR = os.environ.get(
 PER_ENTRY = {"vols": 110, "raid": 130, "disks": 60, "temps": 45,
              "docker": 95, "alerts": 250}
 OVERHEAD = 1500          # cpu/mem/net/mods/trunc/caps 这些固定段
+# 本轮到底有没有真的比过"NAS 上限 vs 板子容量"：没有比过时最终那行判定必须说出来
+# 而不是照旧 ✔（审计 M23 —— 死掉的 RX_BUF_SIZE 检查让"没核对"印成了"核对通过"）。
+CAPACITY_CHECKED = False
 
 # 列表段 → 采集端里构造它的方法名（机器核对用；改名时两边一起改）
 DOCKER_TRANSPORT = os.path.join(os.path.dirname(COLLECTOR), "docker_api.py")
@@ -66,6 +70,11 @@ LIST_METHOD = {
 OBJ_METHOD = {"cpu": "_cpu", "mem": "_mem", "net": "_net", "zfs": "_zfs"}
 
 
+def read_text(path):
+    with open(path,encoding="utf-8") as f:
+        return f.read()
+
+
 def firmware_reads(path):
     """从 fnos_data.c 里抓出 (JSON 段名, 字段名) 列表。
 
@@ -74,7 +83,7 @@ def firmware_reads(path):
         所以先扫一遍 `cJSON_GetObjectItemCaseSensitive(父, "键")` 建立映射；
       - 数组里的 `it` 要归属到最近一次 `cJSON_ArrayForEach(it, <变量>)`。
     """
-    src = open(path, encoding="utf-8").read()
+    src = read_text(path)
     if "bool fnos_status_parse" in src:
         scope = {"root": "root", "net": "net", "interfaces": "netifs"}
         reads = []
@@ -88,13 +97,19 @@ def firmware_reads(path):
                 scope["v"] = "netifs"
             elif 'cJSON_ArrayForEach(v,modules)' in line:
                 scope["v"] = "modules"
-            for var, key in re.findall(r'(?:number|string|item)\((\w+),"(\w+)"\)', line):
+            # 取值函数名单要跟着 fnos_snapshot.c 走。审计 M03 把"double 直接赋值"换成
+            # 了按类型钳位的 inum/unum/lnum/fnum，这里漏列就会**静默**少核 36 个字段
+            # （62 → 26），清单看起来照旧，实际已经有一多半没人核了。
+            for var, key in re.findall(
+                    r'(?:number|string|item|inum|unum|lnum|fnum)\((\w+),"(\w+)"\)', line):
                 if var in scope and var not in ("root",) and key != "interfaces":
                     reads.append((scope[var], key))
             for var, key in re.findall(r'TEXT\([^,]+,(\w+),"(\w+)"\)', line):
                 if var in scope:
                     reads.append((scope[var], key))
-            for key in re.findall(r'number\(root,"(\w+)"\)', line):
+            for key in re.findall(r'cJSON_IsTrue\(item\(root,"(\w+)"\)\)', line):
+                reads.append(("root", key))
+            for key in re.findall(r'(?:number|inum|unum|lnum|fnum)\(root,"(\w+)"\)', line):
                 reads.append(("root", key))
         return list(dict.fromkeys(reads))
     # 变量名 → JSON 键
@@ -135,23 +150,19 @@ def live_status(path=None):
         with open(path, encoding="utf-8") as f:
             return json.load(f)
     out = subprocess.run([sys.executable, COLLECTOR, "--sample"],
-                         capture_output=True, text=True, timeout=30).stdout
+                         capture_output=True, text=True, timeout=30, check=True).stdout
     return json.loads(out)
 
 
 def method_body(path, name):
-    src = open(path, encoding="utf-8").read().splitlines()
-    start = None
-    for i, line in enumerate(src):
-        if re.match(r"\s*def %s\(" % re.escape(name), line):
-            start = i
-            break
-    if start is None:
+    with open(path, encoding="utf-8") as f:
+        src = f.read()
+    tree = ast.parse(src)
+    matches = [node for node in ast.walk(tree)
+               if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name]
+    if len(matches) != 1:
         return None
-    for j in range(start + 1, len(src)):
-        if re.match(r"\s*def \w+\(", src[j]):
-            return "\n".join(src[start:j])
-    return "\n".join(src[start:])
+    return ast.get_source_segment(src, matches[0])
 
 
 def load_reads(argv):
@@ -178,7 +189,7 @@ def load_reads(argv):
 def all_source_keys():
     """采集端源码里出现过的所有 `"键":`，用来兜一条底：板子读的字段名，
     在 NAS 代码里至少得存在（哪怕本机这条分支走不到）。"""
-    src = open(COLLECTOR, encoding="utf-8").read()
+    src = read_text(COLLECTOR)
     # 两种写法都算：字典字面量 `"k": v`，以及下标赋值 `snap["k"] = v`
     # （顶层快照的很多字段是后一种，只认字面量会误报）。
     keys = set(re.findall(r'["\']([A-Za-z_0-9]+)["\']\s*:', src))
@@ -200,8 +211,8 @@ def preview_size_problems():
         if not os.path.exists(f):
             print(f"（跳过预览尺寸核对：{os.path.relpath(f, REPO)} 不在）")
             return []
-    b = io.open(bsp, encoding="utf-8").read()
-    p = io.open(prev, encoding="utf-8").read()
+    b = read_text(bsp)
+    p = read_text(prev)
 
     def num(text, name):
         # The adaptive preview stores defaults in variables, not SCR_W/H macros.
@@ -249,12 +260,17 @@ def main():
         status_path = sys.argv[i + 1] if i + 1 < len(sys.argv) else None
         if not status_path:
             print("--status 后面要跟一个 JSON 文件路径"); return 2
+    if not reads or any(not isinstance(row, (tuple,list)) or len(row)!=2 or
+                        not all(isinstance(v,str) and v for v in row) for row in reads):
+        print("字段清单缺失或无效，拒绝空检查"); return 1
     st = live_status(status_path)
+    if not isinstance(st,dict):
+        print("状态响应必须为对象"); return 1
     if status_path:
         origin += f"；响应来自 {status_path}"
     src_keys = all_source_keys()
     if os.path.exists(DOCKER_TRANSPORT):
-        src_keys.update(re.findall(r'["\'](\w+)["\']\s*:', open(DOCKER_TRANSPORT, encoding="utf-8").read()))
+        src_keys.update(re.findall(r'["\'](\w+)["\']\s*:', read_text(DOCKER_TRANSPORT)))
     problems, checked_live, checked_src = [], 0, 0
 
     for scope, key in reads:
@@ -266,17 +282,24 @@ def main():
             ok = key in st
             where = "真实响应 status"
         elif scope == "modules" and isinstance(seg, dict) and seg:
-            ok = any(isinstance(value, dict) and key in value for value in seg.values())
+            ok = all(isinstance(value, dict) and key in value for value in seg.values())
             where = "真实响应 status.modules.*"
         elif isinstance(seg, dict) and seg:
             ok = key in seg
             where = f"真实响应 status.{scope}"
         elif isinstance(seg, list) and seg:
-            ok = key in seg[0]
+            ok = all(isinstance(value, dict) and key in value for value in seg)
             where = f"真实响应 status.{scope}[0]"
         elif scope in st or (scope == "netifs" and "net" in st):
             meth = LIST_METHOD.get(scope) or OBJ_METHOD.get(scope)
-            body = method_body(DOCKER_TRANSPORT, "containers") if scope == "docker" else (method_body(COLLECTOR, meth) if meth else None)
+            if scope == "docker":
+                # 容器行的键名自 H21 起在 docker_api.row_from_container() 里拼（名字完整保留 +
+                # 稳定 id），containers() 只负责取数、校验和排序。只扫 containers() 会把
+                # n/up/s 三个键看成"采集端没有"——那是检查跟丢了代码，不是协议不符。
+                body = "\n".join(filter(None, (method_body(DOCKER_TRANSPORT, "containers"),
+                                              method_body(DOCKER_TRANSPORT, "row_from_container")))) or None
+            else:
+                body = method_body(COLLECTOR, meth) if meth else None
             if body is None:
                 problems.append(f"{scope}.{key}：找不到构造该段的方法（{meth}）")
                 continue
@@ -317,7 +340,9 @@ def main():
         for p in problems:
             print("  ✗", p)
         return 1
-    print("判定：板子读的每个字段，NAS 侧都在；容量上限也不丢数据 ✓")
+    print("判定：板子读的每个字段，NAS 侧都在；"
+          + ("已核对可解析的静态预算估算；不证明任意动态清单容量" if CAPACITY_CHECKED
+             else "未核对容量，只有字段对齐是核对过的"))
     return 0
 
 
@@ -333,10 +358,10 @@ def limits_problems():
     limits_h = os.path.join(os.path.dirname(DEFAULT_FIRMWARE), "fnos_data.h")
     if not os.path.exists(limits_h):
         print(f"（跳过容量上限核对：找不到 {limits_h}）")
-        return []
-    fw = io.open(limits_h, encoding="utf-8").read()
+        return ["缺少固件容量头文件，容量未核对"]
+    fw = read_text(limits_h)
     # HIST_BUF_SIZE 定义在 .c 里（FNOS_MAX_* 在 .h 里），两个都要读
-    fw2 = fw + io.open(os.path.join(os.path.dirname(DEFAULT_FIRMWARE), "fnos_data.c"), encoding="utf-8").read()
+    fw2 = fw + read_text(os.path.join(os.path.dirname(DEFAULT_FIRMWARE), "fnos_data.c"))
     cap = {m.group(1): int(m.group(2))
            for m in re.finditer(r"#define\s+FNOS_MAX_(\w+)\s+(\d+)", fw)}
     nas_path = os.path.join(os.path.dirname(DEFAULT_FIRMWARE), "..", "..",
@@ -345,8 +370,8 @@ def limits_problems():
     nas_path = os.path.normpath(nas_path)
     if not os.path.exists(nas_path):
         print(f"（跳过容量上限核对：固件上限 {len(cap)} 个，采集端 {os.path.exists(nas_path)}）")
-        return []
-    coll = io.open(nas_path, encoding="utf-8").read()
+        return ["缺少采集端源码，容量未核对"]
+    coll = read_text(nas_path)
     m = re.search(r"DEFAULT_LIMITS\s*=\s*\{([^}]*)\}", coll)
     limits = {}
     if m:
@@ -355,16 +380,23 @@ def limits_problems():
     out = []
     if not cap:
         print("设备清单：动态快照与按需接收，数量不由 FNOS_MAX 常量截断")
+    global CAPACITY_CHECKED
+    CAPACITY_CHECKED = False
     for seg, lim in sorted(limits.items()):
         c = cap.get(seg.upper())
         if c is None:
             continue
+        CAPACITY_CHECKED = True
         if c < lim:
             out.append(f"NAS 的 {seg} 一次最多发 {lim} 条，板子的 FNOS_MAX_{seg.upper()} 只有 {c} "
                        f"—— 多出来的会被静默丢掉（界面不会说，用户只能看到少几条）")
     if limits:
         print(f"容量上限：NAS 截断 {limits}，板子容量 "
               f"{ {k: v for k, v in cap.items() if k.lower() in limits} }")
+    else:
+        # 采集端已经不按常量截断了（动态快照），所以这一轮**没有**任何"NAS 上限 vs 板子容量"
+        # 的数字可比。说清楚，别让最终那行 ✓ 把它盖过去（审计 M23）。
+        print("容量上限：采集端已改成动态快照，NAS 侧没有截断常量可比（板子内部自洽见下一行）")
 
     # 板子**自己**的两个数字也得对得上：它一次性能收多少行历史，与它内部环形缓冲
     # 的格数、以及接收缓冲的字节数。板子现在会带 `?n=FNOS_HIST_MAX` 去要，所以
@@ -384,23 +416,51 @@ def limits_problems():
     # 状态帧的最坏情况：各段都到上限时的 payload 有多大（常量在模块级，见文件头）
     if limits:
         worst = OVERHEAD + sum(PER_ENTRY.get(k, 0) * v for k, v in limits.items())
-        mb = re.search(r"#define\s+RX_BUF_SIZE\s+\(?\s*(\d+)\s*\*\s*(\d+)\s*\)?", fw2)
-        rx = int(mb.group(1)) * int(mb.group(2)) if mb else 0
-        if rx and rx < worst:
-            out.append(f"RX_BUF_SIZE={rx} 装不下满载的状态帧（按声明的上限估 {worst} 字节）"
-                       f"—— 会被截断，板子会一直显示「NAS 返回的数据解析不了」")
-        elif rx:
-            print(f"状态帧缓冲：RX_BUF_SIZE={rx} ≥ 满载估计 {worst}")
+        # 状态帧的接收预算是 Kconfig 的 CONFIG_FNOS_STATUS_MAX_BYTES（默认 262144）。
+        # 这里以前找的是 `RX_BUF_SIZE` —— 那个宏早就不存在了（审计 M23）：正则抓不到、
+        # rx 恒为 0，于是整段判断被跳过，而 main() 照样打印"容量上限也不丢数据 ✓"，
+        # 等于把"没核对"报成了"核对通过"。
+        kcfg = os.path.join(os.path.dirname(DEFAULT_FIRMWARE), "Kconfig")
+        budget = None
+        if os.path.exists(kcfg):
+            mk = re.search(r"config\s+FNOS_STATUS_MAX_BYTES\b.*?default\s+(\d+)",
+                           read_text(kcfg), re.S)
+            if mk:
+                budget = int(mk.group(1))
+        sdk = os.path.normpath(os.path.join(os.path.dirname(DEFAULT_FIRMWARE), "..", "..",
+                                            "sdkconfig.defaults"))
+        if os.path.exists(sdk):
+            ms = re.search(r"^CONFIG_FNOS_STATUS_MAX_BYTES\s*=\s*(\d+)",
+                           read_text(sdk), re.M)
+            if ms:
+                budget = int(ms.group(1))       # sdkconfig 覆盖 Kconfig 默认值
+        if budget is None:
+            out.append("找不到 CONFIG_FNOS_STATUS_MAX_BYTES 的取值（Kconfig 默认值与 "
+                       "sdkconfig.defaults 都没有）—— 状态帧接收预算这一项没有核对")
+        else:
+            CAPACITY_CHECKED = True
+            if budget < worst:
+                out.append(f"CONFIG_FNOS_STATUS_MAX_BYTES={budget} 装不下满载的状态帧"
+                           f"（按声明的上限估 {worst} 字节）—— 会被截断，"
+                           f"板子会一直显示「NAS 返回的数据解析不了」")
+            else:
+                print(f"状态帧预算：CONFIG_FNOS_STATUS_MAX_BYTES={budget} ≥ 满载估计 {worst}")
     if buf and hist:
         need = hist * 48 + 512
+        CAPACITY_CHECKED = True
         if buf < need:
             out.append(f"HIST_BUF_SIZE={buf} 装不下 FNOS_HIST_MAX={hist} 行"
                        f"（按每行 48 字节估，至少要 {need}）—— 多出来的会被截断，"
                        f"JSON 解不出来，板子会每秒重试一次、曲线回填永远不成功")
         else:
-            print(f"板子内部自洽：HIST_BUF_SIZE={buf} ≥ FNOS_HIST_MAX={hist}×48+512={need}")
+            print(f"板子历史预算估算：HIST_BUF_SIZE={buf} ≥ FNOS_HIST_MAX={hist}×48+512={need}（不是任意数值长度上界）")
     return out
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        result = main()
+    except (OSError, ValueError, TypeError, KeyError, IndexError, subprocess.SubprocessError) as e:
+        print(f"契约检查未完成：{type(e).__name__}")
+        result = 1
+    sys.exit(result)

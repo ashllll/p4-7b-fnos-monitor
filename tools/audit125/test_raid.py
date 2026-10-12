@@ -5,8 +5,9 @@
 比如读不到 /proc/mdstat 时返回空数组，板子上就显示"未发现阵列"——比报错更糟，
 因为错误看起来像事实。这类东西只能拿真实 mdstat 形态的 fixture 断言输出。
 
-审计报告自述的"RAID 20 项回归"在仓库里并不存在（见
-docs/review-v1.2.5-audit-2026-10-10.md §0），这份是本机可复现的对应物。
+审计报告自述的"RAID 20 项回归"在仓库里曾取不到（见
+docs/review-v1.2.5-audit-2026-10-10.md §0；2026-10-11 该节已加更正条目：本目录与补丁现在都在仓库里），
+这份是本机可复现的对应物。
 
 用法：
     python3 tools/audit125/test_raid.py          # 退出码 0 = 全过
@@ -170,6 +171,20 @@ check("raid5 缺汇总行 → info（不是 crit）", lv(alerts(RAID5_NO_SUMMARY
 check("container → info", lv(alerts(CONTAINER)), ["info"])
 check("read-only → warn", lv(alerts(READONLY)), ["warn"])
 
+# M20：mdstat 的 [m/n] 不是"m 个在役 / n 个总数"。内核 raid1.c 的 status() 里是
+#     seq_printf(seq, " [%d/%d] [", conf->raid_disks, ...)      ← 第一个参数是成员**总数**
+#   （公开片段：android.googlesource.com/kernel/x86_64/.../drivers/md/raid1.c，以及
+#     Cisco Nexus 文档里真实机器的 `77888 blocks [2/1] [...]`——2 个成员的 raid1 掉了一个）
+#   所以 [2/1] = 2 个成员、1 个在役，采集器的
+#     cur["want"] = int(m.group(1))   # 总数
+#     cur["have"] = int(m.group(2))   # 在役
+#   与内核顺序一致；原审计"have/want 赋值互换、降级阵列显示反向数字"的结论不成立，
+#   这里把语义钉住，防止后来者按那条结论去"修"。
+check("降级 [2/1] → want=成员总数 2", one(DEGRADED_IDLE)["want"], 2)
+check("降级 [2/1] → have=在役数 1", one(DEGRADED_IDLE)["have"], 1)
+check("降级 [2/1] → ok=False", one(DEGRADED_IDLE)["ok"], False)
+check("健康 [2/2] → have=want=2", (one(HEALTHY_RAID1)["have"], one(HEALTHY_RAID1)["want"]), (2, 2))
+
 # 进度范围检查
 check("进度 120% → 不采信", one(BAD_PCT)["sync_pct"], -1.0)
 
@@ -212,6 +227,20 @@ check("首帧失败 → 其它段形状不变",
       (isinstance(snap0.get("vols"), list), isinstance(snap0.get("cpu"), dict)), (True, True))
 check("首帧失败 → 仍然 ready（失败如实写在 modules，不伪装成没数据）",
       snap0.get("ready"), True)
+
+# 健康维护不降级，缺成员时维护也不能掩盖严重性。
+for action in ("check", "resync", "repair"):
+    line = "      [====>...............]  %s = 25.0%% (1/4) finish=1.0min speed=1K/sec\n" % action
+    for fixture, health, level in ((HEALTHY_RAID1, "ok", "info"),
+                                    (DEGRADED_IDLE, "degraded", "crit")):
+        payload = fixture + line
+        check(action + " health " + health, one(payload)["health"], health)
+        check(action + " progress", (one(payload)["what"], one(payload)["sync_pct"]), (action, 25.0))
+        check(action + " alert " + level, lv(alerts(payload)), [level])
+# 无空行、相邻阵列头也必须独立归属进度，数量只作夹具规模。
+dense = "".join("md%d : active raid1 sda1[0] sdb1[1]\n  100 blocks [2/2] [UU]\n" % i for i in range(73))
+check("dense完整清单", len(raid(dense)), 73)
+check("dense全部结构健康", all(r["health"] == "ok" for r in raid(dense)), True)
 
 # ---------------------------------------------------------------- 汇总
 if FAILED:

@@ -6,18 +6,41 @@ as_package mkdir -p "$PKG_VAR" "$PKG_ETC" 2>/dev/null
 PY=$(resolve_python) || { fail "找不到 Python 运行时，无法写入配置"; exit 1; }
 norm_wizard
 
-if ! apply_config "$PY" "$W_PORT" "$W_BIND" "$W_AUTH" "$W_DOCKER" "$W_INTERVAL" "$W_TLS"; then
-  fail "配置写入失败，请检查 $PKG_VAR 的写权限"
-  exit 1
-fi
-say "配置已更新（已配对设备保留）"
-
 was_running=0
 is_running && was_running=1
 
+# 先停服务、再写配置（审计 M25）：运行中的服务自己也会落盘 config.json（管理页保存
+# 设置时走 save_config）。以前是"先写、再停"——服务随后那次写入用它内存里的旧值把
+# 刚写进去的端口/间隔盖回去，用户看到"设置已生效"，实际生效的是旧配置。
 if [ "$was_running" = 1 ]; then
-  service_stop >/dev/null 2>&1 || warn "停止旧实例失败，仍尝试重新启动"
+  # 停不下来就**别写配置**（审计 M25）：旧实例还活着，它内存里的旧值会在退出前再落盘
+  # 一次，把刚写进去的端口/间隔盖回去——用户看到"设置已保存"，生效的其实是旧值；
+  # 下面还会再起一个实例，两个进程抢同一个端口。这里直接放弃本次修改。
+  if ! service_stop; then
+    fail "旧实例没有停下来，已放弃本次设置修改（config.json 保持原样，也没有启动第二个实例）。"
+    warn "处理办法：在应用中心先停止本应用，或按 PID 记录手工结束（见 ${PID_FILE}），再重新提交设置。"
+    exit 1
+  fi
+  # 返回 0 也要再确认一次：这是"旧配置不会盖回来"的唯一凭据。
+  if is_running; then
+    fail "停止命令返回成功，但进程仍在运行；已放弃本次设置修改（config.json 保持原样）。"
+    exit 1
+  fi
 fi
+
+if ! cfg_out=$(apply_config "$PY" "$W_PORT" "$W_BIND" "$W_AUTH" "$W_DOCKER" "$W_INTERVAL" "$W_TLS" 2>&1); then
+  # 失败原因照原样报出来（审计 M53）：写权限只是其中一种可能，config.json 损坏
+  # （JSON 解析失败）时会走到同一条分支，以前那句话把人指到完全错误的方向。
+  fail "配置写入失败：${cfg_out:-未知原因}"
+  if [ "$was_running" = 1 ]; then
+    warn "服务已停止；正在尝试用原配置重新启动"
+    service_start >/dev/null 2>&1 || warn "原配置也起不来了，请在应用中心手动启动"
+  fi
+  exit 1
+fi
+say "配置已更新（已配对设备保留）"
+if [ -n "$cfg_out" ]; then say "$cfg_out"; fi
+
 if service_start; then
   say "设置已生效"
   exit 0

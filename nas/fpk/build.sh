@@ -14,8 +14,8 @@ cd "$(cd "$(dirname "$0")" && pwd)"
 export PATH="$HOME/.local/bin:$PATH"
 
 PKG=nasscreencompanion
-find "$PKG" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
-find "$PKG" \( -name '*.pyc' -o -name '*.pyo' -o -name '.DS_Store' \) -delete 2>/dev/null || true
+find "$PKG" -name '__pycache__' -type d -prune -exec rm -rf {} +
+find "$PKG" \( -name '*.pyc' -o -name '*.pyo' -o -name '.DS_Store' \) -delete
 
 fnpack build --directory "$PKG"
 
@@ -24,8 +24,24 @@ SIZE=$(stat -f%z "$FPK" 2>/dev/null || stat -c%s "$FPK")
 echo "产物：$(pwd)/${FPK}（$SIZE 字节）"
 
 # 打完立刻验：包是拿去分发的，不能出现字节码缓存、macOS 垃圾、或本机标识
-JUNK=$(tar tzf "$FPK"; tar xzOf "$FPK" app.tgz | tar tz) || true
-BAD=$(echo "$JUNK" | grep -E '__pycache__|\.py[co]$|\.DS_Store|^\._' || true)
+OUTER=$(tar tzf "$FPK")
+# 取 app.tgz 的清单要单独判成败（审计 M22）：以前整条挂在 `|| true` 后面，
+# 解包一失败 JUNK 就是空的，grep 什么也找不到，于是照样打出"✓ 包内干净"——
+# 检查失败被当成了检查通过。包结构不对就该当场红，而不是给一个假的绿色。
+if ! APP=$(tar xzOf "$FPK" app.tgz | tar tz); then
+  echo "✗ 读不出包内的 app.tgz（$FPK 结构不对或已损坏），包内清单无法核对" >&2
+  exit 1
+fi
+JUNK=$(printf '%s\n%s\n' "$OUTER" "$APP")
+if BAD=$(printf '%s\n' "$JUNK" | grep -E '__pycache__|\.py[co]$|\.DS_Store|(^|/)\._'); then
+  :
+else
+  grep_rc=$?
+  if [ "$grep_rc" -ne 1 ]; then
+    echo "✗ 包内清单检查工具失败，拒绝放行" >&2
+    exit 1
+  fi
+fi
 if [ -n "$BAD" ]; then
   echo "✗ 包里混进了不该有的东西：" >&2
   echo "$BAD" | sed 's/^/    /' >&2

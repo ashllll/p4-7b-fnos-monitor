@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | 部署 | 飞牛应用中心手动安装 FPK | SSH + sudo 安装 systemd 单元 |
 | 管理入口 | 飞牛桌面内的管理页 | 命令行、journal、简易 HTTP 页面 |
-| 默认遥测 | HTTPS / `8798` / 配对令牌 | HTTP / `8799` / 无令牌 |
+| 默认遥测 | HTTPS / `8798` / 配对令牌 | HTTP / `8799` / 必需令牌 |
 | 服务身份 | 普通包用户；可选受限 root 容器读取辅助进程 | 示例 systemd 单元为 root，附带只读加固 |
 | 配置 | 安装向导与服务设置 | CLI 参数、环境变量与本地单元覆盖 |
 | 并存 | 安装、升级、卸载不接管旧服务 | 由自身安装 / 卸载脚本管理 |
@@ -21,24 +21,27 @@
 # 可先查看设备 / 温度命名：只运行一次，不启动监听服务。
 bash nas/preview-naming.sh your-user@nas.example.test
 
-# 安装并启动；SSH 默认使用现有公钥或连接，sudo 默认使用非交互模式。
+# 安装并启动；SSH 使用公钥或显式提供的密码，sudo 默认使用非交互模式。
 NAS_HOST=nas.example.test NAS_USER=your-user bash nas/install.sh
 # 卸载本采集器。
 NAS_HOST=nas.example.test NAS_USER=your-user bash nas/install.sh uninstall
 ```
 
-`install.sh` 将文件投送到 NAS 的私有 `0700` 临时目录，以 sudo 安装到 `/usr/local/bin/fnos-agent.py` 和 systemd 单元路径，再启动服务。需要密码认证时，脚本支持 `SSHPASS`（本机需 `sshpass`）和 `NAS_SUDO_PASS`；在自己的本地环境提供，不把真实值写进命令示例、仓库或日志。现有脚本不保存 SSH 主机密钥，自动部署前应通过自己的可信连接核实 NAS 身份。
+`install.sh` 将文件投送到 NAS 的私有 `0700` 临时目录，以 sudo 安装到 `/usr/local/bin/fnos-agent.py` 和 systemd 单元路径，再启动服务。需要密码认证时，脚本支持 `SSHPASS`（本机需 `sshpass`）和 `NAS_SUDO_PASS`；在自己的本地环境提供，不把真实值写进命令示例、仓库或日志。脚本要求 SSH 主机密钥已受信任，默认使用 `~/.ssh/known_hosts`，可通过 `FNOS_SSH_KNOWN_HOSTS` 指定文件；未知或变更密钥会拒绝连接，且不复用旧 master 连接。首次使用前，通过可信渠道核对 NAS 指纹后再登记主机密钥，不能只因为处于局域网就接受指纹。温度试算也会使用私有临时目录，清理失败会返回非零。
+
+只验证现有服务而不安装或上传：`NAS_HOST=nas.example.test NAS_USER=your-user bash nas/install.sh verify`。未提供本地令牌时，仅检查匿名请求是否被 401 拒绝，字段汇总明确跳过。卸载在停服/禁用失败时保留程序、unit 和令牌并返回非零；默认成功卸载也保留令牌，显式 `--purge-token` 仅由 NAS 上的 `install-remote.sh uninstall --purge-token` 删除。
 
 在 NAS 上进行只读检查：
 
 ```bash
-curl --fail --silent http://127.0.0.1:8799/api/v1/health
+# 默认鉴权：不带令牌应返回 401；这不是完整状态或鉴权端到端验收。
+curl --silent --output /dev/null --write-out 'HTTP %{http_code}\n' http://127.0.0.1:8799/api/v1/health
 python3 /usr/local/bin/fnos-agent.py --selftest
 python3 /usr/local/bin/fnos-agent.py --temps
 journalctl -u fnos-agent -n 50 --no-pager
 ```
 
-日志访问可能需要 root 或日志组权限。启用 `FNAS_TOKEN` 后，遥测请求需带对应令牌。完整 JSON 和诊断输出可能包含设备、挂载与网络信息，应仅保存在自己的本地验证目录。
+日志访问可能需要 root 或日志组权限。默认要求 `FNAS_TOKEN`，遥测请求需带对应令牌；安装脚本生成并保留 NAS 上的 `0600` 令牌文件。完整 JSON 和诊断输出可能包含设备、挂载与网络信息，应仅保存在自己的本地验证目录。
 
 ## 数据与接口
 
@@ -73,11 +76,11 @@ journalctl -u fnos-agent -n 50 --no-pager
 | `--interval` | `1.0` 秒 |
 | `--hist` | `300` 个样本 |
 | `--selftest` / `--temps` | 单次来源自检 / 温度表，不启动服务 |
-| `FNAS_TOKEN` | 非空时要求查询令牌或 `X-Token` |
+| `FNAS_TOKEN` | 默认必需；缺失时拒绝启动，接受查询令牌或 `X-Token`，优先使用请求头 |
 | `FNAS_NETIF` / `FNAS_VOLUMES` | 选择摘要网口 / 存储卷 |
 | `FNAS_SYSFS` / `FNAS_PROC` | 测试用假树根路径 |
 
-这套独立端点没有飞牛应用的 HTTPS 证书配对流程。开发板使用回退端点时，在本地配置里设置实际 `FNOS_HOST`、`FNOS_PORT` 和可选 `FNOS_TOKEN`；不要把旧 HTTP 端口输入需要 HTTPS 的配对流程。默认监听所有内网地址且无令牌，适用范围由自己的网络与部署策略确定；需要设备配对时使用 FPK 方案。
+这套独立端点没有飞牛应用的 HTTPS 证书配对流程。开发板使用回退端点时，在本地配置里设置实际 `FNOS_HOST`、`FNOS_PORT` 和对应 `FNOS_TOKEN`；不要把旧 HTTP 端口输入需要 HTTPS 的配对流程。默认监听所有内网地址并要求令牌；HTTP 不加密令牌与遥测，请按可信网络和部署策略限制访问。只有操作者显式使用 `--insecure-no-auth` 才允许无令牌，安装脚本拒绝在 unit 中加入该开关；需要证书配对与 HTTPS 时使用 FPK 方案。
 
 ## 运行边界与排障
 

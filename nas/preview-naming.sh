@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 在 NAS 上跑一次**只读**的"温度命名试算"：不动正在跑的采集器、不写 NAS 上的文件、
+# 在 NAS 上跑一次温度命名试算：不动正在跑的采集器，仅写本次私有临时目录、
 # 不占 8799 端口。用来在正式部署前先看清"这一版会把每一路温度叫成什么"。
 #
 # 用法：
@@ -13,9 +13,12 @@ set -euo pipefail
 
 TARGET="${1:?Usage: preview-naming.sh user@nas-host}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
-REMOTE=/tmp/fnos-agent-preview-$$.py
 
-SSH_OPTS=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR
+# 先通过可信渠道核对 NAS 主机指纹并加入 known_hosts；未知/变更密钥必须失败。
+# 不复用已有 master：它可能由旧版绕过校验的脚本建立。
+SSH_OPTS=(-o StrictHostKeyChecking=yes
+          -o "UserKnownHostsFile=${FNOS_SSH_KNOWN_HOSTS:-$HOME/.ssh/known_hosts}"
+          -o ControlMaster=no -o ControlPath=none -o LogLevel=ERROR
           -o ConnectTimeout=8)
 
 run_ssh() {
@@ -34,13 +37,31 @@ run_scp() {
   fi
 }
 
-echo "==> 把 agent 拷到 ${TARGET}:${REMOTE}（只放 /tmp，跑完就删）"
-run_scp -q "$HERE/fnos-agent.py" "$TARGET:$REMOTE"
-# trap 保证异常退出也会清理；--temps 只读 /sys 与 /proc，不启服务
-trap 'run_ssh "$TARGET" "rm -f $REMOTE" >/dev/null 2>&1 || true' EXIT
+REMOTE_DIR=$(run_ssh "$TARGET" 'mktemp -d /tmp/fnos-preview.XXXXXXXXXX')
+case "$REMOTE_DIR" in
+  /tmp/fnos-preview.*) ;;
+  *) echo "NAS 临时目录无效" >&2; exit 1 ;;
+esac
+case "${REMOTE_DIR#/tmp/fnos-preview.}" in
+  ""|*[!A-Za-z0-9]*) echo "NAS 临时目录后缀无效" >&2; exit 1 ;;
+esac
+REMOTE="$REMOTE_DIR/agent.py"
+# 仅清理验证过的本次目录；失败会使检查非零，不伪报全部成功。
+cleanup() {
+  local result=$?
+  trap - EXIT
+  if ! run_ssh "$TARGET" "rm -rf -- '$REMOTE_DIR'"; then
+    echo "NAS 临时目录清理失败" >&2
+    result=1
+  fi
+  exit "$result"
+}
+trap cleanup EXIT
 
+echo "==> 把 agent 拷到本次 NAS 私有临时目录（跑完删除）"
+run_scp -q "$HERE/fnos-agent.py" "$TARGET:$REMOTE"
 echo "==> 只读试算（--temps）"
-run_ssh "$TARGET" "python3 $REMOTE --temps"
+run_ssh "$TARGET" "python3 '$REMOTE' --temps"
 
 echo
 echo "==> 觉得名字对，就部署：cd $(dirname "$HERE")/nas && ./install.sh"

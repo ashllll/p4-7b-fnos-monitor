@@ -24,10 +24,6 @@ def main():
     for name, sig in (("has_cert", r"^static bool has_cert\(const char \*pem\)\n"),
                       ("pem_fingerprint",
                        r"^static bool pem_fingerprint\(const char \*pem, char \*out, size_t out_cap\)\n"),
-                      # 只验 pem_fingerprint：cert_info 依赖 mbedtls 的 x509 整套
-                      # （不是 base64/sha256 两个文件），为它把整个 library/ 编到
-                      # 主机不值当——它做的只是把 mbedtls 解出的 subject 与
-                      # valid_to 格式化一下，风险在编译期（mday→day 已经踩过）。
                       ):
         # **按花括号配对切，别用非贪婪正则**：`cert_info()` 里面有嵌套的
         # `if (!crt) { … }`，`\{.*?\n\}` 会停在那个内层块的收尾行上，
@@ -87,7 +83,7 @@ def main():
  * 它只依赖 mbedtls 与下面两个缓冲，所以能直接编到主机上跑。 */
 #include <stdbool.h>
 #include <stddef.h>
-#include <stdlib.h>   /* cert_info 的 PSRAM 回退分支用 calloc */
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include "mbedtls/base64.h"
@@ -97,17 +93,8 @@ def main():
 static char s_b64[{sizes['s_b64']}];
 static unsigned char s_der[{sizes['s_der']}];
 
-/* 主机上没有 ESP 的堆分级 API：cert_info 先试 PSRAM、失败再退回 calloc，
-   这里让 PSRAM 那次直接失败，走它自己的 calloc 回退分支——**那条分支在真机上
-   也可能走到（PSRAM 分配失败时），所以顺带也验了它**。 */
-#define MALLOC_CAP_SPIRAM 4
-#define MALLOC_CAP_8BIT   2
-static void *heap_caps_calloc(size_t n, size_t sz, int caps)
-{{                                     /* f-string 里的字面花括号要写两遍 */
-    (void)n; (void)sz; (void)caps;
-    return NULL;                      /* 强制走 calloc 回退 */
-}}
-
+/* 本提取器只测has_cert/pem_fingerprint，不覆盖cert_info。
+   cert_info的真实X509/分配路径由tools/test_cert_info.py单独验证。 */
 /* 抠出来的函数原文里带了 static，主机这边要能从 main.c 调到 */
 #define static
 {fn}

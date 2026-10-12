@@ -64,7 +64,7 @@ python3 tools/stack_check.py                  # 烧录前的栈预算检查（�
 
 `test_lifecycle.sh` 会把 `fnpack build` 的产物解到临时目录里，复刻 `/var/apps/{appname}/` 的真实布局（`cmd/` 一套、`target/` 一套、`var/`、`etc/`），再依次跑安装、启动、改设置、升级、卸载，还有三件容易漏的事：旧固件依赖的 `/api/v1/status`、`history`、`health` 字段名与类型被写成了契约断言（`v=1` 保留、只允许加字段），端口被占用时应用不碰占用者，管理面 Socket 建不起来时遥测面仍然可用并给出警告。证书相关还有两条容易漏的断言：管理页显示的指纹必须等于 `openssl x509 -noout -fingerprint -sha256` 的输出（板子固定的就是这个值，算错等于信错证书），以及关掉 TLS 再打开后指纹必须完全不变（否则已配对设备会全部失效）。**143 项断言全部通过**（`0b`、`0c`、`0d`、`3b`、`4c`、`6b`、`7c`、`7d` 各阶段见下）。
 
-已实现：`manifest`（`platform=x86`、`install_dep_apps=python312`、`service_port=8798`、`ctl_stop=true`、`checkport=false`）；`config/privilege` 用 `run-as=package`；`config/resource` 不声明任何共享目录；`app/ui/config` 走统一网关（`gatewayPrefix=/app/nasscreencompanion` + `gatewaySocket=app.sock`，`allUsers=false`）；`wizard/` 的 install/config/uninstall 三份表单；`cmd/` 下 9 个生命周期脚本（共用 `cmd/_common.sh` 前言）；`app/server/` 一个进程两个 HTTP 面（Unix Socket 管理面 + HTTPS 遥测面）；`app/ui/www/index.html` 单文件管理页（概览/能力矩阵/设备配对/服务设置/诊断五个标签页）。
+已实现：`manifest`（`platform=x86`、`install_dep_apps=python312`、`service_port=8798`、`ctl_stop=true`、`checkport=false`）；`config/privilege` 声明 `run-as: root`（生命周期脚本要写 `/var/apps`、读 root 态 `docker.sock`），管理服务的**进程**在启动时降权为包用户（`cmd/main` → `cmd/docker_launch.py` 的 `setgroups([])/setgid()/setuid()`，exec 前完成）；`config/resource` 不声明任何共享目录；`app/ui/config` 走统一网关（`gatewayPrefix=/app/nasscreencompanion` + `gatewaySocket=app.sock`，`allUsers=false`）；`wizard/` 的 install/config/uninstall 三份表单；`cmd/` 下 9 个生命周期脚本（共用 `cmd/_common.sh` 前言）；`app/server/` 一个进程两个 HTTP 面（Unix Socket 管理面 + HTTPS 遥测面）；`app/ui/www/index.html` 单文件管理页（概览/能力矩阵/设备配对/服务设置/诊断五个标签页）。
 
 四个容易再次踩到的坑，写在这里备忘：
 1. **`TRIM_APPDEST` 指向 target 目录本身，不是包根。** fnOS 把 `app.tgz` 的内容直接解到 target 下，所以服务在 `$TRIM_APPDEST/server/`，管理页在 `$TRIM_APPDEST/ui/www/`，Socket 在 `$TRIM_APPDEST/app.sock`——不是 `$TRIM_APPDEST/app/server/`。开发机上直接对着包目录跑时才是带 `app/` 的那一层。`cmd/_common.sh` 和 `nas_companion_server.py` 现在两种布局都认，但新写的路径解析必须想到这一点。
@@ -91,7 +91,7 @@ curl -s --cacert server.crt -H "Authorization: Bearer $TOK" \
 python3 nas/fpk/contract_check.py --status /tmp/status.json
 ```
 
-真 NAS 上每个采集段都有真实数据，62 个字段会全部走"对着真实响应核对"，不留任何靠源码猜的条目。也可以直接把 `contract_check.py` 和 `board_fields.json` 拷到 NAS 上、用 `NSC_COLLECTOR` 指向采集器运行（`board_fields.json` 是 `--emit` 生成的随包清单，改了固件读的字段就重新生成一次，清单变化本身就是一次可 review 的 diff）。这个检查第一次跑就抓到一个真问题：`_cpu()` 在 `/proc/stat` 读不到时的兜底返回值里**漏了 `runq`**，字段形状在两条路径上不一致——真 NAS 上走不到那条分支，但任何受限环境里都会静静地少一个字段。已给 `nas/fnos-agent.py` 和随包的 `fnos_collector.py` 都补上，并在一个真实 HTTPS 响应上复验过（补之前那次响应里没有 `runq`、检查报错；补之后有了、检查通过）。检查本身也做了反向验证：把采集端的 `raid.sync_pct` 改名、以及往固件里加一个 NAS 根本没有的字段，两种情况都会被抓出来。
+真 NAS 上每个采集段都有真实数据，66 个字段会全部走"对着真实响应核对"，不留任何靠源码猜的条目。也可以直接把 `contract_check.py` 和 `board_fields.json` 拷到 NAS 上、用 `NSC_COLLECTOR` 指向采集器运行（`board_fields.json` 是 `--emit` 生成的随包清单，改了固件读的字段就重新生成一次，清单变化本身就是一次可 review 的 diff）。这个检查第一次跑就抓到一个真问题：`_cpu()` 在 `/proc/stat` 读不到时的兜底返回值里**漏了 `runq`**，字段形状在两条路径上不一致——真 NAS 上走不到那条分支，但任何受限环境里都会静静地少一个字段。已给 `nas/fnos-agent.py` 和随包的 `fnos_collector.py` 都补上，并在一个真实 HTTPS 响应上复验过（补之前那次响应里没有 `runq`、检查报错；补之后有了、检查通过）。检查本身也做了反向验证：把采集端的 `raid.sync_pct` 改名、以及往固件里加一个 NAS 根本没有的字段，两种情况都会被抓出来。
 
 ## 板子上那串指纹，和 NAS 上那串，是两段独立的代码算的
 
@@ -452,7 +452,7 @@ P0 要交的那张「来源 / 权限矩阵」，每一格都来自 `classify_rea
 
 ## `board_sim.py` 现在也把"字段契约"跑在真 NAS 的真实响应上
 
-装完包之后、接板子之前，最值得跑的那条命令是 `board_sim.py`。它原本只走配对链路，现在多了一步：**配对成功后顺手把这一帧真实的 `/api/v1/status` 交给 `contract_check.py`**，核对"板子读的 62 个字段，这台 NAS 是不是都给全了"。
+装完包之后、接板子之前，最值得跑的那条命令是 `board_sim.py`。它原本只走配对链路，现在多了一步：**配对成功后顺手把这一帧真实的 `/api/v1/status` 交给 `contract_check.py`**，核对"板子读的 66 个字段，这台 NAS 是不是都给全了"。
 
 这一步正是方案里 P0 的落地。在开发机上只有一部分字段能对着真实响应核（macOS 没有 `/proc`、`/sys`），其余只能退回采集端源码核键名；**真 NAS 上这 62 个会全部走真实响应**——那份"权限矩阵"就不再有任何靠猜的条目。结尾会直接给出下一步：`在板子上输入配对码，逐段比对指纹。`
 
@@ -773,7 +773,7 @@ if(s.error){ $('hdot').className='dot err'; $('hhint').textContent = s.error; re
 证伪两次都中：
 
 ```
-✗ #hhint 没有渲染出管理接口出错时的顶栏提示（期望含 "管理接口不可用（page_check 注入）"，实际 "运行中 · uid 501 · llll"）
+✗ #hhint 没有渲染出管理接口出错时的顶栏提示（期望含 "管理接口不可用（page_check 注入）"，实际 "运行中 · uid <UID> · <PACKAGE_USER>"）
 ✗ #tlsline 没有渲染出TLS 失败的具体原因（期望含 "证书文件读不出来（page_check 注入）"，实际 "未能启用——遥测面当前是<b>明文 HTTP</b>，配对令牌仍然必需。"）
 ```
 
@@ -1095,7 +1095,7 @@ fi
    python3 nas/fpk/board_sim.py --host <NAS-IP> --port 8798 --pair-code <六位码>
    ```
 
-   它把开发板配对时的五步原样走一遍——明文取证书 → **自己**算 SHA-256 → 用这张证书做固定建 TLS → 换令牌 → 带令牌取数据——外加**四条否定断言**：固定一张**别的**证书必须握手失败（还带一条对照：同样这条连接不校验时是通的，否则那条失败可能只是网络不通）、明文读 `/api/v1/status` 必须 403、不带令牌读 status 必须 401、错误配对码必须被拒。在长测实例上实跑是 **15 项通过 0 项失败**。**最后一件事是拿这台 NAS 的真实响应核对「板子要读的 62 个字段是不是都给全了」**；在开发机上只有一部分能对着真实响应核（macOS 没有 `/proc`、`/sys`），在你的 NAS 上会全部走真实响应。
+   它把开发板配对时的五步原样走一遍——明文取证书 → **自己**算 SHA-256 → 用这张证书做固定建 TLS → 换令牌 → 带令牌取数据——外加**四条否定断言**：固定一张**别的**证书必须握手失败（还带一条对照：同样这条连接不校验时是通的，否则那条失败可能只是网络不通）、明文读 `/api/v1/status` 必须 403、不带令牌读 status 必须 401、错误配对码必须被拒。在长测实例上实跑是 **15 项通过 0 项失败**。**最后一件事是拿这台 NAS 的真实响应核对「板子要读的 66 个字段是不是都给全了」**；在开发机上只有一部分能对着真实响应核（macOS 没有 `/proc`、`/sys`），在你的 NAS 上会全部走真实响应。
 
    跑通的输出结尾会直接告诉你下一步该干什么（「这台 NAS 的配对链路、TLS 固定、字段契约都通了。下一步：在板子上输入配对码，逐段比对指纹。」）。**要注意它是"替板子做一遍"，不是"板子已经能用了"**——板子那边还有一次人工比对指纹。
 
@@ -1141,7 +1141,7 @@ fi
 
 **仍然严格的部分**：明文通道拿不到令牌也没法配对，配对必须走 HTTPS；板子侧除这一次引导外，所有连接都必须带固定证书，数据层在"配了 https 却没有证书"时直接报错而不是退回明文。
 
-**板端已经做完的**（固件在 `/Users/llll/code/esp/p4-7b-fnos-monitor`，`./idf.sh build` 通过）：配对状态机、指纹自算与固定、NVS 凭据存储、配对界面。详见下一节。
+**板端已经做完的**（固件在 `/Users/<USER>/code/esp/p4-7b-fnos-monitor`，`./idf.sh build` 通过）：配对状态机、指纹自算与固定、NVS 凭据存储、配对界面。详见下一节。
 
 **板端还没做的**：真机上的配对与断线恢复实测（要等 NAS 上真的装上应用）、24 小时稳定性长测。代码层面的计划项已经做完。
 

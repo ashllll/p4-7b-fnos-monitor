@@ -34,6 +34,25 @@ def load():
     return mod
 
 
+def cleanup_tree(directory):
+    ok = True
+    def failed(exc):
+        nonlocal ok
+        print(f"临时文件清理失败：{exc}")
+        ok = False
+    for root, dirs, _ in os.walk(directory, onerror=failed):
+        for name in dirs:
+            try:
+                os.chmod(os.path.join(root, name), stat.S_IRWXU)
+            except OSError as exc:
+                failed(exc)
+    try:
+        shutil.rmtree(directory)
+    except OSError as exc:
+        failed(exc)
+    return ok
+
+
 def main():
     if not os.path.exists(COLLECTOR):
         print(f"找不到 {COLLECTOR}")
@@ -52,15 +71,18 @@ def main():
     d = tempfile.mkdtemp(prefix="nsc-perm-")
     try:
         readable = os.path.join(d, "readable")
-        io.open(readable, "w").write("x")
+        with io.open(readable, "w") as f:
+            f.write("x")
 
         denied_file = os.path.join(d, "denied-file")
-        io.open(denied_file, "w").write("x")
+        with io.open(denied_file, "w") as f:
+            f.write("x")
         os.chmod(denied_file, 0)
 
         denied_dir = os.path.join(d, "denied-dir")
         os.mkdir(denied_dir)
-        io.open(os.path.join(denied_dir, "inner"), "w").write("x")
+        with io.open(os.path.join(denied_dir, "inner"), "w") as f:
+            f.write("x")
         os.chmod(denied_dir, 0)
 
         missing = os.path.join(d, "does-not-exist")
@@ -73,8 +95,22 @@ def main():
         check("不存在", m.classify_read(missing)[0], m.ST_MISSING)
         print("无权限的目录（要看目录本身，不是里面的文件）")
         check("目录无权限", m.classify_read(denied_dir + "/inner")[0], m.ST_DENIED)
-        print("目录本身可读时，listdir 应当成功")
-        check("目录可读", m.classify_read(readable)[0], m.ST_OK)
+        print("目录本身可读时，读里面的文件应当成功；直接读「目录」应当报 error，不是 ok")
+        ok_dir = os.path.join(d, "ok-dir")
+        os.mkdir(ok_dir)
+        with io.open(os.path.join(ok_dir, "inner"), "w") as f:
+            f.write("x")
+        check("目录里的文件", m.classify_read(os.path.join(ok_dir, "inner"))[0], m.ST_OK)
+        # 这里以前是拿上面那个普通文件再断言一次 ST_OK —— 名字写着"目录"，测的还是文件，
+        # 真目录根本没进过分类器（审计 M56）。真目录 open() 抛的是 IsADirectoryError
+        # （OSError 的兄弟，不是 PermissionError），必须落到 error 而不是被当成 ok/denied。
+        check("目录本身（open 目录会 IsADirectoryError）", m.classify_read(ok_dir)[0], m.ST_ERROR)
+        try:
+            os.listdir(ok_dir)
+            print("  \033[32m✓\033[0m 目录可读：listdir 成功（采样端就是这样列卷内文件的）")
+        except OSError as exc:
+            print(f"  \033[31m✗\033[0m 目录可读却 listdir 失败：{exc}")
+            rc = 1
 
         print("卷容量（statvfs 的权限模型和 open 不同）")
         check("statvfs 可读", m.classify_statvfs(d)[0], m.ST_OK)
@@ -89,17 +125,11 @@ def main():
             print(f"  \033[31m✗\033[0m chmod 000 的目录 statvfs → {st}，不该是这两个之外的状态")
             rc = 1
     finally:
-        # 目录被 chmod 000 之后要先恢复权限才删得掉
-        for root, dirs, _ in os.walk(d):
-            for x in dirs:
-                try:
-                    os.chmod(os.path.join(root, x), stat.S_IRWXU)
-                except OSError:
-                    pass
-        shutil.rmtree(d, ignore_errors=True)
+        if not cleanup_tree(d):
+            rc = 1
 
     if rc:
-        print("\n分类器有判错的地方——矩阵的每一格都来自它，先修这里。")
+        print("\n权限检查或临时文件清理失败，不能报告通过。")
         return 1
     print("\n权限分类器判定正确：有权限/无权限/不存在分得开 ✓")
     return 0

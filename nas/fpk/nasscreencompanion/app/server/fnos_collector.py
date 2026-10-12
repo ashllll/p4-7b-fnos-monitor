@@ -151,6 +151,8 @@ class Collector:
         self.snapshot = {"v": 1, "host": socket.gethostname(), "ts": 0, "ready": False}
         self.history = []              # [[ts, cpu, mem, rx_kbs, tx_kbs], ...]
         self._stop = threading.Event()
+        self._lifecycle_lock = threading.Lock()
+        self._thread = None
         self._prev_cpu = None
         self._prev_net = None
         self._prev_disk = None
@@ -175,12 +177,29 @@ class Collector:
 
     # ---- 启动/停止
     def start(self):
-        t = threading.Thread(target=self._loop, name="sampler", daemon=True)
-        t.start()
-        return t
+        with self._lifecycle_lock:
+            if self._thread is not None and self._thread.is_alive():
+                if self._stop.is_set():
+                    raise RuntimeError("sampler is still stopping")
+                return self._thread
+            self._stop.clear()
+            thread = threading.Thread(target=self._loop, name="sampler", daemon=True)
+            thread.start()
+            self._thread = thread
+            return thread
 
-    def stop(self):
-        self._stop.set()
+    def stop(self, timeout=10.0):
+        with self._lifecycle_lock:
+            self._stop.set()
+            thread = self._thread
+            if thread is None:
+                return
+            if thread is threading.current_thread():
+                raise RuntimeError("sampler cannot join itself")
+            thread.join(timeout)
+            if thread.is_alive():
+                raise TimeoutError("sampler did not stop within budget")
+            self._thread = None
 
     def _loop(self):
         while not self._stop.is_set():
@@ -306,8 +325,13 @@ class Collector:
             })
         self._prev_interfaces = {name: (rx, tx, now) for name, (rx, tx) in current.items()}
         selected = next((row for row in interfaces if row["if"] == iface), None)
+        # 选不中网卡时也得把这 8 个键补齐（审计 M02）：板子按字段名取值，缺键就是空/0，
+        # 于是"链路状态/速率"会安静地显示成没数据（fnos_ui.c 用 net->state 判 up/down）。
+        # 契约是"summary 形状固定"，不是"选中网卡时才有 state"。
         summary = dict(selected) if selected else {"if": iface, "rx_kbs": 0.0, "tx_kbs": 0.0,
-                                                   "rx_total_gb": 0.0, "tx_total_gb": 0.0}
+                                                   "rx_total_gb": 0.0, "tx_total_gb": 0.0,
+                                                   "state": "", "speed_mbps": 0,
+                                                   "physical": False}
         summary["interfaces"] = self._trim("interfaces", interfaces)
         return summary
 
@@ -319,7 +343,11 @@ class Collector:
             if len(f) < 3:
                 continue
             src, mnt, fstype = f[0], f[1], f[2]
-            if fstype in SKIP_FSTYPES or mnt in seen:
+            # 前缀判定，不是精确匹配（审计 M58）：SKIP_FSTYPES 里列了 "fuse"/"fuseblk"/
+            # "fuse.sshfs"/"fuse.mergerfs"/"fuse.rclone"，但枚举永远补不全 ——
+            # fuse.davfs2 / fuse.gcsfuse / fuse.s3fs / fuse.cryfs / fuse.encfs 都会漏过去，
+            # 直接撞上 os.statvfs()：对端一挂就卡在不可中断的 D 态，采样线程再也回不来。
+            if fstype in SKIP_FSTYPES or fstype.startswith("fuse") or mnt in seen:
                 continue
             if mnt.startswith(SKIP_MNT_PREFIX) and mnt != "/":
                 continue
@@ -363,6 +391,7 @@ class Collector:
                 # "(read-only)" 跟级别名平级、在 state 之后（"md0 : active (read-only) raid1 …"），
                 # 只读阵列能照常读写失败才知道，必须在头行就认出来。
                 ro = "(read-only)" in rest
+                rest = re.sub(r"^\(read-only\)\s*", "", rest)
                 m2 = re.match(r"^(raid\d+|linear|multipath|faulty|container)\b\s*(.*)$", rest)
                 lvl, memtxt = (m2.group(1), m2.group(2)) if m2 else ("", rest)
                 cur = {
@@ -814,6 +843,30 @@ ST_ERROR = "error"          # 读取到了但解析失败
 ST_DISABLED = "disabled"    # 被配置显式关闭（如 docker）
 
 
+def normalize_snapshot_types(snap):
+    """把 snapshot 的模块键钉在各自契约的类型上，返回 snap。
+
+    板子（含老固件）是**按类型**解析 payload 的：读到数组就当"列表型模块"，
+    读到对象就当"对象型模块"。采集失败写 None 不是"不谎报空"，那是把类型搞坏
+    （nas/fpk/test_lifecycle.sh 7b 抓到的 raid 变 null 就是这个）。
+    失败只反映在 modules[key].status / errors / caps 里。
+
+    zfs 是**对象型**（_zfs() 返回 {"arc_gb","hit_pct"}，contract_check.py 的
+    OBJ_METHOD 也这么算）。审计 H5 抓到的正是这一条：zfs 曾经和列表型模块挤在
+    一组，采集**成功**时也会被强制成 []，屏上的 ZFS 区永远是空的（1.2.5 的
+    发布包里就是这个状态）。读不到写 None：那是"这次没读到"，不是"这台机器没有 ZFS"。
+    """
+    for k in ("vols", "raid", "disks", "temps", "docker"):
+        if not isinstance(snap.get(k), list):
+            snap[k] = []
+    for k in ("cpu", "mem", "net"):
+        if not isinstance(snap.get(k), dict):
+            snap[k] = {}
+    if not isinstance(snap.get("zfs"), dict):
+        snap["zfs"] = None
+    return snap
+
+
 def classify_read(path):
     """按包用户视角判定一个路径的可读性，返回 (status, detail)。"""
     try:
@@ -1000,22 +1053,15 @@ class CompanionCollector(Collector):
                     state = ST_DENIED if isinstance(exc, PermissionError) else (ST_MISSING if isinstance(exc, FileNotFoundError) else ST_ERROR)
                     meta[key] = {"status": state, "ts": 0, "error": detail}
 
-        # 契约面：键的类型不能因为采集失败而变。板子（含老固件）是**按类型**解析 payload 的，
-        # 而上面"首帧就失败"的分支会写 None —— 那不是"不谎报空"，那是把类型也搞坏
-        # （nas/fpk/test_lifecycle.sh 7b 抓到的就是 raid 变 null）。失败只反映在
-        # modules[key].status / errors / caps 里：读不到 ≠ 这台机器没有阵列。
-        for k in ("vols", "raid", "disks", "temps", "docker", "zfs"):
-            if not isinstance(snap.get(k), list):
-                snap[k] = []
-        for k in ("cpu", "mem", "net"):
-            if not isinstance(snap.get(k), dict):
-                snap[k] = {}
+        # 契约面：键的类型不能因为采集失败而变（明细见 normalize_snapshot_types）。
+        normalize_snapshot_types(snap)
 
         try:
             snap["uptime_s"] = int(float(read_text("/proc/uptime", "0").split()[0] or 0))
         except (ValueError, IndexError):
             snap["uptime_s"] = prev.get("uptime_s", 0)
         if isinstance(snap.get("cpu"), dict):
+            snap["cpu"] = dict(snap["cpu"])  # 失败回退可能借用已发布快照，禁止原地改它
             snap["cpu"]["temp_c"] = getattr(self, "_cpu_temp", None)
         if errors:
             snap["errors"] = errors

@@ -18,18 +18,23 @@ fnos-agent —— 飞牛 fnOS (Debian) 只读状态采集器。
 用法：
   python3 fnos-agent.py --port 8799 --interval 1.0
 可选环境变量：
-  FNAS_TOKEN   非空时要求 ?token= 或 X-Token 头匹配（默认不校验）
+  FNAS_TOKEN   访问令牌（唯一凭据）：请求要带 ?token= 或 X-Token 头。
+               为空且没有 --insecure-no-auth 时**拒绝启动**（fail closed）；
+               正常安装由 nas/install-remote.sh 写进 /etc/fnos-agent.env（0600）。
   FNAS_NETIF   指定统计的网卡（默认自动：优先默认路由网卡）
   FNAS_VOLUMES 逗号分隔的挂载点白名单（默认自动发现）
 """
 
 import argparse
+import copy
 import hmac
 import json
+import math
 import os
 import re
 import socket
 import socketserver
+import signal
 import sys
 import threading
 import time
@@ -83,6 +88,45 @@ SKIP_MNT_PREFIX = ("/run", "/sys", "/dev", "/proc", "/var/lib/docker", "/var/lib
                    "/tmp", "/var/tmp", "/var/lock", "/var/run")
 
 
+def read_text_strict(path):
+    """读不到就抛。凡"空内容 != 正常"的来源必须走这里。
+
+    `read_text(default="")` 会把权限不足/IO 错误变成"空内容"，而空的 /proc/mdstat
+    在语义上是"这台机器没有阵列"——采样层于是拿它覆盖上一帧，板子上从"md0 正常"
+    直接跳成"未发现阵列"，全程没有任何一处报错（审计 R2）。
+    """
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        return f.read()
+
+
+def raid_health(r):
+    """阵列的结构健康度：ok / degraded / inactive / readonly / container / unknown。
+
+    `ok` 原来是"默认 False，等汇总行来翻案"，而 RAID0/linear 本来就没有冗余、
+    内核也不给它们打 `[n/m] [UU]` 行 —— 于是这类阵列永远显示"降级"（审计 R5）。
+    维护进度（resync/check/repair）**不**进这个字段：健康与维护是两件事（审计 R1），
+    降级阵列正在恢复仍然是降级。
+    """
+    state = r.get("state") or ""
+    # 首词精确比较：`"active" in "inactive"` 为真，那是误判的来源（审计 R3）
+    first = (state.split() or [""])[0].lower()
+    lvl = (r.get("lvl") or "").lower()
+    if "read-only" in state.lower() or r.get("ro"):
+        return "readonly"
+    if lvl == "container":
+        return "container"                       # imsm/ddf 外部元数据容器：要在固件里组装
+    if first == "inactive":
+        return "inactive"
+    if first != "active":
+        return "unknown"
+    if r.get("summary"):
+        have, want, flags = int(r.get("have") or 0), int(r.get("want") or 0), r.get("flags") or ""
+        return "ok" if (have == want and "_" not in flags) else "degraded"
+    if lvl in ("raid0", "linear"):
+        return "ok"                              # 没有冗余就没有汇总行，这是正常形态
+    return "unknown"                             # 其余情况缺汇总行就不猜：未知不是健康
+
+
 class Collector:
     def __init__(self, interval=1.0, netif=None, volumes=None, hist_len=300):
         self.interval = float(interval)
@@ -93,11 +137,15 @@ class Collector:
         self.snapshot = {"v": 1, "host": socket.gethostname(), "ts": 0, "ready": False}
         self.history = []              # [[ts, cpu, mem, rx_kbs, tx_kbs], ...]
         self._stop = threading.Event()
+        self._lifecycle_lock = threading.Lock()
+        self._thread = None
         self._prev_cpu = None
+        self._cpu_temp = None
         self._prev_net = None
         self._prev_disk = None
         self._prev_zfs = None
         self._docker_cache = (0.0, [])  # (last_poll, result) —— 注意别叫 _docker，会遮蔽同名方法
+        self._docker_failed = False
         self._docker_seen_up = set()    # 曾经运行过的容器名（用于"掉线"告警）
         self._dev_cache = None          # 温度的设备名索引：(时间, [(realpath, 名字, 类别)])
         self._pci_cache = {}            # (vid,did) → (厂商名, 型号名)，pci.ids 查一次记住
@@ -106,19 +154,41 @@ class Collector:
 
     # ---- 启动/停止
     def start(self):
-        t = threading.Thread(target=self._loop, name="sampler", daemon=True)
-        t.start()
-        return t
+        with self._lifecycle_lock:
+            if self._thread is not None and self._thread.is_alive():
+                if self._stop.is_set():
+                    raise RuntimeError("previous sampler has not stopped")
+                return self._thread
+            self._stop.clear()
+            thread = threading.Thread(target=self._loop, name="sampler", daemon=True)
+            thread.start()
+            self._thread = thread
+            return thread
 
-    def stop(self):
-        self._stop.set()
+    def stop(self, timeout=5.0):
+        with self._lifecycle_lock:
+            self._stop.set()
+            thread = self._thread
+        if thread is None:
+            return True
+        if thread is threading.current_thread():
+            return False
+        thread.join(timeout=max(0.0, timeout))
+        if thread.is_alive():
+            return False
+        with self._lifecycle_lock:
+            if self._thread is thread:
+                self._thread = None
+        return True
 
     def _loop(self):
         while not self._stop.is_set():
-            t0 = time.time()
+            t0 = time.monotonic()
             try:
                 snap = self.sample()
                 with self.lock:
+                    if self._stop.is_set():
+                        break
                     self.snapshot = snap
                     self.history.append([snap["ts"], snap["cpu"]["pct"], snap["mem"]["pct"],
                                          snap["net"]["rx_kbs"], snap["net"]["tx_kbs"]])
@@ -126,9 +196,11 @@ class Collector:
                         del self.history[:len(self.history) - self.hist_len]
             except Exception as exc:                      # 采集失败不能让服务挂掉
                 with self.lock:
+                    if self._stop.is_set():
+                        break
                     self.snapshot = {"v": 1, "host": self.hostname, "ts": int(time.time()),
                                      "ready": False, "error": "%s: %s" % (type(exc).__name__, exc)}
-            dt = self.interval - (time.time() - t0)
+            dt = self.interval - (time.monotonic() - t0)
             if dt > 0:
                 self._stop.wait(dt)
 
@@ -237,8 +309,12 @@ class Collector:
             })
         self._prev_interfaces = {name: (rx, tx, now) for name, (rx, tx) in current.items()}
         selected = next((row for row in interfaces if row["if"] == iface), None)
+        # 键必须齐（审计 M02）：板子按字段名取值，缺 state/speed_mbps/physical 就是
+        # 空/0，界面上的链路状态会安静地变成"没数据"。形状固定，值可以是"未知"。
         summary = dict(selected) if selected else {"if": iface, "rx_kbs": 0.0, "tx_kbs": 0.0,
-                                                   "rx_total_gb": 0.0, "tx_total_gb": 0.0}
+                                                   "rx_total_gb": 0.0, "tx_total_gb": 0.0,
+                                                   "state": "", "speed_mbps": 0,
+                                                   "physical": False}
         summary["interfaces"] = interfaces
         return summary
 
@@ -250,7 +326,11 @@ class Collector:
             if len(f) < 3:
                 continue
             src, mnt, fstype = f[0], f[1], f[2]
-            if fstype in SKIP_FSTYPES or mnt in seen:
+            # 前缀判定，不是精确匹配（审计 M58）：SKIP_FSTYPES 列了 "fuse"/"fuseblk"/
+            # "fuse.sshfs"/"fuse.mergerfs"/"fuse.rclone"，但 fuse.* 的子类型枚举不全 ——
+            # fuse.davfs2 / gcsfuse / s3fs / cryfs / encfs 漏判后 os.statvfs() 会冲着
+            # 已经挂死的网络/融合文件系统，采样线程卡在 D 态回不来。
+            if fstype in SKIP_FSTYPES or fstype.startswith("fuse") or mnt in seen:
                 continue
             if mnt.startswith(SKIP_MNT_PREFIX) and mnt != "/":
                 continue
@@ -277,7 +357,9 @@ class Collector:
         return vols
 
     def _raid(self):
-        txt = read_text("/proc/mdstat")
+        # 严格读：读失败要抛出去，让采样层保留上一帧并标 stale。
+        # 退回空串等于宣布"这台机器没有阵列"，比报错更糟（审计 R2）。
+        txt = read_text_strict("/proc/mdstat")
         out = []
         cur = None
         for line in txt.splitlines():
@@ -289,13 +371,19 @@ class Collector:
             head = re.match(r"^(md\d+)\s*:\s*(\S+)\s*(.*)$", line)
             if head:
                 state, rest = head.group(2), head.group(3)
+                # "(read-only)" 跟级别名平级、在 state 之后（"md0 : active (read-only) raid1 …"），
+                # 只读阵列能照常读写失败才知道，必须在头行就认出来。
+                ro = "(read-only)" in rest
+                rest = re.sub(r"^\(read-only\)\s*", "", rest)
                 m2 = re.match(r"^(raid\d+|linear|multipath|faulty|container)\b\s*(.*)$", rest)
                 lvl, memtxt = (m2.group(1), m2.group(2)) if m2 else ("", rest)
                 cur = {
                     "dev": head.group(1), "state": state, "lvl": lvl,
                     "members": ["%s%s" % (n, "(%s)" % fl if fl else "") for n, _i, fl in
                                 re.findall(r"([a-z0-9]+)\[(\d+)\](?:\(([A-Z])\))?", memtxt)],
-                    "have": 0, "want": 0, "ok": False, "sync_pct": -1.0, "what": "",
+                    "have": 0, "want": 0, "ok": False, "health": "unknown",
+                    "sync_pct": -1.0, "what": "",
+                    "flags": "", "summary": False, "ro": ro,
                 }
                 out.append(cur)
                 continue
@@ -305,18 +393,24 @@ class Collector:
             if m:
                 cur["want"] = int(m.group(1))
                 cur["have"] = int(m.group(2))
-                flags = m.group(3)
-                cur["ok"] = (cur["have"] == cur["want"]) and ("_" not in flags) and \
-                            ("active" in cur["state"])
+                cur["flags"] = m.group(3)
+                cur["summary"] = True
                 continue
             m = re.search(r"\[([=>.]+)\]\s*(\w+)\s*=\s*([\d.]+)%", line)
             if m:
-                # resync/recovery/check/repair 都只是进度。ok 只由 [n/m] 与 [U_] 决定：
-                # 健康阵列每月做 check 的数小时里不该显示成异常。
-                cur["sync_pct"] = float(m.group(3))
+                # resync/recovery/check/repair 都只是进度。结构健康度只由 [n/m] 与 [U_]
+                # 决定：健康阵列每月做 check 的数小时里不该显示成异常。
+                pct = float(m.group(3))
+                cur["sync_pct"] = pct if 0.0 <= pct <= 100.0 else -1.0   # 进度越界就不认
                 cur["what"] = m.group(2)
         # mdstat 的顺序是组装顺序，面板上按设备名排更易读
         out.sort(key=lambda r: r["dev"])
+        for r in out:
+            r["health"] = raid_health(r)
+            r["ok"] = (r["health"] == "ok")         # 未知不是健康
+            r.pop("flags", None)
+            r.pop("summary", None)
+            r.pop("ro", None)
         return out
 
     def _disk_io(self):
@@ -606,6 +700,8 @@ class Collector:
     def _docker(self):
         now = time.time()
         if now - self._docker_cache[0] < 5.0:
+            if getattr(self, "_docker_failed", False):
+                raise RuntimeError("Docker telemetry unavailable")
             return self._docker_cache[1]
         prev = self._docker_cache[1]
         result = prev
@@ -614,10 +710,19 @@ class Collector:
                                       "/containers/json?all=1", timeout=4.0)
             if status != 200:
                 raise RuntimeError("docker http %d" % status)
-            rows = json.loads(body.decode("utf-8", "replace"))
+            rows = json.loads(body.decode("utf-8"))
+            if not isinstance(rows, list):
+                raise ValueError("invalid Docker inventory")
             result = []
             for c in rows:
-                names = c.get("Names") or [c.get("Id", "?")]
+                if not isinstance(c, dict):
+                    raise ValueError("invalid Docker container")
+                names = c.get("Names") or [c.get("Id")]
+                if (not isinstance(names, list) or not names
+                        or any(not isinstance(n, str) or not n.lstrip("/") for n in names)
+                        or not isinstance(c.get("State"), str) or not c["State"]
+                        or not isinstance(c.get("Status", ""), str)):
+                    raise ValueError("invalid Docker container fields")
                 result.append({
                     "n": names[0].lstrip("/"),
                     "up": c.get("State") == "running",
@@ -626,7 +731,10 @@ class Collector:
             result.sort(key=lambda x: (not x["up"], x["n"]))
             self._docker_seen_up.update(c["n"] for c in result if c["up"])
         except Exception:
-            result = prev          # 任何失败都保留上一份，绝不用空表覆盖（否则容器与告警一起消失）
+            self._docker_cache = (now, prev)
+            self._docker_failed = True
+            raise RuntimeError("Docker telemetry unavailable") from None
+        self._docker_failed = False
         self._docker_cache = (now, result)
         return result
 
@@ -658,25 +766,40 @@ class Collector:
 
     def _alerts(self, snap):
         out = []
-        for r in snap.get("raid", []):
-            if not r["ok"]:
-                if r["sync_pct"] >= 0:
-                    out.append({"lv": "info", "m": "%s %s %.1f%%" % (r["dev"], r["what"] or "resync", r["sync_pct"])})
-                else:
-                    out.append({"lv": "crit", "m": "RAID %s degraded (%s)" % (r["dev"], r["state"])})
-        for v in snap.get("vols", []):
+        for r in (snap.get("raid") or []):
+            health = r.get("health") or ("ok" if r.get("ok") else "unknown")
+            dev = r.get("dev", "?")
+            prog = " %s %.1f%%" % (r.get("what") or "resync", r["sync_pct"]) \
+                if r.get("sync_pct", -1) >= 0 else ""
+            if health == "degraded":
+                # 降级就是降级："正在恢复"不改变结构已经缺成员这件事（审计 R1）
+                out.append({"lv": "crit",
+                            "m": "RAID %s degraded (%s)%s" % (dev, r.get("state") or "?", prog)})
+            elif health == "inactive":
+                out.append({"lv": "crit", "m": "RAID %s inactive%s" % (dev, prog)})
+            elif health == "readonly":
+                out.append({"lv": "warn", "m": "RAID %s read-only%s" % (dev, prog)})
+            elif health == "container":
+                out.append({"lv": "info", "m": "RAID %s external container (%s)"
+                            % (dev, r.get("lvl") or "?")})
+            elif health == "unknown":
+                out.append({"lv": "info", "m": "RAID %s state unknown (%s)"
+                            % (dev, r.get("state") or "?")})
+            elif prog:
+                out.append({"lv": "info", "m": "%s%s" % (dev, prog)})
+        for v in (snap.get("vols") or []):
             if v["pct"] >= 90:
                 out.append({"lv": "crit", "m": "%s free %.1f%% left" % (v["mnt"], 100 - v["pct"])})
             elif v["pct"] >= 80:
                 out.append({"lv": "warn", "m": "%s used %.0f%%" % (v["mnt"], v["pct"])})
-        cpu = snap.get("cpu", {})
+        cpu = (snap.get("cpu") or {})
         if cpu.get("temp_c") and cpu["temp_c"] >= 80:
             out.append({"lv": "warn", "m": "CPU temp %.0fC" % cpu["temp_c"]})
-        if snap.get("mem", {}).get("pct", 0) >= 90:
+        if (snap.get("mem") or {}).get("pct", 0) >= 90:
             out.append({"lv": "warn", "m": "MEM used %.0f%%" % snap["mem"]["pct"]})
         if cpu.get("cores") and cpu.get("load5", 0) > cpu["cores"]:
             out.append({"lv": "warn", "m": "LOAD high %.2f" % cpu["load5"]})
-        for c in snap.get("docker", []):
+        for c in (snap.get("docker") or []):
             # 只报"本来在跑、现在掉了"的容器；开机就停着的（如已弃用的 exporter）不刷告警
             if not c["up"] and c["n"] in self._docker_seen_up:
                 out.append({"lv": "warn", "m": "container %s down" % c["n"]})
@@ -689,7 +812,7 @@ class Collector:
         snap = {"v": 1, "host": self.hostname, "ts": int(time.time()), "ready": True}
         errors = []
         with self.lock:
-            prev = dict(self.snapshot) if self.snapshot.get("ready") else {}
+            prev = copy.deepcopy(self.snapshot) if self.snapshot.get("ready") else {}
         for key, fn in (("cpu", self._cpu), ("mem", self._mem), ("net", self._net),
                         ("vols", self._volumes), ("raid", self._raid),
                         ("disks", self._disk_io), ("temps", self._temps),
@@ -698,7 +821,9 @@ class Collector:
                 snap[key] = fn()
             except Exception as exc:                  # noqa: BLE001 - 采集段不能互相拖死
                 errors.append(key)
-                snap[key] = prev.get(key) if key in prev else None
+                snap[key] = prev.get(key)
+                if snap[key] is None:
+                    snap[key] = [] if key in ("vols", "raid", "disks", "temps", "docker") else {}
         try:
             snap["uptime_s"] = int(float(read_text("/proc/uptime", "0").split()[0] or 0))
         except (ValueError, IndexError):
@@ -716,69 +841,161 @@ class Collector:
 
 # ---------------------------------------------------------------- docker 只读查询
 
+DOCKER_HTTP_MAX_BYTES = 4 * 1024 * 1024
+_HTTP_FIELD = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
+
+
 def _http_unix(sock_path, path, timeout=3.0, method="GET"):
-    """通过 unix socket 发一个极简 HTTP/1.0 请求（不依赖 requests / docker 包）。"""
+    """Bounded close-delimited Docker HTTP/1.x; incomplete framing is an error."""
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError("invalid Docker HTTP timeout")
+    deadline = time.monotonic() + timeout
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    s.settimeout(timeout)
     try:
+        s.settimeout(timeout)
         s.connect(sock_path)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("Docker HTTP deadline exceeded")
+        s.settimeout(remaining)
         req = ("%s %s HTTP/1.0\r\nHost: docker\r\nAccept: application/json\r\n"
                "Connection: close\r\n\r\n" % (method, path)).encode("ascii")
         s.sendall(req)
         buf = bytearray()
         while True:
-            chunk = s.recv(65536)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Docker HTTP deadline exceeded")
+            s.settimeout(remaining)
+            chunk = s.recv(min(65536, DOCKER_HTTP_MAX_BYTES + 1 - len(buf)))
             if not chunk:
                 break
             buf += chunk
-            if len(buf) > 4 * 1024 * 1024:
-                break
+            if len(buf) > DOCKER_HTTP_MAX_BYTES:
+                raise ValueError("Docker HTTP response exceeds byte budget")
     finally:
         s.close()
-    head, _, body = bytes(buf).partition(b"\r\n\r\n")
+    head, sep, body = bytes(buf).partition(b"\r\n\r\n")
+    if not sep:
+        raise ValueError("incomplete Docker HTTP header")
     lines = head.decode("latin1").split("\r\n")
-    status = int(lines[0].split()[1]) if lines and len(lines[0].split()) > 1 else 0
+    status_line = re.fullmatch(r"HTTP/1\.[01] ([1-5][0-9]{2})(?: [^\r\n]*)?", lines[0])
+    if not status_line:
+        raise ValueError("invalid Docker HTTP status")
     hdrs = {}
     for h in lines[1:]:
-        k, _, v = h.partition(":")
-        hdrs[k.strip().lower()] = v.strip()
-    if hdrs.get("transfer-encoding", "").lower() == "chunked":
+        k, colon, v = h.partition(":")
+        if not colon or not _HTTP_FIELD.fullmatch(k):
+            raise ValueError("invalid Docker HTTP header")
+        k = k.lower()
+        if k in ("content-length", "transfer-encoding") and k in hdrs:
+            raise ValueError("duplicate Docker HTTP framing")
+        hdrs[k] = v.strip()
+    transfer = hdrs.get("transfer-encoding")
+    length = hdrs.get("content-length")
+    if transfer is not None:
+        if transfer.lower() != "chunked" or length is not None:
+            raise ValueError("unsupported Docker HTTP framing")
         body = _dechunk(body)
-    return status, body
+    elif length is not None:
+        digits = length.lstrip("0") or "0"
+        if (not re.fullmatch(r"[0-9]+", length)
+                or len(digits) > len(str(DOCKER_HTTP_MAX_BYTES)) or int(digits) != len(body)):
+            raise ValueError("Docker HTTP body length mismatch")
+    return int(status_line.group(1)), body
 
 
 def _dechunk(data):
+    if len(data) > DOCKER_HTTP_MAX_BYTES:
+        raise ValueError("Docker chunked input exceeds byte budget")
     out = bytearray()
+    cursor = 0
     while True:
-        pos = data.find(b"\r\n")
-        if pos < 0:
-            break
-        try:
-            size = int(data[:pos].split(b";")[0], 16)
-        except ValueError:
-            break
+        end = data.find(b"\r\n", cursor)
+        if end < 0:
+            raise ValueError("missing Docker chunk size")
+        number = data[cursor:end].split(b";", 1)[0]
+        if not re.fullmatch(rb"[0-9A-Fa-f]+", number):
+            raise ValueError("invalid Docker chunk size")
+        number = number.lstrip(b"0") or b"0"
+        if len(number) > len(format(DOCKER_HTTP_MAX_BYTES, "x")):
+            raise ValueError("oversized Docker chunk")
+        size = int(number, 16)
+        cursor = end + 2
         if size == 0:
-            break
-        out += data[pos + 2:pos + 2 + size]
-        data = data[pos + 2 + size + 2:]
-    return bytes(out)
+            while True:
+                end = data.find(b"\r\n", cursor)
+                if end < 0:
+                    raise ValueError("incomplete Docker chunk trailer")
+                line = data[cursor:end]
+                cursor = end + 2
+                if not line:
+                    if cursor != len(data):
+                        raise ValueError("trailing Docker chunk bytes")
+                    return bytes(out)
+                key, colon, value = line.partition(b":")
+                if (not colon or not _HTTP_FIELD.fullmatch(key.decode("ascii", "strict"))
+                        or key.lower() in (b"content-length", b"transfer-encoding")):
+                    raise ValueError("invalid Docker chunk trailer")
+        if size > DOCKER_HTTP_MAX_BYTES - len(out) or size > len(data) - cursor - 2:
+            raise ValueError("incomplete or oversized Docker chunk")
+        if data[cursor + size:cursor + size + 2] != b"\r\n":
+            raise ValueError("invalid Docker chunk terminator")
+        out.extend(memoryview(data)[cursor:cursor + size])
+        cursor += size + 2
 
 
 # ---------------------------------------------------------------- HTTP 服务
 
 INDEX_HTML = """<!doctype html><html lang="zh-CN"><meta charset="utf-8">
-<title>fnos-agent</title>
-<style>body{background:#0b0f14;color:#d8e2ee;font:14px/1.5 ui-monospace,Menlo,monospace;margin:0;padding:24px}
-h1{font-size:16px;color:#6ee7ff;margin:0 0 12px}pre{white-space:pre-wrap;word-break:break-all}
-.b{color:#8ef0a8}</style>
-<h1>fnos-agent · <span class="b" id="h">…</span></h1><pre id="j">loading…</pre>
-<script>
-async function tick(){try{const r=await fetch('/api/v1/status');const j=await r.json();
-document.getElementById('h').textContent=j.host+'  '+new Date().toLocaleTimeString();
-document.getElementById('j').textContent=JSON.stringify(j,null,1);}catch(e){
-document.getElementById('j').textContent='ERROR '+e;}}
-tick();setInterval(tick,1000);
-</script></html>"""
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>fnos-agent · 采集诊断</title>
+<style>
+:root{color-scheme:dark}body{background:#0b0f14;color:#d8e2ee;font:14px/1.5 ui-monospace,Menlo,monospace;margin:0;padding:24px}
+main{max-width:960px;margin:auto}h1{font-size:20px;color:#6ee7ff;margin:0 0 8px}p{color:#a9b9ca}form{display:flex;gap:8px;align-items:end;flex-wrap:wrap;margin:20px 0}
+label{display:flex;flex-direction:column;gap:6px;flex:1;min-width:160px}input,button{font:inherit;padding:10px;border:1px solid #64768b;border-radius:4px;background:#151f2b;color:inherit}button{cursor:pointer}button:disabled{opacity:.55;cursor:default}input:focus-visible,button:focus-visible{outline:2px solid #6ee7ff;outline-offset:3px}pre{white-space:pre-wrap;overflow-wrap:anywhere;border-top:1px solid #344558;padding-top:16px}#status{min-height:3em;color:#8ef0a8}
+</style><main>
+<h1>fnos-agent · 采集诊断</h1>
+<p>输入采集器令牌以读取状态。令牌仅用于当前页面，停止连接或关闭页面后需重新输入。此 HTTP 服务会明文传输令牌，请只在可信网络使用。</p>
+<form id="auth" autocomplete="off"><label for="token">访问令牌<input id="token" type="password" autocomplete="off" spellcheck="false" autocapitalize="off"></label><button type="submit" id="connect">连接 / 更新令牌</button><button type="button" id="stop" disabled>停止并清除</button></form>
+<p id="status" role="status" aria-live="polite">尚未连接。显式启用无鉴权模式时可留空连接。</p>
+<pre id="j">连接后显示采集状态。</pre>
+</main><script>
+'use strict';
+const form=document.getElementById('auth'), input=document.getElementById('token');
+const status=document.getElementById('status'), output=document.getElementById('j');
+const stopButton=document.getElementById('stop');
+let token='', generation=0, timer=null, pending=null;
+function clearSession(){generation++;clearTimeout(timer);timer=null;if(pending)pending.abort();pending=null;token='';input.value='';output.textContent='连接后显示采集状态。';stopButton.disabled=true;}
+async function tick(gen){
+  if(gen!==generation)return;
+  const controller=new AbortController();pending=controller;
+  const timeout=setTimeout(()=>controller.abort(),10000);
+  try{
+    const headers=token?{'X-Token':token}:{};
+    const response=await fetch('/api/v1/status',{headers,cache:'no-store',credentials:'omit',redirect:'error',signal:controller.signal});
+    if(gen!==generation)return;
+    if(response.status===401||response.status===403){clearSession();status.textContent='鉴权失败：请核对令牌后重新连接。';return;}
+    if(!response.ok)throw new Error('http');
+    const data=await response.json();
+    if(!data||typeof data!=='object'||Array.isArray(data)||typeof data.host!=='string')throw new Error('shape');
+    if(gen!==generation)return;
+    status.textContent=data.host+' · 最近读取 '+new Date().toLocaleTimeString();
+    output.textContent=JSON.stringify(data,null,2);
+  }catch(error){
+    if(gen!==generation)return;
+    output.textContent='本次未取得有效状态；上次内容已清除。';
+    status.textContent='读取失败或超时。请检查服务与网络；稍后自动重试。';
+  }finally{
+    clearTimeout(timeout);
+    if(gen===generation){pending=null;timer=setTimeout(()=>tick(gen),1000);}
+  }
+}
+form.addEventListener('submit',event=>{event.preventDefault();const next=input.value;clearSession();token=next;stopButton.disabled=false;status.textContent='正在读取…';tick(generation);});
+stopButton.addEventListener('click',()=>{clearSession();status.textContent='已停止，当前页面令牌已清除。';});
+window.addEventListener('pagehide',clearSession);
+</script></html>
+"""
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -811,13 +1028,13 @@ class Handler(BaseHTTPRequestHandler):
     def _authorized(self):
         tok = getattr(self.server, "token", "")
         if not tok:
-            return True
-        if hmac.compare_digest(self.headers.get("X-Token", ""), tok):
+            return bool(getattr(self.server, "insecure_no_auth", False))
+        if hmac.compare_digest(self.headers.get("X-Token", "").encode("utf-8"), tok.encode("utf-8")):
             return True
         q = self.path.split("?", 1)[1] if "?" in self.path else ""
         for kv in q.split("&"):
             k, _, v = kv.partition("=")
-            if k == "token" and hmac.compare_digest(v, tok):
+            if k == "token" and hmac.compare_digest(v.encode("utf-8"), tok.encode("utf-8")):
                 return True
         return False
 
@@ -833,8 +1050,24 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/api/v1/history", "/history"):
             if not self._authorized():
                 return self._send(401, '{"error":"unauthorized"}')
+            # 按 ?n= 截断（审计 M32）：开发板恒定请求 ?n=600（components/fnos_monitor/
+            # fnos_data.c 的历史回填），而这里以前把整条缓冲全发出去。缓冲超过 ~930 行
+            # 时响应体就超过开发板 HIST_BUF_SIZE(32 KB) → 被截断 → cJSON 解析失败 →
+            # 回填永远不成功（曲线一直空白，每秒重试）。口径与 FPK 伴侣一致：
+            # nas_companion_server.py 里是 rows = rows[-want:]。
+            want = 0
+            q = self.path.split("?", 1)[1] if "?" in self.path else ""
+            for kv in q.split("&"):
+                k, _, v = kv.partition("=")
+                if k == "n":
+                    try:
+                        want = max(0, int(v))
+                    except ValueError:
+                        want = 0
             with col.lock:
                 hist = list(col.history)
+            if want and want < len(hist):
+                hist = hist[-want:]
             return self._send(200, json.dumps({"v": 1, "cols": ["ts", "cpu", "mem", "rx_kbs", "tx_kbs"],
                                                "rows": hist}, separators=(",", ":")))
         if path in ("/api/v1/health", "/health"):
@@ -854,6 +1087,90 @@ class Server(socketserver.ThreadingMixIn, HTTPServer):
     allow_reuse_address = True
     request_queue_size = 64
 
+    # Reserve the whole connection before creating its worker.
+    connection_limit = 32
+    connection_timeout_s = 30.0
+    drain_timeout_s = 5.0
+
+    def __init__(self, *args, **kwargs):
+        self._connection_slots = threading.BoundedSemaphore(self.connection_limit)
+        self._requests_done = threading.Condition()
+        self._requests = set()
+        self._closing = False
+        self._connection_rejected = 0
+        super().__init__(*args, **kwargs)
+
+    def process_request(self, request, client_address):
+        with self._requests_done:
+            if self._closing or not self._connection_slots.acquire(blocking=False):
+                self._connection_rejected += 1
+                self.shutdown_request(request)
+                return
+            self._requests.add(request)
+            try:
+                super().process_request(request, client_address)
+            except Exception:
+                # Interrupts can arrive after the worker starts. Leave its
+                # registration for the worker/drain instead of releasing twice.
+                self._requests.remove(request)
+                self._connection_slots.release()
+                self._requests_done.notify_all()
+                self.shutdown_request(request)
+                raise
+
+    def process_request_thread(self, request, client_address):
+        timer = None
+        def expire():
+            try:
+                request.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+        try:
+            # Absolute connection budget: trickling bytes cannot reset it.
+            timer = threading.Timer(self.connection_timeout_s, expire)
+            timer.daemon = True
+            timer.start()
+            super().process_request_thread(request, client_address)
+        except Exception:
+            self.handle_error(request, client_address)
+        finally:
+            try:
+                if timer is not None:
+                    timer.cancel()
+                    if timer.ident is not None:
+                        timer.join()
+            finally:
+                try:
+                    self.shutdown_request(request)
+                finally:
+                    with self._requests_done:
+                        self._requests.discard(request)
+                        self._connection_slots.release()
+                        self._requests_done.notify_all()
+
+    def server_close(self):
+        with self._requests_done:
+            self._closing = True
+            for request in self._requests:
+                try:
+                    request.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+        super().server_close()
+        deadline = min(time.monotonic() + self.drain_timeout_s,
+                       getattr(self, "shutdown_deadline", float("inf")))
+        with self._requests_done:
+            while self._requests:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("legacy request workers did not stop")
+                self._requests_done.wait(remaining)
+
+    def handle_error(self, request, client_address):
+        # Expected disconnects have no traceback or request/token logging.
+        if not isinstance(sys.exc_info()[1], OSError):
+            super().handle_error(request, client_address)
+
     def server_bind(self):
         # HTTPServer.server_bind() 会做一次 socket.getfqdn() 反向 DNS，解析不可达时
         # 能阻塞几十秒 —— 那段时间监听 socket 还没建立，而 systemd 已认为服务 active。
@@ -869,16 +1186,27 @@ def main():
     ap.add_argument("--port", type=int, default=int(os.environ.get("FNAS_PORT", "8799")))
     ap.add_argument("--interval", type=float, default=float(os.environ.get("FNAS_INTERVAL", "1.0")))
     ap.add_argument("--hist", type=int, default=int(os.environ.get("FNAS_HIST", "300")))
+    ap.add_argument("--insecure-no-auth", action="store_true",
+                    help="明确关闭鉴权（仅本机排障用）。默认没有 FNAS_TOKEN 就拒绝启动")
     ap.add_argument("--selftest", action="store_true",
                     help="采集一次并打印 JSON（出错时逐段定位），不启动服务")
     ap.add_argument("--temps", action="store_true",
                     help="只跑温度枚举并按「设备名 / 通道 / 数值」打表：只读、不启服务、"
                          "不写任何文件。用来在正式部署前先看清这一版会怎么命名")
     args = ap.parse_args()
+    if not math.isfinite(args.interval) or args.interval <= 0:
+        ap.error("--interval 必须为有限正数")
+    if not 0 <= args.port <= 65535:
+        ap.error("--port 必须在 0~65535 内")
 
     netif = os.environ.get("FNAS_NETIF") or None
     vols = [v.strip() for v in (os.environ.get("FNAS_VOLUMES") or "").split(",") if v.strip()]
-    col = Collector(interval=args.interval, netif=netif, volumes=vols, hist_len=args.hist)
+    # 历史缓冲给个上界（审计 M32）：以前 --hist 想给多大给多大，缓冲会一直涨。
+    # 上下限与 FPK 伴侣同一组（nas_companion_server.py 的 hist_len 30~3600）。
+    hist_len = max(30, min(3600, args.hist))
+    if hist_len != args.hist:
+        sys.stderr.write("警告：--hist %d 超出 30~3600，按 %d 处理\n" % (args.hist, hist_len))
+    col = Collector(interval=args.interval, netif=netif, volumes=vols, hist_len=hist_len)
 
     if args.temps:
         rows = col._temps()
@@ -910,24 +1238,72 @@ def main():
                     print("  %-8s FAIL %s: %s" % (name, type(exc).__name__, exc), file=sys.stderr)
             return 1
 
+    # 默认 fail closed（审计 M31）：8799 上是这台 NAS 的只读状态——卷名/容量、容器与
+    # 镜像、网卡与 IP、温度、主机名、300 条历史。以前 FNAS_TOKEN 为空就等于**关掉鉴权**
+    # （_authorized() 直接 return True），而随包发布的 unit 是 --bind 0.0.0.0 且没有
+    # Environment=，装完就是"局域网任意主机可读"。现在没有令牌就拒绝启动。
+    token = os.environ.get("FNAS_TOKEN", "").strip()
+    if not token and not args.insecure_no_auth:
+        sys.stderr.write(
+            "拒绝启动：没有可用的访问令牌（FNAS_TOKEN 为空）。\n"
+            "  8799 暴露的是整台 NAS 的只读状态，默认必须带令牌才对外服务。\n"
+            "  正常安装：nas/install.sh → nas/install-remote.sh 会在 NAS 上生成\n"
+            "            /etc/fnos-agent.env（0600，root:root，含 FNAS_TOKEN），\n"
+            "            随包 unit 用 EnvironmentFile=-/etc/fnos-agent.env 读它，\n"
+            "            由 systemd 启动即可；令牌不会打印，要看用 sudo grep 读文件。\n"
+            "  手工启动：FNAS_TOKEN=\"$(python3 -c 'import secrets;print(secrets.token_hex(24))')\" \\\n"
+            "            python3 fnos-agent.py --bind 127.0.0.1\n"
+            "  确实只在可信网络里排障、且接受任何人可读 8799：加 --insecure-no-auth。\n")
+        return 2
+    if not token:
+        sys.stderr.write("警告：--insecure-no-auth 生效，8799 上的状态对任何能连上的人可读。\n")
+
     # 先绑定端口再等第一次采样：systemd 报 active 的时刻端口就应该能连上
     # （否则重启后的头两秒是"服务 active 但连接被拒"）。
-    srv = Server((args.bind, args.port), Handler)
-    srv.collector = col
-    srv.token = os.environ.get("FNAS_TOKEN", "")
-
-    col.start()
-    time.sleep(min(2.0, args.interval * 2))                        # 等第一次采样完成
-    sys.stderr.write("fnos-agent listening on %s:%d (interval=%.2fs, pid=%d)\n"
-                     % (args.bind, args.port, args.interval, os.getpid()))
-    sys.stderr.flush()
+    srv = None
+    result = 0
+    previous_term = None
+    signal_installed = False
+    def terminate(signum, frame):
+        raise KeyboardInterrupt
     try:
+        if threading.current_thread() is threading.main_thread():
+            previous_term = signal.signal(signal.SIGTERM, terminate)
+            signal_installed = True
+        srv = Server((args.bind, args.port), Handler)
+        srv.collector = col
+        srv.token = token
+        srv.insecure_no_auth = bool(args.insecure_no_auth)
+        col.start()
+        time.sleep(min(2.0, args.interval * 2))
+        sys.stderr.write("fnos-agent listening on %s:%d (interval=%.2fs, pid=%d)\n"
+                         % (args.bind, args.port, args.interval, os.getpid()))
+        sys.stderr.flush()
         srv.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:
         pass
+    except Exception as exc:
+        sys.stderr.write("fnos-agent startup/runtime failed: %s\n" % type(exc).__name__)
+        result = 1
     finally:
-        col.stop()
-        srv.server_close()
+        shutdown_deadline = time.monotonic() + 8.0
+        try:
+            if srv is not None:
+                srv.shutdown_deadline = shutdown_deadline
+                srv.server_close()
+        except Exception as exc:
+            sys.stderr.write("fnos-agent listener close failed: %s\n" % type(exc).__name__)
+            result = 1
+        try:
+            if not col.stop(timeout=max(0.0, shutdown_deadline - time.monotonic())):
+                sys.stderr.write("fnos-agent sampler did not stop within deadline\n")
+                result = 1
+        except Exception as exc:
+            sys.stderr.write("fnos-agent sampler stop failed: %s\n" % type(exc).__name__)
+            result = 1
+        if signal_installed:
+            signal.signal(signal.SIGTERM, previous_term)
+    return result
 
 
 if __name__ == "__main__":

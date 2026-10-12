@@ -38,6 +38,7 @@ ARTIFACTS = [
         "roots": ["nas/fpk/nasscreencompanion"],
         # 包靠 fnpack 打，任何随包文件变了都得重打
         "extra": [],
+        "all_files": True,
         "how": "(cd nas/fpk && fnpack build --directory nasscreencompanion)",
     },
     {
@@ -63,35 +64,44 @@ ARTIFACTS = [
 ]
 
 
-def newest_sources(roots, extra):
+def newest_sources(roots, extra, all_files=False):
     newest = 0.0
     files = []
     for rel in roots:
         base = os.path.join(REPO, rel)
-        for dirpath, dirnames, filenames in os.walk(base):
+        if not os.path.isdir(base):
+            raise FileNotFoundError(f"源码目录不存在：{rel}")
+        def walk_error(error):
+            raise error
+        for dirpath, dirnames, filenames in os.walk(base, onerror=walk_error):
             # 跳过构建/缓存目录，它们不是源码
-            dirnames[:] = [d for d in dirnames
-                           if d not in ("build", "out", "__pycache__", ".git")]
+            if not all_files:
+                dirnames[:] = [d for d in dirnames
+                               if d not in ("build", "out", "__pycache__", ".git")
+                               and not d.startswith("out-")]
             for fn in filenames:
-                if not fn.endswith(SRC_EXT) and not fn.endswith(".sh") \
-                        and not fn.endswith(".js") and not fn.endswith(".html") \
-                        and not fn.endswith(".py") and fn not in ("manifest", "config",
-                                                                  "privilege", "resource"):
+                # 白名单必须覆盖**构建输入**（审计 M49）：早先只认 .c/.h/.sh/.js/.html/.py
+                # 和几个无扩展名的包件，于是 main/CMakeLists.txt、main/idf_component.yml、
+                # components/*/Kconfig、idf_component.yml、partitions.csv、*.ld 改了都不算"动过"，
+                # 新鲜度门照样绿。
+                if not all_files and not fn.endswith(SRC_EXT) and not fn.endswith(
+                        (".sh", ".js", ".html", ".py", ".yml", ".yaml",
+                         ".csv", ".ld", ".json", ".cmake")) \
+                        and fn not in ("manifest", "config", "privilege", "resource",
+                                       "Kconfig", "Kconfig.projbuild", "CMakeLists.txt", "sdkconfig.defaults"):
                     continue
                 p = os.path.join(dirpath, fn)
-                try:
-                    m = os.path.getmtime(p)
-                except OSError:
-                    continue
+                m = os.path.getmtime(p)
                 files.append((m, os.path.relpath(p, REPO)))
     for rel in extra:
         p = os.path.join(REPO, rel)
         if os.path.exists(p):
             files.append((os.path.getmtime(p), rel))
         else:
-            print(f"  ! freshness_check：配置里写的 {rel} 不存在（配置过期了）")
-    if files:
-        newest = max(m for m, _ in files)
+            raise FileNotFoundError(f"必需构建输入不存在：{rel}")
+    if not files:
+        raise ValueError("没有找到构建输入，新鲜度未判定")
+    newest = max(m for m, _ in files)
     return newest, files
 
 
@@ -105,8 +115,15 @@ def main():
             rows.append((spec["name"], spec["artifact"], None, [], spec["how"]))
             stale += 1
             continue
-        amt = os.path.getmtime(apath)
-        smt, files = newest_sources(spec["roots"], spec["extra"])
+        try:
+            if not os.path.isfile(apath):
+                raise ValueError("产物不是普通文件")
+            amt = os.path.getmtime(apath)
+            smt, files = newest_sources(spec["roots"], spec["extra"], spec.get("all_files", False))
+        except (OSError, ValueError) as error:
+            print(f"  ✗ {spec['name']}：新鲜度未判定：{error}")
+            stale += 1
+            continue
         newer = sorted([(m, f) for m, f in files if m > amt], reverse=True)
         rows.append((spec["name"], spec["artifact"], amt, newer, spec["how"]))
         if newer:

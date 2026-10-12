@@ -1,7 +1,7 @@
 /*******************************************************************************
  * Size: 96 px
  * Bpp: 4
- * Opts: --font ChakraPetch-Bold.ttf --size 96 --bpp 4 --format lvgl --no-compress -r 0x20-0x3A --lv-include lvgl.h -o /Users/llll/code/esp/p4-7b-fnos-monitor/components/fnos_monitor/fonts/ui_font_display_96.c
+ * Opts: --font ChakraPetch-Bold.ttf --size 96 --bpp 4 --format lvgl --no-compress -r 0x20-0x3A --lv-include lvgl.h -o ../../components/fnos_monitor/fonts/ui_font_display_96.c
  ******************************************************************************/
 
 #ifdef LV_LVGL_H_INCLUDE_SIMPLE
@@ -4352,4 +4352,3 @@ lv_font_t ui_font_display_96 = {
 
 
 #endif /*#if UI_FONT_DISPLAY_96*/
-

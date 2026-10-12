@@ -52,6 +52,10 @@ static bool        s_wifi_cfg;                 /* 有凭据 */
 static bool        s_wifi_on;                  /* 已连接（拿到 IP） */
 static char        s_wifi_ssid_stub[33] = "";
 static char        s_wifi_reason[64]    = "";  /* 非空 = 连不上的原因 */
+/* 本轮配网提交的状态：与真机 fnos_net.c 同一套语义（审计 M04 + M05）。
+   0=IDLE 1=PENDING 2=FAILED（用 int 存，避免在这里重复 typedef）。 */
+static int         s_wifi_submit;
+static char        s_wifi_submit_reason[128] = "";
 static fnos_ap_t   s_wifi_aps[FNOS_AP_MAX];
 static int         s_wifi_ap_n;
 
@@ -59,7 +63,7 @@ static int         s_wifi_ap_n;
 static void wifi_stub_reset(void)
 {
     static const struct { const char *ssid; int8_t rssi; bool secure; } def[] = {
-        { "llll",           -46, true  },
+        { "Demo",           -46, true  },
         { "ChinaNet-8x2K",  -61, true  },
         { "HONOR-203",      -72, true  },
         { "Guest-Open",     -80, false },
@@ -77,6 +81,16 @@ static void wifi_stub(bool cfg, bool online, const char *ssid, const char *reaso
     s_wifi_on   = online;
     snprintf(s_wifi_ssid_stub, sizeof s_wifi_ssid_stub, "%s", ssid ? ssid : "");
     snprintf(s_wifi_reason, sizeof s_wifi_reason, "%s", reason ? reason : "");
+    /* 真机的对应关系：拿到 IP → 本轮提交成功（回到 IDLE，成功由 ONLINE 表达）；
+       收到带原因的断开 → 本轮提交失败。这样"第一次配网失败"与"在线改密码"
+       两条路径在预览里也能被渲染出来（审计 M04 + M05）。 */
+    if (reason && reason[0]) {
+        s_wifi_submit = FNOS_WIFI_SUBMIT_FAILED;
+        snprintf(s_wifi_submit_reason, sizeof s_wifi_submit_reason, "%s", reason);
+    } else {
+        s_wifi_submit = FNOS_WIFI_SUBMIT_IDLE;
+        s_wifi_submit_reason[0] = 0;
+    }
     wifi_stub_reset();
 }
 bool        fnos_net_configured(void) { return s_wifi_cfg; }
@@ -90,8 +104,15 @@ bool fnos_wifi_store_load(char *ssid, size_t ssid_cap, char *pass, size_t pass_c
 }
 bool        fnos_net_online(void)     { return s_wifi_on; }
 const char *fnos_net_ssid(void)       { return s_wifi_ssid_stub; }
+void        fnos_net_ssid_r(char *out, size_t cap)
+{
+    snprintf(out, cap, "%s", s_wifi_ssid_stub);
+}
 fnos_net_state_t fnos_net_state(void)
 {
+    /* 与真机 fnos_net.c 同序：本轮提交的状态优先（审计 M04 + M05） */
+    if (s_wifi_submit == FNOS_WIFI_SUBMIT_PENDING) return FNOS_NET_CONNECTING;
+    if (s_wifi_submit == FNOS_WIFI_SUBMIT_FAILED)  return FNOS_NET_FAILED;
     if (!s_wifi_cfg)          return FNOS_NET_UNCONFIGURED;
     if (s_wifi_on)            return FNOS_NET_ONLINE;
     if (s_wifi_reason[0])     return FNOS_NET_FAILED;
@@ -100,22 +121,53 @@ fnos_net_state_t fnos_net_state(void)
 const char *fnos_net_state_str(void)
 {
     static char b[160];
-    if (!s_wifi_cfg)          snprintf(b, sizeof b, "未配置 Wi-Fi");
-    else if (s_wifi_on)       snprintf(b, sizeof b, "已连接 %s（192.0.2.42）", s_wifi_ssid_stub);
-    else if (s_wifi_reason[0])snprintf(b, sizeof b, "连不上 %s：%s（第 2 次重试）",
-                                       s_wifi_ssid_stub, s_wifi_reason);
-    else                      snprintf(b, sizeof b, "正在连接 %s…", s_wifi_ssid_stub);
+    fnos_net_state_str_r(b, sizeof b);
     return b;
 }
-/* 真机是"存 NVS + 立刻重连"：这里等价地进入"正在连接" */
+void fnos_net_state_str_r(char *out, size_t cap)
+{
+    if (!out || !cap) return;
+    if (s_wifi_submit == FNOS_WIFI_SUBMIT_PENDING)
+        snprintf(out, cap, "正在按新凭据连接 %s…（口令或加密方式不合适会在这里失败）",
+                 s_wifi_ssid_stub);
+    else if (s_wifi_submit == FNOS_WIFI_SUBMIT_FAILED)
+        snprintf(out, cap, "连不上 %s：%s（第 2 次重试）", s_wifi_ssid_stub,
+                 s_wifi_submit_reason[0] ? s_wifi_submit_reason : "这一轮没连上");
+    else if (!s_wifi_cfg)     snprintf(out, cap, "未配置 Wi-Fi");
+    else if (s_wifi_on)       snprintf(out, cap, "已连接 %s（192.0.2.42）", s_wifi_ssid_stub);
+    else if (s_wifi_reason[0])snprintf(out, cap, "连不上 %s：%s（第 2 次重试）",
+                                       s_wifi_ssid_stub, s_wifi_reason);
+    else                      snprintf(out, cap, "正在连接 %s…", s_wifi_ssid_stub);
+}
+fnos_wifi_submit_t fnos_net_submit_state(void)
+{
+    return (fnos_wifi_submit_t)s_wifi_submit;
+}
+void fnos_net_submit_reason_r(char *out, size_t cap)
+{
+    if (!out || !cap) return;
+    snprintf(out, cap, "%s", s_wifi_submit_reason);
+}
+void fnos_net_submit_clear(void)
+{
+    if (s_wifi_submit != FNOS_WIFI_SUBMIT_PENDING) {
+        s_wifi_submit = FNOS_WIFI_SUBMIT_IDLE;
+        s_wifi_submit_reason[0] = 0;
+    }
+}
+/* 真机是"入队 → 网络任务里落 NVS + 立刻重连"：这里等价地进入"正在连接"。
+   注意**不动 s_wifi_on**：真机上 esp_wifi_disconnect() 之后、断开事件到达之前，
+   online 仍然是 true —— 这正是"只看 online 会显示连接成功"的窗口（审计 M05），
+   替身必须保留这个窗口，否则那条 bug 在预览里永远复现不出来。 */
 void fnos_net_set_credentials(const char *ssid, const char *pass)
 {
     (void)pass;
     if (!ssid || !ssid[0]) return;
     s_wifi_cfg = true;
-    s_wifi_on  = false;
     s_wifi_reason[0] = 0;
     snprintf(s_wifi_ssid_stub, sizeof s_wifi_ssid_stub, "%s", ssid);
+    s_wifi_submit = FNOS_WIFI_SUBMIT_PENDING;   // 与真机一致：提交即 PENDING
+    s_wifi_submit_reason[0] = 0;
 }
 void fnos_net_scan_request(void) { wifi_stub_reset(); }
 bool fnos_net_scan_busy(void)    { return false; }
@@ -155,7 +207,12 @@ static void fill_live(fnos_status_t *s)
 {
     fnos_counts_t counts={ PREVIEW_VOLS, PREVIEW_RAID, PREVIEW_DISKS, PREVIEW_TEMPS,
                           PREVIEW_DOCKER, PREVIEW_ALERTS, 10, 0 };
-    assert(fnos_status_create(s,&counts));
+    /* 不能塞进 assert()（审计 M17）：NDEBUG 下 fnos_status_create 根本不会被调用，
+       于是整个 fixture 是空的，后面所有版面/文案审计都会"通过"一个空界面。 */
+    if (!fnos_status_create(s,&counts)) {
+        fprintf(stderr, "fill_live: fnos_status_create 失败（快照 arena 分配不出来）\n");
+        abort();
+    }
     s->ever_ok = true;
     s->online  = true;
     s->recv_ms = esp_timer_get_time() / 1000;
@@ -343,6 +400,11 @@ void fnos_pair_active(fnos_pair_cfg_t *out)
     snprintf(out->host, sizeof out->host, "%s", "<NAS_IP>");
     out->port = 8798;
 }
+uint32_t fnos_pair_active_gen(fnos_pair_cfg_t *out)
+{
+    fnos_pair_active(out);
+    return s_pair_gen;
+}
 void fnos_pair_view(fnos_pair_view_t *out)
 {
     memset(out, 0, sizeof *out);
@@ -498,6 +560,12 @@ int fnos_data_hist_read(int64_t since_seq, fnos_sample_t *out, int max, int64_t 
     if (n > 0 && next_seq) *next_seq = since_seq + n;
     return n;
 }
+int fnos_data_hist_read_ex(int64_t since_seq,fnos_sample_t *out,int max,int64_t *next_seq,bool *reset)
+{
+    if (reset) *reset=false;
+    return fnos_data_hist_read(since_seq,out,max,next_seq);
+}
+
 int64_t fnos_data_hist_seq(void) { return s_seq; }
 
 /* ── 取图 ─────────────────────────────────────────────────────────── */
@@ -801,7 +869,12 @@ static bool seen_has(const void *p)
 }
 static void seen_add(const void *p)
 {
-    if (s_seen_n < SEEN_MAX && !seen_has(p)) s_seen[s_seen_n++] = p;
+    if (seen_has(p)) return;
+    if (s_seen_n >= SEEN_MAX) {
+        fprintf(stderr, "seen-object audit capacity exhausted (%d); coverage is incomplete\n", SEEN_MAX);
+        abort();
+    }
+    s_seen[s_seen_n++] = p;
 }
 
 /* 屏幕文案里不该出现没被消费掉的格式说明符（"%d" / "%s" / "%u"…）：
@@ -984,6 +1057,7 @@ static void audit_text_overlap(lv_obj_t *parent)
 
 static int s_cardmap_at = -1;
 static int s_snap_n;
+static FILE *s_barmap;     /* PREVIEW_BARMAP：逐帧滚动条事实，见 snapshot() */
 static bool s_motion_frame; /* only raw in-flight frames permit intentional viewport clipping */
 static bool s_no_settle;   /* 想看动画中途的样子：跳过"把动画落到终值"（PREVIEW_ENTER_MID） */
 
@@ -1159,6 +1233,34 @@ static void probe_geom(lv_obj_t *o, int depth, int maxdepth)
         probe_geom(lv_obj_get_child(o, i), depth + 1, maxdepth);
 }
 
+/* Evidence output must be complete before a mode can report success. */
+static void evidence_flush(FILE *f, const char *what)
+{
+    int failed = ferror(f);
+    if (fflush(f) != 0) failed = 1;
+    if (failed) { fprintf(stderr, "FAIL: evidence write failed (%s)\n", what); exit(1); }
+}
+static void evidence_close(FILE *f, const char *what)
+{
+    int failed = ferror(f);
+    if (fclose(f) != 0) failed = 1;
+    if (failed) { fprintf(stderr, "FAIL: evidence close/write failed (%s)\n", what); exit(1); }
+}
+static int preview_finish(void)
+{
+    if (s_barmap) {
+        FILE *f = s_barmap;
+        s_barmap = NULL;
+        evidence_close(f, "frame barmap");
+    }
+    evidence_flush(stdout, "stdout");
+    if (s_audit_fail) {
+        fprintf(stderr, "FAIL: preview accumulated %d audit violations\n", s_audit_fail);
+        return 1;
+    }
+    return 0;
+}
+
 static void snapshot(const char *name)
 {
     if (getenv("PREVIEW_PAGE_CARDS")) {
@@ -1193,6 +1295,16 @@ static void snapshot(const char *name)
         if (sscanf(getenv("PREVIEW_WHO"), "%dx%d", &w, &h) == 2) dump_cards_named(lv_screen_active(), w, h);
     }
     if (++s_snap_n == s_cardmap_at) { fnos_ui_dump_card_map(); }
+    /* PREVIEW_BARMAP=<file>：每个快照都把**这一帧**的卡片几何 + 滚动条事实追加进去。
+       以前只有建树那一刻的一份几何（PREVIEW_CARDMAP 在 fnos_ui_create() 之后立刻返回），
+       而渲染的帧里有 dense/expanded 这类列表真的会溢出的状态：拿启动态的依据去审全部帧，
+       "有没有条、条在哪一列"就是从错的依据推出来的（审计 H14）。
+       逐帧记下来，审计的判定依据才和它审的那张 PNG 是同一时刻的。 */
+    if (s_barmap) {
+        fprintf(s_barmap, "[frame] %s\n", name);
+        fnos_ui_dump_card_map_fp(s_barmap);
+        evidence_flush(s_barmap, "frame barmap");
+    }
 
     {   /* PREVIEW_BANDS_AT=<快照名子串>：打印活动页的纵向预算 —— 页高、
            每个直接子对象的实际高 / min_height / flex_grow。
@@ -1262,7 +1374,7 @@ static void snapshot(const char *name)
         fputc((((v >>  5) & 0x3F) * 255) / 63, f);
         fputc((( v        & 0x1F) * 255) / 31, f);
     }
-    fclose(f);
+    evidence_close(f, path);
     printf("  %s\n", path);
 }
 
@@ -1364,6 +1476,7 @@ static void verify_container_order(void)
     fnos_ui_set_page(previous_page);
     fnos_ui_motion_settle();
     printf("checks: %d containers preserve collector reading order across reflows PASS\n", st.ndocker);
+    fnos_status_release(&st);      /* M17：本地句柄用完必须还（否则每跑一次漏一整份快照） */
 }
 
 static void verify_transitions(void)
@@ -1483,7 +1596,7 @@ static void verify_transitions(void)
     char ssid0[64], reason0[160];
     snprintf(ssid0, sizeof ssid0, "%s", s_wifi_ssid_stub);
     snprintf(reason0, sizeof reason0, "%s", s_wifi_reason);
-    wifi_stub(true, true, "llll", NULL);          /* 有凭据、已连接 */
+    wifi_stub(true, true, "Demo", NULL);          /* 有凭据、已连接 */
     fnos_ui_set_page(0);
     vtick_advance(500); lv_timer_handler();
     fnos_ui_set_page(3);
@@ -1491,7 +1604,7 @@ static void verify_transitions(void)
     assert(!visible_text(lv_screen_active(), "手动输入"));
     assert(visible_text(lv_screen_active(), "告警与事件"));   /* 正文还在，没被覆盖层顶掉 */
     /* 顶栏入口点开 → 卡出现（同槽位，正文让位）；标签此时是 SSID（已连接） */
-    lv_obj_t *wbtn = visible_text(lv_screen_active(), "llll");
+    lv_obj_t *wbtn = visible_text(lv_screen_active(), "Demo");
     assert(wbtn);
     lv_obj_send_event(lv_obj_get_parent(wbtn), LV_EVENT_CLICKED, NULL);
     vtick_advance(500); lv_timer_handler();
@@ -1759,6 +1872,7 @@ static void verify_overview_charts(void)
     s_state = previous;
     memcpy(s_wifi_ssid_stub, previous_ssid, sizeof previous_ssid);
     regression_tick();
+    fnos_status_release(&fixture);     /* M17：句柄用完必须还 */
 }
 
 static void click_object_center(lv_obj_t *obj)
@@ -1917,6 +2031,7 @@ static void verify_docker_module_states(void)
     s_state = previous;
     fnos_ui_set_page(previous_page);
     regression_tick();
+    fnos_status_release(&fixture);     /* M17：句柄用完必须还 */
 }
 
 static void verify_ui_regressions(void)
@@ -2004,6 +2119,7 @@ static void verify_ui_regressions(void)
     fnos_ui_set_page(old_page);
     regression_tick();
     puts("checks: current-system navigation exits diagnostics, highest severity footer, stale containers, temperature expand/collapse height recovery, stable refresh positions PASS");
+    fnos_status_release(&fixture);     /* M17：句柄用完必须还 */
 }
 
 
@@ -2103,6 +2219,7 @@ static void verify_temperature_protocol_limit(void)
     fnos_ui_set_page(old_page);
     regression_tick();
     puts("checks: all protocol temperature channels manually expand, last channel scrolls into view, explicit details persist, height recovers PASS");
+    fnos_status_release(&fixture);     /* M17：句柄用完必须还 */
 }
 
 static void collect_texts(lv_obj_t *o)
@@ -2282,20 +2399,24 @@ static void verify_pair_messages(void)
         audit_labels(lv_screen_active()); /* 缺字/超高都会在这里 abort */
         audit_format_residue(lv_screen_active(), "nightly-matrix");
         audit_bounds(lv_screen_active());
+        char want[192];
+        if (s_pair_state == FNOS_PAIR_FAILED) {
+            snprintf(want, sizeof want, "失败原因：%s", PAIR_MSGS[i].msg);
+        } else if (s_pair_state == FNOS_PAIR_CONFIRM) {
+            snprintf(want, sizeof want, "%s", "核对证书指纹");
+        } else if (s_pair_state == FNOS_PAIR_UNPROVISIONED) {
+            snprintf(want, sizeof want, "%s", "与 NAS 配对");
+        } else {
+            snprintf(want, sizeof want, "%s", PAIR_MSGS[i].msg);
+        }
+        if (!visible_text(lv_screen_active(), want)) {
+            fprintf(stderr, "pair state %d row %d expected visible text: %s\n", s_pair_state, i, want);
+            abort();
+        }
+        if (s_pair_state == FNOS_PAIR_FETCHING) snapshot("07-pair-fetching");
         shown++;
     }
-    /* 确认最后一条**真的画到了屏幕上**：只跑 audit 的话，万一面板没开，
-       audit 审的是别的页面，这一整段就成了"什么也没测"的空断言。 */
-    /* 失败原因必须真的画在屏幕上。FAIL 阶段左栏被三步指引占着，原因落在 meta 那行，
-       所以这里找的是完整的「原因：…」——**界面写着"核对下面的失败原因"，那就得有原因**。 */
-    char want[192];
-    snprintf(want, sizeof want, "失败原因：%s", PAIR_MSGS[PAIR_MSG_COUNT - 1].msg);
-    if (!visible_text(lv_screen_active(), want)) {
-        fprintf(stderr, "失败原因没有画到屏幕上（面板没打开，或者 FAIL 阶段没显示 v.msg）：%s\n",
-                want);
-        abort();
-    }
-    printf("checks: %d 条设备端配对消息全部渲染并审计过 PASS\n", shown);
+    printf("checks: %d pairing state/message cases audited with visible branch assertions PASS\n", shown);
     /* 留一张 FAILED 的样张：这条分支以前从来没有出现在任何图里 */
     s_pair_state = FNOS_PAIR_FAILED;
     snprintf(s_pair_msg, sizeof s_pair_msg, "%s", "配对成功但写入 NVS 失败");
@@ -2324,7 +2445,14 @@ static void assert_ellipsized_source(const char *prefix, const char *expected)
     lv_label_long_mode_t mode = lv_label_get_long_mode(label);
     lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_CLIP);
     lv_obj_update_layout(lv_screen_active());
-    assert(strcmp(lv_label_get_text(label), expected) == 0);
+    /* 不留 assert：这条断言真正跑起来时要能说清"到底显示成了什么"。
+       只写 assert 的话失败信息只有 expected，实际文本要重新加 printf 才能看到。 */
+    const char *actual = lv_label_get_text(label);
+    if (strcmp(actual, expected) != 0) {
+        fprintf(stderr, "verify: 标签原文对不上 —— 实际=\"%s\" 期望=\"%s\"（前缀 \"%s\"）\n",
+                actual, expected, prefix);
+        abort();
+    }
     lv_label_set_long_mode(label, mode);
 }
 
@@ -2395,12 +2523,33 @@ static void verify_wifi(void)
     verify_wifi_footer("重新扫描");
 
     /* 选一个加密网络 → 输口令页：整块键盘第一次露面（41 键 + 两行输入 + 显示/隐藏） */
-    wifi_click("llll");
+    wifi_click("Demo");
     vtick_advance(500); lv_timer_handler();
     assert(visible_text(lv_screen_active(), "空格"));
     snapshot("10-wifi-pass");
     verify_wifi_footer("返回");
     verify_wifi_keyboard();
+
+    /* 显示口令后关闭：连隐藏标签也应复位，重新选择网络不能复用旧口令。 */
+    for (const char *k = "abcdefghi"; *k; k++) { char t[2] = { *k, 0 }; wifi_click(t); }
+    wifi_click("显示");
+    lv_obj_t *password_label = visible_text(lv_screen_active(), "abcdefghi");
+    assert(password_label);
+    uk_test_alloc_fail_after(1);  /* SSID 格式化成功，随后口令掩码分配失败。 */
+    wifi_click("隐藏");
+    assert(uk_test_alloc_was_triggered());
+    assert(!strcmp(lv_label_get_text(password_label), "口令"));
+    assert(visible_text(lv_screen_active(), "显示"));
+    uk_test_alloc_fail_after(-1);
+    uk_alloc_reset();
+    wifi_click("显示");
+    assert(!strcmp(lv_label_get_text(password_label), "abcdefghi"));
+    wifi_click("关闭");
+    assert(!strcmp(lv_label_get_text(password_label), "口令"));
+    wifi_click("Wi-Fi 未配置");
+    wifi_click("Demo");
+    assert(visible_text(lv_screen_active(), "口令"));
+    assert(visible_text(lv_screen_active(), "显示"));
 
     /* 口令不足 8 位：必须拒绝并说明原因 —— 真机上这条最容易白折腾 */
     wifi_click("a"); wifi_click("b"); wifi_click("c");
@@ -2425,17 +2574,20 @@ static void verify_wifi(void)
     snapshot("10-wifi-linking");
     verify_wifi_footer("关闭");
 
-    s_wifi_on = true;                              /* 替身：连上了 */
+    /* 替身：拿到 IP 了。真机上 GOT_IP 事件同时会把"本轮提交"判成成功（清回 IDLE），
+       所以这里必须走 wifi_stub（它带这个结论），不能只手改 s_wifi_on —— 否则
+       提交状态还停在 PENDING，屏幕按 M04 的规则会继续显示"正在连接…"。 */
+    wifi_stub(true, true, "Demo", "");
     vtick_advance(500); lv_timer_handler();
     assert(visible_text(lv_screen_active(), "连接成功"));
     assert(visible_text(lv_screen_active(),
-           "已连接 llll（192.0.2.42） · 信号 -54 dBm\n"
+           "已连接 Demo（192.0.2.42） · 信号 -54 dBm\n"
            "板子已经记住这个网络，下次开机自动连。"));
     snapshot("10-wifi-linked");
     verify_wifi_footer("关闭");
 
     /* 连不上：标题与原因都要说人话（不能一直写"正在连接…"） */
-    wifi_stub(true, false, "llll", "密码不对（认证失败）");
+    wifi_stub(true, false, "Demo", "密码不对（认证失败）");
     vtick_advance(500); lv_timer_handler();
     assert(visible_text(lv_screen_active(), "没连上"));
     assert(!visible_text(lv_screen_active(), "连接成功"));
@@ -2444,24 +2596,72 @@ static void verify_wifi(void)
     assert(visible_text(lv_screen_active(), "Wi-Fi 未连接"));
     snapshot("10-wifi-failed");
     verify_wifi_footer("关闭");
+    wifi_stub(true, false, "Demo", "凭据保存失败（NVS 写入错误）");
+    vtick_advance(500); lv_timer_handler();
+    assert(visible_text_containing(lv_screen_active(), "凭据保存失败（NVS 写入错误）"));
+    assert(visible_text_containing(lv_screen_active(), "请按原因排查后重试"));
+    assert(!visible_text_containing(lv_screen_active(), "2.4G"));
+    snapshot("10-wifi-store-failed");
+    verify_wifi_footer("关闭");
     wifi_click("修改密码");
     assert(visible_text(lv_screen_active(), "空格"));
-    assert(visible_text(lv_screen_active(), "llll"));
+    assert(visible_text(lv_screen_active(), "Demo"));
     snapshot("10-wifi-retry");
     verify_wifi_footer("返回");
+    /* ── M04：第一次配网就失败 ────────────────────────────────────────────
+       以前凭据还是空的 → 状态被判成"未配置" → 屏幕永远停在"正在连接…"，
+       用户根本不知道这一轮已经失败了。现在这一轮提交有自己的结论。 */
     wifi_click("连接");
-    wifi_stub(true, true, "llll", "");
+    vtick_advance(500); lv_timer_handler();
+    assert(visible_text(lv_screen_active(), "正在连接…"));      /* 提交中：绝不能是成功 */
+    assert(!visible_text(lv_screen_active(), "连接成功"));
+    snapshot("10-wifi-submitting");
+    wifi_stub(false, false, "Demo", "密码不对（认证失败）");    /* 这一轮提交的结论：失败 */
+    vtick_advance(500); lv_timer_handler();
+    assert(visible_text(lv_screen_active(), "没连上"));
+    assert(!visible_text(lv_screen_active(), "正在连接…"));
+    assert(visible_text(lv_screen_active(), "修改密码"));       /* 给用户一条出路 */
+    assert(visible_text(lv_screen_active(), "Wi-Fi 未连接"));   /* 顶栏也是结论，不是"未配置" */
+    assert(!visible_text(lv_screen_active(), "Wi-Fi 未配置"));
+    assert(visible_text_containing(lv_screen_active(), "密码不对（认证失败）"));  /* 原因来自这一轮提交 */
+    snapshot("10-wifi-first-fail");
+    verify_wifi_footer("关闭");
+    wifi_click("修改密码");
+    assert(visible_text(lv_screen_active(), "Demo"));
+    wifi_click("连接");
+    wifi_stub(true, true, "Demo", "");
     vtick_advance(500); lv_timer_handler();
     assert(visible_text(lv_screen_active(), "完成"));
     wifi_click("完成");
     assert(!visible_text(lv_screen_active(), "接入 Wi-Fi"));
 
+    /* ── M05：已经在线时改密码 ────────────────────────────────────────────
+       旧逻辑看 s_online 还是 true → 屏幕上写"连接成功"，而这一刻其实正在按新口令重连。
+       让板子先在 Demo-5G 上在线（顶栏文字与列表里的行不同名，点谁不含糊），
+       用户再去连另一个网络 Demo。 */
+    wifi_stub(true, true, "Demo-5G", "");
+    vtick_advance(500); lv_timer_handler();
+    wifi_click("Demo-5G");                                   /* 顶栏按钮 → 配网卡（扫描页） */
+    vtick_advance(500); lv_timer_handler();
+    wifi_click("Demo");                                      /* 选加密网络 → 输口令页 */
+    for (const char *k = "abcdefgh"; *k; k++) { char t[2] = { *k, 0 }; wifi_click(t); }
+    wifi_click("连接");                                      /* 提交：此刻 online 仍是 true */
+    vtick_advance(500); lv_timer_handler();
+    assert(visible_text(lv_screen_active(), "正在连接…"));
+    assert(!visible_text(lv_screen_active(), "连接成功"));
+    snapshot("10-wifi-change-while-online");
+    verify_wifi_footer("关闭");
+    wifi_stub(true, true, "Demo", "");                        /* 新凭据连上了 */
+    vtick_advance(500); lv_timer_handler();
+    assert(visible_text(lv_screen_active(), "完成"));
+    wifi_click("完成");                                       /* 关掉卡（下面那段要接着验顶栏） */
+
     /* 关掉卡：顶栏要一直看得见状态；配好了就该是 SSID，不是"未配置" */
     vtick_advance(500); lv_timer_handler();
     assert(!visible_text(lv_screen_active(), "接入 Wi-Fi"));
-    wifi_stub(true, true, "llll", "");
+    wifi_stub(true, true, "Demo", "");
     vtick_advance(500); lv_timer_handler();
-    assert(visible_text(lv_screen_active(), "llll"));
+    assert(visible_text(lv_screen_active(), "Demo"));
     assert(!visible_text(lv_screen_active(), "Wi-Fi 未配置"));
     const char *long_ssid = "ABCDEFGHIJKLMNOPQRSTUVWXYZ123456";
     assert(strlen(long_ssid) == 32);
@@ -2477,7 +2677,7 @@ static void verify_wifi(void)
     vtick_advance(500); lv_timer_handler();
     assert_ellipsized_source("连接中", "连接中 · ABCDEFGHIJKLMNOPQRSTUVWXYZ12345");
     snapshot("10-wifi-long-ssid-linking-31");
-    wifi_stub(true, true, "llll", "");
+    wifi_stub(true, true, "Demo", "");
     vtick_advance(500); lv_timer_handler();
 }
 
@@ -2669,7 +2869,11 @@ static void motion_prepare(void)
     s_motion_clock_us = 1000000000LL;
     s_motion_clock_frozen = true;
     s_state = ST_HEALTHY;
-    assert(fnos_data_get(&s_motion_fixture));
+    /* 同样不能塞进 assert()（审计 M17）：录制基准拿不到就该停，而不是录一片空屏。 */
+    if (!fnos_data_get(&s_motion_fixture)) {
+        fprintf(stderr, "motion_prepare: fnos_data_get 失败，动效录制的基准快照拿不到\n");
+        abort();
+    }
     s_override_status = &s_motion_fixture;
     s_override_sample_enabled = true;
     s_override_sample = (fnos_sample_t){
@@ -2982,7 +3186,7 @@ static void motion_response_probe(motion_record_t *record, int base, int target,
         assert(!s_touch_down && lv_indev_get_state(record->pointer) == LV_INDEV_STATE_RELEASED);
         assert(s_seq == history_before && !memcmp(&sample_before, &s_override_sample, sizeof sample_before));
     }
-    fclose(csv);
+    evidence_close(csv, "response.csv");
     fnos_ui_set_page(base);
     motion_wait(record, record->hold, "response-return", false);
     motion_frame(record, "response-return", true);
@@ -3221,7 +3425,7 @@ static void record_motion(lv_indev_t *pointer)
     puts("checks: motion native input, stable terminal pixels, rapid round-trip, frozen history PASS");
     printf("motion: %u frames, step=%ums input=%s -> %s\n",
            record.frame, record.step, record.swipe ? "swipe" : "api", path);
-    fclose(record.timeline);
+    evidence_close(record.timeline, "motion.csv");
     free(alternate_pixels);
     free(terminal);
     free(baseline);
@@ -3274,15 +3478,41 @@ static lv_obj_t *hardware_temperature_title(const fnos_status_t *fixture, int fi
     return title;
 }
 
+/* 硬件夹具的读取与解析**不能藏在 assert 里**（审计 M17）：Release 构建曾把
+   `assert(fread(...))` / `assert(fnos_status_parse(...))` 整条预处理掉，
+   于是"读文件"和"解析"这两件**有副作用的事**根本没发生，而 PASS 照打、退出码照 0，
+   后面按 `fixture.nvols` 之类遍历自然全是 0 次 —— 一条永远为真的断言。
+   现在：有副作用的动作用显式判断 + 响亮退出（rc 非零、写清哪个文件），
+   无副作用的判据继续用 assert（构建已无条件 -UNDEBUG，见 CMakeLists.txt）。 */
+static FILE *must_open_fixture(const char *path)
+{
+    FILE *f=fopen(path,"rb");
+    if (!f) { fprintf(stderr,"FAIL: 打不开硬件夹具 %s: %s\n",path,strerror(errno)); exit(1); }
+    return f;
+}
+static void must_parse_fixture(const char *json, fnos_status_t *out, const char *what)
+{
+    const char *reason=NULL;
+    if (!fnos_status_parse(json,out,&reason)) {
+        fprintf(stderr,"FAIL: 硬件夹具解析失败（%s）%s%s\n",what,reason?"：":"",reason?reason:"");
+        exit(1);
+    }
+}
+
 static void hardware_inventory(const char *path)
 {
-    FILE *file=fopen(path,"rb"); assert(file);
-    fseek(file,0,SEEK_END); long size=ftell(file); rewind(file); assert(size>0);
-    char *json=malloc((size_t)size+1); assert(json);
-    assert(fread(json,1,(size_t)size,file)==(size_t)size); fclose(file); json[size]=0;
+    FILE *file=must_open_fixture(path);
+    fseek(file,0,SEEK_END); long size=ftell(file); rewind(file);
+    if (size<=0) { fprintf(stderr,"FAIL: 硬件夹具是空的：%s\n",path); exit(1); }
+    char *json=malloc((size_t)size+1);
+    if (!json) { fprintf(stderr,"FAIL: 硬件夹具 %ld 字节，内存不足\n",size); exit(1); }
+    size_t got=fread(json,1,(size_t)size,file); fclose(file); json[size]=0;
+    if (got!=(size_t)size) {
+        fprintf(stderr,"FAIL: 硬件夹具只读到 %zu/%ld 字节（文件被截断？）：%s\n",got,size,path);
+        exit(1);
+    }
     static fnos_status_t fixture;
-    const char *reason=NULL;
-    assert(fnos_status_parse(json,&fixture,&reason)); free(json);
+    must_parse_fixture(json,&fixture,"主夹具"); free(json);
     fixture.ever_ok=fixture.online=true; fixture.last_status=200;
     fixture.recv_ms=esp_timer_get_time()/1000; fixture.ok_count=1;
     s_override_status=&fixture;
@@ -3291,7 +3521,7 @@ static void hardware_inventory(const char *path)
     if (failure) {
         if (getenv("PREVIEW_ALLOC_SEED_ONE")) {
             fnos_status_t seed={0};
-            assert(fnos_status_parse("{\"ready\":true,\"host\":\"seed\",\"vols\":[{\"mnt\":\"seed-volume\"}],\"raid\":[{\"dev\":\"seed-array\"}],\"disks\":[{\"dev\":\"seed-disk\"}],\"docker\":[{\"n\":\"seed-service\"}],\"alerts\":[{\"m\":\"seed-event\"}],\"temps\":[{\"dev\":\"seed-sensor\",\"dn\":\"seed-model\",\"ch\":\"seed-channel\",\"c\":40}],\"net\":{\"if\":\"seed-port\"}}",&seed,&reason));
+            must_parse_fixture("{\"ready\":true,\"host\":\"seed\",\"vols\":[{\"mnt\":\"seed-volume\"}],\"raid\":[{\"dev\":\"seed-array\"}],\"disks\":[{\"dev\":\"seed-disk\"}],\"docker\":[{\"n\":\"seed-service\"}],\"alerts\":[{\"m\":\"seed-event\"}],\"temps\":[{\"dev\":\"seed-sensor\",\"dn\":\"seed-model\",\"ch\":\"seed-channel\",\"c\":40}],\"net\":{\"if\":\"seed-port\"}}",&seed,"seed 夹具");
             seed.ever_ok=seed.online=true;
             s_override_status=&seed;
             regression_tick();
@@ -3335,6 +3565,8 @@ static void hardware_inventory(const char *path)
             first=end;
         }
         printf("checks: allocation failure %d fired=%d, retry and every inventory PASS\n",atoi(failure),fired);
+        s_override_status = NULL;
+        fnos_status_release(&fixture);
         return;
     }
     regression_tick();
@@ -3380,7 +3612,7 @@ static void hardware_inventory(const char *path)
     }
     /* Shrink back to an empty frame: no removed device may return as an old tile. */
     char *old=fixture.nvols ? strdup(fixture.vols[fixture.nvols-1].mnt) : NULL;
-    assert(fnos_status_parse("{\"ready\":true,\"host\":\"empty\"}",&fixture,&reason));
+    must_parse_fixture("{\"ready\":true,\"host\":\"empty\"}",&fixture,"空帧夹具");
     fixture.ever_ok=fixture.online=true;
     for (int page=0;page<FNOS_UI_PAGE_COUNT;page++) {
         fnos_ui_set_page(page); fnos_ui_motion_settle(); regression_tick();
@@ -3434,7 +3666,7 @@ static void record_numbers(void)
         uk_number_set_text(labels[i],"--",false);
     }
     number_frame(timeline,"number-unavailable",0,"unavailable");
-    fclose(timeline);
+    evidence_close(timeline, "numeric motion.csv");
     puts("checks: Apple curve, carry, retarget continuity, repeat, missing, allocation and deletion PASS");
 }
 
@@ -3472,14 +3704,55 @@ static void record_data_numbers(void)
         s_no_settle=false;
         snprintf(name,sizeof name,"data-p%d-after",page); number_frame(timeline,name,page,"after");
     }
-    fclose(timeline);
+    evidence_close(timeline, "numeric motion.csv");
     puts("checks: six-page numeric transition frames and geometry PASS");
+}
+
+/* Dedicated production-LVGL coordinate check, before building the FNOS tree. */
+static void verify_chart_mapping(void)
+{
+    lv_obj_t *chart = lv_chart_create(lv_screen_active());
+    assert(chart);
+    lv_obj_set_size(chart, 400, 400);
+    lv_obj_set_style_pad_all(chart, 0, 0);
+    lv_obj_set_style_border_width(chart, 0, 0);
+    lv_chart_set_type(chart, LV_CHART_TYPE_LINE);
+    lv_chart_set_point_count(chart, 3);
+    lv_chart_series_t *series = lv_chart_add_series(chart, lv_color_hex(0x00ff00), LV_CHART_AXIS_PRIMARY_Y);
+    assert(series);
+    lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, 0, 20000000);
+    lv_chart_set_value_by_id(chart, series, 0, 0);
+    lv_chart_set_value_by_id(chart, series, 1, 10000000);
+    lv_chart_set_value_by_id(chart, series, 2, 20000000);
+    lv_obj_update_layout(chart);
+    lv_point_t point;
+    lv_chart_get_point_pos_by_id(chart, series, 1, &point);
+    assert(point.y == lv_obj_get_content_height(chart) / 2);
+    lv_refr_now(lv_display_get_default());
+    lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, INT32_MIN, INT32_MAX);
+    lv_chart_set_value_by_id(chart, series, 0, INT32_MIN);
+    lv_chart_set_value_by_id(chart, series, 1, 0);
+    lv_chart_set_value_by_id(chart, series, 2, INT32_MAX - 1);
+    lv_chart_get_point_pos_by_id(chart, series, 1, &point);
+    int32_t h = lv_obj_get_content_height(chart);
+    assert(point.y >= h / 2 && point.y <= h / 2 + 1);
+    lv_refr_now(lv_display_get_default());
+    lv_obj_delete(chart);
+    puts("checks: production LVGL line chart large/full-int32 coordinates and draw PASS");
 }
 
 int main(int argc, char **argv)
 {
     if (argc > 1) s_outdir = argv[1];
-    mkdir(s_outdir, 0755);
+    if (mkdir(s_outdir, 0755) != 0 && errno != EEXIST) {
+        fprintf(stderr, "FAIL: cannot create preview output directory\n");
+        return 1;
+    }
+    struct stat out_stat;
+    if (stat(s_outdir, &out_stat) != 0 || !S_ISDIR(out_stat.st_mode)) {
+        fprintf(stderr, "FAIL: preview output is not a directory\n");
+        return 1;
+    }
     setvbuf(stdout, NULL, _IONBF, 0);   /* 重定向到文件时 stdout 是块缓冲的：不退出就看不到任何日志 */
     setvbuf(stderr, NULL, _IONBF, 0);
 
@@ -3489,10 +3762,18 @@ int main(int argc, char **argv)
     /* PREVIEW_SIZE=WxH：分辨率自适应取证（默认跟板子一致 1024×600） */
     const char *sz = getenv("PREVIEW_SIZE");
     if (sz) {
-        int w = 0, h = 0;
-        if (sscanf(sz, "%dx%d", &w, &h) == 2 && w > 0 && h > 0 &&
-            w <= SCR_MAX_W && h <= SCR_MAX_H) { s_scr_w = w; s_scr_h = h; }
-        else fprintf(stderr, "PREVIEW_SIZE 要写成 WxH（<=1280x800），忽略：%s\n", sz);
+        char *mid = NULL, *end = NULL;
+        errno = 0;
+        long w = strtol(sz, &mid, 10);
+        if (errno || mid == sz || *mid != 'x') {
+            fputs("FAIL: invalid PREVIEW_SIZE\n", stderr); return 2;
+        }
+        long h = strtol(mid + 1, &end, 10);
+        if (errno || end == mid + 1 || *end || w <= 0 || h <= 0 ||
+            w > SCR_MAX_W || h > SCR_MAX_H) {
+            fputs("FAIL: PREVIEW_SIZE outside buffer or malformed\n", stderr); return 2;
+        }
+        s_scr_w = (int)w; s_scr_h = (int)h;
     }
     lv_display_t *d = lv_display_create(s_scr_w, s_scr_h);
     static uint16_t buf[SCR_MAX_W * SCR_MAX_H];
@@ -3512,20 +3793,30 @@ int main(int argc, char **argv)
     fnos_ui_theme_use(getenv("KK_PALETTE"));
     fprintf(stderr, "palette: %s\n", fnos_ui_theme_name());
 
+    if (getenv("PREVIEW_CHART_MAP")) { verify_chart_mapping(); return preview_finish(); }
     motion_prepare();
     /* First NAS pairing on an already configured network, without relying on
        verify_transitions() to set up the Wi-Fi fixture first. */
     if (getenv("PREVIEW_PAIR_FIRST_ENTRY") || getenv("PREVIEW_HARDWARE_FIXTURE"))
         wifi_stub(true, true, "PREVIEW-LAN", NULL);
-    if (getenv("PREVIEW_NUMBERS")) { record_numbers(); return 0; }
+    /* PREVIEW_BARMAP=<file>：逐帧写（见 snapshot()）。渲染时开一次，审计就按帧取依据；
+       打不开就是硬失败 —— 静默少了逐帧表，审计会退回"启动态几何审全部帧"的老毛病。 */
+    {   const char *bp = getenv("PREVIEW_BARMAP");
+        if (bp && *bp) {
+            s_barmap = fopen(bp, "w");
+            if (!s_barmap) { fprintf(stderr, "FAIL: 打不开逐帧滚动条表 %s\n", bp); return 1; }
+        }
+    }
+
+    if (getenv("PREVIEW_NUMBERS")) { record_numbers(); return preview_finish(); }
     fnos_ui_create();
-    if (getenv("PREVIEW_DATA_MOTION")) { record_data_numbers(); return 0; }
+    if (getenv("PREVIEW_DATA_MOTION")) { record_data_numbers(); return preview_finish(); }
 
     /* 卡片几何的"唯一来源"：把已建好的卡片按真实 coords 吐出来，
        看门狗（scroll_gap.js）读它。手抄一张卡片表 → 抄错一次就报 15 处假不合格。 */
     if (getenv("PREVIEW_CARDMAP")) {
         fnos_ui_dump_card_map();
-        return 0;
+        return preview_finish();
     }
     /* PREVIEW_CARDMAP_AT=<n>：在第 n 次 snapshot 之前再吐一遍卡片几何，
        用来核对"建树那一刻"与"跑完状态之后"的 coords 是否一致 —— 曾经差过 76px，
@@ -3534,18 +3825,18 @@ int main(int argc, char **argv)
 
     if (getenv("PREVIEW_MOTION")) {
         record_motion(touch);
-        return 0;
+        return preview_finish();
     }
     if (getenv("PREVIEW_PAIR_FIRST_ENTRY")) {
         verify_pairing();
         verify_pair_messages();
         puts("checks: first pairing entry and all pairing stages PASS");
-        return 0;
+        return preview_finish();
     }
 
     if (getenv("PREVIEW_HARDWARE_FIXTURE")) {
         hardware_inventory(getenv("PREVIEW_HARDWARE_FIXTURE"));
-        return 0;
+        return preview_finish();
     }
 
     snapshot("00-startup");
@@ -3613,5 +3904,5 @@ int main(int argc, char **argv)
            s_seen_n, s_never_visible, NEVER_VISIBLE_BASELINE);
 
     printf("preview: %d page(s)/state → %s\n", FNOS_UI_PAGE_COUNT, s_outdir);
-    return 0;
+    return preview_finish();
 }

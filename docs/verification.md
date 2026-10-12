@@ -611,7 +611,8 @@ P3 系统（温度十行分级条 + 采集端点七行 + 告警）。刷新 `ui_
 - **契约**：`python3 nas/fpk/contract_check.py --emit` ⇒ `nas/fpk/board_fields.json` 51 字段，
   含 `['temps','dev'] ['temps','ch'] ['temps','n'] ['temps','c']`。
 - **构建**：`./idf.sh build` EXIT=0，`build/fnos_monitor.bin` **0x1a9ef0 B**（1.74 MB），app 分区余 82%。
-- **串口**（`tools/serial_capture.py --seconds 15`，捕获后自动复位回运行模式）：
+- **串口**（`tools/serial_capture.py --seconds 15`；收尾会做一次 DTR/RTS 复位尝试，失败时打印
+  `python3 -m esptool --port <port> --after hard-reset chip-id`——要确定性复位以那条命令为准）：
   `[0.82] fnos_ui: ui created (pages=5)` → `[0.82] main: boot complete` →
   `[3.68] fnos_net: got ip <BOARD_IP>` → `[4.08] fnos_data: history backfilled: 300 samples`；
   堆稳态 `internal=217KB largest=172KB dma=179KB psram=27240KB`；**无** watchdog / 断言 /
@@ -732,7 +733,7 @@ P3 系统（温度十行分级条 + 采集端点七行 + 告警）。刷新 `ui_
   `09-legacy-p4.png`（7 路一行制，数值紧挨名字）、`03-offline-p4.png`（数值灰化 +
   页头"保留旧数据"）。三项审计通过：几何越界 0、字形缺字 0、"从未露面构件"
   169 = 基线（与改造前一致）。
-- 真机：`android-preview-20261006-163754-445064.png`（`/Users/llll/Documents/ChatGPT/board-camera/`）
+- 真机：`android-preview-20261006-163754-445064.png`（`/Users/<USER>/Documents/ChatGPT/board-camera/`）
   —— 为拍这一页临时把开机页设成第 4 页（`fnos_ui_set_page(FNOS_TEMP_START_PAGE)`，
   拍完已改回 `fnos_ui_set_page(0)` 并重建烧录）。照片里三列分别是
   `CPU 36.0 / NIC 76.0(红) / NVME0 31.9`、`NVME1 34.9 / NVME2 43.9 / NVME3 39.9`、`iGPU 37.0`，
@@ -746,10 +747,10 @@ P3 系统（温度十行分级条 + 采集端点七行 + 告警）。刷新 `ui_
 
 **这一步是用户明确授权后由代理直接做的**（此前几轮一直卡在"需要 SSH 凭据"）。
 
-- 连接：`ssh llll@<NAS_IP>`（fnOS/Debian 12，内核 `6.18.18.c1107-trim`，主机名 `nas`）。
-  顺带把本机 `~/.ssh/id_ed25519.pub` 装进 `/home/llll/.ssh/authorized_keys`
-  （该用户家目录原先不存在 —— 登录时一直报 `Could not chdir to home directory /home/llll` ——
-  已创建并 chown 到 `llll:1001`）；**sudo 仍需密码**，不落盘、不进记忆。
+- 连接：`ssh <USER>@<NAS_IP>`（fnOS/Debian 12，内核 `6.18.18.c1107-trim`，主机名 `nas`）。
+  顺带把本机 `~/.ssh/id_ed25519.pub` 装进 `/home/<USER>/.ssh/authorized_keys`
+  （该用户家目录原先不存在 —— 登录时一直报 `Could not chdir to home directory /home/<USER>` ——
+  已创建并 chown 到 `<USER>:1001`）；**sudo 仍需密码**，不落盘、不进记忆。
 - 部署前先跑**只读**试算（`nas/preview-naming.sh` → 远端 `fnos-agent.py --temps`）：
   真机 **24 路**，命名如下（摘）：
 
@@ -774,7 +775,7 @@ P3 系统（温度十行分级条 + 采集端点七行 + 告警）。刷新 `ui_
   例 `{"n":"enp1s0 PHY","c":76.0,"dev":"enp1s0","ch":"PHY","dn":"Aquantia atlantic 10GbE"}` ——
   `n`/`c` 保留（老固件可用），新增三个字段。
 - **面板侧（固件未重烧）**：照片 `android-preview-20261006-164706-861674.png`
-  （`/Users/llll/Documents/ChatGPT/board-camera/`）显示「温度」页已是 24 路两行制：
+  （`/Users/<USER>/Documents/ChatGPT/board-camera/`）显示「温度」页已是 24 路两行制：
   第一行设备名（`Intel Core i7-8700`、`Aquantia atlantic 10GbE`、`ZHITAI TiPlus7100 1TB`、
   `PCIe-8 SSD 512GB`、`Intel UHD Graphics 630`），第二行通道名 + 数值，76.0°C 走危险色；
   页头 `24 路传感器 · 最热 Aquantia atlantic 10GbE · MAC 76.0°C` +
@@ -782,12 +783,14 @@ P3 系统（温度十行分级条 + 采集端点七行 + 告警）。刷新 `ui_
 
 ## 21. 配对 POST 卡死：请求体根本没发出去（2026-10-06）
 
+> 2026-10-11 更正：旧探针的固定诊断码可能命中真实配对码，不能称为只读。当前实现已删除 POST，仅 GET identity 与 HTTPS health；下面串口记录是历史取证，不能用于验收当前探针的 POST 行为。明文 identity 自带的证书也不能证明远端身份可信，仍须用户核对指纹。
+
 **症状**：板子明文取 `identity` ✓、证书指纹算得出 ✓，但 `POST /api/v1/pair` 6 秒超时
 （串口 `fnos_pair: http fetch_headers failed: errno=0 internal_heap=210288` +
 `HTTP_CLIENT: Connection timed out before data was ready!`），同时 NAS 应用日志出现
 `SSLEOFError: EOF occurred in violation of protocol` 与 403/500。
 
-**定位手法（关键）**：给配对流加了一条**只读自检** —— `fnos_pair_tls_probe()`
+**定位手法（当时实现）**：给配对流加了一条诊断探针 —— `fnos_pair_tls_probe()`
 （`components/fnos_monitor/fnos_pair.c`）+ 串口命令 `tls`（`fnos_wifi_cli.c`）：
 明文取 identity → 用那张证书 `GET /api/v1/health` → 再 `POST /api/v1/pair` 一个假码。
 第一次跑就分流了问题：**GET 一直 `ok=1 status=200`** ⇒ 证书 / 时钟 / TLS 版本 / 应用侧
@@ -810,7 +813,7 @@ TLS 服务 / 6 秒超时全部排除，问题只能在 POST 这一段。
 ```
 
 POST 拿到 403 且**服务端的错误文案能上屏** —— 说明请求体发出去了、响应也收全了
-（假码 `000000` 必然 403，这正是探针的预期结果）。
+（当时样本中的 `000000` 返回 403；它并不保证永远无效）。
 
 **顺带**：`tls` 命令临时把 `esp-tls` / `mbedtls` / `HTTP_CLIENT` 抬到 DEBUG，握手细节直接
 进串口；探针跑在独立的 PSRAM 栈任务里（mbedTLS 握手吃栈，串口命令任务的 4 KB 不够）。
@@ -906,7 +909,7 @@ p3 系统（三列；容器空态 / 硬件温度 / 暂无告警事件）。
 ### 23.3 实机缺陷：配网卡自己冒出来盖住系统页（本轮最有价值的一条）
 
 **现象**：p3 照片里"接入 Wi-Fi"卡自行弹出、正在扫描，而串口 `wifi show` 回显
-`凭据：有 / SSID：llll / 状态：已连接 llll（<BOARD_IP>）`。
+`凭据：有 / SSID：<SSID> / 状态：已连接 <SSID>（<BOARD_IP>）`。
 
 **第一次修（方向对但不够）**：开机规则的判据从 `fnos_net_configured()`（要等网络层读完 NVS 才置真，
 与 ~3.5 s 的截止时刻存在竞态）换成权威存储 `fnos_wifi_store_load()`。烧录后抓串口 26 s，

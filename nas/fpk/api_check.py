@@ -18,6 +18,7 @@
 退出码非 0 表示有对不上的地方。
 """
 
+import ast
 import io
 import os
 import re
@@ -27,68 +28,121 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_PKG = os.path.join(HERE, "nasscreencompanion")
 
 
+def object_keys(body):
+    # Deliberately bounded grammar: a flat literal with explicit identifier keys.
+    # A spread, shorthand, quoted key, nested value or comma expression must be
+    # checked by a richer parser rather than silently disappearing from this gate.
+    if not body.strip():
+        return []
+    keys = []
+    for field in body.strip().rstrip(",").split(","):
+        match = re.match(r"\s*([A-Za-z_]\w*)\s*:\s*\S", field)
+        if not match:
+            raise ValueError("unsupported POST object field")
+        keys.append(match.group(1))
+    return keys
+
+
 def page_calls(html):
-    """页面的 (方法, 路径, 请求体键名) 列表。"""
-    calls = []
-    for m in re.finditer(r"\bget\(\s*'([^']+)'", html):
-        calls.append(("GET", m.group(1), []))
-    # post('/api/x', { a: ..., b: ... })  —— 只取第一层对象字面量的键
-    for m in re.finditer(r"\bpost\(\s*'([^']+)'\s*,\s*\{([^{}]*)\}", html, re.S):
-        keys = re.findall(r"([A-Za-z_]\w*)\s*:", m.group(2))
-        calls.append(("POST", m.group(1), keys))
-    # post('/api/x', body) 这种把对象先存变量的写法：把变量名对应的字面量找出来
-    for m in re.finditer(r"\bpost\(\s*'([^']+)'\s*,\s*([A-Za-z_]\w*)\s*\)", html):
-        var = m.group(2)
-        vm = re.search(r"\bconst\s+%s\s*=\s*\{(.*?)\};" % re.escape(var), html, re.S)
-        keys = re.findall(r"([A-Za-z_]\w*)\s*:", vm.group(1)) if vm else []
-        calls.append(("POST", m.group(1), keys))
+    """Extract the supported literal calls, refusing unrecognized POST bodies."""
+    calls, handled = [], set()
+    literal = r"(['\"])(/api/[^'\"]+)\1"
+    for m in re.finditer(r"\bget\(\s*" + literal + r"\s*\)", html):
+        calls.append(("GET", m.group(2), []))
+        handled.add(m.start())
+    for m in re.finditer(r"\bpost\(\s*" + literal + r"\s*,\s*\{([^{}]*)\}\s*\)", html, re.S):
+        body = m.group(3)
+        keys = object_keys(body)
+        if body.strip() and not keys:
+            raise ValueError("POST literal body keys unavailable: " + m.group(2))
+        calls.append(("POST", m.group(2), keys)); handled.add(m.start())
+    for m in re.finditer(r"\bpost\(\s*" + literal + r"\s*,\s*([A-Za-z_]\w*)\s*\)", html):
+        var = m.group(3)
+        declarations = list(re.finditer(r"\bconst\s+%s\s*=\s*\{([^{}]*)\};" % re.escape(var), html, re.S))
+        if len(declarations) != 1:
+            raise ValueError("POST body variable not uniquely resolved: " + var)
+        if re.search(r"\b%s\s*(?:\.[A-Za-z_]\w*|\[[^\]]*\])\s*=" % re.escape(var), html) or re.search(r"\bObject\.assign\(\s*%s\b" % re.escape(var), html):
+            raise ValueError("POST body variable is mutated: " + var)
+        body = declarations[0].group(1)
+        keys = object_keys(body)
+        if body.strip() and not keys:
+            raise ValueError("POST variable body keys unavailable: " + var)
+        calls.append(("POST", m.group(2), keys)); handled.add(m.start())
+    # Function declarations are helpers, not calls. Every other helper invocation
+    # must be recognized; expressions/dynamic URLs are explicitly outside this parser.
+    for m in re.finditer(r"\b(?:get|post)\s*\(", html):
+        if re.search(r"\bfunction\s*$", html[:m.start()]):
+            continue
+        if m.start() not in handled:
+            raise ValueError("unsupported page API call at offset %d" % m.start())
+    if not calls:
+        raise ValueError("no page API calls found")
     return calls
 
 
+def route_blocks(src):
+    """Return actual method/path branches, bounded by Python AST statements."""
+    out = {}
+    for fn in ast.walk(ast.parse(src)):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        method = {"do_GET": "GET", "_route_get": "GET",
+                  "do_POST": "POST", "_route_post": "POST"}.get(fn.name)
+        if method is None:
+            continue
+        for node in ast.walk(fn):
+            if not isinstance(node, ast.If) or not isinstance(node.test, ast.Compare):
+                continue
+            test = node.test
+            if not isinstance(test.left, ast.Name) or test.left.id != "path" or len(test.ops) != 1:
+                continue
+            rhs = test.comparators[0]
+            values = [rhs] if isinstance(test.ops[0], ast.Eq) else (rhs.elts if isinstance(test.ops[0], ast.In) and isinstance(rhs, (ast.Tuple, ast.List)) else [])
+            for value in values:
+                if isinstance(value, ast.Constant) and isinstance(value.value, str) and value.value.startswith("/api/"):
+                    out[(method, value.value)] = node.body
+    return out
+
+
 def server_routes(src):
-    """服务端路由路径（去重）。"""
-    return set(re.findall(r'path == "(/api/[^"]+)"', src)) | \
-           set(re.findall(r"path in \(\s*\"(/api/[^\"]+)\"", src))
+    return set(route_blocks(src))
 
 
 def accepted_keys(src):
-    """每个端点认的请求体键名：{路径: {键}}，从处理函数里现抓。"""
     out = {}
-
-    def body_of(fn_pat):
-        """按**缩进**切函数体，不按花括号：Python 的函数体里可能一个 `{` 都没有
-        （`_apply_config` 就是这样），按花括号找会一路吃到下一个函数的字典字面量上去。"""
-        m = re.search(fn_pat, src)
-        if not m:
-            return ""
-        start = src.rfind("\n", 0, m.start()) + 1
-        lines = src[start:].split("\n")
-        out = [lines[0]]
-        for ln in lines[1:]:
-            if ln.strip() and not ln.startswith("        ") and ln.lstrip().startswith(("def ", "class ", "@")):
-                break
-            out.append(ln)
-        return "\n".join(out)
-
-    cfg = body_of(r"def _apply_config\(self, body\)")
-    keys = set(re.findall(r'"(\w+)"\s+in\s+body', cfg))
-    # 取值表 ("interval", float, 0.2, 60.0) 里的键名。
-    # 注意 findall 只给了一个分组时返回的是**字符串列表**，不是元组列表——
-    # 写成 t[0] 会取到首字母（i/h/p），于是这三个键被当成"服务端不认"。
-    keys |= set(re.findall(r'\(\s*"(\w+)"\s*,\s*(?:float|int|str|bool)', cfg))
-    out["/api/config"] = keys
-
-    # 其余 POST 端点：函数体里 body.get("k") / body["k"]。
-    # 这里是按"就近 700 字符"取的，可能把相邻处理函数的键也收进来——**偏保守**：
-    # 收宽了只会让检查松一点（漏报），不会误报。真要精确到函数级就得按缩进切
-    # 每个 handler，等哪天它真的漏了再补。
-    for path, fn in (("/api/collector/docker", r"def _collector_docker|collector/docker"),
-                     ("/api/pairing/new", r"pairing/new"),
-                     ("/api/pairing/cancel", r"pairing/cancel"),
-                     ("/api/devices/revoke", r"devices/revoke")):
-        seg = src[src.find(path):] if path in src else ""
-        # 就近取 700 字符，够覆盖那个分支的 body 用法
-        out[path] = set(re.findall(r'body(?:\.get\(|\[)"(\w+)"', seg[:700]))
+    tree = ast.parse(src)
+    cfg = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_apply_config"]
+    cfg_text = ast.get_source_segment(src, cfg[0]) if len(cfg) == 1 else ""
+    # 当前配置入口只负责取锁；仅在入口确实委托body时读取同名唯一校验方法。
+    if len(cfg) == 1 and any(isinstance(n, ast.Call) and
+            isinstance(n.func, ast.Attribute) and isinstance(n.func.value, ast.Name) and
+            n.func.value.id == "self" and n.func.attr == "_apply_config_locked" and
+            len(n.args) == 1 and isinstance(n.args[0], ast.Name) and n.args[0].id == "body"
+            for n in ast.walk(cfg[0])):
+        helper = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_apply_config_locked"]
+        if len(helper) != 1:
+            raise ValueError("configuration validator helper is not uniquely resolved")
+        cfg_text += "\n" + ast.get_source_segment(src, helper[0])
+    for (method, path), statements in route_blocks(src).items():
+        if method != "POST":
+            continue
+        keys = set()
+        for statement in statements:
+            for node in ast.walk(statement):
+                if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and
+                    isinstance(node.func.value, ast.Name) and node.func.value.id == "body" and
+                    node.func.attr == "get" and node.args and isinstance(node.args[0], ast.Constant) and
+                    isinstance(node.args[0].value, str)):
+                    keys.add(node.args[0].value)
+                if (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) and
+                    node.value.id == "body" and isinstance(node.slice, ast.Constant) and isinstance(node.slice.value, str)):
+                    keys.add(node.slice.value)
+        if path == "/api/config":
+            if not cfg_text:
+                out[path] = None; continue
+            keys |= set(re.findall(r'["\'](\w+)["\']\s+in\s+body', cfg_text))
+            keys |= set(re.findall(r'\(\s*["\'](\w+)["\']\s*,\s*(?:float|int|str|bool)', cfg_text))
+        out[path] = keys
     return out
 
 
@@ -101,18 +155,22 @@ def main():
             print(f"找不到 {p}")
             return 2
 
-    calls = page_calls(io.open(html_path, encoding="utf-8").read())
-    src = io.open(srv_path, encoding="utf-8").read()
-    routes = server_routes(src)
-    accepts = accepted_keys(src)
+    try:
+        with io.open(html_path, encoding="utf-8") as f:
+            calls = page_calls(f.read())
+        with io.open(srv_path, encoding="utf-8") as f:
+            src = f.read()
+        routes = server_routes(src)
+        accepts = accepted_keys(src)
+    except (OSError, ValueError, SyntaxError) as exc:
+        print(f"API 检查未完成：{exc}")
+        return 2
 
     problems = []
     seen = set()
     for method, path, keys in calls:
-        if (method, path) in seen:
-            continue
         seen.add((method, path))
-        if path not in routes:
+        if (method, path) not in routes:
             problems.append(f"页面调用 {method} {path}，但服务端的 do_GET/do_POST 里没有这个路由"
                             f"（用户会看到一个 404）")
             continue
@@ -120,6 +178,10 @@ def main():
             continue
         ok = accepts.get(path)
         if ok is None:
+            # 服务端认哪些键是由 accepted_keys() 从源码抠出来的：抠不到就等于这一项没查
+            # （审计 M40）。以前直接 continue，然后照样打印"字段名服务端也都认 ✓"。
+            problems.append(f"页面往 {path} 发的请求体有 {sorted(keys)}，但服务端这条路由的"
+                            f"请求体键名没抠出来（accepted_keys() 认不出来）—— 字段名这一项等于没核对")
             continue
         for k in keys:
             if k not in ok:
@@ -128,13 +190,13 @@ def main():
 
     print(f"页面调用：{len(seen)} 个端点；服务端路由 {len(routes)} 条")
     for method, path in sorted(seen):                 # seen 里存的是 (方法, 路径)
-        keys = next(k for m2, p2, k in calls if (m2, p2) == (method, path))
+        keys = sorted({key for m2, p2, kk in calls if (m2, p2) == (method, path) for key in kk})
         extra = f" 请求体 {sorted(keys)}" if keys else ""
         print(f"  {method:4} {path}{extra}")
 
     # 反向：服务端有、页面从不调用的端点（不是错，但值得知道）
     page_paths = {p for _, p, _ in calls}
-    unused = sorted(routes - page_paths)
+    unused = sorted({p for _, p in routes} - page_paths)
     if unused:
         print(f"（服务端还有 {len(unused)} 条页面没用到的路由：{'、'.join(unused)}）")
 

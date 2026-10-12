@@ -14,6 +14,7 @@ The server loader is executed from its AST without importing server globals.
 import argparse
 import ast
 import builtins
+import copy
 import json
 import os
 from pathlib import Path
@@ -28,7 +29,7 @@ from unittest import mock
 
 PACKAGE = Path(__file__).resolve().parent / "nasscreencompanion"
 TIMEOUT = 10.0
-DEVICES = [{"name": "anonymous-board", "sha256": "fixture-not-a-real-hash",
+DEVICES = [{"name": "anonymous-board", "sha256": "a" * 64,
             "last4": "test", "added_at": 1, "last_seen": 2}]
 EXISTING = {"docker_enabled": True, "devices": DEVICES, "port": 12345,
             "bind": "127.0.0.1", "auth_mode": "pairing", "interval": 2.5,
@@ -89,12 +90,13 @@ with mock.patch("builtins.open", side_effect=fixture_open):
         server = PACKAGE / "app" / "server" / "nas_companion_server.py"
         tree = ast.parse(server.read_text(encoding="utf-8"), filename=str(server))
         selected = [node for node in tree.body
-                    if (isinstance(node, ast.FunctionDef) and node.name == "load_config")
+                    if (isinstance(node, ast.FunctionDef) and node.name in ("load_config", "_config_bool", "_validate_startup_config"))
+                    or (isinstance(node, ast.ClassDef) and node.name == "ConfigError")
                     or (isinstance(node, ast.Assign) and any(
                         isinstance(target, ast.Name) and target.id == "DEFAULT_CONFIG"
                         for target in node.targets))]
-        self.assertEqual(len(selected), 2, "expected production loader and defaults")
-        self.loader_namespace = {"json": json, "os": os, "cfg_path": lambda: str(self.config),
+        self.assertEqual(len(selected), 5, "expected production loader, validators, error and defaults")
+        self.loader_namespace = {"json": json, "os": os, "copy": copy, "cfg_path": lambda: str(self.config),
                                  "log": mock.Mock()}
         exec(compile(ast.Module(body=selected, type_ignores=[]), str(server), "exec"),
              self.loader_namespace)
@@ -236,7 +238,7 @@ with mock.patch("builtins.open", side_effect=fixture_open):
             with self.subTest(error=name):
                 self.config.write_bytes(content)
                 previous = self.snapshot()
-                with self.assertRaises(exception):
+                with self.assertRaises(self.loader_namespace["ConfigError"]):
                     self.load_config()
                 self.assert_preserved(previous)
         self.write_config()
@@ -249,7 +251,7 @@ with mock.patch("builtins.open", side_effect=fixture_open):
             return real_open(path, mode, *args, **kwargs)
 
         with mock.patch("builtins.open", side_effect=denied_open):
-            with self.assertRaises(PermissionError):
+            with self.assertRaises(self.loader_namespace["ConfigError"]):
                 self.load_config()
         self.assert_preserved(previous)
 
