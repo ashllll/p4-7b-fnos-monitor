@@ -10,12 +10,16 @@
 - 真的每请求泄漏（比如把请求对象留在某个列表里）会一路涨下去，后段还在涨。
 
 用法：python3 nas/fpk/mem_check.py [请求数，默认 3000]
+      --entities 1024 --publish-every 10 --server-dir <解包后的 server>
+默认仅测空快照请求；--entities 增加匿名完整清单和持续生产发布，不访问 NAS。
 """
 
+import argparse
 import http.client
-import importlib.util
+import json
 import os
 import sys
+from pathlib import Path
 
 # 这个脚本会把 nas_companion_server.py 加载进本进程跑；它顶部 `from fnos_collector
 # import …`，于是 Python 会在**源码树里**写下 __pycache__/*.pyc（本机 3.14 的字节码）。
@@ -23,7 +27,6 @@ import sys
 # 而 NAS 上是 python312。禁掉写入，别让检查工具污染要分发的包。
 sys.dont_write_bytecode = True
 import subprocess
-import sys
 import tempfile
 import threading
 import time
@@ -41,45 +44,78 @@ def rss_kb():
 
 
 def main():
-    total = int(sys.argv[1]) if len(sys.argv) > 1 else 3000
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('requests', type=int, nargs='?', default=3000)
+    parser.add_argument('--entities', type=int, default=0)
+    parser.add_argument('--publish-every', type=int, default=10)
+    parser.add_argument('--server-dir', type=Path, default=Path(SERVER).parent)
+    args = parser.parse_args()
+    if args.entities < 0 or args.publish_every < 1:
+        parser.error('entities must be nonnegative and publish-every positive')
+    total = args.requests
     if total < BATCH * 6:
         print("样本太少，未判定（请求数至少 3000）")
         return 3
-    tmp = tempfile.mkdtemp()
-    os.environ.update(TRIM_APPDEST=tmp, TRIM_PKGVAR=tmp, TRIM_PKGETC=tmp,
+    tmp = tempfile.TemporaryDirectory()
+    os.environ.update(TRIM_APPDEST=tmp.name, TRIM_PKGVAR=tmp.name, TRIM_PKGETC=tmp.name,
                       TRIM_APPNAME="nasscreencompanion")
-    spec = importlib.util.spec_from_file_location("nsc", SERVER)
-    m = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(m)
+    from benchmark_telemetry import fixture, load, publish
+    m = load(args.server_dir.resolve())
 
     cfg = dict(m.DEFAULT_CONFIG)
     cfg.update(port=0, bind="127.0.0.1", tls_enabled=False, auth_mode="lan")
     state = m.State(cfg)
+    generation = 0
+    def advance():
+        nonlocal generation
+        generation += 1
+        snap = fixture(args.entities)
+        snap.update(seq=generation, ts=1700000000 + generation)
+        publish(state.collector, snap)
+    if args.entities:
+        # Fill the configured bounded history before evaluating steady-state RSS.
+        for _ in range(state.collector.hist_len):
+            advance()
     servers, _ = m.make_servers(state, cfg, bind_socket=False)
     tcp = [s for s in servers if not getattr(s, "is_unix", False)][0]
     port = tcp.server_address[1]
-    threading.Thread(target=tcp.serve_forever, daemon=True).start()
+    thread = threading.Thread(target=tcp.serve_forever, daemon=True)
+    thread.start()
     time.sleep(0.3)
 
     base = rss_kb()
     samples = []
     print(f"起点 RSS={base} KB，活跃线程={threading.active_count()}")
-    for i in range(1, total + 1):
-        c = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
-        c.request("GET", PATHS[i % len(PATHS)])
-        response = c.getresponse()
-        response.read()
-        if response.status != 200:
-            raise RuntimeError(f"被测端点 {PATHS[i % len(PATHS)]} 返回 {response.status}，未覆盖有效请求")
-        c.close()
-        if i % BATCH == 0:
-            cur = rss_kb()
-            samples.append((i, cur))
-            print(f"  {i:6} 个请求  RSS={cur} KB（相对起点 {cur - base:+d}）"
-                  f"  活跃线程={threading.active_count()}")
-
-    tcp.shutdown()
-    tcp.server_close()
+    print(f"匿名实体/清单={args.entities}，每 {args.publish_every} 请求发布一次；无 NAS 访问")
+    try:
+        for i in range(1, total + 1):
+            if args.entities and (i - 1) % args.publish_every == 0:
+                advance()
+            c = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+            try:
+                c.request("GET", PATHS[i % len(PATHS)])
+                response = c.getresponse()
+                body = response.read()
+                if response.status != 200:
+                    raise RuntimeError(f"被测端点 {PATHS[i % len(PATHS)]} 返回 {response.status}，未覆盖有效请求")
+            finally:
+                c.close()
+            if args.entities and PATHS[i % len(PATHS)] == '/api/v1/status':
+                snap = json.loads(body)
+                if snap.get('seq') != generation or any(len(snap.get(key, [])) != args.entities
+                                                        for key in ('vols', 'docker', 'temps')):
+                    raise RuntimeError('HTTP 未返回当前完整发布代次，拒绝采信内存结果')
+            if i % BATCH == 0:
+                cur = rss_kb()
+                samples.append((i, cur))
+                print(f"  {i:6} 个请求  RSS={cur} KB（相对起点 {cur - base:+d}）"
+                      f"  活跃线程={threading.active_count()}")
+    finally:
+        tcp.shutdown()
+        tcp.server_close()
+        thread.join(timeout=3)
+        tmp.cleanup()
+    print(f"累计生产发布={generation}，历史行={len(state.collector.read_history())}")
 
     # 判据：拿后 1/3 的样本比中间 1/3，增长必须很小（噪声量级）。
     if len(samples) < 6:

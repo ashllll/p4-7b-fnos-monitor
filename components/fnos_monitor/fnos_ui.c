@@ -948,7 +948,7 @@ static void build_header(lv_obj_t *h)
    点它进系统页看全部 —— 老实现没有底栏，这是按设计稿补的全局状态行。 */
 static void build_foot(lv_obj_t *foot)
 {
-    s_ui.foot_poll = uk_label(foot, UK_FONT_CJK_12, UK_T3, "轮询 1s · ok 0 · fail 0");
+    s_ui.foot_poll = uk_label(foot, UK_FONT_CJK_12, UK_T3, "采 -- · 屏 -- · ok 0 · fail 0");
     not_clickable(s_ui.foot_poll);
 
     lv_obj_t *band = lv_obj_create(foot);
@@ -3286,6 +3286,13 @@ static int64_t data_age_ms(const fnos_status_t *st)
     return age < 0 ? 0 : age;
 }
 
+static const char *fmt_period(char *b, size_t cap, unsigned ms)
+{
+    if (ms >= 1000 && ms % 1000 == 0) snprintf(b, cap, "%us", ms / 1000);
+    else snprintf(b, cap, "%ums", ms);
+    return b;
+}
+
 /* ── 刷屏 ─────────────────────────────────────────────────────────── */
 
 /* 曲线横轴：能算出时间就说时间，算不出（旧版应用没给 ts）就说次数。
@@ -4090,10 +4097,11 @@ static void overview_refresh(const fnos_status_t *st)
 static void header_refresh(void)
 {
     const fnos_status_t *st = &s_st;
-    char age[32];
+    char age[32], period[16];
     if (!st->ever_ok) set_txt(s_ui.h_ep, "%s · 等待采集端", NAV_TXT[s_page]);
     else if (!st->online) set_txt(s_ui.h_ep, "%s · 保留旧数据 · %s", NAV_TXT[s_page], fmt_age(age, sizeof age, data_age_ms(st)));
-    else set_txt(s_ui.h_ep, "%s · 每秒更新", NAV_TXT[s_page]);
+    else set_txt(s_ui.h_ep, "%s · %s 更新", NAV_TXT[s_page],
+                 fmt_period(period, sizeof period, fnos_ui_refresh_period_ms()));
 }
 
 static void inventory_notice(void)
@@ -4264,6 +4272,7 @@ static void refresh(void)
         if (cur >= 0 && cur < FNOS_UI_PAGE_COUNT) s_page_dirty[cur] = false;
     }
 
+    uk_number_motion_period(fnos_ui_refresh_period_ms());
     uk_number_motion_enable(st->online && !motion_busy());
 
     /* 顶栏：主机 / 端点 / 状态胶囊 / 信号 */
@@ -4276,9 +4285,13 @@ static void refresh(void)
 
     /* 底栏：左边是轮询统计，右边是"最严重的一条告警"。底栏只说**一件事**：
        现在要不要动手；全量告警在系统页那一列里。 */
-    if (s_ui.foot_poll)
-        set_num(s_ui.foot_poll, "轮询 1s · ok %u · fail %u",
+    if (s_ui.foot_poll) {
+        char poll[16], frame[16];
+        fmt_period(poll, sizeof poll, fnos_data_poll_interval_ms());
+        fmt_period(frame, sizeof frame, fnos_ui_refresh_period_ms());
+        set_num(s_ui.foot_poll, "采 %s · 屏 %s · ok %u · fail %u", poll, frame,
                 (unsigned)st->ok_count, (unsigned)st->fail_count);
+    }
     if (s_ui.foot_txt && s_ui.foot_dot) {
         uint32_t band = UK_OK;
         int first = -1, rank = -1;
@@ -4966,9 +4979,44 @@ static int32_t history_chart_value(float value)
     return (int32_t)v;
 }
 
+#ifdef CONFIG_FNOS_SOAK_DIAG
+/* Acceptance counters run only after the visible page has consumed a snapshot.
+   Age uses the response's rounded age, corrected from integer ts to ts_ms,
+   plus full HTTP RTT and local residence: a conservative estimate, not a clock
+   synchronization measurement. All counters are owned by the LVGL task. */
+static void rate_note(int64_t started)
+{
+    static int64_t last_log, last_seq, last_recv;
+    static unsigned ticks, updates, received, ages_n;
+    static uint64_t work_us, age_sum;
+    static uint32_t work_max, age_max;
+    int64_t now=esp_timer_get_time();
+    uint32_t work=(uint32_t)(now-started);
+    ticks++; work_us+=work; if(work>work_max) work_max=work;
+    if(s_st.recv_ms!=last_recv) {received++;last_recv=s_st.recv_ms;}
+    if(s_st.source_seq!=last_seq) {updates++;last_seq=s_st.source_seq;}
+    if(s_st.source_age_valid && s_st.recv_ms>0) {
+        uint32_t age=(uint32_t)((int64_t)s_st.source_age_ms+s_st.http_ms+now/1000-s_st.recv_ms);
+        ages_n++;age_sum+=age;if(age>age_max)age_max=age;
+    }
+    if(!last_log) last_log=now;
+    if(now-last_log>=5000000) {
+        ESP_LOGI(TAG,"FNOS_RATE up_ms=%lld span_ms=%lld period=%u page=%d ticks=%u updates=%u received=%u seq=%lld ok=%u fail=%u age_n=%u age_mean_ms=%u age_max_ms=%u work_mean_us=%u work_max_us=%u",
+            (long long)(now/1000),(long long)((now-last_log)/1000),fnos_data_poll_interval_ms(),s_page,
+            ticks,updates,received,(long long)s_st.source_seq,(unsigned)s_st.ok_count,(unsigned)s_st.fail_count,
+            ages_n,ages_n?(unsigned)(age_sum/ages_n):0,age_max,ticks?(unsigned)(work_us/ticks):0,work_max);
+        last_log=now;ticks=updates=received=ages_n=0;work_us=age_sum=0;work_max=age_max=0;
+    }
+}
+#endif
+
 static void ui_tick(lv_timer_t *t)
 {
-    (void)t;
+#ifndef CONFIG_FNOS_UI_REFRESH_MS
+#define CONFIG_FNOS_UI_REFRESH_MS 100
+#endif
+    unsigned period = fnos_ui_refresh_period_ms();
+    lv_timer_set_period(t, period);
     int64_t t_bench = esp_timer_get_time();   /* 台架：这一次 tick 的总耗时（关配置时零成本） */
     uk_alloc_reset();
     const bool night = atomic_load_explicit(&s_night_req, memory_order_relaxed);
@@ -4992,9 +5040,10 @@ static void ui_tick(lv_timer_t *t)
        fnos_net_configured()：那个标志由网络层读完 NVS 才置真，而这里到点就往弹，
        于是 NVS 稍慢一步就误判成"没凭据"——实机上真出现过：凭据明明在（wifi show
        回显 凭据：有 / 已连接 Demo），系统页却被配网卡盖住，还自动起了一次扫描。 */
-    static int boot_ticks;
-    if (boot_ticks >= 0 && ++boot_ticks > 6) {
-        boot_ticks = -1;
+    static int64_t boot_deadline;
+    if (!boot_deadline) boot_deadline = esp_timer_get_time() + 3000000;
+    if (boot_deadline > 0 && esp_timer_get_time() >= boot_deadline) {
+        boot_deadline = -1;
         char ssid[64];
         bool have = fnos_wifi_store_load(ssid, sizeof ssid, NULL, 0);
         if (!have && !s_wifi_dismissed && !s_wifi_open && s_ui.wifi_card) {
@@ -5084,6 +5133,9 @@ static void ui_tick(lv_timer_t *t)
     pages_warm();
     inventory_notice();
     fnos_perf_note_tick((uint32_t)(esp_timer_get_time() - t_bench));
+#ifdef CONFIG_FNOS_SOAK_DIAG
+    rate_note(t_bench);
+#endif
 }
 
 static lv_obj_t *build_page(lv_obj_t *content, int idx)
@@ -5106,13 +5158,20 @@ static lv_obj_t *build_page(lv_obj_t *content, int idx)
 static lv_timer_t *s_ui_tick;
 static void ui_tick_start(void)
 {
-    if (!s_ui_tick) s_ui_tick = lv_timer_create(ui_tick, 500, NULL);
+    if (!s_ui_tick) s_ui_tick = lv_timer_create(ui_tick, CONFIG_FNOS_UI_REFRESH_MS, NULL);
     if (!s_ui_tick) ESP_LOGE(TAG, "UI refresh timer allocation failed: display is stale");
 }
 
 bool fnos_ui_ready(void)
 {
     return s_created && s_ui_tick != NULL && s_motion_poll != NULL;
+}
+
+unsigned fnos_ui_refresh_period_ms(void)
+{
+    unsigned period = fnos_data_poll_interval_ms();
+    if (period < CONFIG_FNOS_UI_REFRESH_MS) period = CONFIG_FNOS_UI_REFRESH_MS;
+    return period;
 }
 
 void fnos_ui_create(void)

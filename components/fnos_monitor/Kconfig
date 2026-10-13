@@ -1,5 +1,21 @@
 menu "fnOS monitor"
 
+    config FNOS_POLL_INTERVAL_MS
+        int "Telemetry request period (ms; runtime override: poll <ms>)"
+        range 50 60000
+        default 200
+        help
+            Includes request and parse time. Slow cycles yield without sending
+            catch-up bursts. Volatile runtime overrides reset after reboot.
+
+    config FNOS_UI_REFRESH_MS
+        int "Minimum UI data frame period (ms)"
+        range 50 1000
+        default 100
+        help
+            UI data frames never run faster than this period and never run
+            faster than telemetry. Navigation keeps its own display cadence.
+
     config FNOS_HEAP_DEBUG
         bool "打印堆余量与任务状态（每 10 秒）"
         default n
@@ -90,29 +106,41 @@ menu "fnOS monitor"
                 budget exhaustion. This never limits telemetry or inventory.
 
         config FNOS_UI_NUMBER_MS
-            int "Numeric transition duration (ms; 0 disables motion)"
-            range 0 500
-            default 250
+            int "Linear numeric transition duration cap (ms; 0 disables motion)"
+            range 0 1000
+            default 160
+            help
+                Keep each transition brief enough to reach a stable resting
+                state before another presented value is allowed to animate.
+
+        config FNOS_UI_NUMBER_PRESENT_MS
+            int "Minimum interval between presented numeric changes (ms)"
+            range 0 5000
+            default 600
+            help
+                Telemetry and charts may refresh faster. Numeric labels select
+                the newest sample no more often than this interval, preventing
+                high-frequency readings from remaining in perpetual motion.
 
         config FNOS_UI_NUMBER_STAGGER_MS
             int "Numeric changed-position stagger (ms)"
             range 0 100
-            default 50
+            default 0
 
         config FNOS_UI_NUMBER_MAX_STAGGER_MS
             int "Maximum total numeric stagger (ms)"
             range 0 200
-            default 100
+            default 0
 
         config FNOS_UI_NUMBER_TRAVEL_PCT
             int "Numeric travel (% of font line height)"
             range 0 50
-            default 25
+            default 12
 
         config FNOS_UI_NUMBER_BLUR_PCT
             int "Numeric sampled blur (% of font line height; 0 disables)"
             range 0 10
-            default 6
+            default 0
 
         config FNOS_UI_MOTION_STATS
             bool "Log page preparation and render timing"

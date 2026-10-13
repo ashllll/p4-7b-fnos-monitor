@@ -2,11 +2,13 @@
 """Complete inventories, explicit policy and independent interface rates."""
 import importlib.util
 import json
+import sys
 from pathlib import Path
 from unittest.mock import patch
 COLLECTOR = Path(__file__).parent / "nasscreencompanion/app/server/fnos_collector.py"
 
 def main():
+    sys.path.insert(0, str(COLLECTOR.parent))
     spec = importlib.util.spec_from_file_location("inventory_collector", COLLECTOR)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

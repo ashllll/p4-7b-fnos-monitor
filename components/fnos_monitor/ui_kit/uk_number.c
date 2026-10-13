@@ -18,10 +18,12 @@ typedef struct {
     lv_label_t label;
     glyph_layer_t *layers;
     const lv_font_t *font;
-    uint32_t started, span;
+    uint32_t started, span, duration, last_presented;
     bool active;
 } number_label_t;
 static bool motion_enabled = true;
+static bool presentation_gate_enabled = true;
+static uint32_t motion_period_ms = UK_NUMBER_MS;
 static size_t layer_bytes;
 static uk_number_stats_t stats;
 #ifdef FNOS_UI_TESTING
@@ -53,19 +55,14 @@ static const lv_obj_class_t number_class = {
     .height_def=LV_SIZE_CONTENT, .name="uk_number_label"
 };
 
-/* Invert x(t), then evaluate y(t). Apple easeOut is (0,0,.58,1),
-   not y(progress) and not LVGL's unrelated built-in ease-out polynomial. */
-static float apple_ease(float progress)
+/* Telemetry is not a gesture: use a short constant-velocity transition, then
+   leave a stable dwell. Fast samples still feed charts, while numeric labels
+   select the newest reading at a calmer presentation cadence. */
+static float linear_progress(float progress)
 {
     if (progress<=0) return 0;
     if (progress>=1) return 1;
-    float lo=0, hi=1, t=0;
-    for (int i=0;i<16;i++) {
-        t=(lo+hi)*.5f;
-        float x=3*(1-t)*t*t*UK_NUMBER_BEZIER_X2+t*t*t;
-        if (x<progress) lo=t; else hi=t;
-    }
-    return 3*(1-t)*t*t+t*t*t;
+    return progress;
 }
 static bool has_reading(const char *text)
 {
@@ -108,6 +105,10 @@ void uk_number_settle(lv_obj_t *obj)
     if (obj && lv_obj_get_class(obj)==&number_class) clear_layers(obj);
 }
 void uk_number_motion_enable(bool enabled) { motion_enabled=enabled; }
+void uk_number_motion_period(uint32_t period_ms)
+{
+    motion_period_ms=period_ms ? LV_MIN(period_ms,(uint32_t)UK_NUMBER_MS) : UK_NUMBER_MS;
+}
 lv_obj_t *uk_number_label_create(lv_obj_t *parent)
 {
     lv_obj_t *obj=lv_obj_class_create_obj(&number_class,parent);
@@ -122,7 +123,7 @@ static void number_destroy(const lv_obj_class_t *cls, lv_obj_t *obj)
 static void sample_layers(number_label_t *n, uint32_t elapsed)
 {
     for (glyph_layer_t *g=n->layers;g;g=g->next) {
-        float p=elapsed<=g->delay ? 0 : apple_ease((float)(elapsed-g->delay)/(UK_NUMBER_MS ? UK_NUMBER_MS : 1));
+        float p=elapsed<=g->delay ? 0 : linear_progress((float)(elapsed-g->delay)/(n->duration ? n->duration : 1));
         g->x=g->from_x+(g->to_x-g->from_x)*p;
         g->y=g->from_y+(g->to_y-g->from_y)*p;
         g->alpha=g->from_alpha+(g->to_alpha-g->from_alpha)*p;
@@ -181,16 +182,24 @@ void uk_number_set_text(lv_obj_t *obj, const char *text, bool animate)
     number_label_t *n=(number_label_t *)obj;
     const char *old=lv_label_get_text(obj);
     const lv_font_t *font=lv_obj_get_style_text_font(obj,0);
-    bool eligible=animate && motion_enabled && !UK_NUMBER_REDUCED && UK_NUMBER_MS>0 &&
+    bool eligible=animate && motion_enabled && !UK_NUMBER_REDUCED && motion_period_ms>0 &&
         lv_obj_is_visible(obj) && has_reading(old) && has_reading(text) &&
         same_numeric_structure(old,text) &&
         (!n->active || n->font==font);
     if (!eligible) {
         clear_layers(obj);
-        if (strcmp(old,text)) lv_label_set_text(obj,text);
+        if (strcmp(old,text)) {
+            lv_label_set_text(obj,text);
+            n->last_presented=0;
+        }
         return;
     }
     if (!strcmp(old,text)) return; /* Same target never restarts a running transition. */
+    if (presentation_gate_enabled && UK_NUMBER_PRESENT_MS>0 && n->last_presented &&
+        lv_tick_elaps(n->last_presented)<UK_NUMBER_PRESENT_MS) {
+        return; /* Keep the current reading still; the next refresh supplies the latest target. */
+    }
+    n->last_presented=lv_tick_get();
     n->font=font;
     lv_obj_update_layout(obj);
     lv_point_t old_size,new_size;
@@ -228,7 +237,10 @@ void uk_number_set_text(lv_obj_t *obj, const char *text, bool animate)
         g->from_x=g->x; g->from_y=g->y; g->from_alpha=g->alpha;
         g->to_x=g->x; g->to_y=distance; g->to_alpha=0; g->delay=0;
     }
-    uint32_t i=0, changed=0, max_delay=0; int key=-char_count(text); float x=0;
+    uint32_t i=0, max_delay=0; int key=-char_count(text); float x=0;
+#if UK_NUMBER_STAGGER_MS > 0 && UK_NUMBER_MAX_STAGGER_MS > 0
+    uint32_t changed=0;
+#endif
     while (text[i]) {
         uint32_t cp=lv_text_encoded_next(text,&i), j=i;
         uint32_t next=text[j] ? lv_text_encoded_next(text,&j) : 0;
@@ -236,7 +248,13 @@ void uk_number_set_text(lv_obj_t *obj, const char *text, bool animate)
         for (glyph_layer_t *g=n->layers;g;g=g->next)
             if (g->key==key && g->cp==cp && (!found || g->alpha>found->alpha)) found=g;
         bool changing=!found || found->alpha<.999f || fabsf(found->y)>.01f;
-        uint32_t delay=changing ? LV_MIN(changed++*UK_NUMBER_STAGGER_MS,UK_NUMBER_MAX_STAGGER_MS) : 0;
+        uint32_t delay=0;
+        if (changing) {
+#if UK_NUMBER_STAGGER_MS > 0 && UK_NUMBER_MAX_STAGGER_MS > 0
+            delay=LV_MIN(changed*UK_NUMBER_STAGGER_MS,UK_NUMBER_MAX_STAGGER_MS);
+            changed++;
+#endif
+        }
         if (!found) found=add_layer(n,key,cp,x,-distance,0);
         if (!found) { clear_layers(obj); lv_label_set_text(obj,text); return; }
         found->from_x=found->x; found->from_y=found->y; found->from_alpha=found->alpha;
@@ -247,7 +265,8 @@ void uk_number_set_text(lv_obj_t *obj, const char *text, bool animate)
         max_delay=LV_MAX(max_delay,delay);
         key++; x+=lv_font_get_glyph_width(font,cp,next)+spacing;
     }
-    n->span=UK_NUMBER_MS+max_delay; n->started=lv_tick_get(); n->active=true;
+    n->duration=motion_period_ms;
+    n->span=n->duration+max_delay; n->started=lv_tick_get(); n->active=true;
     lv_label_set_text(obj,text); /* Public text is always the actual latest reading. */
     lv_obj_update_layout(obj);
     lv_area_t new_content; lv_obj_get_content_coords(obj,&new_content);
@@ -330,9 +349,11 @@ static bool test_proportional_glyph(const lv_font_t *font, lv_font_glyph_dsc_t *
 }
 void uk_number_selfcheck(lv_obj_t *parent)
 {
-    assert(apple_ease(0)==0 && apple_ease(1)==1);
-    assert(fabsf(apple_ease(.5f)-.6846432f)<.0001f);
+    assert(linear_progress(0)==0 && linear_progress(1)==1);
+    assert(fabsf(linear_progress(.5f)-.5f)<.0001f);
     if (UK_NUMBER_REDUCED || UK_NUMBER_MS==0) return;
+    bool saved_gate=presentation_gate_enabled;
+    presentation_gate_enabled=false;
     lv_obj_t *o=uk_number_label_create(parent);
     assert(o);
     lv_obj_set_style_text_font(o,UK_FONT_NUM_32,0);
@@ -341,8 +362,8 @@ void uk_number_selfcheck(lv_obj_t *parent)
     uk_number_set_text(o,"66%",true);
     number_label_t *n=(number_label_t *)o;
     assert(n->active);
-    sample_layers(n,UK_NUMBER_MS/3);
-    n->started=lv_tick_get()-UK_NUMBER_MS/3;
+    sample_layers(n,n->duration/3);
+    n->started=lv_tick_get()-n->duration/3;
     glyph_layer_t *before=n->layers;
     float y=before->y,alpha=before->alpha;
     uk_number_set_text(o,"67%",true);
@@ -373,11 +394,11 @@ void uk_number_selfcheck(lv_obj_t *parent)
     uk_number_motion_enable(false); uk_number_set_text(o,"2 GB",true); assert(!n->active);
     uk_number_motion_enable(true); uk_number_set_text(o,"3 GB",true); assert(n->active);
     uk_number_motion_enable(false);
-    number_step(o,UK_NUMBER_MS/3);
+    number_step(o,n->duration/3);
     assert(!n->active && !n->layers && !strcmp(lv_label_get_text(o),"3 GB"));
     uk_number_motion_enable(true); uk_number_set_text(o,"4 GB",true); assert(n->active);
     lv_obj_add_flag(o,LV_OBJ_FLAG_HIDDEN);
-    number_step(o,UK_NUMBER_MS/3);
+    number_step(o,n->duration/3);
     assert(!n->active && !n->layers && !strcmp(lv_label_get_text(o),"4 GB"));
     lv_obj_remove_flag(o,LV_OBJ_FLAG_HIDDEN);
     uk_number_settle(o);
@@ -421,5 +442,20 @@ void uk_number_selfcheck(lv_obj_t *parent)
     assert(((number_label_t *)r->val)->active);
     assert(((number_label_t *)r->name2)->active);
     lv_obj_delete(r->row); lv_free(r);
+    presentation_gate_enabled=saved_gate;
+    if (saved_gate && UK_NUMBER_PRESENT_MS>0) {
+        lv_obj_t *q=uk_number_label_create(parent);
+        assert(q); lv_obj_set_style_text_font(q,UK_FONT_NUM_32,0); lv_obj_set_width(q,200);
+        uk_number_set_text(q,"10",false); lv_obj_update_layout(q);
+        number_label_t *qn=(number_label_t *)q;
+        uint32_t now=lv_tick_get();
+        qn->last_presented=now ? now : 1;
+        uk_number_set_text(q,"11",true);
+        assert(!qn->active && !strcmp(lv_label_get_text(q),"10"));
+        qn->last_presented=lv_tick_get()-UK_NUMBER_PRESENT_MS;
+        uk_number_set_text(q,"12",true);
+        assert(qn->active && !strcmp(lv_label_get_text(q),"12"));
+        lv_obj_delete(q);
+    }
 }
 #endif

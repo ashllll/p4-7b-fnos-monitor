@@ -7,7 +7,7 @@
 // UI 生命周期：
 //   * 开机 Preload：用 ui_kit（LVGL 原生 flex）手写六页（JSON 清单 / 代码生成 / MVVM-C 已全部删除）
 //   * Open = 原子换页（先隐藏全部旧页并归零偏移，再显示目标页，最后整屏失效）
-//   * 500 ms LVGL tick 拉 fnos_data 快照并刷文案（本文件是唯一的 LVGL 写入者）
+//   * 可配置 LVGL data tick 拉 fnos_data 快照并刷文案（本文件是唯一的 LVGL 写入者）
 //   * set_night 只置标志（esp_timer 任务调用），落地在 LVGL 任务里（线程红线）
 //
 // 必须在持有显示锁（bsp_display_lock）时调用 fnos_ui_create()。
@@ -24,6 +24,8 @@ extern "C" {
 void fnos_ui_create(void);        // 幂等：Preload + Open(0)；失败的刷新/手势定时器可重试
 // 与 create 同样须持显示锁；仅证明树已建、刷新与手势timer存在，不证明全部构件/实机正常。
 bool fnos_ui_ready(void);
+// 实际数据帧周期 = max(采集周期, CONFIG_FNOS_UI_REFRESH_MS)；手势动画另走显示帧。
+unsigned fnos_ui_refresh_period_ms(void);
 // 只在 LVGL 任务且持有显示锁时调用；其他任务使用 fnos_ui_request_page()。
 void fnos_ui_set_page(int idx);   // 0..FNOS_UI_PAGE_COUNT-1，越界循环
 

@@ -11,6 +11,7 @@
 #include "fnos_perf.h"
 #include "fnos_wifi_store.h"
 #include "fnos_ui.h"
+#include "fnos_data.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -100,6 +101,18 @@ static void handle(char *line)
     if (!n) return;
 
     if (!strcmp(line, "help") || !strcmp(line, "?")) { usage(); return; }
+    if (command_is(line, "poll")) {
+        int ms = command_index(line + 4);
+        if (ms < 0 || !fnos_data_set_poll_interval_ms((unsigned)ms)) {
+            printf("poll <%u-%u ms> (volatile; current=%u ms)\n",
+                   FNOS_POLL_INTERVAL_MIN_MS, FNOS_POLL_INTERVAL_MAX_MS,
+                   fnos_data_poll_interval_ms());
+            return;
+        }
+        printf("poll period=%u ms; UI data frame=%u ms (volatile)\n",
+               fnos_data_poll_interval_ms(), fnos_ui_refresh_period_ms());
+        return;
+    }
     if (command_is(line, "page")) {
         int n = command_index(line + 4);
         if (n < 0 || n >= FNOS_UI_PAGE_COUNT) { printf("用法：page <0-%d>\n", FNOS_UI_PAGE_COUNT - 1); return; }

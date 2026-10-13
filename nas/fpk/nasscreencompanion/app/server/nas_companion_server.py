@@ -64,7 +64,7 @@ from fnos_collector import (                       # noqa: E402
 )
 
 APPNAME = "nasscreencompanion"
-APPVER = os.environ.get("TRIM_APPVER") or "1.2.5"   # manifest 里的 version 由应用中心经 TRIM_APPVER 注入；这个默认值给开发模式兜底
+APPVER = os.environ.get("TRIM_APPVER") or "1.2.7"   # manifest 里的 version 由应用中心经 TRIM_APPVER 注入；这个默认值给开发模式兜底
 GATEWAY_PREFIX = "/app/" + APPNAME
 SOCKET_NAME = "app.sock"                 # 必须位于 target 目录（网关要求）
 LOG_TAIL = 400                           # 内存里保留的日志行数（供管理页看）
@@ -469,9 +469,13 @@ def _config_bool(value, key):
     raise ConfigError("%s 取值非法" % key)
 
 
+INTERVAL_MIN_S = 0.05
+INTERVAL_MAX_S = 60.0
+
+
 def _validate_startup_config(cfg):
     """Validate before constructing collectors/listeners; never repair bad auth/TLS."""
-    for key, cast, lo, hi in (("interval", float, 0.2, 60.0),
+    for key, cast, lo, hi in (("interval", float, INTERVAL_MIN_S, INTERVAL_MAX_S),
                               ("hist_len", int, 30, 3600),
                               ("port", int, 1, 65535)):
         value = cfg[key]
@@ -793,6 +797,15 @@ class Handler(BaseHTTPRequestHandler):
             body = json_bytes(body)
         elif isinstance(body, str):
             body = body.encode("utf-8")
+        # Retire healthy keep-alive connections through a complete HTTP response
+        # before the absolute timer interrupts them. The hard bound still covers
+        # handshakes, slow requests and handlers that never finish.
+        context = getattr(self.server, "_connection_context", None)
+        deadline = getattr(context, "deadline", None)
+        if deadline is not None:
+            reserve = min(HTTP_IDLE_TIMEOUT_S, self.server.connection_timeout_s / 2)
+            if time.monotonic() >= deadline - reserve:
+                self.close_connection = True
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
@@ -965,12 +978,11 @@ class Handler(BaseHTTPRequestHandler):
         coll = st.collector
 
         if path in ("/api/v1/health", "/healthz"):
-            with coll.lock:
-                snap = copy.deepcopy(coll.snapshot)
+            snap = coll.read_summary(time.time())
             return self._send(200, {
                 "ok": True, "app": APPNAME, "ver": APPVER,
                 "ts": int(time.time()),
-                "age_s": round(max(0.0, time.time() - snap.get("ts", 0)), 1) if snap.get("ts") else None,
+                "age_s": snap["age_s"],
                 "host": coll.hostname, "ready": bool(snap.get("ready")),
             })
 
@@ -1021,24 +1033,17 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(401, {"ok": False, "error": why,
                                             "how": "POST /api/v1/pair {\"code\":\"123456\",\"name\":\"lcd\"}"})
             if path == "/api/v1/status":
-                with coll.lock:
-                    snap = copy.deepcopy(coll.snapshot)
-                snap["age_s"] = round(max(0.0, time.time() - snap.get("ts", 0)), 1) if snap.get("ts") else None
-                snap["app"] = APPNAME
-                snap["app_ver"] = APPVER
-                return self._send(200, snap)
+                frame = coll.read_snapshot()
+                return self._send(200, frame.status_body(APPNAME, APPVER, time.time()))
             # `?n=` 让客户端声明"我最多能收多少行"。板子的接收缓冲是 32 KB，
             # 而 hist_len 允许配到 3600（约 151 KB）——不声明的话，超出的部分会被
             # 板子截断，JSON 解析失败，于是它每秒重试一次、曲线回填永远不成功。
             # 只取**最近** n 行（曲线要的是靠后的一段）。不带 n 时行为不变。
-            with coll.lock:
-                rows = list(coll.history)
             try:
                 want = int((q.get("n") or [""])[0])
             except (TypeError, ValueError):
                 want = 0
-            if want > 0:
-                rows = rows[-want:]
+            rows = coll.read_history(want)
             return self._send(200, {"cols": ["ts", "cpu", "mem", "rx_kbs", "tx_kbs", "temp_max"],
                                     "rows": rows, "n": len(rows)})
 
@@ -1055,23 +1060,14 @@ class Handler(BaseHTTPRequestHandler):
             if self._require_admin() is None:
                 return
             cfg, devices, pending = st.management_snapshot()
-            with coll.lock:
-                snap = copy.deepcopy(coll.snapshot)
-                samples = len(coll.history)
-                interval, hist_len = coll.interval, coll.hist_len
+            snap = coll.read_summary(time.time())
             return self._send(200, {
                 "ok": True,
                 "app": APPNAME, "ver": APPVER, "proto": PROTO_VERSION,
                 "host": coll.hostname,
                 "pid": os.getpid(), "uid": os.getuid(), "user": _current_user(),
                 "uptime_s": int(time.time() - st.started_at),
-                "collector": {
-                    "ready": bool(snap.get("ready")), "seq": snap.get("seq", 0),
-                    "ts": snap.get("ts", 0),
-                    "age_s": round(max(0.0, time.time() - snap.get("ts", 0)), 1) if snap.get("ts") else None,
-                    "interval": interval, "hist_len": hist_len,
-                    "samples": samples,
-                },
+                "collector": snap,
                 "config": cfg,
                 "devices": devices,
                 "pairing": ({"expires_in": int(pending["expires"] - time.time())}
@@ -1100,9 +1096,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/status-now":
             if self._require_admin() is None:
                 return
-            with coll.lock:
-                snap = copy.deepcopy(coll.snapshot)
-            return self._send(200, snap)
+            return self._send(200, coll.read_snapshot().body)
 
         return self._err(404, "not found: " + path)
 
@@ -1208,7 +1202,7 @@ class Handler(BaseHTTPRequestHandler):
         st = self.server.state
         candidate = dict(st.cfg)
         changed, restart = [], []
-        for key, cast, lo, hi in (("interval", float, 0.2, 60.0),
+        for key, cast, lo, hi in (("interval", float, INTERVAL_MIN_S, INTERVAL_MAX_S),
                                   ("hist_len", int, 30, 3600),
                                   ("port", int, 1, 65535)):
             if key in body:
@@ -1369,6 +1363,7 @@ class ThreadedHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
 
     def __init__(self, *args, **kwargs):
         self._probe_slots = threading.BoundedSemaphore(self.probe_limit)
+        self._connection_context = threading.local()
         self._requests_done = threading.Condition()
         self._requests = {}
         self._closing = False
@@ -1446,6 +1441,7 @@ class ThreadedHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
         try:
             # Absolute connection lifetime, including peek/handshake/HTTP; bytes
             # do not reset it. OS scheduling/backend waits are not hard realtime.
+            self._connection_context.deadline = time.monotonic() + self.connection_timeout_s
             timer = threading.Timer(self.connection_timeout_s, expire)
             timer.daemon = True
             timer.start()

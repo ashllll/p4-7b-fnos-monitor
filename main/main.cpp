@@ -26,6 +26,7 @@
 #include "fnos_data.h"
 #include "fnos_ui.h"
 #include "ui_kit/uk_theme.h"   /* fnos_ui_theme_use/name：调色板切在 ui_kit 里 */
+#include "ui_kit/uk.h"         /* optional diagnostic number-cache statistics */
 #if __has_include("fnos_config.h")
 #include "fnos_config.h"
 #else

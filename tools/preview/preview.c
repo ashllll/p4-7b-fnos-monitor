@@ -461,6 +461,15 @@ void fnos_pair_forget(void)
     snprintf(s_pair_msg, sizeof s_pair_msg, "%s", "已解除配对，回到编译期默认参数");
 }
 
+#ifndef CONFIG_FNOS_POLL_INTERVAL_MS
+#define CONFIG_FNOS_POLL_INTERVAL_MS 200
+#endif
+unsigned fnos_data_poll_interval_ms(void) {
+    const char *v=getenv("PREVIEW_POLL_MS");
+    return v && atoi(v)>=(int)FNOS_POLL_INTERVAL_MIN_MS
+           ? (unsigned)atoi(v) : CONFIG_FNOS_POLL_INTERVAL_MS;
+}
+
 bool fnos_data_get(fnos_status_t *out)
 {
     if (s_override_status) { fnos_status_copy(out,s_override_status); return true; }
@@ -3888,7 +3897,7 @@ static void record_numbers(void)
     }
     number_frame(timeline,"number-unavailable",0,"unavailable");
     evidence_close(timeline, "numeric motion.csv");
-    puts("checks: Apple curve, carry, retarget continuity, repeat, missing, allocation and deletion PASS");
+    puts("checks: linear telemetry curve, carry, retarget continuity, repeat, missing, allocation and deletion PASS");
 }
 
 static void record_data_numbers(void)

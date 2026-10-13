@@ -1,4 +1,4 @@
-// fnOS 状态数据层：1 Hz 轮询 NAS 上的采集端，解析 JSON 成定长快照 + 曲线环形缓冲。
+// fnOS 状态数据层：可配置节拍轮询 NAS，解析 JSON 成动态快照 + 曲线环形缓冲。
 //
 // 连接参数（地址/端口/令牌/是否 HTTPS/固定证书）来自 fnos_pair：没配对时就是
 // 编译期默认值（明文 HTTP），配对之后换成"独立遥测端口 + 配对令牌 + 固定证书"，
@@ -23,6 +23,7 @@
 #include <float.h>
 #include <limits.h>
 #include <math.h>
+#include <stdatomic.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -49,7 +50,22 @@
 
 static const char *TAG = "fnos_data";
 
-#define POLL_INTERVAL_MS 1000
+#ifndef CONFIG_FNOS_POLL_INTERVAL_MS
+#define CONFIG_FNOS_POLL_INTERVAL_MS 200
+#endif
+static atomic_uint s_poll_interval_ms = CONFIG_FNOS_POLL_INTERVAL_MS;
+
+unsigned fnos_data_poll_interval_ms(void)
+{
+    return atomic_load_explicit(&s_poll_interval_ms, memory_order_relaxed);
+}
+
+bool fnos_data_set_poll_interval_ms(unsigned ms)
+{
+    if (ms < FNOS_POLL_INTERVAL_MIN_MS || ms > FNOS_POLL_INTERVAL_MAX_MS) return false;
+    atomic_store_explicit(&s_poll_interval_ms, ms, memory_order_relaxed);
+    return true;
+}
 #define POLL_TIMEOUT_MS  3000
 #define POLL_BACKOFF_MAX 5000
 /* Byte budgets are configuration, not hardware inventory limits. */
@@ -385,6 +401,11 @@ static bool http_get(const char *url, char **buffer, size_t *capacity, size_t bu
         http_drop_client();
         return false;
     }
+    // 手动 open/read 流程不会像 perform() 自动处理 Connection: close。
+    // 先消费完整响应，再按 IDF 解析出的连接寿命丢弃句柄，下一轮正常重连。
+    if (!esp_http_client_is_persistent_connection(s_client)) {
+        http_drop_client();
+    }
     return true;
 }
 
@@ -522,6 +543,7 @@ static void poll_task(void *arg)
         }
         fnos_net_poll_rssi();               // 刷新 RSSI 缓存，UI 那边只读内存
 
+        const int64_t cycle_start = esp_timer_get_time();
         int status_code = 0, len = 0, ms = 0;
         bool ok = http_get(s_url_status, &buf, &buf_capacity, CONFIG_FNOS_STATUS_MAX_BYTES, &status_code, &len, &ms);
         if (ok && status_code == 200 && parse_status(buf, &tmp)) {
@@ -546,7 +568,11 @@ static void poll_task(void *arg)
                          (unsigned)(heap_caps_get_free_size(MALLOC_CAP_DMA) / 1024),
                          (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
             }
-            vTaskDelay(pdMS_TO_TICKS(POLL_INTERVAL_MS));
+            int64_t remaining = (int64_t)fnos_data_poll_interval_ms() * 1000 -
+                                (esp_timer_get_time() - cycle_start);
+            // 超预算时让出 CPU，不补发错过的采样，避免追赶风暴。
+            TickType_t wait = remaining > 0 ? pdMS_TO_TICKS((remaining + 999) / 1000) : 1;
+            vTaskDelay(wait ? wait : 1);
         } else {
             const char *why = !ok ? (s_conn_err[0] ? s_conn_err
                                                    : (status_code == 0 ? "connect/timeout" : "read error"))
@@ -595,7 +621,7 @@ void fnos_data_start(void)
         s_task = NULL;
         return;
     }
-    ESP_LOGI(TAG, "polling %s every %d ms", s_url_status, POLL_INTERVAL_MS);
+    ESP_LOGI(TAG, "polling %s every %u ms", s_url_status, fnos_data_poll_interval_ms());
 }
 
 void fnos_data_network_changed(void)

@@ -212,7 +212,9 @@ class Safety(unittest.TestCase):
             for no in ('0','false','no','off',' FALSE '):
                 with patch.dict(os.environ,{'NSC_TLS':no,'NSC_DOCKER':no}):
                     cfg=m.load_config();self.assertFalse(cfg['tls_enabled']);self.assertFalse(cfg['docker_enabled'])
-            for key,value in [('NSC_INTERVAL','nan'),('NSC_INTERVAL','inf'),('NSC_INTERVAL','0'),('NSC_HIST','29'),('NSC_HIST','30.5'),('TRIM_SERVICE_PORT','0'),('TRIM_SERVICE_PORT','65536'),('NSC_AUTH','invalid'),('NSC_BIND',''),('NSC_DOCKER','invalid')]:
+            with patch.dict(os.environ,{'NSC_INTERVAL':'0.05'}):
+                self.assertEqual(m.load_config()['interval'],0.05)
+            for key,value in [('NSC_INTERVAL','nan'),('NSC_INTERVAL','inf'),('NSC_INTERVAL','0'),('NSC_INTERVAL','0.049'),('NSC_HIST','29'),('NSC_HIST','30.5'),('TRIM_SERVICE_PORT','0'),('TRIM_SERVICE_PORT','65536'),('NSC_AUTH','invalid'),('NSC_BIND',''),('NSC_DOCKER','invalid')]:
                 with patch.dict(os.environ,{key:value}),self.assertRaises(m.ConfigError):m.load_config()
             for key,value in [('tls_enabled','invalid'),('tls_enabled',None),('docker_enabled',{}),('interval',True),('interval',float('nan')),('hist_len',30.5),('port',False),('port',65536),('auth_mode','invalid'),('bind',None),('devices',{}),('devices',[{}]),('devices',[None]),('devices',[{'sha256':'é'*64}])]:
                 stored=dict(m.DEFAULT_CONFIG);stored[key]=value

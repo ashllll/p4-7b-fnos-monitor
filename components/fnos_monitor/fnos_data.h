@@ -20,6 +20,11 @@ extern "C" {
 // 而不是整帧作废。
 #define FNOS_PROTO_KNOWN 2
 
+/* One runtime contract for every command/UI caller. Kconfig repeats these
+   literals because its range syntax cannot reference C preprocessor macros. */
+#define FNOS_POLL_INTERVAL_MIN_MS 50U
+#define FNOS_POLL_INTERVAL_MAX_MS 60000U
+
 #ifndef CONFIG_FNOS_CHART_WINDOW
 #define CONFIG_FNOS_CHART_WINDOW 180
 #endif
@@ -81,6 +86,9 @@ typedef struct {
 
     int source_dropped;                   // older/configured collectors may still limit lists
     int64_t source_ts;
+    int64_t source_seq;                   // collector generation; 0 for legacy sources
+    int source_age_ms;                    // age since ts_ms at HTTP assembly, rounded to 100 ms
+    bool source_age_valid;
     void *storage;                        // private immutable inventory owner
     int proto;                              // 采集端协议版本（0 = 旧版应用，没上报）
     int nmods;  fnos_mod_t *mods;
@@ -113,6 +121,9 @@ typedef struct { float cpu, mem, rx_kbs, tx_kbs, temp_max; } fnos_sample_t;
 
 // 启动轮询任务（幂等）。未联网时任务自己等待，不阻塞调用方。
 void fnos_data_start(void);
+/* Volatile cadence override for acceptance; reboot restores Kconfig. */
+unsigned fnos_data_poll_interval_ms(void);
+bool fnos_data_set_poll_interval_ms(unsigned ms);
 // 网络状态变化（断线/重连）：丢弃 HTTP 长连接与会话，避免继续用失效 socket。
 void fnos_data_network_changed(void);
 // 复制当前快照；out须{0}初始化或为调用者独占的有效快照，禁止并发共用out。

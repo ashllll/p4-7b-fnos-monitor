@@ -100,5 +100,15 @@ int main(void)
     assert(!metrics.docker[0].has_cpu && !metrics.docker[0].has_mem && !metrics.docker[0].has_restarts);
     fnos_status_release(&metrics);
     puts("PASS optional metrics: real zero, null, absent, negative, overflow, fractional restart and stable identity");
+    assert(fnos_status_parse("{\"ready\":true,\"seq\":42,\"ts\":1700000000,\"ts_ms\":1700000000750,\"age_s\":0.9}",&metrics,&reason));
+    assert(metrics.source_seq==42 && metrics.source_age_valid && metrics.source_age_ms==150);
+    assert(fnos_status_parse("{\"ready\":true,\"ts\":1700000000,\"ts_ms\":1700000000990,\"age_s\":0.9}",&metrics,&reason));
+    assert(metrics.source_age_valid && metrics.source_age_ms==0);
+    assert(fnos_status_parse("{\"ready\":true,\"ts\":1700000000,\"ts_ms\":1700000000750,\"age_s\":1e100}",&metrics,&reason));
+    assert(!metrics.source_age_valid);
+    assert(fnos_status_parse("{\"ready\":true}",&metrics,&reason));
+    assert(!metrics.source_age_valid && metrics.source_seq==0);
+    fnos_status_release(&metrics);
+    puts("PASS cadence metadata: millisecond correction, rounding clamp, hostile age and legacy absence");
     return 0;
 }

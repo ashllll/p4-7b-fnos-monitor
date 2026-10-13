@@ -159,6 +159,7 @@ def build_cap_tree(root):
 # ------------------------------------------------------------------ 加载模块
 
 def load(path, name):
+    sys.path.insert(0, os.path.dirname(path))
     sys.dont_write_bytecode = True          # 别在包目录里留 __pycache__
     spec = importlib.util.spec_from_file_location(name, path)
     m = importlib.util.module_from_spec(spec)

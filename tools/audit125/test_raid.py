@@ -22,6 +22,7 @@ COLLECTOR = os.path.join(REPO, "nas", "fpk", "nasscreencompanion", "app", "serve
 
 
 def _load_collector():
+    sys.path.insert(0, os.path.dirname(COLLECTOR))
     spec = importlib.util.spec_from_file_location("fnos_collector", COLLECTOR)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)

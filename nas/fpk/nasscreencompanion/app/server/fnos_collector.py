@@ -3,20 +3,21 @@
 """
 fnos_collector —— 飞牛 fnOS (Debian) 只读状态采集模块（NAS 屏幕伴侣的采集层）。
 
-来源：本文件第 1~445 行是 nas/fnos-agent.py 的原样拷贝（开发版采集器，
-SSH + systemd 部署、监听 8799），行为与字段契约保持不变；第 446 行以下是
-应用中心版（nasscreencompanion）追加的伴侣层，只新增字段、不改已有字段。
+独立的 FPK 采集实现，保留 nas/fnos-agent.py 的旧字段兼容契约。
+模块状态、完整硬件清单和新增指标由 CompanionCollector 提供；采样结果的
+所有权与 JSON 编码集中在 telemetry_snapshot，不与旧的 8799 服务共享运行状态。
 
 设计目标（给 ESP32-P4 等 MCU 屏幕用）：
-  * 一次 HTTP GET 拿到全部指标，payload 约 1~2 KB，纯 JSON；
+  * 一次 HTTP GET 拿到全部指标，纯 JSON，大小随实际清单增长；
   * 依赖为零（只用 Python 3 标准库，Python>=3.8 均可）；
   * 严格只读：只读 /proc、/sys、statvfs、/proc/mdstat、docker.sock，不写任何文件；
-  * 采样与请求解耦：后台线程按固定间隔采样，HTTP 请求直接返回快照（请求耗时常数级）。
+  * 采样与请求解耦：后台线程按单调时钟采样，每代在锁外复制、编码一次；
+    HTTP 摘要不遍历清单，状态读取复用编码，传输成本仍与 payload 字节数成正比。
 
 采集层字段（Collector）：cpu{pct,cores,load1,load5,load15,temp_c,procs}、
   mem{total,used,avail,pct,swap}、net{if,rx_kbs,tx_kbs,累计}、vols[]、raid[]、
-  disks[]（按繁忙度前 10）、temps[]、docker[]（前 16）、zfs{arc_gb,hit_pct}、
-  uptime_s、alerts[]（前 8）、顶层 {v:1, host, ts, ready}。
+  disks[]、temps[]、docker[]、zfs{arc_gb,hit_pct}、uptime_s、alerts[]、
+  顶层 {v:1, host, ts, ready}。清单默认全量；显式 limits 策略才会裁剪并报告遗漏。
 
 伴侣层新增（CompanionCollector）：proto=2、seq（采样序号）、ts_ms/mono_ms、
   modules{每段状态 + 该段自己的时间戳 + 错误}、caps（本机可用段）、
@@ -43,6 +44,7 @@ import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from telemetry_snapshot import PublishedSnapshot
 
 # ---------------------------------------------------------------- 采样工具
 
@@ -148,8 +150,8 @@ class Collector:
         self.vol_whitelist = [v for v in (volumes or []) if v]
         self.hist_len = int(hist_len)
         self.lock = threading.Lock()
-        self.snapshot = {"v": 1, "host": socket.gethostname(), "ts": 0, "ready": False}
-        self.history = []              # [[ts, cpu, mem, rx_kbs, tx_kbs], ...]
+        self._published = PublishedSnapshot({"v": 1, "host": socket.gethostname(), "ts": 0, "ready": False})
+        self.history = []              # [[ts, cpu, mem, rx_kbs, tx_kbs, temp_max], ...]
         self._stop = threading.Event()
         self._lifecycle_lock = threading.Lock()
         self._thread = None
@@ -163,8 +165,40 @@ class Collector:
         self._pci_cache = {}            # (vid,did) → (厂商名, 型号名)，pci.ids 查一次记住
         self._cpu_name = None           # /proc/cpuinfo 的型号名（只读一次）
         self.hostname = socket.gethostname()
-        # 截断前总数：板子端数组有固定上限，必须能区分"只有 10 块盘"和"被截到 10 块"
+        # 显式裁剪策略保留原总数；默认不按设备数量裁剪。
         self._totals = {}
+
+    @property
+    def snapshot(self):
+        """Sampler-only borrowed data; never mutate a published generation."""
+        return self._published.data
+
+    @snapshot.setter
+    def snapshot(self, candidate):
+        # Also used by collector fixtures. Preparing outside the lock is essential.
+        frame = PublishedSnapshot(candidate)
+        with self.lock:
+            self._published = frame
+
+    def read_snapshot(self):
+        """Pin one generation for a response, without copying its inventories."""
+        with self.lock:
+            return self._published
+
+    def read_summary(self, now):
+        with self.lock:
+            frame = self._published
+            samples = len(self.history)
+            interval, hist_len = self.interval, self.hist_len
+        summary = frame.summary(now)
+        summary.update(samples=samples, interval=interval, hist_len=hist_len)
+        return summary
+
+    def read_history(self, want=0):
+        with self.lock:
+            rows = self.history[-want:] if want > 0 else self.history[:]
+        # Published history rows are never mutated; detach just the selected rows.
+        return [row[:] for row in rows]
 
     def set_hist_len(self, hist_len):
         length = int(hist_len)
@@ -190,7 +224,8 @@ class Collector:
 
     def stop(self, timeout=10.0):
         with self._lifecycle_lock:
-            self._stop.set()
+            with self.lock:
+                self._stop.set()
             thread = self._thread
             if thread is None:
                 return
@@ -203,22 +238,31 @@ class Collector:
 
     def _loop(self):
         while not self._stop.is_set():
-            t0 = time.time()
+            t0 = time.monotonic()
             try:
                 snap = self.sample()
-                with self.lock:
-                    self.snapshot = snap
-                    self.history.append([snap["ts"], snap["cpu"]["pct"], snap["mem"]["pct"],
-                                         snap["net"]["rx_kbs"], snap["net"]["tx_kbs"],
-                                         max((t["c"] for t in snap.get("temps", []) if isinstance(t.get("c"), (int,float))), default=None)
-                                         if "temps" not in snap.get("errors", []) and snap.get("modules", {}).get("temps", {}).get("status", "ok") == "ok" else None])
+                if self._stop.is_set():
+                    break
+                frame = PublishedSnapshot(snap)
+                row = [snap["ts"], snap["cpu"]["pct"], snap["mem"]["pct"],
+                       snap["net"]["rx_kbs"], snap["net"]["tx_kbs"],
+                       max((t["c"] for t in snap.get("temps", []) if isinstance(t.get("c"), (int, float))), default=None)
+                       if "temps" not in snap.get("errors", []) and snap.get("modules", {}).get("temps", {}).get("status", "ok") == "ok" else None]
+            except Exception as exc:                      # 采集失败不能让服务挂掉
+                if self._stop.is_set():
+                    break
+                frame = PublishedSnapshot({"v": 1, "host": self.hostname, "ts": int(time.time()),
+                                           "ready": False, "error": "%s: %s" % (type(exc).__name__, exc)})
+                row = None
+            with self.lock:
+                if self._stop.is_set():
+                    break
+                self._published = frame
+                if row is not None:
+                    self.history.append(row)
                     if len(self.history) > self.hist_len:
                         del self.history[:len(self.history) - self.hist_len]
-            except Exception as exc:                      # 采集失败不能让服务挂掉
-                with self.lock:
-                    self.snapshot = {"v": 1, "host": self.hostname, "ts": int(time.time()),
-                                     "ready": False, "error": "%s: %s" % (type(exc).__name__, exc)}
-            dt = self.interval - (time.time() - t0)
+            dt = self.interval - (time.monotonic() - t0)
             if dt > 0:
                 self._stop.wait(dt)
 

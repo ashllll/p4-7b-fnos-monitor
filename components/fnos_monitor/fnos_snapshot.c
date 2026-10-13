@@ -167,6 +167,13 @@ bool fnos_status_parse(const char *json, fnos_status_t *out, const char **reason
 #define TEXT(field, object, key) do { if (!fnos_status_text(&s, &(field), "%s", string(object,key))) goto fail; } while (0)
     TEXT(s.host,root,"host"); s.uptime_s=unum(root,"uptime_s");
     s.source_ts=lnum(root,"ts"); s.proto=inum(root,"proto");
+    s.source_seq=lnum(root,"seq");
+    int64_t source_end=lnum(root,"ts_ms");
+    s.source_age_valid=metric_number(root,"age_s") && s.source_ts>0 && source_end>0;
+    if (s.source_age_valid) {
+        double age=number(root,"age_s")*1000.0-(source_end-s.source_ts*1000.0);
+        s.source_age_ms=(int)clampd(age,0.0,INT_MAX);
+    }
     const cJSON *o=item(root,"cpu");
     s.cpu.pct=fnum(o,"pct"); s.cpu.load1=fnum(o,"load1");
     s.cpu.load5=fnum(o,"load5"); s.cpu.load15=fnum(o,"load15");

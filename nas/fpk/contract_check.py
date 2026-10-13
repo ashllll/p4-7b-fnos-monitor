@@ -30,12 +30,14 @@
 """
 
 import ast
+import importlib.util
 import io
 import json
 import os
 import re
 import subprocess
 import sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
@@ -61,6 +63,7 @@ CAPACITY_CHECKED = False
 
 # 列表段 → 采集端里构造它的方法名（机器核对用；改名时两边一起改）
 DOCKER_TRANSPORT = os.path.join(os.path.dirname(COLLECTOR), "docker_api.py")
+TELEMETRY_SNAPSHOT = os.path.join(os.path.dirname(COLLECTOR), "telemetry_snapshot.py")
 
 LIST_METHOD = {
     "vols": "_volumes", "raid": "_raid", "disks": "_disk_io", "temps": "_temps",
@@ -151,7 +154,14 @@ def live_status(path=None):
             return json.load(f)
     out = subprocess.run([sys.executable, COLLECTOR, "--sample"],
                          capture_output=True, text=True, timeout=30, check=True).stdout
-    return json.loads(out)
+    sample = json.loads(out)
+    if not os.path.exists(TELEMETRY_SNAPSHOT):
+        return sample
+    spec = importlib.util.spec_from_file_location("contract_telemetry_snapshot", TELEMETRY_SNAPSHOT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    body = module.PublishedSnapshot(sample).status_body("contract-check", "0", time.time())
+    return json.loads(body)
 
 
 def method_body(path, name):
@@ -188,8 +198,9 @@ def load_reads(argv):
 
 def all_source_keys():
     """采集端源码里出现过的所有 `"键":`，用来兜一条底：板子读的字段名，
-    在 NAS 代码里至少得存在（哪怕本机这条分支走不到）。"""
-    src = read_text(COLLECTOR) + "\n" + read_text(DOCKER_TRANSPORT)
+    在 NAS 的采集或响应发布代码里至少得存在（哪怕本机这条分支走不到）。"""
+    paths = (COLLECTOR, DOCKER_TRANSPORT, TELEMETRY_SNAPSHOT)
+    src = "\n".join(read_text(path) for path in paths if os.path.exists(path))
     # 两种写法都算：字典字面量 `"k": v`，以及下标赋值 `snap["k"] = v`
     # （顶层快照的很多字段是后一种，只认字面量会误报）。
     keys = set(re.findall(r'["\']([A-Za-z_0-9]+)["\']\s*:', src))

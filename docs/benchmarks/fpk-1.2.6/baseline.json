@@ -1,0 +1,90 @@
+{
+  "python": "3.12.15",
+  "scope": "host production routes; anonymous inventory; no network",
+  "results": [
+    {
+      "entities_per_list": 32,
+      "routes": {
+        "/api/v1/health": {
+          "median_us": 203.06,
+          "bytes": 119
+        },
+        "/api/state": {
+          "median_us": 209.69,
+          "bytes": 560
+        },
+        "/api/v1/status": {
+          "median_us": 259.96,
+          "bytes": 10131
+        },
+        "/api/status-now": {
+          "median_us": 259.11,
+          "bytes": 10067
+        }
+      },
+      "publish_median_us": 5.22,
+      "publish_plus_1_status_us": 265.18,
+      "publish_plus_4_status_us": 1045.06,
+      "publish_plus_32_status_us": 8323.94
+    },
+    {
+      "entities_per_list": 256,
+      "routes": {
+        "/api/v1/health": {
+          "median_us": 1564.95,
+          "bytes": 119
+        },
+        "/api/state": {
+          "median_us": 1553.06,
+          "bytes": 560
+        },
+        "/api/v1/status": {
+          "median_us": 2022.36,
+          "bytes": 80195
+        },
+        "/api/status-now": {
+          "median_us": 2005.53,
+          "bytes": 80131
+        }
+      },
+      "publish_median_us": 23.05,
+      "publish_plus_1_status_us": 2045.41,
+      "publish_plus_4_status_us": 8112.49,
+      "publish_plus_32_status_us": 64738.57
+    },
+    {
+      "entities_per_list": 1024,
+      "routes": {
+        "/api/v1/health": {
+          "median_us": 6145.69,
+          "bytes": 119
+        },
+        "/api/state": {
+          "median_us": 6101.97,
+          "bytes": 560
+        },
+        "/api/v1/status": {
+          "median_us": 8028.34,
+          "bytes": 321443
+        },
+        "/api/status-now": {
+          "median_us": 8330.67,
+          "bytes": 321379
+        }
+      },
+      "publish_median_us": 87.06,
+      "publish_plus_1_status_us": 8115.4,
+      "publish_plus_4_status_us": 32200.42,
+      "publish_plus_32_status_us": 256993.94
+    }
+  ],
+  "identity": {
+    "commit": "8cca07c30b553d284cf8f97e8f1cdb85101aa759"
+  },
+  "method": {
+    "batches": 7,
+    "requests_per_batch": 40,
+    "entities": "anonymous vols/docker/temps, per list",
+    "network": false
+  }
+}

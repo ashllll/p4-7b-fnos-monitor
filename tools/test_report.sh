@@ -115,6 +115,7 @@ run_check "字段契约（板子读的字段 NAS 是否都在）" python3 nas/fp
 run_check "向导表单 schema" python3 nas/fpk/wizard_check.py "$PKG"
 run_check "manifest 取值与包内结构" python3 nas/fpk/manifest_check.py "$PKG"
 run_check "每请求内存判定" python3 nas/fpk/mem_check.py 3000
+run_check "匿名大清单持续发布与 HTTP 内存判定" python3 nas/fpk/mem_check.py 3000 --entities 1024 --publish-every 10
 # plan_check 读的正是**这份报告**里的「本轮断言条数 / 失败数」，所以它只能在报告写完之后跑。
 # 以前它排在报告重写之前（审计 M51）：跑的是上一轮的结论 —— 上一轮要是红的，这一轮即使
 # 已经修好了也会被记一行"失败"并置 HARD_FAIL，而写完之后那次复跑只能追一条 ⚠ 注脚，
@@ -190,6 +191,7 @@ run_check "性能样本完整性（无设备）" python3 tools/test_perf_samples
 run_check "大小栈帧与未知调整负控" python3 tools/test_stack_frames.py
 run_check "拍屏错误处理（模拟，无设备）" python3 tools/test_page_shot.py
 run_check "TLS 故障拒绝降级、令牌并发与安全日志" python3 nas/fpk/test_server_safety.py
+run_check "遥测发布所有权、编码复用与停止屏障（无 NAS）" python3 nas/fpk/test_telemetry_publication.py
 run_check "令牌 fail-closed 安装/升级/故障路径（M31）" python3 nas/fpk/test_install_token.py
 run_check "Release 断言与坏夹具拒绝（无设备）" bash tools/preview/test_release_asserts.sh
 run_check "预览输出目录守卫 + 分支变量按阶段隔离（M36/M57）" bash tools/preview/test_run_guard.sh
@@ -293,7 +295,7 @@ hdr "写报告"
   echo "- **manifest 校验**（\`manifest_check.py\`）：\`fnpack build\` 只查"必要字段在、格式对"，不查取值。这里按官方文档核 \`platform\`/\`ctl_stop\`/\`service_port\`/\`install_dep_apps\` 等，并交叉核对 \`desktop_applaunchname\` 确实存在于 \`ui/config\` 的入口 ID 里（对不上＝桌面卡片打不开）。"
   echo "- **向导 schema**（\`wizard_check.py\`）：安装向导是用户看到的第一屏。核字段类型、选项、\`wizard_\` 前缀、校验规则，以及\`initValue\` 能不能通过自己的 \`rules\`（不能＝用户什么都不改就被拦下）。"
   echo "- **管理页 JS**（\`page_check.js\`）：在 Node + 最小 DOM 垫片里跑真实脚本、喂真实响应、把每个按钮点一遍，并对渲染结果做断言——JS 读不存在的属性只得到 \`undefined\`，不会报错。"
-  echo "- **每请求内存判定**（\`mem_check.py\`）：打 3000 个请求，看 RSS 是"平台化"还是单调上涨（判据取后 1/3 比中间 1/3）。"
+  echo "- **每请求内存判定**（\`mem_check.py\`）：分别用空快照与每类 1024 项匿名清单打 3000 个 HTTP 请求；后者同时持续生产发布，检查完整清单与代次，RSS 判据取后 1/3 比中间 1/3。不代替真实 NAS 长测。"
   echo "- **静态栈预算**（\`stack_check.py\`）：从 ELF 算各任务调用链的栈深下界。本项目被栈溢出烧过两次，而主机预览栈是 MB 级、永远测不出来。"
   echo "- **产物不比源码旧**（\`tools/freshness_check.py\`）：这个项目有三套产物、三条编译路径，验证成本差得很远（改文案跑预览几秒，\`./idf.sh build\` 两分钟起）。便宜的那条会被反复跑、贵的那条容易被跳过，于是出现最坏的情况：**源码里有编不过的东西，而所有检查都是绿的**——因为它们检查的是上一次编出来的二进制。这个脚本只比 mtime，一秒出结果。它第一次跑就抓到三套产物全部过期（其中固件比源码旧 2 分钟、应用包比 \`cmd/_common.sh\` 旧 3 分钟），也就是说那一轮的"全绿"里有一部分是对旧代码说的。"
   echo "- **证书指纹三方一致**（\`tools/certcheck/run.sh\`）：指纹是整套信任模型里唯一的人工锚点——用户在 NAS 管理页看一串、在板子屏幕看一串，一样才放行，而这两个值由**两段完全独立的代码**算出（服务端纯 Python、板端 C + mbedtls）。这个脚本把固件里那个 \`pem_fingerprint()\` **原样抠出来**编到主机上跑（不抄一份，抄了就等于测手抄的那份），和 Python 版、和 \`openssl x509 -noout -fingerprint -sha256\` 三方对照；另外测 CRLF 换行与"PEM 里带证书链"两个边界。它第一次跑就抓到固件把整条链的 base64 拼起来、链一长就返回 false，而服务端是取第一段——两端会对不上，用户只会看到"证书解不开"。"

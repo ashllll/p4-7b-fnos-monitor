@@ -4,8 +4,9 @@
 
 ## 表现与数据约束
 
-- 使用 Apple Core Animation `easeOut` 对应的 `cubic-bezier(0,0,0.58,1)`；计算时先求解曲线的 x，再取 y。
-- 只为变化的字符添加纵向位移、透明度及轻微柔化。位移按字体行高计算，柔化为五点加权字形采样，不是高斯模糊。
+- 2026-10-13 起，采集与呈现节奏分离：遥测和图表保持 200 ms 更新；数字标签每 600 ms 选择最新读数，以 160 ms 固定速度线性过渡，并至少稳定停留 440 ms。动画从当前呈现值重定向，不回跳、不排队，也不靠提高 NAS 采集频率制造流畅感。
+- 只为变化的字符添加轻微纵向位移与透明度。位移按字体行高计算；高频遥测关闭错峰和柔化，避免字形在持续更新时拖尾。
+- 手势翻页仍由手指位置直接驱动，松手后使用临界阻尼收尾并支持中途反向。这部分遵循 Apple 的直接操控与无回弹原则，不套用遥测数字的匀速曲线。
 - 不变的字符保留；进位增加字符时从原画面位置过渡。更新中再次收到读数时从当前可见字形继续，不排队播放历史读数。
 - label 的真实文本始终是最新读数，没有数值插值，也不制造采样或历史数据。
 - 断线、缺失值、单位/状态/身份变化立即显示。多行、溢出、字体切换、隐藏对象及字符数量减少且内容尺寸遮罩无法保留原字形时使用原生静态文本；避免裁字或覆盖相邻单位。
@@ -25,11 +26,12 @@
 
 | 配置 | 默认值 |
 | --- | --- |
-| `FNOS_UI_NUMBER_MS` | 250 ms；0 关闭 |
-| `FNOS_UI_NUMBER_STAGGER_MS` | 50 ms |
-| `FNOS_UI_NUMBER_MAX_STAGGER_MS` | 100 ms |
-| `FNOS_UI_NUMBER_TRAVEL_PCT` | 字体行高的 25% |
-| `FNOS_UI_NUMBER_BLUR_PCT` | 字体行高的 6%；0 关闭 |
+| `FNOS_UI_NUMBER_MS` | 160 ms 线性过渡上限；0 关闭 |
+| `FNOS_UI_NUMBER_PRESENT_MS` | 600 ms 最小数字呈现间隔；采集和图表不受影响 |
+| `FNOS_UI_NUMBER_STAGGER_MS` | 0 ms |
+| `FNOS_UI_NUMBER_MAX_STAGGER_MS` | 0 ms |
+| `FNOS_UI_NUMBER_TRAVEL_PCT` | 字体行高的 12% |
+| `FNOS_UI_NUMBER_BLUR_PCT` | 0；关闭 |
 | `FNOS_UI_NUMBER_BUDGET_BYTES` | 临时字形总预算 128 KiB |
 | `FNOS_UI_REDUCED_MOTION` | 启用后数值立即更新 |
 

@@ -560,7 +560,7 @@ step "7b. 协议契约（旧板子必须继续能读）"
 # 计划里承诺过：/api/v1/status、history、health 的既有字段名和类型不能变，
 # 新增信息只能是加字段。这里把这个承诺写成断言，改协议前先看这一段。
 CONTRACT=$(python3 - "$PORT" "$TOK" "$CACERT" <<'PY'
-import json, ssl, sys, urllib.request
+import json, math, ssl, sys, urllib.request
 
 port, tok, cacert = sys.argv[1], sys.argv[2], sys.argv[3]
 base = "https://127.0.0.1:%s" % port
@@ -605,18 +605,22 @@ if not isinstance(st.get("modules"), dict):
     bad.append("status.modules 不是对象")
 
 h = get("/api/v1/history")
-if h.get("cols") != ["ts", "cpu", "mem", "rx_kbs", "tx_kbs"]:
+if h.get("cols") != ["ts", "cpu", "mem", "rx_kbs", "tx_kbs", "temp_max"]:
     bad.append("history.cols 变了：%r" % (h.get("cols"),))
 rows = h.get("rows")
 if not isinstance(rows, list):
     bad.append("history.rows 不是数组")
 else:
     for row in rows:
-        if not isinstance(row, list) or len(row) != 5:
-            bad.append("history 行不是 5 列：%r" % (row,))
+        if not isinstance(row, list) or len(row) != 6:
+            bad.append("history 行不是 6 列：%r" % (row,))
             break
-        if not all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in row):
-            bad.append("history 行里有非数字：%r" % (row,))
+        # 前五列保持原位置与有限数值；新增最高温缺失时为 null，不能伪装成 0°C。
+        if not all(typed(x, (int, float)) and math.isfinite(x) for x in row[:5]):
+            bad.append("history 原五列里有非法数字：%r" % (row,))
+            break
+        if row[5] is not None and not (typed(row[5], (int, float)) and math.isfinite(row[5])):
+            bad.append("history 最高温不是有限数字或 null：%r" % (row,))
             break
 
 hl = get("/api/v1/health")

@@ -243,7 +243,7 @@ norm_wizard() {
     *) W_TLS=true ;;
   esac
 
-  # 采样间隔：服务端认的合法区间是 0.2~60 秒（nas_companion_server.py:946 的同一组
+  # 采样间隔：服务端认的合法区间是 0.05~60 秒（nas_companion_server.py 的同一组
   # 上下限）。这里以前只挡了非数字，"0" 能一路写进 config.json —— 采集线程算出负的
   # sleep 就干脆不睡，CPU 直接跑满（审计 M44）。范围外的值回退到 1.0 并留日志。
   W_INTERVAL="${wizard_interval:-1.0}"
@@ -252,8 +252,8 @@ norm_wizard() {
       if [ -n "${wizard_interval:-}" ]; then warn "采样间隔 \"$wizard_interval\" 不是数字，已回退到 1.0"; fi
       W_INTERVAL=1.0 ;;
   esac
-  if ! awk -v v="$W_INTERVAL" 'BEGIN { exit !(v + 0 >= 0.2 && v + 0 <= 60.0) }'; then
-    warn "采样间隔 ${W_INTERVAL}s 不在 0.2~60s 内，已回退到 1.0"
+  if ! awk -v v="$W_INTERVAL" 'BEGIN { exit !(v + 0 >= 0.05 && v + 0 <= 60.0) }'; then
+    warn "采样间隔 ${W_INTERVAL}s 不在 0.05~60s 内，已回退到 1.0"
     W_INTERVAL=1.0
   fi
 }

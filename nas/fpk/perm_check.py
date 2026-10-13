@@ -27,6 +27,7 @@ COLLECTOR = os.path.join(HERE, "nasscreencompanion", "app", "server", "fnos_coll
 
 
 def load():
+    sys.path.insert(0, os.path.dirname(COLLECTOR))
     spec = importlib.util.spec_from_file_location("nsc_collector", COLLECTOR)
     mod = importlib.util.module_from_spec(spec)
     sys.dont_write_bytecode = True          # 别在包目录里留 __pycache__（会被打进 .fpk）
