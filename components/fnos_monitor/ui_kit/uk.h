@@ -96,8 +96,8 @@ lv_obj_t *uk_number_label_create(lv_obj_t *parent);
 void uk_number_set_text(lv_obj_t *label, const char *text, bool animate);
 void uk_number_settle(lv_obj_t *label);
 void uk_number_motion_enable(bool enabled);
-/* Match numeric motion to the data cadence; the theme value remains a cap. */
-void uk_number_motion_period(uint32_t period_ms);
+/* Open at most one synchronized numeric presentation batch per configured cadence. */
+void uk_number_refresh_begin(void);
 /* Snapshot/reset-free counters; call only on the LVGL thread while holding its lock. */
 typedef struct {
     size_t bytes, peak_bytes;

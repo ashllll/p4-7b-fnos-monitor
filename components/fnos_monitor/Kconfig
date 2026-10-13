@@ -106,21 +106,22 @@ menu "fnOS monitor"
                 budget exhaustion. This never limits telemetry or inventory.
 
         config FNOS_UI_NUMBER_MS
-            int "Linear numeric transition duration cap (ms; 0 disables motion)"
+            int "Linear numeric transition duration (ms; 0 disables motion)"
             range 0 1000
-            default 160
+            default 300
             help
-                Keep each transition brief enough to reach a stable resting
-                state before another presented value is allowed to animate.
+                Use a fixed duration independent of telemetry and screen refresh
+                cadence. Keep it shorter than FNOS_UI_NUMBER_PRESENT_MS so every
+                batch reaches a stable resting state.
 
         config FNOS_UI_NUMBER_PRESENT_MS
             int "Minimum interval between presented numeric changes (ms)"
             range 0 5000
-            default 600
+            default 1200
             help
                 Telemetry and charts may refresh faster. Numeric labels select
-                the newest sample no more often than this interval, preventing
-                high-frequency readings from remaining in perpetual motion.
+                the newest sample together on this global cadence, preventing
+                different readings from keeping the screen in perpetual motion.
 
         config FNOS_UI_NUMBER_STAGGER_MS
             int "Numeric changed-position stagger (ms)"
@@ -135,7 +136,7 @@ menu "fnOS monitor"
         config FNOS_UI_NUMBER_TRAVEL_PCT
             int "Numeric travel (% of font line height)"
             range 0 50
-            default 12
+            default 8
 
         config FNOS_UI_NUMBER_BLUR_PCT
             int "Numeric sampled blur (% of font line height; 0 disables)"

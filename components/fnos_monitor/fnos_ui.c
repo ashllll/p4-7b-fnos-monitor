@@ -4272,7 +4272,7 @@ static void refresh(void)
         if (cur >= 0 && cur < FNOS_UI_PAGE_COUNT) s_page_dirty[cur] = false;
     }
 
-    uk_number_motion_period(fnos_ui_refresh_period_ms());
+    uk_number_refresh_begin();
     uk_number_motion_enable(st->online && !motion_busy());
 
     /* 顶栏：主机 / 端点 / 状态胶囊 / 信号 */

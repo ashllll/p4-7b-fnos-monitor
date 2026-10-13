@@ -18,11 +18,14 @@ typedef struct {
     lv_label_t label;
     glyph_layer_t *layers;
     const lv_font_t *font;
-    uint32_t started, span, duration, last_presented;
+    uint32_t started, span, duration;
     bool active;
 } number_label_t;
 static bool motion_enabled = true;
 static bool presentation_gate_enabled = true;
+static bool presentation_batch_open = true;
+static bool presentation_batch_started;
+static uint32_t presentation_batch_at;
 static uint32_t motion_period_ms = UK_NUMBER_MS;
 static size_t layer_bytes;
 static uk_number_stats_t stats;
@@ -105,9 +108,22 @@ void uk_number_settle(lv_obj_t *obj)
     if (obj && lv_obj_get_class(obj)==&number_class) clear_layers(obj);
 }
 void uk_number_motion_enable(bool enabled) { motion_enabled=enabled; }
-void uk_number_motion_period(uint32_t period_ms)
+void uk_number_refresh_begin(void)
 {
-    motion_period_ms=period_ms ? LV_MIN(period_ms,(uint32_t)UK_NUMBER_MS) : UK_NUMBER_MS;
+    /* Sampling and screen refresh stay fast. Numeric motion uses its own fixed
+       duration, while all labels share one beat so the whole screen can rest. */
+    motion_period_ms=UK_NUMBER_MS;
+    if (!presentation_gate_enabled || UK_NUMBER_PRESENT_MS==0) {
+        presentation_batch_open=true;
+        return;
+    }
+    uint32_t now=lv_tick_get();
+    presentation_batch_open=!presentation_batch_started ||
+        lv_tick_elaps(presentation_batch_at)>=UK_NUMBER_PRESENT_MS;
+    if (presentation_batch_open) {
+        presentation_batch_started=true;
+        presentation_batch_at=now;
+    }
 }
 lv_obj_t *uk_number_label_create(lv_obj_t *parent)
 {
@@ -188,18 +204,12 @@ void uk_number_set_text(lv_obj_t *obj, const char *text, bool animate)
         (!n->active || n->font==font);
     if (!eligible) {
         clear_layers(obj);
-        if (strcmp(old,text)) {
-            lv_label_set_text(obj,text);
-            n->last_presented=0;
-        }
+        if (strcmp(old,text)) lv_label_set_text(obj,text);
         return;
     }
     if (!strcmp(old,text)) return; /* Same target never restarts a running transition. */
-    if (presentation_gate_enabled && UK_NUMBER_PRESENT_MS>0 && n->last_presented &&
-        lv_tick_elaps(n->last_presented)<UK_NUMBER_PRESENT_MS) {
-        return; /* Keep the current reading still; the next refresh supplies the latest target. */
-    }
-    n->last_presented=lv_tick_get();
+    if (presentation_gate_enabled && UK_NUMBER_PRESENT_MS>0 && !presentation_batch_open)
+        return; /* Keep this batch still; the next shared beat takes the latest target. */
     n->font=font;
     lv_obj_update_layout(obj);
     lv_point_t old_size,new_size;
@@ -362,6 +372,7 @@ void uk_number_selfcheck(lv_obj_t *parent)
     uk_number_set_text(o,"66%",true);
     number_label_t *n=(number_label_t *)o;
     assert(n->active);
+    assert(n->duration==UK_NUMBER_MS);
     sample_layers(n,n->duration/3);
     n->started=lv_tick_get()-n->duration/3;
     glyph_layer_t *before=n->layers;
@@ -444,18 +455,36 @@ void uk_number_selfcheck(lv_obj_t *parent)
     lv_obj_delete(r->row); lv_free(r);
     presentation_gate_enabled=saved_gate;
     if (saved_gate && UK_NUMBER_PRESENT_MS>0) {
-        lv_obj_t *q=uk_number_label_create(parent);
-        assert(q); lv_obj_set_style_text_font(q,UK_FONT_NUM_32,0); lv_obj_set_width(q,200);
+        bool saved_batch_open=presentation_batch_open;
+        bool saved_batch_started=presentation_batch_started;
+        uint32_t saved_batch_at=presentation_batch_at;
+        lv_obj_t *q=uk_number_label_create(parent), *q2=uk_number_label_create(parent);
+        assert(q && q2);
+        lv_obj_set_style_text_font(q,UK_FONT_NUM_32,0); lv_obj_set_width(q,200);
+        lv_obj_set_style_text_font(q2,UK_FONT_NUM_32,0); lv_obj_set_width(q2,200);
         uk_number_set_text(q,"10",false); lv_obj_update_layout(q);
-        number_label_t *qn=(number_label_t *)q;
-        uint32_t now=lv_tick_get();
-        qn->last_presented=now ? now : 1;
+        uk_number_set_text(q2,"20",false); lv_obj_update_layout(q2);
+        number_label_t *qn=(number_label_t *)q, *qn2=(number_label_t *)q2;
+        presentation_batch_started=false;
+        uk_number_refresh_begin();
         uk_number_set_text(q,"11",true);
-        assert(!qn->active && !strcmp(lv_label_get_text(q),"10"));
-        qn->last_presented=lv_tick_get()-UK_NUMBER_PRESENT_MS;
+        uk_number_set_text(q2,"21",true);
+        assert(qn->active && qn2->active);
+        uk_number_settle(q); uk_number_settle(q2);
+        uk_number_refresh_begin();
         uk_number_set_text(q,"12",true);
-        assert(qn->active && !strcmp(lv_label_get_text(q),"12"));
-        lv_obj_delete(q);
+        uk_number_set_text(q2,"22",true);
+        assert(!qn->active && !qn2->active);
+        assert(!strcmp(lv_label_get_text(q),"11") && !strcmp(lv_label_get_text(q2),"21"));
+        presentation_batch_at=lv_tick_get()-UK_NUMBER_PRESENT_MS;
+        uk_number_refresh_begin();
+        uk_number_set_text(q,"13",true);
+        uk_number_set_text(q2,"23",true);
+        assert(qn->active && qn2->active);
+        lv_obj_delete(q); lv_obj_delete(q2);
+        presentation_batch_open=saved_batch_open;
+        presentation_batch_started=saved_batch_started;
+        presentation_batch_at=saved_batch_at;
     }
 }
 #endif
