@@ -973,6 +973,9 @@ static void build_foot(lv_obj_t *foot)
     s_ui.foot_txt = uk_label(band, UK_FONT_CJK_12, UK_T3, "等待数据");
     lv_obj_set_flex_grow(s_ui.foot_txt, 1);
     lv_obj_set_style_min_width(s_ui.foot_txt, 0, 0);
+    /* This entry is one line high; complete events remain reachable by tapping it. */
+    lv_label_set_long_mode(s_ui.foot_txt, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_height(s_ui.foot_txt, lv_font_get_line_height(UK_FONT_CJK_12));
     not_clickable(s_ui.foot_txt);
 }
 
@@ -1969,10 +1972,8 @@ static lv_obj_t *panel_box(lv_obj_t *parent, int32_t grow)
    采集端可能给空串或没见过的级别，一律落进"提示"，不丢事件。 */
 static int alert_group_of(const char *lv)
 {
-    if (lv && lv[0]) {
-        if (lv[0] == 'c') return 0;
-        if (lv[0] == 'w') return 1;
-    }
+    if (lv && !strcmp(lv, "crit")) return 0;
+    if (lv && !strcmp(lv, "warn")) return 1;
     return 2;
 }
 
@@ -4118,7 +4119,32 @@ static void inventory_notice(void)
 /* 告警页健康态的"体检"四行（见 build_p5 的注释）。所有数字都来自当前快照：
    某一段读不到就写它的状态词 + 黄点 —— 绝不静默显示成 0，因为 0 的含义是
    "看过了、确实是 0"。 */
-static void alert_health_sync(const fnos_status_t *st)
+typedef struct {
+    int alerts[3], first_alert, running;
+    uint32_t color, event_color;
+    const char *note;
+} health_summary_t;
+
+/* Borrow only the current snapshot; no second inventory or retained strings. */
+static health_summary_t health_summary(const fnos_status_t *st)
+{
+    health_summary_t h = { .first_alert = -1, .event_color = UK_T3 };
+    int first_group = 3;
+    for (int i = 0; i < st->nalerts; i++) {
+        int group = alert_group_of(st->alerts[i].lv);
+        h.alerts[group]++;
+        if (group < first_group) { first_group = group; h.first_alert = i; }
+    }
+    for (int i = 0; i < st->ndocker; i++) if (st->docker[i].up) h.running++;
+    h.event_color = first_group == 0 ? UK_DANGER : first_group == 1 ? UK_WARN : UK_T3;
+    h.color = !st->ever_ok ? UK_T3 : !st->online ? UK_WARN :
+              h.alerts[0] ? UK_DANGER : h.alerts[1] ? UK_WARN : UK_OK;
+    h.note = !st->ever_ok ? "等待数据" : !st->online ? "采集端离线" :
+             h.alerts[0] ? "存在严重告警" : h.alerts[1] ? "需要关注" : "无采集告警";
+    return h;
+}
+
+static void alert_health_sync(const fnos_status_t *st, int running)
 {
     if (!s_ui.alert_health) return;
     const bool on = st->ever_ok && st->online && st->nalerts == 0;
@@ -4194,10 +4220,8 @@ static void alert_health_sync(const fnos_status_t *st)
     } else if (st->ndocker <= 0) {
         snprintf(v2, sizeof v2, "未发现容器");
     } else {
-        int up = 0;
-        for (int i = 0; i < st->ndocker; i++) if (st->docker[i].up) up++;
-        snprintf(v2, sizeof v2, "%s%d/%d 运行", overview_live(st, "docker") ? "" : "旧值 · ", up, st->ndocker);
-        warn[2] = up < st->ndocker || !overview_live(st, "docker");
+        snprintf(v2, sizeof v2, "%s%d/%d 运行", overview_live(st, "docker") ? "" : "旧值 · ", running, st->ndocker);
+        warn[2] = running < st->ndocker || !overview_live(st, "docker");
     }
 
     /* ④ 采集：这条链路自己的状态 —— 成功/失败次数 + 数据新鲜度 */
@@ -4218,22 +4242,7 @@ static void alert_health_sync(const fnos_status_t *st)
    数据 1Hz、UI 2Hz，原来 500ms 把 6 页正文全刷一遍，一半是白做的：实机上这次
    tick 要 75ms，而它跑在 LVGL 任务里（持显示锁），直接顶住手势帧。 */
 static bool s_page_dirty[FNOS_UI_PAGE_COUNT];
-static int  s_force_page = -1;   /* -1 = 跟随 s_page；>=0 = 只刷这一页 */
-
-static bool page_on(int k)
-{
-    return k == (s_force_page >= 0 ? s_force_page : s_page);
-}
-
-/* 切页 / 预热时补刷目标页正文：目标页必须在露出来**之前**就是新数据。 */
-static void refresh_page(int idx)
-{
-    if (idx < 0 || idx >= FNOS_UI_PAGE_COUNT) return;
-    int prev = s_force_page;
-    s_force_page = idx;
-    refresh();
-    s_force_page = prev;
-}
+static void refresh_page(int idx);
 
 static void module_note(lv_obj_t *card, const fnos_status_t *st, const char *module)
 {
@@ -4256,25 +4265,8 @@ static const char *smart_note(const char *state)
     return "未采集";
 }
 
-static void refresh(void)
+static void refresh_shell(const fnos_status_t *st, const health_summary_t *health)
 {
-    const fnos_status_t *st = &s_st;
-    char b[256], c1[32], c2[32];
-
-    /* 刷正文前先把"这一拍没刷到的页"记脏，留给切页/预热补。
-       强制单页刷（refresh_page）只清自己的脏位，不去标脏别人 —— 预热一页
-       不该把刚刷过的当前页标脏。 */
-    {
-        int cur = s_force_page >= 0 ? s_force_page : s_page;
-        if (s_force_page < 0)
-            for (int i = 0; i < FNOS_UI_PAGE_COUNT; i++)
-                if (i != cur) s_page_dirty[i] = true;
-        if (cur >= 0 && cur < FNOS_UI_PAGE_COUNT) s_page_dirty[cur] = false;
-    }
-
-    uk_number_refresh_begin();
-    uk_number_motion_enable(st->online && !motion_busy());
-
     /* 顶栏：主机 / 端点 / 状态胶囊 / 信号 */
     set_txt(s_ui.h_host, "%s", st->host[0] ? st->host : "fnos");
     header_refresh();
@@ -4294,11 +4286,7 @@ static void refresh(void)
     }
     if (s_ui.foot_txt && s_ui.foot_dot) {
         uint32_t band = UK_OK;
-        int first = -1, rank = -1;
-        for (int i = 0; i < st->nalerts; i++) {
-            int r = !strcmp(st->alerts[i].lv, "crit") ? 2 : !strcmp(st->alerts[i].lv, "warn") ? 1 : 0;
-            if (r > rank) { rank = r; first = i; }
-        }
+        int first = health->first_alert;
         if (!st->ever_ok) {
             band = UK_T3; set_txt(s_ui.foot_txt, "等待采集端…");
         } else if (!st->online) {
@@ -4306,7 +4294,7 @@ static void refresh(void)
             if (first >= 0) set_txt(s_ui.foot_txt, "采集端离线 · 上次事件：%s", st->alerts[first].m);
             else set_txt(s_ui.foot_txt, "告警状态未知 · 保留旧数据");
         } else if (first >= 0) {
-            band = rank == 2 ? UK_DANGER : rank == 1 ? UK_WARN : UK_T3;
+            band = health->event_color;
             set_txt(s_ui.foot_txt, "%s · 共 %d 个事件", st->alerts[first].m, st->nalerts);
         } else if (st->source_dropped) { band = UK_WARN; set_txt(s_ui.foot_txt, "采集端省略 %d 项 · 请检查采集限制", st->source_dropped); }
         else set_txt(s_ui.foot_txt, "无告警事件 · 采集正常");
@@ -4324,27 +4312,26 @@ static void refresh(void)
         }
     }
 
-    /* 健康结论先区分可信度，再报告采集器的告警。 */
-    int critical = 0, warnings = 0, running = 0;
-    for (int i = 0; i < st->nalerts; i++) {
-        if (strcmp(st->alerts[i].lv, "crit") == 0) critical++;
-        else if (strcmp(st->alerts[i].lv, "warn") == 0) warnings++;
-    }
-    for (int i = 0; i < st->ndocker; i++) if (st->docker[i].up) running++;
-    uint32_t health_color = !st->ever_ok ? UK_T3 : !st->online ? UK_WARN : critical ? UK_DANGER : warnings ? UK_WARN : UK_OK;
-    const char *health_note = !st->ever_ok ? "等待数据" : !st->online ? "采集端离线" : critical ? "存在严重告警" : warnings ? "需要关注" : "无采集告警";
-    set_txt(s_ui.health, "%s", health_note);
-    if (page_on(3)) set_txt(s_ui.system_state, "%s", health_note);   /* 系统页正文那份 */
-    lv_obj_set_style_text_color(s_ui.health, uk_c(health_color), 0);
+    set_txt(s_ui.health, "%s", health->note);
+    lv_obj_set_style_text_color(s_ui.health, uk_c(health->color), 0);
+}
+
+static void refresh_body(int page, const fnos_status_t *st, const health_summary_t *health)
+{
+    char b[256], c1[32], c2[32];
+    const int critical = health->alerts[0], warnings = health->alerts[1], running = health->running;
+    const uint32_t health_color = health->color;
+    const char *why = st->online ? NULL : link_reason(st);
+    if (page == 3) set_txt(s_ui.system_state, "%s", health->note);
     /* 首页结论带：点是状态灯，正文是最要紧的一件事，右侧"全部 →"只在有事件时出现。
        文案与底栏那条同源，不重复算逻辑。 */
-    if (page_on(0) && s_ui.home_band_dot) {
+    if ((page == 0) && s_ui.home_band_dot) {
         lv_obj_set_style_bg_color(s_ui.home_band_dot, uk_c(health_color), 0);
         lv_obj_set_style_shadow_color(s_ui.home_band_dot, uk_c(health_color), 0);
         lv_obj_set_style_shadow_width(s_ui.home_band_dot, UK_GLOW_W, 0);
         lv_obj_set_style_shadow_opa(s_ui.home_band_dot, health_color == UK_OK ? 0 : UK_GLOW_OPA, 0);
         if (st->nalerts > 0) {
-            set_txt(s_ui.home_band_msg, "%s", st->alerts[0].m);
+            set_txt(s_ui.home_band_msg, "%s", st->alerts[health->first_alert].m);
             show(s_ui.home_band_more, true);
         } else if (!st->ever_ok) {
             set_txt(s_ui.home_band_msg, "%s", "等待采集端首次采集");
@@ -4359,19 +4346,21 @@ static void refresh(void)
             show(s_ui.home_band_more, false);
         }
     }
+    if (page == 0) {
     /* 健康卡右侧那行摘要同时是"为什么连不上"的公告栏：在线时报告运行概况，
        离线时报告原因（见 link_reason）——比再来一行"离线"有用得多。 */
-    const char *why = st->online ? NULL : link_reason(st);
     /* Connection failures must remain readable on compact displays. The top
        status band grows with the reason; telemetry summaries may stay compact. */
     lv_label_set_long_mode(s_ui.home_band_msg, why ? LV_LABEL_LONG_MODE_WRAP : LV_LABEL_LONG_MODE_DOTS);
     lv_obj_set_height(s_ui.home_band_msg, why ? LV_SIZE_CONTENT : lv_font_get_line_height(UK_FONT_CJK_12));
     if (why) set_txt(s_ui.home_band_msg, "%s", why);
 
-    /* P0: current readings and histories use the same snapshot/cursor as detail pages. */
-    if (page_on(0)) overview_refresh(st);
+    }
 
-    if (page_on(1)) {
+    /* P0: current readings and histories use the same snapshot/cursor as detail pages. */
+    if (page == 0) overview_refresh(st);
+
+    if (page == 1) {
         double used = 0, total = 0, free_gb = 0;
         for (int i = 0; i < st->nvols; i++) {
             used += st->vols[i].used_gb;
@@ -4388,7 +4377,7 @@ static void refresh(void)
             lv_obj_set_style_bg_color(s_ui.storage_bar, uk_c(uk_pct_color(pct)), LV_PART_INDICATOR);
         }
     }
-    if (page_on(0)) {
+    if (page == 0) {
     if (!st->online) {
         set_txt(s_ui.overview_note, "%s", why ? why : "离线，显示最后一次采集快照");
         set_num(s_ui.home_temp_value, "--");
@@ -4430,14 +4419,14 @@ static void refresh(void)
             lv_obj_set_style_bg_color(s_ui.home_temp_dot, uk_c(UK_T3), 0);
         }
     }
-    }   /* page_on(0)：首页结论带 + 概览脚注 + 最热温度磁贴 */
-    if (page_on(2)) {
+    }   /* (page == 0)：首页结论带 + 概览脚注 + 最热温度磁贴 */
+    if (page == 2) {
         char nb[64];
         set_txt(s_ui.net_title, "网络吞吐 · %s", hist_span_text(nb, sizeof nb, st));
     }
     /* P1：卷 / 阵列 / 硬盘。行按需建、**多出来的销毁**（不能只 HIDDEN，理由见
        row_trim 的注释）；池的重排只在"条数或池尺寸变了"时才发生（pool_layout 判脏）。 */
-    if (page_on(1)) {
+    if (page == 1) {
     module_note(s_ui.vol_card,st,"vols");
     module_note(s_ui.raid_card,st,"raid");
     module_note(s_ui.disk_card,st,"disks");
@@ -4526,12 +4515,12 @@ static void refresh(void)
         lv_obj_set_style_text_color(row->name2,uk_c(!strcmp(d->smart,"failed") && overview_live(st,"disks") ? UK_DANGER : UK_T3),0);
     }
     pool_layout(&s_p1_disk_n, &s_p1_disk_w, &s_p1_disk_h, ndisk, s_ui.disk_pool, UK_ENTITY_MIN_WIDTH, false, NULL);
-    }   /* page_on(1)：卷 / 阵列 / 硬盘清单 */
+    }   /* (page == 1)：卷 / 阵列 / 硬盘清单 */
 
     /* ── P2：网络 ─────────────────────────────────────────────────────
        4 张速率 KPI + 吞吐趋势 + 网卡信息条。数值与单位分给两个 label
        （uk_kpi 的 val/unit），单位才会小一号。 */
-    if (page_on(2)) {
+    if (page == 2) {
     {
         char nb[32], sb[64];
         const char *v, *u;
@@ -4605,7 +4594,7 @@ static void refresh(void)
     }
     show(s_ui.net_card, nnets>0);
     uk_pool_relayout(s_ui.net_pool, UK_ENTITY_MIN_WIDTH, false, NULL);
-    }   /* page_on(2)：网络 */
+    }   /* (page == 2)：网络 */
 
     const char *dock_state = overview_module_state(st, "docker");
     const char *dock_note = docker_module_note(st);
@@ -4621,7 +4610,7 @@ static void refresh(void)
     } else {
         snprintf(dock_summary, sizeof dock_summary, "容器%s", dock_note);
     }
-    if (page_on(3)) {
+    if (page == 3) {
     if (st->online) set_txt(s_ui.system_note, "%s · %d 路温度 · 严重 %d · 警告 %d", dock_summary, st->ntemps, critical, warnings);
     else set_txt(s_ui.system_note, "旧快照 · %s · %d 路温度 · %d 个上次事件", dock_summary, st->ntemps, st->nalerts);
     if (dock_live) set_txt(s_ui.dock_empty_label, "暂无容器");
@@ -4637,17 +4626,17 @@ static void refresh(void)
     }
     /* 空态与池二选一：空态盒子要独占卡体才能居中，所以池空的时候把它收起来
        （池空着呢，藏不藏都一样看不见；下次有数据时尺寸变化会触发重排）。 */
-    if (page_on(1)) {
+    if (page == 1) {
         show(s_ui.vol_empty, st->nvols == 0); show(s_ui.vol_pool, st->nvols > 0);
         show(s_ui.raid_empty, st->nraid == 0); show(s_ui.raid_pool, st->nraid > 0);
         show(s_ui.disk_empty, st->ndisks == 0); show(s_ui.disk_pool, st->ndisks > 0);
     }
-    if (page_on(3)) {
+    if (page == 3) {
         show(s_ui.dock_empty, ndock == 0); show(s_ui.dock_pool, ndock > 0);
         show(s_ui.temp_empty, st->ntemps == 0); show(s_ui.p3_temp_pool, st->ntemps > 0);
     }
     if (!st->ever_ok) {
-        if (page_on(2)) {
+        if (page == 2) {
             for (int i = 0; i < 4; i++) uk_kpi_set(s_ui.kpi2[i], "-", "", "等待数据", -1);
             set_num(s_ui.tr_tx_lbl, "等待数据");
             set_num(s_ui.tr_rx_lbl, "等待数据");
@@ -4655,7 +4644,7 @@ static void refresh(void)
             /* 从没采到过数据：把图清空，不留上一轮的残影 */
             chart_clear(s_ui.tr_net, 2);
         }
-        if (page_on(3)) {
+        if (page == 3) {
             set_txt(s_ui.system_note, "等待采集，尚无有效快照");
             set_num(s_ui.system_note2, "");
         }
@@ -4663,8 +4652,8 @@ static void refresh(void)
     /* ── P3：容器 / 温度 ───────────────────────────────────────────────
        两张清单都是自适应池：行按需建、多出来的行销毁（不是隐藏 —— 池的条目收集
        不看 HIDDEN，隐藏的行下一拍会被重新显示成上一帧的旧行）。 */
-    if (page_on(2)) network_layout();
-    if (page_on(3)) {
+    if (page == 2) network_layout();
+    if (page == 3) {
     module_note(s_ui.dock_card,st,"docker");
     module_note(s_ui.p3_temp_card,st,"temps");
     ndock = rows_sync(&s_ui.dock_row, &s_ui.dock_made, ndock, s_ui.dock_pool, false, false);
@@ -4692,7 +4681,7 @@ static void refresh(void)
     }
     pool_layout(&s_p3_dock_n, &s_p3_dock_w, &s_p3_dock_h, ndock,
                 s_ui.dock_pool, UK_ENTITY_MIN_WIDTH, false, NULL);
-    }   /* page_on(3)：容器行 */
+    }   /* (page == 3)：容器行 */
 
     /* ── P3：硬件温度摘要 = **一台设备一行** ─────────────────────────────
        原来按"通道"一行（24 路 24 行），设备名与通道名混在一行里、"PCIe-8-SSD 512GB"
@@ -4700,8 +4689,8 @@ static void refresh(void)
        全量通道在「温度」页。分组见 temp_groups()。 */
     /* 一份分组喂两页：系统页读摘要行、温度页读设备块。两页都不在时连分组都别算
        （temp_groups 里要排序 + 逐通道比较，2Hz 全跑不值）。 */
-    bool tgrp_ok = (page_on(3) || page_on(4)) && temp_groups();
-    if (tgrp_ok && page_on(3)) {
+    bool tgrp_ok = ((page == 3) || (page == 4)) && temp_groups();
+    if (tgrp_ok && (page == 3)) {
     int ndev = s_tgrp_n;
     ndev = rows_sync(&s_ui.p3_temp_row, &s_ui.p3_temp_made, ndev, s_ui.p3_temp_pool, true, true);
     for (int i = 0; i < ndev; i++) {
@@ -4726,9 +4715,9 @@ static void refresh(void)
     }
     pool_layout(&s_p3_temp_n, &s_p3_temp_w, &s_p3_temp_h, ndev,
                 s_ui.p3_temp_pool, UK_ENTITY_MIN_WIDTH, false, NULL);
-    }   /* page_on(3)：温度摘要行 */
+    }   /* (page == 3)：温度摘要行 */
 
-    if (tgrp_ok && page_on(4)) {
+    if (tgrp_ok && (page == 4)) {
     /* P4: topology and user choice drive layout; ordinary samples update values. */
     int nblk = s_tgrp_n;
     for (int i = 0; i < nblk; i++) {
@@ -4771,7 +4760,7 @@ static void refresh(void)
     }
     } /* A failed grouping keeps copied labels and owned device IDs for retry. */
     /* Visual reference counts are separate from collector health alerts. */
-    if (page_on(4)) {
+    if (page == 4) {
     module_note(s_ui.temp_card,st,"temps");
     int32_t peak=chart_peak(s_ui.temp_history,0), floor=0;
     lv_chart_series_t *series=uk_trend_series(s_ui.temp_history,0);
@@ -4824,9 +4813,9 @@ static void refresh(void)
         set_txt(s_ui.temp_note2, "%d 路传感器 · 参考区间 ≥%.0f°C 关注 %d 路 · ≥%.0f°C 高温 %d 路 · 采集告警见系统",
                 st->ntemps, (double)UK_TEMP_WARM, warn, (double)UK_TEMP_DANGER, danger);
     }
-    }   /* page_on(4)：温度页大字与脚注 */
+    }   /* (page == 4)：温度页大字与脚注 */
 
-    if (page_on(3)) {
+    if (page == 3) {
     set_txt(s_ui.agent_detail[0], "%s", st->host[0] ? st->host : "-");
     set_txt(s_ui.agent_detail[1], "%s:%d", FNOS_HOST, FNOS_PORT);
     set_num(s_ui.agent_detail[2], "%d ms (状态 %d)", st->http_ms, st->last_status);
@@ -4899,15 +4888,14 @@ static void refresh(void)
         }
         uk_viewport_snap(s_ui.alert_col, UK_S3);
     }
-    }   /* page_on(3)：诊断明细 + 系统页告警列 */
-    if (page_on(1)) storage_layout();
-    if (page_on(3)) system_layout();
+    }   /* (page == 3)：诊断明细 + 系统页告警列 */
+    if (page == 1) storage_layout();
+    if (page == 3) system_layout();
     /* P5：告警页与上面同源，按严重度分三组。组内行数多退少补 —— 不是 HIDDEN：
        隐藏的行仍然占位（见 row_trim 的注释）。 */
-    if (page_on(5)) {
+    if (page == 5) {
     if (s_ui.alert_page_note) {
-        int cnt[3] = { 0, 0, 0 };
-        for (int i = 0; i < st->nalerts; i++) cnt[alert_group_of(st->alerts[i].lv)]++;
+        const int *cnt = health->alerts;
         for (int g = 0; g < 3; g++) {
             lv_obj_t *col = s_ui.alert_page_col[g];
             if (!col) continue;
@@ -4949,21 +4937,44 @@ static void refresh(void)
         show(s_ui.alert_page_empty, matches == 0);
         lv_obj_t *empty_label = lv_obj_get_child(s_ui.alert_page_empty, 0);
         set_txt(empty_label, "%s", s_scope[5] && st->nalerts ? "此等级暂无事件 · 选择全部查看" : "暂无告警事件");
-        alert_health_sync(st);
+        alert_health_sync(st, running);
     }
-    }   /* page_on(5)：告警页 */
+    }   /* (page == 5)：告警页 */
     lv_obj_t *history_charts[] = {s_ui.overview_resource[0].chart, s_ui.overview_resource[1].chart,
                                    s_ui.tr_net, s_ui.temp_history};
     static const int history_pages[] = {0, 0, 2, 4};
     static const char *const history_modules[] = {"cpu", "mem", "net", "temps"};
     for (unsigned i = 0; i < sizeof history_pages / sizeof history_pages[0]; i++) {
-        if (!page_on(history_pages[i])) continue;
+        if (!(page == history_pages[i])) continue;
         bool available = overview_readable(st, history_modules[i]) && chart_sample_count(history_charts[i]);
         set_txt(s_ui.history_span[i], "%s", available ? hist_span_text(b, sizeof b, st) : "等待历史采样");
         set_txt(s_ui.history_end[i], "%s", !available ? "--" : overview_live(st, history_modules[i]) ? "最新采样" : "上次采样");
     }
-    if (page_on(1)) set_txt(s_ui.scope_note[1], "%d 卷 · %d 阵列 · %d 磁盘 · 点按详情", st->nvols, st->nraid, st->ndisks);
-    if (page_on(3)) set_txt(s_ui.scope_note[3], "%d 容器 · %d 路温度 · 点按详情", st->ndocker, st->ntemps);
+    if (page == 1) set_txt(s_ui.scope_note[1], "%d 卷 · %d 阵列 · %d 磁盘 · 点按详情", st->nvols, st->nraid, st->ndisks);
+    if (page == 3) set_txt(s_ui.scope_note[3], "%d 容器 · %d 路温度 · 点按详情", st->ndocker, st->ntemps);
+}
+
+/* Preparation is synchronous: incoming values must not wait for a numeric beat.
+   It does not reopen the global presentation batch or update the shell. */
+static void refresh_page(int idx)
+{
+    if (idx < 0 || idx >= FNOS_UI_PAGE_COUNT) return;
+    const health_summary_t health = health_summary(&s_st);
+    uk_number_motion_enable(false);
+    refresh_body(idx, &s_st, &health);
+    s_page_dirty[idx] = false;
+    uk_number_motion_enable(s_st.online && !motion_busy());
+    inventory_notice();
+}
+
+static void refresh(void)
+{
+    const health_summary_t health = health_summary(&s_st);
+    for (int i = 0; i < FNOS_UI_PAGE_COUNT; i++) s_page_dirty[i] = i != s_page;
+    uk_number_refresh_begin();
+    uk_number_motion_enable(s_st.online && !motion_busy());
+    refresh_shell(&s_st, &health);
+    refresh_body(s_page, &s_st, &health);
     inventory_notice();
 }
 

@@ -3,6 +3,7 @@
 import importlib.util
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,6 +14,10 @@ import fnos_collector as collector
 import docker_api
 spec=importlib.util.spec_from_file_location('launch_metrics',BASE/'cmd/docker_launch.py')
 launch=importlib.util.module_from_spec(spec);spec.loader.exec_module(launch)
+spec=importlib.util.spec_from_file_location('legacy_metrics',BASE.parent.parent/'fnos-agent.py')
+legacy=importlib.util.module_from_spec(spec);spec.loader.exec_module(legacy)
+spec=importlib.util.spec_from_file_location('sync_metrics',BASE.parent.parent/'sync_docker_metrics.py')
+sync_metrics=importlib.util.module_from_spec(spec);spec.loader.exec_module(sync_metrics)
 
 class MetricsTests(unittest.TestCase):
     def test_disk_delta_idle_hotplug_reset(self):
@@ -51,28 +56,55 @@ class MetricsTests(unittest.TestCase):
             c._smart_enrich(rows);self.assertEqual(rows[0]['smart'],'missing')
 
     def test_docker_metrics_both_transports(self):
-        for module in (docker_api,launch):
-            module._metrics_cache={};module._metrics_previous={};module._metrics_cursor=0
+        for module in (docker_api,launch,legacy):
             raw=[{'Id':'a'*64,'State':'running'},{'Id':'b'*64,'State':'exited'}]
             cpu=[100,1000]
+            failed=False
             def get(identifier,suffix):
+                if failed:raise PermissionError()
                 if suffix=='json':return {'RestartCount':2}
                 return {'cpu_stats':{'cpu_usage':{'total_usage':cpu[0]},'system_cpu_usage':cpu[1],'online_cpus':4},'memory_stats':{'usage':256*1024**2,'stats':{'inactive_file':64*1024**2}}}
             def frame():
                 rows=[{},{}]
-                module._enrich_metrics(raw,rows)
+                metrics.enrich(raw,rows)
                 return rows
-            with patch.object(module,'_metrics_get',side_effect=get),patch.object(module.time,'time',return_value=1700000000):
-                first=frame();self.assertIsNone(first[0]['cpu_pct']);self.assertEqual(first[0]['mem_mb'],192)
-                second=frame();self.assertEqual(second[1]['restarts'],2);self.assertIsNone(second[1]['mem_mb'])
-                cpu[:]=[150,1200]
-                third=frame();self.assertEqual(third[0]['cpu_pct'],100)
-                self.assertEqual(third[0]['id'],'a'*64)
-            with patch.object(module,'_metrics_get',side_effect=PermissionError()):
-                frame();bad=frame();self.assertIsNone(bad[0]['cpu_pct']);self.assertEqual(bad[0]['metrics_ts'],0)
+            metrics=module.DockerMetrics(get,clock=lambda:1700000000)
+            first=frame();self.assertIsNone(first[0]['cpu_pct']);self.assertEqual(first[0]['mem_mb'],192)
+            second=frame();self.assertEqual(second[1]['restarts'],2);self.assertIsNone(second[1]['mem_mb'])
+            cpu[:]=[150,1200]
+            third=frame();self.assertEqual(third[0]['cpu_pct'],100)
+            self.assertEqual(third[0]['id'],'a'*64)
+            self.assertEqual(third[0]['metrics_ts'],1700000000)
+            # A new module instance cannot inherit another collector's CPU baseline.
+            isolated=module.DockerMetrics(get)
+            separate=[{},{}];isolated.enrich(raw,separate)
+            self.assertIsNone(separate[0]['cpu_pct'])
+            # Removal clears cache AND baseline, observed through the same interface.
+            metrics.enrich([],[])
+            readded=frame();self.assertIsNone(readded[0]['cpu_pct'])
+            failed=True
+            frame();bad=frame();self.assertIsNone(bad[0]['cpu_pct']);self.assertEqual(bad[0]['metrics_ts'],0)
+            failed=False
+            frame();recovered=frame();self.assertIsNone(recovered[0]['cpu_pct'])
             with self.assertRaises(ValueError):module._metrics_get('../unsafe','json')
             with self.assertRaises(ValueError):module._metrics_get('a'*64,'start')
-            # Removal clears both cached resources and CPU baselines.
-            module._enrich_metrics([],[]);self.assertFalse(module._metrics_cache)
+
+    def test_generated_metric_copies_reject_drift_and_preserve_entry_code(self):
+        self.assertEqual(sync_metrics.sync(),[])
+        with tempfile.TemporaryDirectory() as directory:
+            base=Path(directory)
+            source=(sync_metrics.BASE/'docker_metrics.py.inc').read_text()
+            (base/'docker_metrics.py.inc').write_text(source)
+            for name in sync_metrics.TARGETS:
+                p=base/name;p.parent.mkdir(parents=True,exist_ok=True)
+                p.write_text('# keep trusted entry\n'+sync_metrics.START+source+sync_metrics.END+'# keep privilege drop\n')
+            target=base/sync_metrics.TARGETS[0]
+            target.write_text(target.read_text().replace('self._cursor+=1','self._cursor+=2'))
+            self.assertEqual(sync_metrics.sync(base),[sync_metrics.TARGETS[0]])
+            sync_metrics.sync(base,write=True)
+            self.assertEqual(sync_metrics.sync(base),[])
+            self.assertTrue(target.read_text().endswith('# keep privilege drop\n'))
+            target.write_text('no generated markers\n')
+            with self.assertRaises(ValueError):sync_metrics.sync(base)
 
 if __name__=='__main__':unittest.main()

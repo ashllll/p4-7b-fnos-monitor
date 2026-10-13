@@ -194,10 +194,20 @@ class ContractBoardTests(unittest.TestCase):
         result,calls=self.simulator();self.assertEqual(result,0);self.assertTrue(any(body and 'invalid' in body for _,_,body in calls))
 
 class BuildArchiveTests(unittest.TestCase):
-    def build_fixture(self,mode,grep_failure=False,find_failure=False):
-        import os
+    def build_fixture(self,mode,grep_failure=False,find_failure=False,metric_drift=False):
+        import shutil
         with tempfile.TemporaryDirectory(prefix='fnos-package-check-') as tmp:
-            root=Path(tmp);(root/'nasscreencompanion').mkdir();binpath=root/'bin';binpath.mkdir()
+            base=Path(tmp);root=base/'fpk';root.mkdir()
+            (root/'nasscreencompanion').mkdir();binpath=root/'bin';binpath.mkdir()
+            for name in ('sync_docker_metrics.py','docker_metrics.py.inc','fnos-agent.py',
+                         'fpk/nasscreencompanion/app/server/docker_api.py',
+                         'fpk/nasscreencompanion/cmd/docker_launch.py'):
+                target=base/name;target.parent.mkdir(parents=True,exist_ok=True)
+                shutil.copyfile(HERE.parent/name,target)
+            if metric_drift:
+                target=base/'fnos-agent.py'
+                target.write_text(target.read_text().replace('# END GENERATED DOCKER METRICS',
+                    '# drifted inline copy\n# END GENERATED DOCKER METRICS'))
             fixture=root/'pack.py'
             fixture.write_text("import io,tarfile\nfrom pathlib import Path\nmode="+repr(mode)+"\nwith tarfile.open('nasscreencompanion.fpk','w:gz') as outer:\n if mode!='missing':\n  data=b'broken'\n  if mode!='corrupt':\n   inner=io.BytesIO()\n   with tarfile.open(fileobj=inner,mode='w:gz') as app:\n    info=tarfile.TarInfo('nested/._resource' if mode=='junk' else 'fixture.txt');info.size=1;app.addfile(info,io.BytesIO(b'x'))\n   data=inner.getvalue()\n  info=tarfile.TarInfo('app.tgz');info.size=len(data);outer.addfile(info,io.BytesIO(data))\n")
             script=(HERE/'build.sh').read_text().replace('fnpack build --directory "$PKG"',sys.executable+' '+str(fixture))
@@ -212,5 +222,9 @@ class BuildArchiveTests(unittest.TestCase):
     def test_nested_resource_fork(self):self.assertNotEqual(self.build_fixture('junk').returncode,0)
     def test_grep_tool_error(self):self.assertNotEqual(self.build_fixture('valid',grep_failure=True).returncode,0)
     def test_cleanup_tool_error(self):self.assertNotEqual(self.build_fixture('valid',find_failure=True).returncode,0)
+    def test_metric_drift_rejects_build(self):
+        result=self.build_fixture('valid',metric_drift=True)
+        self.assertNotEqual(result.returncode,0)
+        self.assertIn('stale Docker metric copies',result.stdout)
 
 if __name__=='__main__': unittest.main()

@@ -26,6 +26,7 @@ prefix = r'''
 #include <sched.h>
 #include <stddef.h>
 #define FNOS_UI_PAGE_COUNT 6
+#define CONFIG_FNOS_UI_REFRESH_MS 500
 #define ESP_LOGE(...) (++errors)
 #define ESP_LOGI(...) ((void)0)
 typedef int lv_timer_t;
@@ -51,6 +52,8 @@ static lv_obj_t *uk_shell(lv_obj_t *scr, lv_obj_t **rail, lv_obj_t **head, lv_ob
 static void build_rail(lv_obj_t *p) { assert(p); }
 static void build_header(lv_obj_t *p) { assert(p); }
 static void build_foot(lv_obj_t *p) { assert(p); }
+static void entity_detail_build(lv_obj_t *p) { assert(p); }
+static void scope_sync(void) {}
 static lv_obj_t *build_page(lv_obj_t *p, int i) { assert(p && i >= 0 && i < 6); ++pages; return p; }
 static void show(lv_obj_t *p, bool on) { assert(p && !on); }
 static void fnos_ui_set_page(int p) { s_page = p; }
@@ -140,6 +143,8 @@ typedef struct {int unused;} lv_anim_t;
 static struct {int from,to,direction;int32_t offset,start,end,width,velocity,spring_b;bool active,tracking,dragging;uint32_t duration;float phase_velocity;} s_motion;
 static struct {lv_obj_t *page[6],*viewport,*diagnostics_button;} s_ui;
 static bool s_refresh_pending, fail_anim, reduced;
+static struct {bool online;} s_st;
+static void uk_number_motion_enable(bool on){(void)on;}
 static int s_page, selected, refreshes, pairs, attempts;
 static lv_anim_t animation;
 static void show(lv_obj_t *o,bool on){(void)o;(void)on;}

@@ -2262,9 +2262,29 @@ static void verify_ui_regressions(void)
     regression_tick();
     assert(strcmp(fixture.alerts[0].lv, "warn") == 0);
     assert(strcmp(fixture.alerts[1].lv, "crit") == 0);
-    lv_obj_t *critical = visible_text_containing(lv_screen_active(), fixture.alerts[1].m);
+    /* The footer appends its event count; the home band must independently show
+       the same highest-severity event, rather than the first source row. */
+    assert(visible_text(lv_screen_active(), fixture.alerts[1].m));
+    lv_obj_t *poll = visible_text_containing(lv_screen_active(), "采 ");
+    assert(poll);
+    lv_obj_t *critical = visible_text_containing(lv_obj_get_parent(poll), fixture.alerts[1].m);
     assert(critical);
     assert(lv_color_to_u32(lv_obj_get_style_text_color(critical, LV_PART_MAIN)) == lv_color_to_u32(uk_c(UK_DANGER)));
+
+    /* Future levels are informational, and equal severity retains source order. */
+    int alert_count = fixture.nalerts;
+    const char *level0 = fixture.alerts[0].lv, *level1 = fixture.alerts[1].lv;
+    fixture.nalerts = 2;
+    fnos_status_text(&fixture, &fixture.alerts[0].lv, "caution");
+    fnos_status_text(&fixture, &fixture.alerts[1].lv, "future");
+    regression_tick();
+    assert(visible_text(lv_screen_active(), fixture.alerts[0].m));
+    assert(visible_text(lv_screen_active(), "无采集告警"));
+    fnos_ui_set_page(5); regression_tick();
+    assert(visible_text(lv_screen_active(), "严重 0 · 警告 0 · 提示 2"));
+    fnos_status_text(&fixture, &fixture.alerts[0].lv, "%s", level0);
+    fnos_status_text(&fixture, &fixture.alerts[1].lv, "%s", level1);
+    fixture.nalerts = alert_count;
 
     /* Explicit stale state on each container row, not only the page summary. */
     fixture.online = false;
@@ -4012,6 +4032,18 @@ static void verify_inventory_rename(const char **field, const char *sample)
 static void verify_refresh_work(void)
 {
     lv_display_t *display = lv_display_get_default();
+    /* A page prepared on the current numeric beat must show the new snapshot
+       immediately, even when the global presentation batch was already used. */
+    assert(s_motion_fixture.nvols > 0);
+    fnos_ui_set_page(1); fnos_ui_motion_settle(); regression_tick();
+    float original_pct = s_motion_fixture.vols[0].pct;
+    fnos_ui_set_page(0); fnos_ui_motion_settle(); regression_tick();
+    s_motion_fixture.vols[0].pct = 17;
+    regression_tick();
+    fnos_ui_set_page(1); fnos_ui_motion_settle();
+    assert(visible_text(lv_screen_active(), "17%"));
+    s_motion_fixture.vols[0].pct = original_pct;
+    fnos_ui_set_page(0); fnos_ui_motion_settle(); regression_tick();
     lv_obj_t *nav_label = visible_text(lv_screen_active(), "总览");
     assert(nav_label);
     lv_obj_t *nav = lv_obj_get_parent(nav_label);

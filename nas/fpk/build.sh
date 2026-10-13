@@ -14,6 +14,7 @@ cd "$(cd "$(dirname "$0")" && pwd)"
 export PATH="$HOME/.local/bin:$PATH"
 
 PKG=nasscreencompanion
+python3 ../sync_docker_metrics.py
 find "$PKG" -name '__pycache__' -type d -prune -exec rm -rf {} +
 find "$PKG" \( -name '*.pyc' -o -name '*.pyo' -o -name '.DS_Store' \) -delete
 

@@ -310,7 +310,7 @@ def main():
                 # n/up/s 三个键看成"采集端没有"——那是检查跟丢了代码，不是协议不符。
                 body = "\n".join(filter(None, (method_body(DOCKER_TRANSPORT, "containers"),
                                               method_body(DOCKER_TRANSPORT, "row_from_container"),
-                                              method_body(DOCKER_TRANSPORT, "_enrich_metrics")))) or None
+                                              method_body(DOCKER_TRANSPORT, "enrich")))) or None
             else:
                 body = method_body(COLLECTOR, meth) if meth else None
                 if scope == "disks": body = (body or "") + (method_body(COLLECTOR,"_smart_enrich") or "")
