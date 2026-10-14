@@ -2,6 +2,8 @@
 
 以下 ADR 于 2026-10-14 补录本次已落地的选择，状态为 accepted；补录没有新增实现或设备操作。术语见 [GLOSSARY](../../GLOSSARY.md)。
 
+工程 skills 的领域文档消费规则见 [domain.md](../agents/domain.md)，任务入口见 [issue-tracker.md](../agents/issue-tracker.md)，分诊角色见 [triage-labels.md](../agents/triage-labels.md)。
+
 | ADR | 决策 |
 | --- | --- |
 | [0001](0001-native-instrument-ui.md) | 通过共享原生 LVGL 构件统一横屏仪表界面 |

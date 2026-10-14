@@ -4,12 +4,13 @@
 
 硬盘、存储卷、网口、容器和温度通道按实际数据创建卡片；名称换行、列数随可用空间调整，长清单通过滚动查看。采集失败、旧值、权限不足和未启用来源有各自的状态提示。
 
-**历史实机验收记录以 `8cca07c` 固件和 FPK 1.2.7 为基线。** 当时已校验板上镜像并检查六页实拍；安装包核对了配置和 TLS 证书保留、包用户身份、容器资源与温度历史。连接复用修复的短时观察未见失败，范围见 [FPK 性能验证](docs/fpk-performance-2026-10-12.md)。本轮以 `d282c6a` 为基线完成健康结论、页面刷新与 Docker 指标重构及主机验证，见 [架构重构与验证](docs/architecture-refactor-2026-10-13.md)；尚未部署或烧录。历史审计限制见 [未闭环事项](docs/open-items-2026-10-11.md)。
+**历史实机验收记录以 `8cca07c` 固件和 FPK 1.2.7 为基线。** 当时已校验板上镜像并检查六页实拍；安装包核对了配置和 TLS 证书保留、包用户身份、容器资源与温度历史。连接复用修复的短时观察未见失败，范围见 [FPK 性能验证](docs/fpk-performance-2026-10-12.md)。2026-10-13 以 `d282c6a` 为基线完成的 [架构重构](docs/architecture-refactor-2026-10-13.md) 当时未部署或烧录。2026-10-14 的 CUKTECH 界面、连续阻尼与数据可信度修复已完成构建、烧录校验及短时串口观察，见 [最新 UI 验证](docs/ui-post-motion-audit-2026-10-14.md)；本轮未重新部署 NAS，长期运行与完整物理触控继续开放。历史审计限制见 [未闭环事项](docs/open-items-2026-10-11.md)。
 
 | 范围 | 当前状态 |
 | --- | --- |
 | 本地候选源码 | 总览、存储、网络、系统、温度、独立告警六页，配对 / 配网 / 诊断覆盖层 |
 | 架构重构基线 | `d282c6a`；后续源码提交见仓库 main 历史，设备验收单独记录 |
+| 界面与动效固件基线 | `30abfd0`（2026-10-14）；CUKTECH 横屏仪表与连续阻尼，验证及未验收边界见最新 UI 记录 |
 | 飞牛安装包 | [1.2.7](nas/fpk/nasscreencompanion.fpk)，真实 fnOS 升级及针对性运行检查通过；长期运行仍待验收 |
 | 主机验证 | 固件构建、原生预览、匿名 NAS 生命周期及针对性故障负控；范围见未闭环事项 |
 | 尚未闭环 | 真实 LVGL 内存耗尽恢复、旧 NVS 混代与回退／掉电、设备信任与异常权限边界、完整浏览器视觉、容量目标／30% 性能／72 小时长测 |
@@ -17,13 +18,15 @@
 
 ## 界面与监控内容
 
-默认 `unifi` 主题采用 UniFi Network 深色界面的中性表面与蓝色交互强调。宽屏使用左侧导航，窄屏使用顶部横向导航；总览按健康、实体摘要、资源历史组织，存储/系统/告警支持分类筛选，设备行可打开只读详情。最新全界面结构、版本依据与验证见 [UniFi 1.1 全界面迭代](docs/ui-unifi-v11-2026-10-12.md)，最初配色记录见 [UniFi 风格重构](docs/ui-unifi-2026-10-12.md)。页面与覆盖层复用同一套 `fnos_ui.c` / `ui_kit`；主机预览编译这份真实 LVGL 源码。
+默认 `cuktech` 主题采用近黑背景、仪表数字和黄色交互焦点；当前只迭代 ESP32-P4 7B 的 **1024×600 横屏**，全宽内容配底部导航。首页六张多功能卡承载 CPU、内存、设备状态、网络读数、存储和温度；网速曲线只保留在网络页。存储、系统和告警支持分类筛选，设备行可打开只读详情。页面与配对／配网／诊断覆盖层复用同一套 `fnos_ui.c` / `ui_kit`；主机预览编译真实 LVGL 源码。
+
+当前设计见 [CUKTECH 界面合同](docs/ui-cuktech-2026-10-14.md)，450 ms 临界阻尼、连续重定向和状态即时发布见 [动效记录](docs/ui-ammeter-motion-2026-10-14.md)，决策与取舍见 [ADR 索引](docs/adr/README.md)。原 [UniFi 全界面迭代](docs/ui-unifi-v11-2026-10-12.md) 保留为历史记录。
 
 新增网口链路占用、卷剩余容量、内存余量、采集 P95、SMART 与磁盘延迟、容器资源与重启次数，以及最高温历史和详情入口。字段兼容性、缺失状态与采集条件见 [信息增强说明](docs/ui-telemetry-2026-10-12.md)。固件已烧录并检查画面，新增采集实现已在真实 NAS 的 1.2.7 中运行，容器 CPU、内存、重启次数及温度历史已读取验证。SMART 在当前权限下返回拒绝或不支持，尚未取得成功健康读数。
 
 | 页面 | 主要内容 |
 | --- | --- |
-| 总览 | 健康与异常、CPU / 内存趋势、网络、存储卷比较、温度与运行时长 |
+| 总览 | 六张状态卡：CPU / 内存环表与趋势、运行状态、网络数值、存储卷比较及最高温 |
 | 存储 | 容量摘要、动态卷卡片、阵列状态与同步进度、磁盘读写活动 |
 | 网络 | 收发速率、双线历史、累计流量、采集状态及各网络接口清单 |
 | 系统 | 系统摘要、来源状态、容器服务及硬件温度摘要 |
@@ -128,7 +131,7 @@ export FNOS_SERIAL_PORT='/dev/cu.YOUR_BOARD_PORT'
 
 1.2.4 采集器默认完整传送卷、阵列、磁盘、温度、容器及非 loopback 网络接口清单，名称、路径和通道身份不按固定长度截断。各接口独立测速，处理热插拔和计数器复位。若调用者显式配置数量策略，响应仍包含总数与遗漏统计。
 
-固件的接收缓冲、动态快照和界面卡片按实际数据分配。清单增长、减少、空清单、多通道与长名称走同一布局逻辑，默认不轮播页面或温度分组。不同分辨率已通过主机矩阵验证；该开发板的物理面板仍是 1024×600。
+固件的接收缓冲、动态快照和界面卡片按实际数据分配。清单增长、减少、空清单、多通道与长名称走同一布局逻辑，默认不轮播页面或温度分组。当前在 1024×600 横屏上验证不同硬件组合；早期多尺寸矩阵仅为历史证据，不继续开展窄屏或竖屏迭代。
 
 | 配置 | 默认 | 含义 |
 | --- | ---: | --- |
@@ -136,7 +139,7 @@ export FNOS_SERIAL_PORT='/dev/cu.YOUR_BOARD_PORT'
 | `CONFIG_FNOS_SNAPSHOT_MAX_BYTES` | 1048576 B | 单份硬件清单与字符串存储预算 |
 | `CONFIG_FNOS_UI_LIST_MIN_WIDTH` | 260 px | 首选清单宽度，实际列数由可用空间和文本推导 |
 | `CONFIG_FNOS_UI_REDUCED_MOTION` | 关闭 | 开启后保留跟手，松手直接落定 |
-| `CONFIG_FNOS_PALETTE` | `unifi` | 也可选 `device`、`graphite`、`abyss`、`phosphor`；已有 sdkconfig 需同步更新 |
+| `CONFIG_FNOS_PALETTE` | `cuktech` | 也可选 `unifi`、`device`、`graphite`、`abyss`、`phosphor`；已有 sdkconfig 需同步更新 |
 
 预算限制字节资源，**不是固定设备数量上限**。超预算或解析失败会保留最后有效快照并报错；部分受控分配失败会提示设备尚未显示；但当前真实 LVGL 内存分配失败先触发启用的断言并停留，调用者收到 NULL 时的回退测试不能证明真实内存耗尽可恢复（见[未闭环事项](docs/open-items-2026-10-11.md)）。旧来源、权限不足与真正零值不能混为一谈。完整实现和矩阵范围见 [硬件自适应记录](docs/ui-hardware-adaptive-audit-2026-10-08.md)。
 
@@ -151,6 +154,8 @@ export FNOS_SERIAL_PORT='/dev/cu.YOUR_BOARD_PORT'
 bash tools/preview/run.sh
 # ELF 静态栈预算；不代替运行期测量。
 python3 tools/stack_check.py
+# 生产历史合并、图表数值边界与故障负控；匿名主机检查。
+python3 tools/test_history_merge.py
 
 # 采集、容器 IPC、权限迁移与配置保留回归。
 python3 nas/fpk/collector_check.py
@@ -212,7 +217,13 @@ bash nas/fpk/test_lifecycle.sh
 | [nas/fpk/](nas/fpk/README.md) | 飞牛应用、管理页、包构建及生命周期 |
 | [nas/](nas/README.md) | 可选 Linux/systemd 旧采集器，默认 HTTP 8799，与 FPK 分开部署 |
 | [tools/preview/](tools/preview/README.md) | 真实 LVGL 主机预览与交互 / 硬件矩阵 |
-| [docs/ui-device-reference.md](docs/ui-device-reference.md) | 当前视觉与动效方向 |
+| [docs/ui-cuktech-2026-10-14.md](docs/ui-cuktech-2026-10-14.md) | 当前横屏仪表界面合同 |
+| [docs/ui-ammeter-motion-2026-10-14.md](docs/ui-ammeter-motion-2026-10-14.md) | 连续阻尼参数、实现与阶段验证 |
+| [docs/ui-post-motion-audit-2026-10-14.md](docs/ui-post-motion-audit-2026-10-14.md) | 最新缺陷回归、烧录及验收边界 |
+| [docs/adr/](docs/adr/README.md) | 架构决策、取舍和编号索引 |
+| [GLOSSARY.md](GLOSSARY.md) | 采集状态、读数与健康结论的领域术语 |
+| [docs/agents/](docs/agents/domain.md) | skills 的领域文档、任务入口与分诊约定 |
+| [docs/ui-device-reference.md](docs/ui-device-reference.md) | 原生跟手动效的历史参考 |
 | [docs/ui-v12-lvgl-native.md](docs/ui-v12-lvgl-native.md) | 原生 UI 架构及迁移记录 |
 | [docs/verification.md](docs/verification.md) | 验证入口与证据边界 |
 | [docs/open-items-2026-10-11.md](docs/open-items-2026-10-11.md) | 当前验证结果、原审计编号去向与待验收事项 |
