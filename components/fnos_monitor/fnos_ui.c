@@ -86,10 +86,6 @@ typedef struct {
 #define PAIR_FP_PER     8
 #define PAIR_PAD_KEYS  12
 #define PAIR_PAD_COLS  4     /* 键盘列数：4 列 × 3 行（3 列 × 4 行会把整卡顶出视口） */
-/* 告警与事件卡的最高高度（见 build_p3）：再多就交给卡内滚动，别把上面两张卡挤没。 */
-#define UI_ALERT_PANEL_MAX_H 150
-/* 系统页那张告警卡只当"摘要"：最多列三条，其余去告警页看。 */
-#define UI_ALERT_PANEL_ROWS  3
 #define PAIR_CODE_LEN   6
 #define PAIR_STEPS      3
 
@@ -118,10 +114,10 @@ static struct {
     lv_obj_t *nav_mark[FNOS_UI_PAGE_COUNT];
     /* 顶栏 */
     lv_obj_t *h_host, *h_ep, *h_chip, *h_bars[4];
-    lv_obj_t *health, *overview_note;
+    lv_obj_t *overview_note;
     lv_obj_t *capacity, *capacity_detail, *storage_note;
     lv_obj_t *capacity_bar;             /* hero 条（8 高） */
-    lv_obj_t *net_axis, *net_note, *system_state, *system_note, *system_note2;
+    lv_obj_t *net_axis, *net_note, *system_note, *system_note2;
     lv_obj_t *p3_note, *p3_cols;    /* 系统页正文：三张覆盖层（诊断/配对/配网）显示时要收起来 */
     lv_obj_t *vol_empty, *raid_empty, *disk_empty, *dock_empty, *temp_empty;
     lv_obj_t *dock_empty_label;
@@ -156,7 +152,6 @@ static struct {
     lv_obj_t *dock_card, *dock_pool;
     uk_row_t **dock_row;
     int       dock_made;
-    lv_obj_t *alert_card;
     lv_obj_t *p3_temp_card, *p3_temp_pool;
     uk_row_t **p3_temp_row;
     int       p3_temp_made;
@@ -169,12 +164,8 @@ static struct {
     lv_obj_t *temp_note, *temp_note2, *temp_empty_all;
     lv_obj_t *temp_history, *temp_history_note;
     lv_obj_t *agent_detail[UI_AGENT_ROWS];
-    lv_obj_t *alert_col, **alert_lbl, *alert_none, *alert_none_box;
-    int alert_made;
 
-    /* 首页（P0）：顶部"结论带" + 最热温度磁贴。带子把"健康/告警"从两行小字
-       升级成整页宽的一行结论，点它进告警页。 */
-    lv_obj_t *home_band, *home_band_dot, *home_band_more, *home_band_msg;
+    /* 首页（P0）：最热温度磁贴。 */
     lv_obj_t *home_temp_card, *home_temp_value, *home_temp_unit, *home_temp_name, *home_temp_dot;
     /* P1 存储页的容量条（首页那条属于首页的存储磁贴，两条各自绑定同一次计算） */
     lv_obj_t *storage_bar;
@@ -188,7 +179,7 @@ static struct {
 
     /* 左导航栏（rail）自身与它的徽标：三档表面由 theme_apply() 统一落地 */
     lv_obj_t *rail, *logo_lbl;
-    lv_obj_t *foot_poll, *foot_dot, *foot_txt;   /* 底栏：轮询统计 + 告警带 */
+    lv_obj_t *foot_dot, *foot_txt;   /* 仅内存不足时显示 */
 
     /* 配对（覆盖在系统页上的一张整页卡，与"采集诊断"同槽位、互斥显示）*/
     lv_obj_t *pair_btn, *pair_btn_lbl, *pair_dot;
@@ -543,29 +534,6 @@ static lv_obj_t *empty_box(lv_obj_t *body, const char *txt, lv_obj_t **out_label
     return box;
 }
 
-/* 可以自由排版的滚动列（告警那种长短不一、还要换行的内容用不了自适应池：
-   池要求条目等高等宽，还会给每个条目 flex_grow）。滚动条画在自己右边缘。 */
-static lv_obj_t *scroll_col(lv_obj_t *parent)
-{
-    lv_obj_t *c = lv_obj_create(parent);
-    lv_obj_set_width(c, LV_PCT(100));
-    lv_obj_set_flex_grow(c, 1);
-    lv_obj_set_style_bg_opa(c, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(c, 0, 0);
-    lv_obj_set_style_pad_all(c, 0, 0);
-    lv_obj_set_style_pad_row(c, UK_S3, 0);
-    uk_list_mark(c);   /* 滚动列也是清单：默认承诺 UK_LIST_MIN_ROWS 项 */
-    lv_obj_set_style_pad_right(c, UK_SCROLL_INSET, 0);
-    lv_obj_set_style_min_height(c, 0, 0);
-    lv_obj_set_flex_flow(c, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(c, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-    lv_obj_set_style_width(c, UK_SCROLL_W, LV_PART_SCROLLBAR);
-    lv_obj_set_style_bg_color(c, uk_c(UK_SURF_S3), LV_PART_SCROLLBAR);
-    lv_obj_set_style_bg_opa(c, LV_OPA_COVER, LV_PART_SCROLLBAR);
-    lv_obj_set_style_radius(c, UK_SCROLL_W / 2, LV_PART_SCROLLBAR);
-    return c;
-}
-
 /* 池重排守门：只有"条目数或池尺寸变了"才重排（照 p4 的 s_p4_* 写法，四页共用）。
    读尺寸前必须 update_layout —— lv_obj_get_width() 读的是布局结果，不是实时计算；
    页面还藏着（HIDDEN）时子树不参与 flex 布局，尺寸是 0，这时不能重排，
@@ -648,7 +616,7 @@ static void page_jump_cb(lv_event_t *e)
     fnos_ui_set_page((int)(intptr_t)lv_event_get_user_data(e));
 }
 
-/* 底栏告警带 / 首页结论带：点进告警页（第 5 页）。 */
+/* 内存不足提示入口：点进告警页（第 5 页）。 */
 static void foot_band_cb(lv_event_t *e) { (void)e; fnos_ui_set_page(5); }
 
 
@@ -660,9 +628,7 @@ static void p3_overlay_sync(void)
 {
     if (!s_ui.p3_note) return;
     bool any = s_diagnostics || s_pair_open || s_wifi_open;
-    /* 告警卡挂在页上（整页宽，不跟另外两张挤一排），所以它不在 p3_cols 里 ——
-       收正文时得单独跟着收，否则覆盖层底下会露出系统页的一张卡。 */
-    lv_obj_t *body[] = { s_ui.p3_note, s_ui.p3_cols, s_ui.alert_card, s_ui.scope_bar[3] };
+    lv_obj_t *body[] = { s_ui.p3_note, s_ui.p3_cols, s_ui.scope_bar[3] };
     for (unsigned i = 0; i < sizeof body / sizeof body[0]; i++) {
         if (!body[i]) continue;
         if (any) lv_obj_add_flag(body[i], LV_OBJ_FLAG_HIDDEN);
@@ -1015,14 +981,9 @@ static void build_header(lv_obj_t *h)
 
 }
 
-/* 底栏：轮询统计 + 告警带（v11 版面的 foot）。带子里的那条告警是"最严重的一条"，
-   点它进系统页看全部 —— 老实现没有底栏，这是按设计稿补的全局状态行。 */
+/* Allocation failures must remain visible even outside the Alerts page. */
 static void build_foot(lv_obj_t *foot)
 {
-    s_ui.foot_poll = uk_label(foot, UK_FONT_CJK_12, UK_T3, "采 -- · 屏 -- · ok 0 · fail 0");
-    not_clickable(s_ui.foot_poll);
-    lv_obj_add_flag(s_ui.foot_poll, LV_OBJ_FLAG_HIDDEN);
-
     lv_obj_t *band = lv_obj_create(foot);
     lv_obj_set_flex_grow(band, 1);
     lv_obj_set_height(band, lv_font_get_line_height(UK_FONT_CJK_12) + UK_S1);
@@ -1036,8 +997,6 @@ static void build_foot(lv_obj_t *foot)
     lv_obj_set_flex_flow(band, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(band, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_remove_flag(band, LV_OBJ_FLAG_SCROLLABLE);
-    /* 底栏这条带子升级成"随时可进的告警入口"：哪一页都能点，点它进告警页。
-       文案一个字不改（预览断言按文案查），只多一个按压回执。 */
     lv_obj_set_style_bg_color(band, uk_c(UK_SURF_S1), LV_STATE_PRESSED);
     lv_obj_add_flag(band, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(band, foot_band_cb, LV_EVENT_CLICKED, NULL);
@@ -1045,7 +1004,7 @@ static void build_foot(lv_obj_t *foot)
     s_ui.foot_txt = uk_label(band, UK_FONT_CJK_12, UK_T3, "等待数据");
     lv_obj_set_flex_grow(s_ui.foot_txt, 1);
     lv_obj_set_style_min_width(s_ui.foot_txt, 0, 0);
-    /* This entry is one line high; complete events remain reachable by tapping it. */
+    /* Keep the exceptional notice to one line. */
     lv_label_set_long_mode(s_ui.foot_txt, LV_LABEL_LONG_MODE_DOTS);
     lv_obj_set_height(s_ui.foot_txt, lv_font_get_line_height(UK_FONT_CJK_12));
     not_clickable(s_ui.foot_txt);
@@ -1375,38 +1334,6 @@ static void build_p0(lv_obj_t *page)
 {
     ui_page(page);
     scope_bar(page, 0, "NAS 概览 · 资源与健康", NULL, 0);
-    /* 页首"结论带"：把原来那两行小字（健康结论 + 最热温度）升级成整页宽的一条。
-       健康时它是一行安静的绿点状态；有严重告警时它是红底 + 首条消息 + 「全部 →」。
-       它在最上面、可点、随时能进告警页 —— 这是"重要性 > 版面整洁"的第一条实现。 */
-    lv_obj_t *band = lv_obj_create(page);
-    lv_obj_set_width(band, LV_PCT(100));
-    lv_obj_set_height(band, LV_SIZE_CONTENT);
-    lv_obj_set_style_bg_color(band, uk_c(UK_SURF_S1), 0);
-    lv_obj_set_style_bg_opa(band, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(band, UK_RADIUS, 0);
-    lv_obj_set_style_border_color(band, uk_c(UK_LINE), 0);
-    lv_obj_set_style_border_width(band, 1, 0);
-    lv_obj_set_style_pad_hor(band, UK_S3, 0);
-    lv_obj_set_style_pad_ver(band, UK_S2, 0);
-    lv_obj_set_style_pad_column(band, UK_S2, 0);
-    lv_obj_set_flex_flow(band, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(band, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_remove_flag(band, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(band, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_style_bg_color(band, uk_c(UK_SURF_S2), LV_STATE_PRESSED);
-    lv_obj_add_event_cb(band, foot_band_cb, LV_EVENT_CLICKED, NULL);
-    s_ui.home_band = band;
-    s_ui.home_band_dot = uk_dot(band, UK_OK, UK_DOT);
-    s_ui.health = uk_label(band, UK_FONT_CJK_16, UK_T1, "等待数据");
-    s_ui.home_band_msg = uk_label(band, UK_FONT_CJK_12, UK_T3, "");
-    lv_obj_set_flex_grow(s_ui.home_band_msg, 1);
-    lv_obj_set_style_min_width(s_ui.home_band_msg, 0, 0);
-    lv_label_set_long_mode(s_ui.home_band_msg, LV_LABEL_LONG_MODE_DOTS);
-    lv_obj_set_height(s_ui.home_band_msg, lv_font_get_line_height(UK_FONT_CJK_12));
-    s_ui.home_band_more = uk_label(band, UK_FONT_CJK_12, UK_T3, "全部 →");
-    lv_obj_set_style_text_color(s_ui.home_band_more, uk_c(UK_BLUE_TXT), 0);
-    lv_obj_add_flag(s_ui.home_band_more, LV_OBJ_FLAG_HIDDEN);
-
     /* The unboxed status line belongs to the resource group, with a tighter internal gap. */
     lv_obj_t *resource_group = uk_col(page, UK_HERO_GROW);
     lv_obj_set_width(resource_group, LV_PCT(100));
@@ -1757,7 +1684,7 @@ static void network_layout(void)
 
 static void build_p3(lv_obj_t *page)
 {
-    /* 系统页 = 状态摘要 + 三行（容器服务 / 硬件温度 / 告警与事件）。
+    /* 系统页 = 状态摘要 + 容器服务 / 硬件温度。
        诊断卡、配对卡、配网卡都盖在同一块内容区上（旧实现是"同槽位的三张整页卡"，
        靠后建的盖住先建的）；flex 里没有绝对定位的浮层，改成"显示覆盖层就收起正文"，
        见 p3_overlay_sync()。 */
@@ -1765,16 +1692,13 @@ static void build_p3(lv_obj_t *page)
     static const char *const views[] = { "全部", "容器", "硬件" };
     scope_bar(page, 3, "服务与主机 · 点按行查看详情", views, 3);
 
-    /* 摘要卡不设卡头标题：状态行本身就是这一卡的标题（"容器 8/8 运行 · 24 路温度 ·
-       0 个事件"），再加一个"系统摘要"就是用两个标题说同一件事。 */
+    /* 摘要行直接显示容器与温度概况，告警集中在告警页。 */
     s_ui.p3_note = ui_card(page, NULL, NULL);
     uk_card_flex(s_ui.p3_note, 0);
     {
         bool compact = lv_display_get_vertical_resolution(lv_display_get_default()) < UK_SCR_H;
         if (compact) lv_obj_set_style_pad_all(s_ui.p3_note, UK_S2, 0);
         lv_obj_t *body = uk_card_body(s_ui.p3_note);
-        s_ui.system_state = uk_label(body, UK_FONT_CJK_20, UK_ON_SUMMARY, "等待数据");
-        lv_obj_set_width(s_ui.system_state, LV_PCT(100));
         s_ui.system_note = uk_label(body, compact ? UK_FONT_CJK_12 : UK_FONT_CJK_16, UK_T2, "等待数据");
         lv_obj_set_width(s_ui.system_note, LV_PCT(100));
         s_ui.system_note2 = uk_label(body, UK_FONT_CJK_12, UK_T3, "");
@@ -1812,45 +1736,7 @@ static void build_p3(lv_obj_t *page)
         s_ui.p3_temp_made = 0;
     }
 
-    /* 告警与事件：一条告警可能两三行（消息本身是整句中文），所以这里不用池，
-       用可以自己滚的列（池要求条目等高等宽）。 */
-    s_ui.alert_card = ui_card(page, "告警与事件", "查看全部 →");
-    /* 不跟另外两张同排：三分之一宽会把一句中文折成四五行；而三张卡等高时，
-       只有一两条告警的那张会空出大半张卡面，像没画完。改成整页宽、按内容定高、
-       最高 UI_ALERT_PANEL_MAX_H —— 内容少时它只占一条，内容多时由卡内滚动接管。
-       这里刻意不用 flex_grow：它一旦参与抢余量，就和上面的池卡等比瓜分，
-       健康态下池卡只剩一半高（列表被挤成两三条）。余量留给 p3_cols。 */
-    lv_obj_set_flex_grow(s_ui.alert_card, 0);
-    lv_obj_set_height(s_ui.alert_card, LV_SIZE_CONTENT);
-    lv_obj_set_style_max_height(s_ui.alert_card, UI_ALERT_PANEL_MAX_H, 0);
-    /* 卡片本身就是入口：点它去告警页看全部。 */
-    lv_obj_add_flag(s_ui.alert_card, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_style_bg_color(s_ui.alert_card, uk_c(UK_SURF_S2), LV_STATE_PRESSED);
-    lv_obj_add_event_cb(s_ui.alert_card, page_jump_cb, LV_EVENT_CLICKED, (void *)(intptr_t)5);
-    {
-        /* 卡片按内容定高 ⇒ body 也必须按内容定高：uk_card 默认给 body 的是 flex_grow 1，
-           在"按内容定高"的父容器里会被算成 0 高，整张卡塌成一条线（里面的字全跑到卡外，
-           几何审计直接报 child out of parent）。 */
-        lv_obj_t *body = uk_card_body(s_ui.alert_card);
-        lv_obj_set_flex_grow(body, 0);
-        lv_obj_set_height(body, LV_SIZE_CONTENT);
-        s_ui.alert_none_box = empty_box(body, "等待数据", &s_ui.alert_none);
-        /* 空态盒子同理：它本来是"吃满卡高、自己居中"，这张卡不按卡高算，得给它一个真实高度。 */
-        lv_obj_set_flex_grow(s_ui.alert_none_box, 0);
-        lv_obj_set_height(s_ui.alert_none_box, lv_font_get_line_height(UK_FONT_CJK_16));
-        s_ui.alert_col = scroll_col(body);
-        /* 告警列也按内容定高，但封顶在"卡片上限 - 卡头与内边距"：再多就自己滚。
-           于是卡片高度 = 内容高度（最多 150）：既不会空着半张卡，也不会撑破页面。 */
-        lv_obj_set_flex_grow(s_ui.alert_col, 0);
-        lv_obj_set_height(s_ui.alert_col, LV_SIZE_CONTENT);
-        /* 系统页只列 UI_ALERT_PANEL_ROWS 条：卡片按内容定高，多了在这里自己滚，
-           完整的九条在告警页（点卡进）。 */
-        lv_obj_set_style_max_height(s_ui.alert_col,
-                                    UI_ALERT_PANEL_ROWS * lv_font_get_line_height(UK_FONT_CJK_16)
-                                        + (UI_ALERT_PANEL_ROWS - 1) * UK_S3, 0);
-    }
-
-    lv_obj_t *status_cards[] = { s_ui.dock_card, s_ui.p3_temp_card, s_ui.alert_card };
+    lv_obj_t *status_cards[] = { s_ui.dock_card, s_ui.p3_temp_card };
     for (unsigned i = 0; i < sizeof status_cards / sizeof status_cards[0]; i++) {
         lv_obj_set_style_pad_all(status_cards[i], UK_S2, 0);
         lv_obj_set_style_pad_row(status_cards[i], UK_S1, 0);
@@ -3506,12 +3392,6 @@ const char *fnos_ui_link_reason(const fnos_status_t *st)
     return link_reason(st);
 }
 
-/* 底栏那个"最严重告警"状态点：只有严重级别才呼吸。
-   呼吸是 700ms 往复的无限动画，而 refresh() 每秒都会跑一次——每次都重启动画的话
-   透明度会在 1 秒处被硬拉回 255，看起来是"卡一下"而不是呼吸。所以只在**状态翻转**时
-   才调用 uk_anim_pulse()。 */
-static bool s_pulse_on;
-
 /* ── 温度清单：分组 / 建块 / 填值（p4 用块，p3 用行，分组只算一次）───────── */
 static temp_grp_t *s_tgrp;
 static int s_tgrp_capacity;
@@ -4333,7 +4213,9 @@ static void inventory_notice(void)
     bool missing_kpi = false;
     for (unsigned i = 0; i < sizeof s_ui.kpi2 / sizeof s_ui.kpi2[0]; i++)
         if (!s_ui.kpi2[i]) missing_kpi = true;
-    if (!uk_alloc_failed() && !missing_kpi) return;
+    bool failed = uk_alloc_failed() || missing_kpi;
+    show(lv_obj_get_parent(lv_obj_get_parent(s_ui.foot_txt)), failed);
+    if (!failed) return;
     lv_label_set_text_static(s_ui.foot_txt, "界面内存不足 · 部分设备尚未显示");
     lv_obj_set_style_text_color(s_ui.foot_txt, uk_c(UK_WARN), 0);
     lv_obj_set_style_bg_color(s_ui.foot_dot, uk_c(UK_WARN), 0);
@@ -4343,27 +4225,15 @@ static void inventory_notice(void)
    某一段读不到就写它的状态词 + 黄点 —— 绝不静默显示成 0，因为 0 的含义是
    "看过了、确实是 0"。 */
 typedef struct {
-    int alerts[3], first_alert, running;
-    uint32_t color, event_color;
-    const char *note;
+    int alerts[3], running;
 } health_summary_t;
 
 /* Borrow only the current snapshot; no second inventory or retained strings. */
 static health_summary_t health_summary(const fnos_status_t *st)
 {
-    health_summary_t h = { .first_alert = -1, .event_color = UK_T3 };
-    int first_group = 3;
-    for (int i = 0; i < st->nalerts; i++) {
-        int group = alert_group_of(st->alerts[i].lv);
-        h.alerts[group]++;
-        if (group < first_group) { first_group = group; h.first_alert = i; }
-    }
+    health_summary_t h = {0};
+    for (int i = 0; i < st->nalerts; i++) h.alerts[alert_group_of(st->alerts[i].lv)]++;
     for (int i = 0; i < st->ndocker; i++) if (st->docker[i].up) h.running++;
-    h.event_color = first_group == 0 ? UK_DANGER : first_group == 1 ? UK_WARN : UK_T3;
-    h.color = !st->ever_ok ? UK_T3 : !st->online ? UK_WARN :
-              h.alerts[0] ? UK_DANGER : h.alerts[1] ? UK_WARN : UK_OK;
-    h.note = !st->ever_ok ? "等待数据" : !st->online ? "采集端离线" :
-             h.alerts[0] ? "存在严重告警" : h.alerts[1] ? "需要关注" : "无采集告警";
     return h;
 }
 
@@ -4479,7 +4349,7 @@ static const char *smart_note(const char *state)
     return "未采集";
 }
 
-static void refresh_shell(const fnos_status_t *st, const health_summary_t *health)
+static void refresh_shell(const fnos_status_t *st)
 {
     /* 顶栏：主机 / 端点 / 状态胶囊 / 信号 */
     set_txt(s_ui.h_host, "%s", st->host[0] ? st->host : "fnos");
@@ -4488,94 +4358,14 @@ static void refresh_shell(const fnos_status_t *st, const health_summary_t *healt
     else if (st->online)   chip_set_glow(s_ui.h_chip, "在线", UK_OK);
     else                   chip_set_glow(s_ui.h_chip, "离线", UK_WARN);
     signal_set(fnos_net_rssi());
-
-    /* 底栏：左边是轮询统计，右边是"最严重的一条告警"。底栏只说**一件事**：
-       现在要不要动手；全量告警在系统页那一列里。 */
-    if (s_ui.foot_poll) {
-        char poll[16], frame[16];
-        fmt_period(poll, sizeof poll, fnos_data_poll_interval_ms());
-        fmt_period(frame, sizeof frame, fnos_ui_refresh_period_ms());
-        set_num(s_ui.foot_poll, "采 %s · 屏 %s · ok %u · fail %u", poll, frame,
-                (unsigned)st->ok_count, (unsigned)st->fail_count);
-    }
-    if (s_ui.foot_txt && s_ui.foot_dot) {
-        uint32_t band = UK_OK;
-        int first = health->first_alert;
-        if (!st->ever_ok) {
-            band = UK_T3; set_txt(s_ui.foot_txt, "等待采集端…");
-        } else if (!st->online) {
-            band = UK_WARN;
-            if (first >= 0) set_txt(s_ui.foot_txt, "采集端离线 · 上次事件：%s", st->alerts[first].m);
-            else set_txt(s_ui.foot_txt, "告警状态未知 · 保留旧数据");
-        } else if (first >= 0) {
-            band = health->event_color;
-            set_txt(s_ui.foot_txt, "%s · 共 %d 个事件", st->alerts[first].m, st->nalerts);
-        } else if (st->source_dropped) { band = UK_WARN; set_txt(s_ui.foot_txt, "采集端省略 %d 项 · 请检查采集限制", st->source_dropped); }
-        else set_txt(s_ui.foot_txt, "无告警事件 · 采集正常");
-        lv_obj_set_style_bg_color(s_ui.foot_dot, uk_c(band), 0);
-        lv_obj_set_style_shadow_color(s_ui.foot_dot, uk_c(band), 0);
-        lv_obj_set_style_shadow_width(s_ui.foot_dot, UK_GLOW_W, 0);
-        lv_obj_set_style_shadow_opa(s_ui.foot_dot, band == UK_OK ? 0 : UK_GLOW_OPA, 0);
-        lv_obj_set_style_text_color(s_ui.foot_txt,
-                                    uk_c(band == UK_OK ? UK_T3 : band), 0);
-        /* 只有严重告警才呼吸：注意/信息级别常驻亮着就够，闪起来反而像故障灯。 */
-        bool pulse = (band == UK_DANGER);
-        if (pulse != s_pulse_on) {
-            uk_anim_pulse(s_ui.foot_dot, pulse);
-            s_pulse_on = pulse;
-        }
-    }
-
-    set_txt(s_ui.health, "%s", health->note);
-    lv_obj_set_style_text_color(s_ui.health, uk_c(health->color), 0);
 }
 
 static void refresh_body(int page, const fnos_status_t *st, const health_summary_t *health)
 {
     char b[256], c1[32], c2[32];
-    const int critical = health->alerts[0], warnings = health->alerts[1], running = health->running;
-    const uint32_t health_color = health->color;
+    const int running = health->running;
     const char *why = st->online ? NULL : link_reason(st);
-    if (page == 3) set_txt(s_ui.system_state, "%s", health->note);
-    /* 首页结论带：点是状态灯，正文是最要紧的一件事，右侧"全部 →"只在有事件时出现。
-       文案与底栏那条同源，不重复算逻辑。 */
-    if ((page == 0) && s_ui.home_band_dot) {
-        lv_obj_set_style_bg_color(s_ui.home_band_dot, uk_c(health_color), 0);
-        lv_obj_set_style_shadow_color(s_ui.home_band_dot, uk_c(health_color), 0);
-        lv_obj_set_style_shadow_width(s_ui.home_band_dot, UK_GLOW_W, 0);
-        lv_obj_set_style_shadow_opa(s_ui.home_band_dot, health_color == UK_OK ? 0 : UK_GLOW_OPA, 0);
-        if (st->nalerts > 0) {
-            set_txt(s_ui.home_band_msg, "%s", st->alerts[health->first_alert].m);
-            show(s_ui.home_band_more, true);
-        } else if (!st->ever_ok) {
-            set_txt(s_ui.home_band_msg, "%s", "等待采集端首次采集");
-            show(s_ui.home_band_more, false);
-        } else if (!st->online) {
-            set_txt(s_ui.home_band_msg, "%s", "采集端离线 · 显示最后一次采集快照");
-            show(s_ui.home_band_more, false);
-        } else {
-            /* 别把带 %d 的文案塞进 set_txt 的 "%s" 里当**实参**：%s 会原样印出
-               "容器 %d/%d 运行"（实机 2026-10-08 抓到），必须让格式串当格式串用。 */
-            set_txt(s_ui.home_band_msg, "容器 %d/%d 运行 · 无待处理事件", running, st->ndocker);
-            show(s_ui.home_band_more, false);
-        }
-    }
-    if (page == 0) {
-    /* 健康卡右侧那行摘要同时是"为什么连不上"的公告栏：在线时报告运行概况，
-       离线时报告原因（见 link_reason）——比再来一行"离线"有用得多。 */
-    /* Connection failures must remain readable on compact displays. The top
-       status band grows with the reason; telemetry summaries may stay compact. */
-    lv_label_set_long_mode(s_ui.home_band_msg, why ? LV_LABEL_LONG_MODE_WRAP : LV_LABEL_LONG_MODE_DOTS);
-    lv_obj_set_height(s_ui.home_band_msg, why ? LV_SIZE_CONTENT : lv_font_get_line_height(UK_FONT_CJK_12));
-    if (why) set_txt(s_ui.home_band_msg, "%s", why);
-
-    }
-
-    /* P0: current readings and histories use the same snapshot/cursor as detail pages. */
-    if (page == 0) {
-        overview_refresh(st);
-        show(s_ui.home_band_msg, !st->online || st->nalerts > 0);
-    }
+    if (page == 0) overview_refresh(st);
 
     if (page == 1) {
         const bool readable = overview_readable(st, "vols");
@@ -4870,8 +4660,8 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
         snprintf(dock_summary, sizeof dock_summary, "容器%s", dock_note);
     }
     if (page == 3) {
-    if (st->online) set_txt(s_ui.system_note, "%s · %d 路温度 · 严重 %d · 警告 %d", dock_summary, st->ntemps, critical, warnings);
-    else set_txt(s_ui.system_note, "旧快照 · %s · %d 路温度 · %d 个上次事件", dock_summary, st->ntemps, st->nalerts);
+    if (st->online) set_txt(s_ui.system_note, "%s · %d 路温度", dock_summary, st->ntemps);
+    else set_txt(s_ui.system_note, "旧快照 · %s · %d 路温度", dock_summary, st->ntemps);
     if (dock_live) set_txt(s_ui.dock_empty_label, "暂无容器");
     else set_txt(s_ui.dock_empty_label, "容器%s", dock_note);
     /* 数据层早就有、v7 界面一直没用上的字段：负载 / 进程数 / 交换 / 运行时长 */
@@ -5128,44 +4918,7 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
             lv_free(segments);
         }
     }
-    int nalerts = st->nalerts;
-    if (nalerts > s_ui.alert_made) {
-        lv_obj_t **grown = uk_realloc(s_ui.alert_lbl, (size_t)nalerts * sizeof *grown);
-        if (grown) {
-            s_ui.alert_lbl = grown;
-            for (int i = s_ui.alert_made; i < nalerts; i++) {
-                grown[i] = uk_label(s_ui.alert_col, UK_FONT_CJK_16, UK_WARN, "");
-                lv_obj_set_width(grown[i], LV_PCT(100));
-                lv_label_set_long_mode(grown[i], LV_LABEL_LONG_MODE_WRAP);
-            }
-            s_ui.alert_made = nalerts;
-        } else nalerts = s_ui.alert_made;
-    }
-    for (int i = nalerts; i < s_ui.alert_made; i++) lv_obj_delete(s_ui.alert_lbl[i]);
-    s_ui.alert_made = nalerts;
-    if (nalerts == 0) {
-        for (int i = 0; i < s_ui.alert_made; i++) show(s_ui.alert_lbl[i], false);
-        show(s_ui.alert_col, false);          /* 空态盒子要独占卡体才能居中 */
-        show(s_ui.alert_none_box, true);
-        set_txt(s_ui.alert_none, "%s",
-                !st->ever_ok ? (why ? why : "等待告警数据")
-                             : !st->online ? (why ? why : "采集端离线\n告警状态未知")
-                                           : "暂无告警事件");
-    } else {
-        show(s_ui.alert_none_box, false);
-        show(s_ui.alert_col, true);
-        for (int i = 0; i < s_ui.alert_made; i++) {
-            if (i >= st->nalerts) { show(s_ui.alert_lbl[i], false); continue; }
-            show(s_ui.alert_lbl[i], true);
-            /* agent 的告警级别是 "crit" / "warn" / "info"（见 nas/fnos-agent.py:_alerts） */
-            uint32_t ac = (strcmp(st->alerts[i].lv, "crit") == 0) ? UK_DANGER
-                        : (strcmp(st->alerts[i].lv, "warn") == 0) ? UK_WARN : UK_T3;
-            lv_obj_set_style_text_color(s_ui.alert_lbl[i], uk_c(st->online ? ac : UK_T3), 0);
-            set_txt(s_ui.alert_lbl[i], "%s%s", st->online ? "" : "上次采集：", st->alerts[i].m);
-        }
-        uk_viewport_snap(s_ui.alert_col, UK_S3);
-    }
-    }   /* (page == 3)：诊断明细 + 系统页告警列 */
+    }   /* (page == 3)：诊断明细 */
     if (page == 1) storage_layout();
     if (page == 3) system_layout();
     /* P5：告警页与上面同源，按严重度分三组。组内行数多退少补 —— 不是 HIDDEN：
@@ -5210,6 +4963,10 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
         if (!st->ever_ok) set_txt(s_ui.alert_page_note, "%s", why ? why : "等待采集端 · 尚无有效快照");
         else if (!st->online) set_txt(s_ui.alert_page_note, "采集端离线 · 严重 %d · 警告 %d · 提示 %d", cnt[0], cnt[1], cnt[2]);
         else set_txt(s_ui.alert_page_note, "严重 %d · 警告 %d · 提示 %d", cnt[0], cnt[1], cnt[2]);
+        if (st->source_dropped) {
+            set_txt(s_ui.alert_page_note, "%s · 采集端省略 %d 项 · 请检查采集限制",
+                    !st->online ? "采集端离线" : "采集不完整", st->source_dropped);
+        }
         int matches = s_scope[5] ? cnt[s_scope[5] - 1] : st->nalerts;
         show(s_ui.alert_page_empty, matches == 0);
         lv_obj_t *empty_label = lv_obj_get_child(s_ui.alert_page_empty, 0);
@@ -5252,7 +5009,7 @@ static void refresh(void)
     for (int i = 0; i < FNOS_UI_PAGE_COUNT; i++) s_page_dirty[i] = i != s_page;
     uk_number_refresh_begin();
     uk_number_motion_enable(s_st.online && !motion_busy());
-    refresh_shell(&s_st, &health);
+    refresh_shell(&s_st);
     refresh_body(s_page, &s_st, &health);
     inventory_notice();
 }
@@ -5490,6 +5247,7 @@ void fnos_ui_create(void)
     build_rail(rail);
     build_header(head);
     build_foot(foot);
+    show(foot, false); /* Collection alerts belong to the Alerts page. */
 
     for (int i = 0; i < FNOS_UI_PAGE_COUNT; i++) {
         s_ui.page[i] = build_page(content, i);

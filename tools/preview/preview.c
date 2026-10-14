@@ -1603,7 +1603,7 @@ static void verify_transitions(void)
 
     s_state = ST_HEALTHY;
     vtick_advance(500); lv_timer_handler();
-    assert(visible_text(lv_screen_active(), "暂无告警事件"));
+    assert(!visible_text(lv_screen_active(), "暂无告警事件"));
     assert(!visible_text(lv_screen_active(), "container download-service down"));
     assert(!visible_text(lv_screen_active(), "/vol4 used 95%"));
     /* 告警页的健康态不是"一屏留白"：它要顺带回答"看住了什么、现在什么状态"。
@@ -1620,7 +1620,7 @@ static void verify_transitions(void)
     assert(visible_text_containing(lv_screen_active(), "在线\n"));
     snapshot("06-alerts-health");
     fnos_ui_set_page(0);
-    assert(visible_text(lv_screen_active(), "无采集告警"));
+    assert(!visible_text(lv_screen_active(), "无采集告警"));
     /* 结论带那行文案曾经把 "%d/%d" 原样印到屏上（set_txt 的 "%s" 吃的实参里带着格式串，
        实机 2026-10-08 抓到）。正常首页不再重复容器摘要，且屏上不许残留
        没被消费掉的格式说明符。 */
@@ -1628,7 +1628,7 @@ static void verify_transitions(void)
     assert(!visible_text_containing(lv_screen_active(), "%d"));
     s_state = ST_LOCKBUSY;
     vtick_advance(500); lv_timer_handler();
-    assert(visible_text(lv_screen_active(), "无采集告警"));
+    assert(!visible_text(lv_screen_active(), "无采集告警"));
     s_state = ST_WARMING;
     vtick_advance(500); lv_timer_handler();
     assert(visible_text(lv_screen_active(), "等待数据"));
@@ -1648,7 +1648,7 @@ static void verify_transitions(void)
     fnos_ui_set_page(3);
     assert(!visible_text(lv_screen_active(), "重新扫描"));
     assert(!visible_text(lv_screen_active(), "手动输入"));
-    assert(visible_text(lv_screen_active(), "告警与事件"));   /* 正文还在，没被覆盖层顶掉 */
+    assert(!visible_text(lv_screen_active(), "告警与事件"));   /* 告警仅在独立告警页显示 */
     /* 顶栏入口点开 → 卡出现（同槽位，正文让位）；标签此时是 SSID（已连接） */
     lv_obj_t *wbtn = visible_text(lv_screen_active(), "Demo");
     assert(wbtn);
@@ -2467,29 +2467,38 @@ static void verify_ui_regressions(void)
     regression_tick();
     snapshot("11-long-host");
 
-    /* WARN precedes CRIT in the real fixture. Highest severity must win globally. */
+    /* Collection alerts belong exclusively to the Alerts page. */
     fnos_ui_set_page(0);
     regression_tick();
     assert(strcmp(fixture.alerts[0].lv, "warn") == 0);
     assert(strcmp(fixture.alerts[1].lv, "crit") == 0);
-    /* The footer appends its event count; the home band must independently show
-       the same highest-severity event, rather than the first source row. */
+    for (int page = 0; page < 5; page++) {
+        fnos_ui_set_page(page);
+        regression_tick();
+        assert(!visible_text(lv_screen_active(), fixture.alerts[1].m));
+        assert(!visible_text(lv_screen_active(), "存在严重告警"));
+    }
+    fnos_ui_set_page(5);
+    regression_tick();
     assert(visible_text(lv_screen_active(), fixture.alerts[1].m));
-    char footer_event[256];
-    snprintf(footer_event, sizeof footer_event, "%s · 共 %d 个事件", fixture.alerts[1].m, fixture.nalerts);
-    lv_obj_t *critical = visible_text(lv_screen_active(), footer_event);
-    assert(critical);
-    assert(lv_color_to_u32(lv_obj_get_style_text_color(critical, LV_PART_MAIN)) == lv_color_to_u32(uk_c(UK_DANGER)));
+    int dropped = fixture.source_dropped;
+    fixture.source_dropped = 3;
+    regression_tick();
+    assert(visible_text_containing(lv_screen_active(), "采集端省略 3 项"));
+    fixture.source_dropped = dropped;
+    fnos_ui_set_page(0);
+    regression_tick();
+    assert(!visible_text_containing(lv_screen_active(), "采集端省略"));
 
-    /* Future levels are informational, and equal severity retains source order. */
+    /* Future levels remain informational on the Alerts page. */
     int alert_count = fixture.nalerts;
     const char *level0 = fixture.alerts[0].lv, *level1 = fixture.alerts[1].lv;
     fixture.nalerts = 2;
     fnos_status_text(&fixture, &fixture.alerts[0].lv, "caution");
     fnos_status_text(&fixture, &fixture.alerts[1].lv, "future");
     regression_tick();
-    assert(visible_text(lv_screen_active(), fixture.alerts[0].m));
-    assert(visible_text(lv_screen_active(), "无采集告警"));
+    assert(!visible_text(lv_screen_active(), fixture.alerts[0].m));
+    assert(!visible_text(lv_screen_active(), "无采集告警"));
     fnos_ui_set_page(5); regression_tick();
     assert(visible_text(lv_screen_active(), "严重 0 · 警告 0 · 提示 2"));
     fnos_status_text(&fixture, &fixture.alerts[0].lv, "%s", level0);
@@ -2559,7 +2568,7 @@ static void verify_ui_regressions(void)
     s_state = old_state;
     fnos_ui_set_page(old_page);
     regression_tick();
-    puts("checks: current-system navigation exits diagnostics, highest severity footer, stale containers, temperature expand/collapse height recovery, stable refresh positions PASS");
+    puts("checks: current-system navigation exits diagnostics, alerts confined to Alerts page, stale containers, temperature expand/collapse height recovery, stable refresh positions PASS");
     fnos_status_release(&fixture);     /* M17：句柄用完必须还 */
 }
 
@@ -3140,7 +3149,7 @@ static void verify_pairing(void)
     vtick_advance(500); lv_timer_handler();
     /* visible_text 是**整串相等**比较（不是子串），断言必须写整串。
        路数跟着桩走：桩现在是真机的 24 路通道（原来只有 10 个设备级读数）。 */
-    assert(visible_text(lv_screen_active(), "容器 8/8 运行 · 24 路温度 · 严重 0 · 警告 0"));
+    assert(visible_text(lv_screen_active(), "容器 8/8 运行 · 24 路温度"));
     assert(!visible_text(lv_screen_active(), "与 NAS 配对"));
     click_text("配对");
     assert(visible_text(lv_screen_active(), "与 NAS 配对"));
