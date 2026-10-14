@@ -94,10 +94,21 @@ void uk_set_text(lv_obj_t *label, const char *fmt, ...);
 /* Numeric labels retain the lv_label API. Explicit opt-in prevents animating IDs/input. */
 lv_obj_t *uk_number_label_create(lv_obj_t *parent);
 void uk_number_set_text(lv_obj_t *label, const char *text, bool animate);
+/* Present value and unit together, including on a closed presentation beat. */
+void uk_number_set_reading(lv_obj_t *value, lv_obj_t *unit, const char *text,
+                           const char *unit_text, bool animate);
 void uk_number_settle(lv_obj_t *label);
 void uk_number_motion_enable(bool enabled);
 /* Open at most one synchronized numeric presentation batch per configured cadence. */
 void uk_number_refresh_begin(void);
+/* Native bar/arc values use UK_METER_SCALE ticks per displayed unit. */
+void uk_meter_set(lv_obj_t *obj, int32_t value, bool animate);
+void uk_meter_settle(lv_obj_t *obj);
+void uk_meter_motion_enable(bool enabled);
+int32_t uk_anim_path_damped(const lv_anim_t *a);
+#ifdef FNOS_UI_TESTING
+void uk_meter_selfcheck(lv_obj_t *parent);
+#endif
 /* Snapshot/reset-free counters; call only on the LVGL thread while holding its lock. */
 typedef struct {
     size_t bytes, peak_bytes;
@@ -183,11 +194,17 @@ uk_kpi_t *uk_kpi_create(lv_obj_t *parent, const char *label);
 void uk_kpi_set(uk_kpi_t *k, const char *val, const char *unit, const char *sub, int32_t pct);
 
 /* ── 原生控件的轻封装（自适应尺寸交给 flex，动画交给 LVGL） ───────── */
-/* 趋势图：原生 lv_chart（LINE），点数组在 PSRAM 分配；返回图表对象。 */
+/* Native line segments on a continuously advancing time axis. Displayed values
+   use a trailing mean; raw history stays separate for peaks/counts. */
 lv_obj_t *uk_trend_create(lv_obj_t *parent, int32_t points, int32_t series);
-lv_chart_series_t *uk_trend_series(lv_obj_t *chart, int32_t idx);
+lv_chart_series_t *uk_trend_series(lv_obj_t *chart, int32_t idx); /* Display/colour */
+lv_chart_series_t *uk_trend_raw_series(lv_obj_t *chart, int32_t idx); /* Read-only statistics */
 void uk_trend_set_range(lv_obj_t *chart, int32_t ymin, int32_t ymax);
-void uk_trend_push(lv_obj_t *chart, int32_t series_idx, int32_t v);
+/* interval_ms comes from the data producer, not the UI's consumption timing.
+   Pass zero for backfill/unknown cadence (establish the window immediately). */
+void uk_trend_push(lv_obj_t *chart, int32_t series_idx, int32_t v, uint32_t interval_ms);
+void uk_trend_clear(lv_obj_t *chart);  /* Reset both rings and presentation time. */
+void uk_trend_settle(lv_obj_t *chart); /* Snap a history batch/hidden view to newest. */
 
 /* 数字键盘：原生 lv_buttonmatrix，回调收到按钮文字。 */
 lv_obj_t *uk_numpad_create(lv_obj_t *parent, void (*cb)(const char *key, void *user), void *user);

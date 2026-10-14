@@ -44,17 +44,18 @@ menu "fnOS monitor"
             平时保持 0，交给你自己点导航/滑动翻页。
 
     config FNOS_PALETTE
-        string "配色方案（unifi / device / graphite / abyss / phosphor）"
-        default "unifi"
+        string "配色方案（cuktech / unifi / device / graphite / abyss / phosphor）"
+        default "cuktech"
         help
             预置配色见 components/fnos_monitor/ui_kit/uk_theme.c：
-              unifi     UniFi Network 深色语言，NAS 触控适配（默认）
+              cuktech   近黑仪表、青蓝数据色与黄色焦点（默认）
+              unifi     UniFi Network 深色配色
               device    深紫画布 + 薄荷绿 / 桃橙（旧参考设备）
               graphite  中性石墨蓝灰
               abyss     深空蓝 + 青，像网络运维终端
               phosphor  近黑 + 磷光绿，对比度最高
             配色只管颜色：版面几何全在 ui_kit/（LVGL 原生 flex，不推导坐标），与配色无关
-            —— 换配色不会挪动任何一个元素。名字写错会退回 unifi（设备照样能开机）。
+            —— 换配色不会挪动任何一个元素。名字写错会退回 cuktech（设备照样能开机）。
 
     config FNOS_STATUS_MAX_BYTES
         int "Maximum telemetry response bytes"
@@ -82,6 +83,30 @@ menu "fnOS monitor"
 
     menu "UI reference ranges and layout"
 
+        config FNOS_UI_TREND_SMOOTH_SAMPLES
+            int "Trailing samples averaged in displayed trend lines (1 disables)"
+            range 1 127
+            default 3
+            help
+                Smooth short-period fluctuations only in the displayed line.
+                Current readings, historical peaks and sample counts keep the
+                original data. A missing sample breaks and resets the window.
+
+        config FNOS_UI_TREND_SCROLL_MS
+            int "Maximum sample interval animated as continuous chart travel (ms)"
+            range 0 5000
+            default 2000
+            help
+                Advance the native time axis at constant speed between samples.
+                Longer gaps snap to the newest window. Zero disables streaming.
+
+        config FNOS_UI_TREND_FPS
+            int "Maximum local streaming chart frame rate"
+            range 1 60
+            default 30
+            help
+                Limits local drawing only; never changes NAS collection or polling.
+
         config FNOS_UI_TEXT_SCRATCH_BYTES
             int "UI formatting scratch buffer on the LVGL stack (bytes)"
             range 64 1024
@@ -106,22 +131,30 @@ menu "fnOS monitor"
                 budget exhaustion. This never limits telemetry or inventory.
 
         config FNOS_UI_NUMBER_MS
-            int "Linear numeric transition duration (ms; 0 disables motion)"
+            int "Damped telemetry response duration (ms; 0 disables motion)"
             range 0 1000
-            default 300
+            default 450
             help
-                Use a fixed duration independent of telemetry and screen refresh
-                cadence. Keep it shorter than FNOS_UI_NUMBER_PRESENT_MS so every
-                batch reaches a stable resting state.
+                Critically damped digits, gauges and bars share this response
+                duration; meters retain a subpixel tail for at most twice it.
+                New targets preserve current position and velocity.
+                Zero disables motion; sampling and history remain unchanged.
+
+        config FNOS_UI_TELEMETRY_DAMPING
+            int "Telemetry settling factor (critical damping)"
+            range 6 12
+            default 8
+            help
+                Natural frequency = factor / settling duration. Eight leaves
+                about 0.3 percent residual at the nominal response duration.
 
         config FNOS_UI_NUMBER_PRESENT_MS
             int "Minimum interval between presented numeric changes (ms)"
             range 0 5000
-            default 1200
+            default 600
             help
-                Telemetry and charts may refresh faster. Numeric labels select
-                the newest sample together on this global cadence, preventing
-                different readings from keeping the screen in perpetual motion.
+                Zero publishes each real update in place. A nonzero value can
+                select the newest sample on a slower shared presentation beat.
 
         config FNOS_UI_NUMBER_STAGGER_MS
             int "Numeric changed-position stagger (ms)"
@@ -136,7 +169,7 @@ menu "fnOS monitor"
         config FNOS_UI_NUMBER_TRAVEL_PCT
             int "Numeric travel (% of font line height)"
             range 0 50
-            default 8
+            default 4
 
         config FNOS_UI_NUMBER_BLUR_PCT
             int "Numeric sampled blur (% of font line height; 0 disables)"

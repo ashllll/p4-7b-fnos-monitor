@@ -101,7 +101,7 @@ cat >> lv_kconfig_host.h <<'EOF'
 #define LV_USE_STDLIB_MALLOC 1     /* LV_STDLIB_CLIB   */
 #define LV_USE_STDLIB_STRING 1     /* 设备端 CONFIG_LV_USE_CLIB_STRING  */
 #define LV_USE_STDLIB_SPRINTF 1    /* 设备端 CONFIG_LV_USE_CLIB_SPRINTF */
-#define LV_DRAW_SW_DRAW_UNIT_CNT 1 /* 设备是 2（双核并行）；主机单线程，>1 会要求 LV_USE_OS */
+#define LV_DRAW_SW_DRAW_UNIT_CNT 1 /* 与设备默认一致；主机单线程，>1 会要求 LV_USE_OS */
 
 /* LVGL 默认 LV_ASSERT_HANDLER 是 while(1); —— 断言失败 = 无声 100% CPU 死循环。
    主机上改成打 stderr 再 abort（stderr 无缓冲，重定向到文件也立刻可见）。 */

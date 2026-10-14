@@ -1,5 +1,6 @@
 /* Numeric transitions inherit lv_label: native text/layout/audits stay authoritative. */
 #include "uk.h"
+#include "uk_spring.h"
 #include "src/widgets/label/lv_label_private.h"
 #include "src/core/lv_obj_class_private.h"
 #include "src/misc/lv_text_private.h"
@@ -13,6 +14,7 @@ typedef struct glyph_layer {
     int key;
     bool presented;
     float x, y, alpha, from_x, from_y, from_alpha, to_x, to_y, to_alpha;
+    float vx, vy, va, from_vx, from_vy, from_va;
 } glyph_layer_t;
 typedef struct {
     lv_label_t label;
@@ -58,15 +60,8 @@ static const lv_obj_class_t number_class = {
     .height_def=LV_SIZE_CONTENT, .name="uk_number_label"
 };
 
-/* Telemetry is not a gesture: use a short constant-velocity transition, then
-   leave a stable dwell. Fast samples still feed charts, while numeric labels
-   select the newest reading at a calmer presentation cadence. */
-static float linear_progress(float progress)
-{
-    if (progress<=0) return 0;
-    if (progress>=1) return 1;
-    return progress;
-}
+/* Damped telemetry shares the meter response while keeping native text/layout.
+   Logical readings publish immediately on the selected presentation beat. */
 static bool has_reading(const char *text)
 {
     bool digit=false;
@@ -107,12 +102,19 @@ void uk_number_settle(lv_obj_t *obj)
 {
     if (obj && lv_obj_get_class(obj)==&number_class) clear_layers(obj);
 }
-void uk_number_motion_enable(bool enabled) { motion_enabled=enabled; }
+void uk_number_motion_enable(bool enabled)
+{
+    motion_enabled=enabled;
+    uk_meter_motion_enable(enabled);
+}
 void uk_number_refresh_begin(void)
 {
     /* Sampling and screen refresh stay fast. Numeric motion uses its own fixed
        duration, while all labels share one beat so the whole screen can rest. */
     motion_period_ms=UK_NUMBER_MS;
+#if UK_NUMBER_PRESENT_MS == 0
+    presentation_batch_open=true;
+#else
     if (!presentation_gate_enabled || UK_NUMBER_PRESENT_MS==0) {
         presentation_batch_open=true;
         return;
@@ -124,6 +126,7 @@ void uk_number_refresh_begin(void)
         presentation_batch_started=true;
         presentation_batch_at=now;
     }
+#endif
 }
 lv_obj_t *uk_number_label_create(lv_obj_t *parent)
 {
@@ -138,11 +141,16 @@ static void number_destroy(const lv_obj_class_t *cls, lv_obj_t *obj)
 }
 static void sample_layers(number_label_t *n, uint32_t elapsed)
 {
+    uint32_t sampled=UINT32_MAX;
+    uk_spring_response_t response={0};
     for (glyph_layer_t *g=n->layers;g;g=g->next) {
-        float p=elapsed<=g->delay ? 0 : linear_progress((float)(elapsed-g->delay)/(n->duration ? n->duration : 1));
-        g->x=g->from_x+(g->to_x-g->from_x)*p;
-        g->y=g->from_y+(g->to_y-g->from_y)*p;
-        g->alpha=g->from_alpha+(g->to_alpha-g->from_alpha)*p;
+        uint32_t local=elapsed<=g->delay ? 0 : elapsed-g->delay;
+        /* With the default zero stagger, one exponential serves all glyphs. */
+        if (local!=sampled) { response=local>=n->duration ? (uk_spring_response_t){0} : uk_spring_response(local,n->duration); sampled=local; }
+        g->x=uk_spring_value(g->from_x,g->from_vx,g->to_x,response,&g->vx);
+        g->y=uk_spring_value(g->from_y,g->from_vy,g->to_y,response,&g->vy);
+        g->alpha=uk_spring_value(g->from_alpha,g->from_va,g->to_alpha,response,&g->va);
+        if (g->alpha<0 || g->alpha>1) { g->alpha=LV_CLAMP(0,g->alpha,1); g->va=0; }
     }
 }
 static void number_step(void *obj, int32_t elapsed)
@@ -190,6 +198,23 @@ static bool seed_layers(lv_obj_t *obj, const char *text)
     }
     return true;
 }
+void uk_number_set_reading(lv_obj_t *value, lv_obj_t *unit, const char *text,
+                           const char *unit_text, bool animate)
+{
+    if (!value || !unit) return;
+    if (!text) text = "";
+    if (!unit_text) unit_text = "";
+    bool same_unit = !strcmp(lv_label_get_text(unit), unit_text);
+    /* Holding only the value while updating its unit would fabricate a reading.
+       Initial/missing/offline values still publish immediately. */
+    if (animate && same_unit && same_numeric_structure(lv_label_get_text(value),text) &&
+        motion_enabled && !UK_NUMBER_REDUCED && UK_NUMBER_MS > 0 &&
+        presentation_gate_enabled && UK_NUMBER_PRESENT_MS > 0 && !presentation_batch_open &&
+        lv_obj_is_visible(value) && has_reading(lv_label_get_text(value)) && has_reading(text)) return;
+    uk_number_set_text(value, text, animate && same_unit);
+    uk_set_text(unit, "%s", unit_text);
+}
+
 void uk_number_set_text(lv_obj_t *obj, const char *text, bool animate)
 {
     if (!obj) return;
@@ -245,6 +270,7 @@ void uk_number_set_text(lv_obj_t *obj, const char *text, bool animate)
     for (glyph_layer_t *g=n->layers;g;g=g->next) {
         g->presented=true;
         g->from_x=g->x; g->from_y=g->y; g->from_alpha=g->alpha;
+        g->from_vx=g->vx; g->from_vy=g->vy; g->from_va=g->va;
         g->to_x=g->x; g->to_y=distance; g->to_alpha=0; g->delay=0;
     }
     uint32_t i=0, max_delay=0; int key=-char_count(text); float x=0;
@@ -268,6 +294,7 @@ void uk_number_set_text(lv_obj_t *obj, const char *text, bool animate)
         if (!found) found=add_layer(n,key,cp,x,-distance,0);
         if (!found) { clear_layers(obj); lv_label_set_text(obj,text); return; }
         found->from_x=found->x; found->from_y=found->y; found->from_alpha=found->alpha;
+        found->from_vx=found->vx; found->from_vy=found->vy; found->from_va=found->va;
         found->to_x=x; found->to_y=0; found->to_alpha=1; found->delay=delay;
         /* Pair the outgoing digit with its incoming digit's delay. */
         for (glyph_layer_t *g=n->layers;g;g=g->next)
@@ -359,9 +386,28 @@ static bool test_proportional_glyph(const lv_font_t *font, lv_font_glyph_dsc_t *
 }
 void uk_number_selfcheck(lv_obj_t *parent)
 {
-    assert(linear_progress(0)==0 && linear_progress(1)==1);
-    assert(fabsf(linear_progress(.5f)-.5f)<.0001f);
-    if (UK_NUMBER_REDUCED || UK_NUMBER_MS==0) return;
+    uk_meter_selfcheck(parent);
+    if (UK_NUMBER_REDUCED || UK_NUMBER_MS==0) {
+        lv_obj_t *o=uk_number_label_create(parent);
+        assert(o);
+        lv_obj_set_style_text_font(o,UK_FONT_NUM_32,0);
+        lv_obj_set_width(o,200);
+        uk_number_set_text(o,"99 MB/s",false); lv_obj_update_layout(o);
+        lv_area_t before,after; lv_obj_get_coords(o,&before);
+        size_t bytes=layer_bytes;
+        uk_number_set_text(o,"100 MB/s",true);
+        assert(!strcmp(lv_label_get_text(o),"100 MB/s"));
+        number_label_t *n=(number_label_t *)o;
+        assert(!n->active && !n->layers && layer_bytes==bytes);
+        lv_obj_update_layout(o); lv_obj_get_coords(o,&after);
+        assert(before.x1==after.x1 && before.y1==after.y1);
+        uk_number_set_text(o,"0 MB/s",true);
+        assert(!strcmp(lv_label_get_text(o),"0 MB/s"));
+        uk_number_set_text(o,"--",false);
+        assert(!strcmp(lv_label_get_text(o),"--"));
+        lv_obj_delete(o);
+        return;
+    }
     bool saved_gate=presentation_gate_enabled;
     presentation_gate_enabled=false;
     lv_obj_t *o=uk_number_label_create(parent);
@@ -376,9 +422,10 @@ void uk_number_selfcheck(lv_obj_t *parent)
     sample_layers(n,n->duration/3);
     n->started=lv_tick_get()-n->duration/3;
     glyph_layer_t *before=n->layers;
-    float y=before->y,alpha=before->alpha;
+    float y=before->y,alpha=before->alpha,vy=before->vy;
     uk_number_set_text(o,"67%",true);
     assert(fabsf(before->y-y)<.001f && fabsf(before->alpha-alpha)<.001f);
+    assert(fabsf(before->vy-vy)<.001f);
     uint32_t began=n->started; uk_number_set_text(o,"67%",true); assert(n->started==began);
     uk_number_set_text(o,"--",false); assert(!n->active && !n->layers);
     lv_obj_set_width(o,LV_SIZE_CONTENT);
@@ -481,6 +528,19 @@ void uk_number_selfcheck(lv_obj_t *parent)
         uk_number_set_text(q,"13",true);
         uk_number_set_text(q2,"23",true);
         assert(qn->active && qn2->active);
+        lv_obj_t *unit=lv_label_create(parent);
+        assert(unit);
+        uk_number_set_reading(q,unit,"950.0","KB/s",false);
+        presentation_batch_open=false;
+        uk_number_set_reading(q,unit,"1.1","MB/s",true);
+        assert(!strcmp(lv_label_get_text(q),"1.1") && !strcmp(lv_label_get_text(unit),"MB/s") && !qn->active);
+        presentation_batch_open=true;
+        uk_number_set_reading(q,unit,"1.1","MB/s",true);
+        assert(!strcmp(lv_label_get_text(q),"1.1") && !strcmp(lv_label_get_text(unit),"MB/s") && !qn->active);
+        presentation_batch_open=false;
+        uk_number_set_reading(q,unit,"--","",false);
+        assert(!strcmp(lv_label_get_text(q),"--") && !strcmp(lv_label_get_text(unit),"") && !qn->active);
+        lv_obj_delete(unit);
         lv_obj_delete(q); lv_obj_delete(q2);
         presentation_batch_open=saved_batch_open;
         presentation_batch_started=saved_batch_started;

@@ -83,6 +83,7 @@ static EXT_RAM_BSS_ATTR float s_h_tx[FNOS_HIST_MAX];
 static EXT_RAM_BSS_ATTR float s_h_temp[FNOS_HIST_MAX];
 
 static EXT_RAM_BSS_ATTR int64_t s_h_ts[FNOS_HIST_MAX];
+static EXT_RAM_BSS_ATTR uint32_t s_h_interval[FNOS_HIST_MAX];
 static int s_hist_count;
 static int64_t s_hist_reset_seq = -1;
 static bool s_hist_backfilled;
@@ -159,6 +160,7 @@ static bool history_row_values(const cJSON *row, fnos_sample_t *out, int64_t *ts
     const cJSON *t=cJSON_GetArrayItem(row,0);
     *ts = cJSON_IsNumber(t) && isfinite(t->valuedouble) && t->valuedouble>1e9 &&
           t->valuedouble<4e9 && floor(t->valuedouble)==t->valuedouble ? (int64_t)t->valuedouble : 0;
+    out->interval_ms = 0; /* Epoch-second backfill cannot supply a live cadence. */
     return true;
 }
 static void *history_alloc(size_t n)
@@ -212,7 +214,7 @@ static bool parse_history(const char *js)
     }
     for (int i=0;i<live;i++) {
         int idx=(int)((s_seq-live+i)%FNOS_HIST_MAX);
-        saved[i]=(history_record_t){{s_h_cpu[idx],s_h_mem[idx],s_h_rx[idx],s_h_tx[idx],s_h_temp[idx]},s_h_ts[idx]};
+        saved[i]=(history_record_t){{s_h_cpu[idx],s_h_mem[idx],s_h_rx[idx],s_h_tx[idx],s_h_temp[idx],s_h_interval[idx]},s_h_ts[idx]};
     }
     int64_t seq=s_seq;
     if (live) {
@@ -228,6 +230,7 @@ static bool parse_history(const char *js)
         int idx=(int)(seq++%FNOS_HIST_MAX);
         s_h_cpu[idx]=sample.cpu; s_h_mem[idx]=sample.mem;
         s_h_rx[idx]=sample.rx_kbs; s_h_tx[idx]=sample.tx_kbs; s_h_temp[idx]=sample.temp_max; s_h_ts[idx]=ts;
+        s_h_interval[idx]=sample.interval_ms;
         if (!ts || (count && ts<=ts_last)) times_ok=false;
         if (!count) ts_first=ts;
         ts_last=ts; count++;
@@ -236,6 +239,7 @@ static bool parse_history(const char *js)
         int idx=(int)(seq++%FNOS_HIST_MAX); sample=saved[i].sample; ts=saved[i].ts;
         s_h_cpu[idx]=sample.cpu; s_h_mem[idx]=sample.mem;
         s_h_rx[idx]=sample.rx_kbs; s_h_tx[idx]=sample.tx_kbs; s_h_temp[idx]=sample.temp_max; s_h_ts[idx]=ts;
+        s_h_interval[idx]=sample.interval_ms;
         if (!ts || (count && ts<=ts_last)) times_ok=false;
         if (!count) ts_first=ts;
         ts_last=ts; count++;
@@ -455,6 +459,7 @@ static void commit_status(const fnos_status_t *st, int http_ms, int status_code)
         return;
     }
     fnos_status_t *dst = &s_status;
+    int64_t previous_recv = dst->recv_ms;
     uint32_t ok = dst->ok_count, fail = dst->fail_count;
     bool hist_ts_ok = dst->hist_ts_ok;
     int hist_span_s = dst->hist_span_s, hist_avg_gap_x10 = dst->hist_avg_gap_x10;
@@ -476,6 +481,9 @@ static void commit_status(const fnos_status_t *st, int http_ms, int status_code)
     http_ring_push(http_ms);
 
     int idx = (int)(s_seq % FNOS_HIST_MAX);
+    int64_t interval = dst->recv_ms - previous_recv;
+    s_h_interval[idx] = s_hist_count && previous_recv > 0 && interval > 0 && interval <= UINT32_MAX
+                        ? (uint32_t)interval : 0;
     s_h_cpu[idx] = dst->cpu.pct;
     s_h_mem[idx] = dst->mem.pct;
     s_h_rx[idx]  = dst->net.rx_kbs;
@@ -679,6 +687,7 @@ int fnos_data_hist_read_ex(int64_t since_seq, fnos_sample_t *out, int max, int64
         out[n].rx_kbs = s_h_rx[idx];
         out[n].tx_kbs = s_h_tx[idx];
         out[n].temp_max = s_h_temp[idx];
+        out[n].interval_ms = s_h_interval[idx];
         n++;
         since_seq++;
     }

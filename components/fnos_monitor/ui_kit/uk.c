@@ -3,6 +3,8 @@
 // 这里只有"怎么摆"，"摆什么"在 fnos_ui.c。所有几何都由 flex 决定；
 // 唯一手写的尺寸是圆点直径、发丝线高度、条高（这些是"尺寸"不是"位置"）。
 #include "uk.h"
+#include "src/widgets/chart/lv_chart_private.h"
+#include "src/core/lv_obj_class_private.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -59,8 +61,8 @@ static void style_surface(lv_obj_t *o, uint32_t bg, int32_t radius)
 static void style_card_edge(lv_obj_t *o)
 {
     lv_obj_set_style_border_width(o, 1, 0);
-    lv_obj_set_style_border_color(o, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_border_opa(o, UK_EDGE_OPA, 0);
+    lv_obj_set_style_border_color(o, uk_c(UK_LINE), 0);
+    lv_obj_set_style_border_opa(o, LV_OPA_COVER, 0);
 }
 
 static lv_obj_t *mk_label_raw(lv_obj_t *parent, const lv_font_t *font, uint32_t hex)
@@ -93,16 +95,17 @@ lv_obj_t *uk_shell(lv_obj_t *scr, lv_obj_t **out_rail, lv_obj_t **out_head, lv_o
     lv_obj_t *head = lv_obj_create(scr);
     lv_obj_set_size(head, LV_PCT(100), LV_SIZE_CONTENT);
     lv_obj_set_style_min_height(head, UK_HEAD_H, 0);
-    style_surface(head, UK_SURF_S2, 0);
+    style_surface(head, UK_SURF_S1, 0);
+    lv_obj_set_style_border_side(head, LV_BORDER_SIDE_BOTTOM, 0);
+    lv_obj_set_style_border_width(head, 0, 0);
+    lv_obj_set_style_border_color(head, uk_c(UK_LINE), 0);
     lv_obj_set_flex_flow(head, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(head, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_all(head, UK_S2, 0);
+    lv_obj_set_style_pad_hor(head, UK_S2, 0);
+    lv_obj_set_style_pad_ver(head, UK_S1, 0);
     lv_obj_set_style_pad_column(head, UK_S2, 0);
 
-    /* Use a rail only when the measured display leaves room for comparison
-       columns. Narrow displays retain a touch dock; no entity counts enter this. */
-    const bool side = lv_display_get_horizontal_resolution(NULL) >=
-                      UK_RAIL_W + UK_CONTENT_COLUMNS * UK_LIST_MIN_WIDTH;
+    /* Full-width instrument workspace; page selection lives in the bottom dock. */
     lv_obj_t *workspace = lv_obj_create(scr);
     lv_obj_set_width(workspace, LV_PCT(100));
     lv_obj_set_flex_grow(workspace, 1);
@@ -138,18 +141,17 @@ lv_obj_t *uk_shell(lv_obj_t *scr, lv_obj_t **out_rail, lv_obj_t **out_head, lv_o
     lv_obj_set_flex_align(foot, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(foot, UK_S2, 0);
 
-    lv_obj_t *rail = lv_obj_create(side ? workspace : scr);
-    lv_obj_set_size(rail, side ? UK_RAIL_W : LV_PCT(100), side ? LV_PCT(100) : UK_DOCK_H);
-    if (side) lv_obj_move_to_index(rail, 0);
-    else lv_obj_move_to_index(rail, 1); /* S1 horizontal application navigation above workspace. */
+    lv_obj_t *rail = lv_obj_create(scr);
+    lv_obj_set_size(rail, LV_PCT(100), UK_DOCK_H);
+    lv_obj_move_to_index(rail, 2); /* Content -> page dock -> event footer. */
     style_surface(rail, UK_BG, 0);
-    lv_obj_set_flex_flow(rail, side ? LV_FLEX_FLOW_COLUMN : LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_flow(rail, LV_FLEX_FLOW_ROW);
     lv_obj_set_style_pad_row(rail, UK_S1, 0);
     lv_obj_set_flex_align(rail, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_hor(rail, UK_S2, 0);
-    lv_obj_set_style_pad_ver(rail, side ? UK_S2 : UK_S1, 0);
+    lv_obj_set_style_pad_ver(rail, UK_S1, 0);
     lv_obj_add_flag(rail, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_scroll_dir(rail, side ? LV_DIR_VER : LV_DIR_HOR);
+    lv_obj_set_scroll_dir(rail, LV_DIR_HOR);
     lv_obj_set_scrollbar_mode(rail, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_style_pad_column(rail, UK_PANEL_GAP, 0);
 
@@ -239,15 +241,19 @@ lv_obj_t *uk_card(lv_obj_t *parent, const char *title, const char *note)
     lv_obj_set_style_border_width(head, 0, 0);
     lv_obj_set_style_pad_all(head, 0, 0);
     lv_obj_set_style_pad_column(head, UK_S3, 0);
+    lv_obj_set_style_pad_bottom(head, UK_S1, 0);
+    lv_obj_set_style_border_side(head, LV_BORDER_SIDE_BOTTOM, 0);
+    lv_obj_set_style_border_width(head, 0, 0);
+    lv_obj_set_style_border_color(head, uk_c(UK_LINE), 0);
     lv_obj_set_flex_flow(head, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(head, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    lv_obj_t *tl = mk_label_raw(head, UK_FONT_CJK_16, UK_T2);
+    lv_obj_t *tl = mk_label_raw(head, UK_FONT_CJK_16, UK_T1);
     lv_label_set_long_mode(tl, LV_LABEL_LONG_MODE_DOTS);
     lv_obj_set_flex_grow(tl, 1);
     lv_label_set_text(tl, title ? title : "");   /* 不给就空着，别留 LVGL 默认的 "Text" */
 
-    lv_obj_t *nt = mk_label_raw(head, UK_FONT_CJK_12, UK_T4);
+    lv_obj_t *nt = mk_label_raw(head, UK_FONT_CJK_12, UK_T3);
     lv_obj_set_style_text_align(nt, LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_set_flex_grow(nt, 0);
     lv_label_set_text(nt, note ? note : "");
@@ -400,8 +406,8 @@ uk_row_t *uk_row_create(lv_obj_t *parent, bool with_led, bool with_bar)
     lv_obj_set_width(row, LV_PCT(100));
     lv_obj_set_height(row, LV_SIZE_CONTENT);
     lv_obj_set_style_bg_color(row, uk_c(UK_SURF_T), 0);
-    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_radius(row, 0, 0);
+    lv_obj_set_style_bg_opa(row, separated ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+    lv_obj_set_style_radius(row, separated ? UK_RADIUS_SM : 0, 0);
     lv_obj_set_style_border_width(row, 0, 0);
     lv_obj_set_style_pad_all(row, 0, 0);
     /* Separated tiles have inner breathing room; dense Wi-Fi rows retain their own layout. */
@@ -411,7 +417,7 @@ uk_row_t *uk_row_create(lv_obj_t *parent, bool with_led, bool with_bar)
     /* 1px 下边线 = 清单分隔线（也是行与行之间的视觉间距）；
        行高只有 1px 的代价，比 pad_row 便宜，24 路才能一屏排下。 */
     lv_obj_set_style_border_width(row, 1, 0);
-    lv_obj_set_style_border_side(row, LV_BORDER_SIDE_BOTTOM, 0);
+    lv_obj_set_style_border_side(row, separated ? LV_BORDER_SIDE_FULL : LV_BORDER_SIDE_BOTTOM, 0);
     lv_obj_set_style_border_color(row, uk_c(UK_LINE), 0);
     lv_obj_set_style_border_opa(row, LV_OPA_60, 0);
     lv_obj_set_flex_flow(row, LV_FLEX_FLOW_COLUMN);
@@ -471,7 +477,7 @@ uk_row_t *uk_row_create(lv_obj_t *parent, bool with_led, bool with_bar)
         r->bar = lv_bar_create(row);
         lv_obj_set_width(r->bar, LV_PCT(100));
         lv_obj_set_height(r->bar, UK_BAR_H);
-        lv_bar_set_range(r->bar, 0, 100);
+        lv_bar_set_range(r->bar, 0, 100 * UK_METER_SCALE);
         lv_obj_set_style_radius(r->bar, UK_BAR_H / 2, 0);
         lv_obj_set_style_bg_color(r->bar, uk_c(UK_SURF_S3), LV_PART_MAIN);
         lv_obj_set_style_bg_opa(r->bar, LV_OPA_COVER, LV_PART_MAIN);
@@ -811,6 +817,9 @@ uk_kpi_t *uk_kpi_create(lv_obj_t *parent, const char *label)
     lv_obj_set_flex_align(vr, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
 
     k->val  = mk_label_raw(vr, UK_FONT_NUM_32, UK_T1);
+    lv_obj_set_width(k->val, 0);
+    lv_obj_set_flex_grow(k->val, 1);
+    lv_obj_set_style_min_width(k->val, 0, 0);
     lv_label_set_long_mode(k->val, LV_LABEL_LONG_MODE_CLIP);
     k->unit = mk_label_raw(vr, UK_FONT_CJK_12, UK_T3);
     lv_obj_set_style_pad_bottom(k->unit, 4, 0);
@@ -823,7 +832,7 @@ uk_kpi_t *uk_kpi_create(lv_obj_t *parent, const char *label)
     k->bar = lv_bar_create(box);
     lv_obj_set_width(k->bar, LV_PCT(100));
     lv_obj_set_height(k->bar, UK_BAR_H);
-    lv_bar_set_range(k->bar, 0, 100);
+    lv_bar_set_range(k->bar, 0, 100 * UK_METER_SCALE);
     lv_obj_set_style_radius(k->bar, UK_BAR_H / 2, 0);
     lv_obj_set_style_bg_color(k->bar, uk_c(UK_SURF_S3), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(k->bar, LV_OPA_COVER, LV_PART_MAIN);
@@ -837,8 +846,7 @@ void uk_kpi_set(uk_kpi_t *k, const char *val, const char *unit, const char *sub,
 {
     if (!k) return;
     const bool same_unit = !strcmp(lv_label_get_text(k->unit),unit ? unit : "");
-    uk_number_set_text(k->val,val ? val : "",same_unit);
-    uk_set_text(k->unit, "%s", unit ? unit : "");
+    uk_number_set_reading(k->val, k->unit, val, unit, true);
     uk_number_set_text(k->sub,sub ? sub : "",same_unit);
     if (k->bar) {
         if (pct < 0) lv_obj_add_flag(k->bar, LV_OBJ_FLAG_HIDDEN);
@@ -853,25 +861,123 @@ void uk_kpi_set(uk_kpi_t *k, const char *val, const char *unit, const char *sub,
 /* ── 原生控件封装 ─────────────────────────────────────────────────── */
 static const uint32_t SERIES_HEX[3] = { 0x4797FF, 0x63BDE3, 0xA0BD28 };
 
+/* Native XY charts let the time axis advance without moving the grid or labels.
+   Fixed-point sample positions provide subpixel motion at any viewport width. */
+enum { TREND_UNIT = 256, TREND_PROGRESS = 65536 };
+typedef struct {
+    lv_chart_t chart;
+    int32_t right, from, target;
+    uint32_t last_paint, started, duration;
+    bool sampled;
+} trend_t;
+
+static void trend_step(void *obj, int32_t progress);
+static void trend_destroy(const lv_obj_class_t *cls, lv_obj_t *obj)
+{
+    (void)cls;
+    lv_anim_delete(obj, trend_step);
+}
+static const lv_obj_class_t trend_class = {
+    .base_class = &lv_chart_class, .destructor_cb = trend_destroy,
+    .instance_size = sizeof(trend_t), .name = "uk_streaming_trend"
+};
+
+static int32_t trend_span(lv_obj_t *chart)
+{
+    /* One guard point remains just outside the left edge during a shift. */
+    uint32_t points = lv_chart_get_point_count(chart);
+    return (int32_t)(points > 2 ? points - 2 : 1) * TREND_UNIT;
+}
+static void trend_window(lv_obj_t *chart, int32_t right)
+{
+    trend_t *t = (trend_t *)chart;
+    t->right = right;
+    lv_chart_set_axis_range(chart, LV_CHART_AXIS_PRIMARY_X, right - trend_span(chart), right);
+}
+static void trend_step(void *obj, int32_t progress)
+{
+    trend_t *t = obj;
+    uint32_t now = lv_tick_get();
+    if (!lv_obj_is_visible(obj) || UK_NUMBER_REDUCED) {
+        trend_window(obj, t->target);
+        t->duration = 0;
+        lv_anim_delete(obj, trend_step);
+        return;
+    }
+    if (progress != TREND_PROGRESS && UK_TREND_FPS > 0 &&
+        lv_tick_elaps(t->last_paint) < 1000U / UK_TREND_FPS) return;
+    t->last_paint = now;
+    trend_window(obj, t->from + (int32_t)((int64_t)(t->target - t->from) * progress / TREND_PROGRESS));
+    if (progress == TREND_PROGRESS) t->duration = 0;
+}
+void uk_trend_settle(lv_obj_t *chart)
+{
+    if (!chart || !lv_obj_has_class(chart, &trend_class)) return;
+    trend_t *t = (trend_t *)chart;
+    lv_anim_delete(chart, trend_step);
+    trend_window(chart, t->target);
+    t->duration = 0;
+}
+void uk_trend_clear(lv_obj_t *chart)
+{
+    if (!chart) return;
+    uk_trend_settle(chart);
+    uint32_t count = lv_chart_get_point_count(chart);
+    for (lv_chart_series_t *s = lv_chart_get_series_next(chart, NULL); s;
+         s = lv_chart_get_series_next(chart, s)) {
+        lv_chart_set_all_values(chart, s, LV_CHART_POINT_NONE);
+        int32_t *x = lv_chart_get_series_x_array(chart, s);
+        if (x) memset(x, 0, count * sizeof *x);
+    }
+    trend_t *t = (trend_t *)chart;
+    t->from = t->target = 0;
+    t->sampled = false;
+    trend_window(chart, 0);
+}
+static void trend_rebase(lv_obj_t *chart)
+{
+    trend_t *t = (trend_t *)chart;
+    int32_t span = trend_span(chart);
+    if (t->target <= 4 * span) return;
+    int32_t shift = t->target - span;
+    uint32_t count = lv_chart_get_point_count(chart);
+    for (lv_chart_series_t *s = lv_chart_get_series_next(chart, NULL); s;
+         s = lv_chart_get_series_next(chart, s)) {
+        int32_t *x = lv_chart_get_series_x_array(chart, s);
+        for (uint32_t i = 0; i < count; i++) x[i] = LV_MAX((int64_t)x[i] - shift, -span);
+    }
+    t->from -= shift;
+    t->target -= shift;
+    trend_window(chart, t->right - shift);
+}
 lv_obj_t *uk_trend_create(lv_obj_t *parent, int32_t points, int32_t series)
 {
-    lv_obj_t *c = lv_chart_create(parent);
+    lv_obj_t *c = lv_obj_class_create_obj(&trend_class, parent);
+    if (!c) return NULL;
+    lv_obj_class_init_obj(c);
     lv_obj_set_width(c, LV_PCT(100));
     lv_obj_set_flex_grow(c, 1);
     lv_obj_set_style_bg_opa(c, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(c, 0, 0);
     lv_obj_set_style_pad_all(c, 0, 0);
-    lv_obj_set_style_line_width(c, 2, LV_PART_ITEMS);
+    lv_obj_set_style_line_width(c, UK_TREND_STROKE, LV_PART_ITEMS);
+    lv_obj_set_style_line_rounded(c, true, LV_PART_ITEMS);
     lv_obj_set_style_size(c, 0, 0, LV_PART_INDICATOR);      /* 只要线，不要点 */
     lv_obj_set_style_bg_opa(c, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_line_color(c, uk_c(UK_LINE), LV_PART_MAIN);
     lv_obj_set_style_line_opa(c, LV_OPA_40, LV_PART_MAIN);
-    lv_chart_set_type(c, LV_CHART_TYPE_LINE);
+    /* SCATTER uses native straight line segments with explicit time positions. */
+    lv_chart_set_type(c, LV_CHART_TYPE_SCATTER);
     lv_chart_set_point_count(c, (uint32_t)points);
     lv_chart_set_div_line_count(c, 2, 4);
     for (int32_t i = 0; i < series; i++) {
+        /* LVGL owns both rings. The hidden ring remains an exact source for
+           current/peak/quality calculations; only the second ring is drawn. */
+        lv_chart_series_t *raw = lv_chart_add_series(c, uk_c(SERIES_HEX[i % 3]), LV_CHART_AXIS_PRIMARY_Y);
+        if (raw) lv_chart_hide_series(c, raw, true);
         lv_chart_add_series(c, uk_c(SERIES_HEX[i % 3]), LV_CHART_AXIS_PRIMARY_Y);
     }
+    uk_trend_clear(c);
     return c;
 }
 
@@ -885,7 +991,12 @@ static lv_chart_series_t *series_at(lv_obj_t *chart, int32_t idx)
 
 lv_chart_series_t *uk_trend_series(lv_obj_t *chart, int32_t idx)
 {
-    return series_at(chart, idx);
+    return idx < 0 ? NULL : series_at(chart, 2 * idx + 1);
+}
+
+lv_chart_series_t *uk_trend_raw_series(lv_obj_t *chart, int32_t idx)
+{
+    return idx < 0 ? NULL : series_at(chart, 2 * idx);
 }
 
 void uk_trend_set_range(lv_obj_t *chart, int32_t ymin, int32_t ymax)
@@ -893,10 +1004,61 @@ void uk_trend_set_range(lv_obj_t *chart, int32_t ymin, int32_t ymax)
     lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, ymin, ymax);
 }
 
-void uk_trend_push(lv_obj_t *chart, int32_t series_idx, int32_t v)
+void uk_trend_push(lv_obj_t *chart, int32_t series_idx, int32_t v, uint32_t interval_ms)
 {
-    lv_chart_series_t *s = series_at(chart, series_idx);
-    if (s) lv_chart_set_next_value(chart, s, v);
+    lv_chart_series_t *raw = uk_trend_raw_series(chart, series_idx);
+    lv_chart_series_t *line = uk_trend_series(chart, series_idx);
+    if (!raw || !line) return;
+    trend_rebase(chart);
+    trend_t *t = (trend_t *)chart;
+    uint32_t points = lv_chart_get_point_count(chart);
+    uint32_t previous = (lv_chart_get_x_start_point(chart, raw) + points - 1) % points;
+    bool continuous = v != LV_CHART_POINT_NONE &&
+        lv_chart_get_series_y_array(chart, raw)[previous] != LV_CHART_POINT_NONE;
+    int32_t x = LV_MAX(lv_chart_get_series_x_array(chart, raw)[previous] + TREND_UNIT, t->target);
+    lv_chart_set_next_value2(chart, raw, x, v);
+    if (v != LV_CHART_POINT_NONE) {
+        uint32_t points = lv_chart_get_point_count(chart);
+        uint32_t at = lv_chart_get_x_start_point(chart, raw);
+        const int32_t *values = lv_chart_get_series_y_array(chart, raw);
+        int64_t sum = 0;
+        uint32_t count = 0;
+        for (uint32_t i = 0; i < LV_MIN(points, UK_TREND_SMOOTH_SAMPLES); i++) {
+            at = (at + points - 1) % points;
+            if (values[at] == LV_CHART_POINT_NONE) break;
+            sum += values[at];
+            count++;
+        }
+        v = (int32_t)(sum / count); /* The current valid sample guarantees count > 0. */
+    }
+    lv_chart_set_next_value2(chart, line, x, v);
+    if (x <= t->target) return; /* Other series share the same time advance. */
+    bool animate = t->sampled && continuous && points > 2 &&
+        interval_ms > 0 && interval_ms <= UK_TREND_SCROLL_MS && UK_TREND_FPS > 0 &&
+        !UK_NUMBER_REDUCED && lv_obj_is_visible(chart);
+    t->sampled = true;
+    /* Retarget from elapsed time, even if the last paint was skipped. Otherwise
+       each throttled frame adds permanent lag to the live time window. */
+    t->from = t->duration ? t->from + (int32_t)((int64_t)(t->target - t->from) *
+        LV_MIN(lv_tick_elaps(t->started), t->duration) / t->duration) : t->right;
+    t->target = x;
+    t->duration = 0;
+    lv_anim_delete(chart, trend_step);
+    if (!animate) { trend_window(chart, x); return; }
+    trend_window(chart, t->from);
+    lv_anim_t a; lv_anim_init(&a);
+    lv_anim_set_var(&a, chart);
+    lv_anim_set_values(&a, 0, TREND_PROGRESS);
+    /* A new sample can arrive before the preceding travel finishes. Preserve
+       velocity by scaling duration with remaining distance, rather than restart
+       a full interval and decelerate when LVGL consumes a sample early. */
+    uint32_t duration = (uint32_t)(((int64_t)t->target - t->from) * interval_ms / TREND_UNIT);
+    t->duration = LV_MAX(duration, 1);
+    t->started = lv_tick_get();
+    lv_anim_set_duration(&a, t->duration);
+    lv_anim_set_exec_cb(&a, trend_step);
+    lv_anim_set_path_cb(&a, lv_anim_path_linear);
+    if (!lv_anim_start(&a)) { trend_window(chart, x); t->duration = 0; }
 }
 
 /* ── 数字键盘 ─────────────────────────────────────────────────────── */
@@ -950,7 +1112,7 @@ lv_obj_t *uk_numpad_create(lv_obj_t *parent, void (*cb)(const char *key, void *u
    没有调用点；将来真要做数字滚动再按需加回来，别提前备着）。 */
 void uk_bar_set(lv_obj_t *bar, int32_t v)
 {
-    if (bar) lv_bar_set_value(bar, v, LV_ANIM_ON);
+    if (bar) uk_meter_set(bar, LV_CLAMP(0, v, 100) * UK_METER_SCALE, true);
 }
 
 static void opa_anim_cb(void *o, int32_t v) { lv_obj_set_style_opa((lv_obj_t *)o, (lv_opa_t)v, 0); }
@@ -989,7 +1151,7 @@ void uk_anim_enter(lv_obj_t *obj, int32_t dy, uint32_t ms, uint32_t delay_ms)
     lv_anim_set_values(&a, dy, 0);
     lv_anim_set_duration(&a, ms);
     lv_anim_set_delay(&a, delay_ms);
-    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    lv_anim_set_path_cb(&a, uk_anim_path_damped);
     lv_anim_set_exec_cb(&a, enter_anim_cb);
     lv_anim_start(&a);
 }
@@ -1007,7 +1169,7 @@ void uk_anim_fade(lv_obj_t *obj, lv_opa_t from, uint32_t ms, uint32_t delay_ms)
     lv_anim_set_values(&a, from, LV_OPA_COVER);
     lv_anim_set_duration(&a, ms);
     lv_anim_set_delay(&a, delay_ms);
-    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    lv_anim_set_path_cb(&a, uk_anim_path_damped);
     lv_anim_set_exec_cb(&a, opa_anim_cb);
     lv_anim_start(&a);
 }
@@ -1031,7 +1193,7 @@ void uk_anim_reveal(lv_obj_t *panel, uint32_t ms, uint32_t delay_ms)
     lv_anim_set_values(&a, 0, LV_OPA_COVER);
     lv_anim_set_duration(&a, ms);
     lv_anim_set_delay(&a, delay_ms);
-    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    lv_anim_set_path_cb(&a, uk_anim_path_damped);
     lv_anim_set_exec_cb(&a, reveal_anim_cb);
     lv_anim_start(&a);
 }
@@ -1053,15 +1215,7 @@ void uk_anim_settle(lv_obj_t *root)
         lv_anim_delete(root, opa_anim_cb);
         lv_obj_set_style_opa(root, LV_OPA_COVER, 0);
     }
-    /* 值条也有原生补间（UK_BAR_ANIM_MS），同样得落到终值：否则快照正好拍在
-       补间中途 —— p0 的容量条第一拍就会截成"空条"，参考图每次都不一样。
-       lv_bar_get_value 在补间一开始就已经是目标值，直接 set_value(同值) 会被
-       库里早退，所以先挪一格再用 ANIM_OFF 落回（第一次调用顺手删掉在飞的动画）。 */
-    if (lv_obj_check_type(root, &lv_bar_class)) {
-        int32_t v = lv_bar_get_value(root);
-        lv_bar_set_value(root, v > 0 ? v - 1 : v + 1, LV_ANIM_OFF);
-        lv_bar_set_value(root, v, LV_ANIM_OFF);
-    }
+    uk_meter_settle(root);
     uk_number_settle(root);
     uk_anim_reveal_settle(root);
     uint32_t n = lv_obj_get_child_count(root);

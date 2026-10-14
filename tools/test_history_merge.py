@@ -34,11 +34,24 @@ int main(int argc,char **argv) {
   assert(fnos_status_parse("{\"ready\":true,\"ts\":1700000004,\"temps\":[{\"c\":45}],\"modules\":{\"temps\":{\"status\":\"stale\"}}}",&st,&why));
   commit_status(&st,1,200);fnos_status_release(&st);
   assert(fnos_data_hist_read_ex(next,out,1,&next,&reset)==1 && isnan(out[0].temp_max));
+ } else if(!strcmp(argv[1],"interval")) {
+  live(100,1700000010);
+  host_timer_us+=200000;live(101,1700000011);
+  host_timer_us+=350000;live(102,1700000012);
+  /* Delayed consumption cannot replace data-layer timing with UI timing. */
+  host_timer_us+=4000000;
+  assert(fnos_data_hist_read_ex(0,out,FNOS_HIST_MAX,&next,&reset)==3);
+  assert(out[0].interval_ms==0 && out[1].interval_ms==200 && out[2].interval_ms==350);
+  assert(parse_history(history));
+  assert(fnos_data_hist_read_ex(0,out,FNOS_HIST_MAX,&next,&reset)==5 && reset);
+  assert(out[0].interval_ms==0 && out[1].interval_ms==0 && out[3].interval_ms==200 && out[4].interval_ms==350);
+  history_reset();host_timer_us+=200000;live(103,1700000013);
+  assert(fnos_data_hist_read_ex(next,out,1,&next,&reset)==1 && reset && out[0].interval_ms==0);
  } else if(!strcmp(argv[1],"ui")) {
   live(7,1700000010);ui_cursor=fnos_data_hist_seq()+100;history_reset();
-  ui_history_tick();assert(ui_clears==5 && ui_cursor==fnos_data_hist_seq());
+  ui_history_tick();assert(ui_clears==4 && ui_cursor==fnos_data_hist_seq());
   live(100,1700000010);assert(parse_history(history));
-  ui_clears=0;ui_history_tick();assert(ui_clears==5 && ui_cursor==fnos_data_hist_seq());
+  ui_clears=0;ui_history_tick();assert(ui_clears==4 && ui_cursor==fnos_data_hist_seq());
   ui_clears=0;ui_history_tick();assert(ui_clears==0);
  } else if(!strcmp(argv[1],"merge") || !strcmp(argv[1],"oom")) {
   live(100,1700000010);live(101,1700000011);int64_t cursor=fnos_data_hist_seq();assert(cursor==2);
@@ -105,9 +118,9 @@ def run():
 static int64_t ui_cursor;
 static int ui_clears;
 static struct { bool ever_ok; } s_st={true};
-static struct { struct { int chart; } overview_resource[2]; int overview_net,tr_net,temp_history; } s_ui;
-static bool s_overview_gap[3];
-static void chart_clear(int chart,int channels) { (void)chart; (void)channels; ui_clears++; }
+static struct { struct { int chart; } overview_resource[2]; int tr_net,temp_history; } s_ui;
+static bool s_overview_gap[2];
+static void uk_trend_clear(int chart) { (void)chart; ui_clears++; }
 static void ui_history_tick(void) {
 '''+block+advance+'\n}\n'
   main=MAIN.replace('static void live(',ui_fixture+'\nstatic void live(',1)
@@ -116,7 +129,7 @@ static void ui_history_tick(void) {
   cmd=['cc','-std=c11','-pthread','-fsanitize=address,undefined,float-cast-overflow','-fno-sanitize-recover=all','-g','-I'+str(ROOT/'build/config'),'-I'+str(ROOT/'components/fnos_monitor'),'-I'+str(cj),str(p/'test.c'),str(cj/'cJSON.c'),'-o',str(p/'test')]
   subprocess.run(cmd,check=True,capture_output=True)
   env=dict(os.environ,ASAN_OPTIONS='detect_leaks=0')
-  for case in ('temperature','ui','merge','reset','full','unknown-time','bad-order','capacity','lock','concurrent'):
+  for case in ('temperature','interval','ui','merge','reset','full','unknown-time','bad-order','capacity','lock','concurrent'):
    result=subprocess.run([str(p/'test'),case],capture_output=True,env=env,timeout=20)
    assert result.returncode==0,(case,result.stderr)
   # Fault only this allocation function; leave parser and snapshot allocations real.
@@ -133,7 +146,7 @@ static void ui_history_tick(void) {
   assert mutant!=main;(p/'test.c').write_text(mutant);subprocess.run(cmd,check=True,capture_output=True)
   result=subprocess.run([str(p/'test'),'ui'],capture_output=True,env=env,timeout=20)
   assert result.returncode!=0 and b'ui_cursor==fnos_data_hist_seq()' in result.stderr,'UI empty-batch cursor negative control must fail'
- print('PASS history merge: 10 production scenarios, real pthread mutex, allocation failure, reset and UI empty-batch negative controls; ASan/UBSan')
+ print('PASS history merge: 11 production scenarios including producer intervals, real pthread mutex, allocation failure, reset and UI empty-batch negative controls; ASan/UBSan')
 def chart_test():
  ui=(ROOT/'components/fnos_monitor/fnos_ui.c').read_text()
  start=ui.index('    for (int i = 0; i < n; i++) {',ui.index('static void ui_tick('))
@@ -150,27 +163,28 @@ def chart_test():
 #include <assert.h>
 #define LV_CHART_POINT_NONE INT32_MAX
 typedef int lv_obj_t;
-static struct { struct {lv_obj_t *chart;} overview_resource[2]; lv_obj_t *overview_net,*tr_net,*temp_history; } s_ui;
-static bool s_overview_gap[3];
-static int32_t points[7];static int point_count;
-static void uk_trend_push(lv_obj_t *c,int32_t series,int32_t v) {(void)c;(void)series;assert(point_count<7);points[point_count++]=v;}
-struct sample {float cpu,mem,rx_kbs,tx_kbs,temp_max;};
+static struct { struct {lv_obj_t *chart;} overview_resource[2]; lv_obj_t *tr_net,*temp_history; } s_ui;
+static bool s_overview_gap[2];
+static int32_t points[5];static int point_count;
+static void uk_trend_push(lv_obj_t *c,int32_t series,int32_t v,uint32_t interval) {(void)c;(void)series;assert(interval==200);assert(point_count<5);points[point_count++]=v;}
+struct sample {float cpu,mem,rx_kbs,tx_kbs,temp_max;uint32_t interval_ms;};
 """
  main=r"""
 static void draw(float v) {
- struct sample smp[1]={{v,v,v,v,v}};int n=1;bool live[3]={true,true,true};point_count=0;
+ struct sample smp[1]={{v,v,v,v,v,200}};int n=1;bool live[2]={true,true};uint64_t batch_ms=0;point_count=0;
 """+block+r"""
- assert(point_count==7);
+ assert(point_count==5);
+ assert(batch_ms==200);
 }
 int main(void) {
  float invalid[]={FLT_MAX,-FLT_MAX,INFINITY,-INFINITY,NAN,0x1p31f,nextafterf(-0x1p31f,-INFINITY)};
  for(unsigned i=0;i<sizeof invalid/sizeof invalid[0];i++) {
-  draw(invalid[i]);for(int j=0;j<7;j++)assert(points[j]==LV_CHART_POINT_NONE);
+  draw(invalid[i]);for(int j=0;j<5;j++)assert(points[j]==LV_CHART_POINT_NONE);
  }
  float valid[]={0,12.75f,-12.75f,-0x1p31f,nextafterf(0x1p31f,0),FLT_MIN};
  int32_t expected[]={0,12,-12,INT32_MIN,2147483520,0};
  for(unsigned i=0;i<sizeof valid/sizeof valid[0];i++) {
-  draw(valid[i]);for(int j=0;j<7;j++)assert(points[j]==expected[i]);
+  draw(valid[i]);for(int j=0;j<5;j++)assert(points[j]==expected[i]);
  }
  return 0;
 }
@@ -187,12 +201,11 @@ int main(void) {
    assert mutant!=main;src.write_text(pre+helper+mutant);subprocess.run(cmd,check=True,capture_output=True)
    result=subprocess.run([str(exe)],capture_output=True,env=env,timeout=10)
    assert result.returncode!=0 and b'outside the range of representable values' in result.stderr,result.stderr
- print('PASS production ui_tick seven chart sinks: finite boundary/nonfinite gaps, fractional truncation; old casts rejected by float-cast-overflow')
+ print('PASS production ui_tick five chart series: CPU/memory/temperature and network TX/RX, finite boundary/nonfinite gaps, fractional truncation; old casts rejected by float-cast-overflow')
 def range_test():
  ui=(ROOT/'components/fnos_monitor/fnos_ui.c').read_text()
  def piece(a,b):
   start=ui.index(a);return ui[start:ui.index(b,start)]
- overview=piece('        float top = chart_peak(s_ui.overview_net, 0);','        if (!net_live)') if '        float top = chart_peak(s_ui.overview_net, 0);' in ui else piece('        int32_t ymax = network_chart_max(', '        if (!net_live)')
  network=piece('        int32_t peak_tx = chart_peak(s_ui.tr_net, 0);','        set_num(s_ui.net_axis')
  helper=''
  if 'static int32_t network_chart_max(' in ui:
@@ -202,20 +215,21 @@ def range_test():
 #include <float.h>
 #include <math.h>
 #include <assert.h>
-static struct {int overview_net,tr_net,temp_history;} s_ui;
+static struct {int tr_net;} s_ui;
 static struct status {struct {float rx_kbs,tx_kbs;} net;} state,*st=&state;
 static int32_t peak,result;
 static int32_t chart_peak(int chart,int series){(void)chart;(void)series;return peak;}
 static void uk_trend_set_range(int chart,int32_t lo,int32_t hi){(void)chart;assert(lo==0);result=hi;}
 """
- code=base+helper+'\nstatic void overview(void){\n'+overview+'}\nstatic void network(void){\n'+network+'}\n'
+ code=base+helper+'\nstatic void network(void){\n'+network+'}\n'
  code+=r"""
 int main(void){
- state.net.rx_kbs=FLT_MAX;state.net.tx_kbs=0;overview();assert(result==INT32_MAX-1);network();assert(result==INT32_MAX-1);
- state.net.rx_kbs=0;peak=2147483520;overview();assert(result==INT32_MAX-1);network();assert(result==INT32_MAX-1);
- peak=0;overview();assert(result==1);network();assert(result==20);
- state.net.rx_kbs=10.25f;overview();assert(result==13);network();assert(result==20);
- state.net.rx_kbs=NAN;state.net.tx_kbs=INFINITY;overview();assert(result==1);network();assert(result==20);
+ state.net.rx_kbs=FLT_MAX;state.net.tx_kbs=0;network();assert(result==INT32_MAX-1);
+ state.net.rx_kbs=0;peak=2147483520;network();assert(result==INT32_MAX-1);
+ peak=0;network();assert(result==20);
+ state.net.rx_kbs=10.25f;network();assert(result==20);
+ state.net.rx_kbs=20.25f;network();assert(result==25);
+ state.net.rx_kbs=NAN;state.net.tx_kbs=INFINITY;network();assert(result==20);
  return 0;
 }
 """
@@ -230,7 +244,7 @@ int main(void){
    assert mutant!=code;src.write_text(mutant);subprocess.run(cmd,check=True,capture_output=True)
    result=subprocess.run([str(exe)],capture_output=True,env=dict(os.environ,ASAN_OPTIONS='detect_leaks=0'),timeout=10)
    assert result.returncode!=0 and b'outside the range of representable values' in result.stderr,result.stderr
- print('PASS production overview/network range: huge values, peak headroom, zero, fractional ceiling, nonfinite input')
+ print('PASS production network range: huge values, peak headroom, zero, fractional ceiling, nonfinite input; speed curves only on Network')
 
 def map_test():
  import random
@@ -295,11 +309,11 @@ def gauge_test():
  ui=(ROOT/'components/fnos_monitor/fnos_ui.c').read_text()
  a=ui.index('static int32_t gauge_value(');helper=ui[a:ui.index('\n}',a)+2]
  a=ui.index('static const char *fmt_cap(');formatter=ui[a:ui.index('\n}',a)+2]
- aggregates=re.findall(r'    (?:    )?double used = 0, total = 0, free_gb = 0;.*?for \(int i = 0; i < st->nvols; i\+\+\) \{.*?\n    (?:    )?\}',ui,re.S)
+ aggregates=re.findall(r'    (?:    )?double used = 0, total = 0(?:, free_gb = 0)?;.*?for \(int i = 0; i < st->nvols; i\+\+\) \{.*?\n    (?:    )?\}',ui,re.S)
  assert len(aggregates)==2
  # Extract all actual gauge consumers, including color calls, and require safe entry.
  expressions=re.findall(r'gauge_value\((vol->pct|v->pct|g->max_c|used / total \* 100(?:\.0 \+ 0\.5)?)\)',ui)
- assert len(expressions)==7,expressions
+ assert set(expressions)=={'vol->pct','v->pct','g->max_c','used / total * 100','used / total * 100.0 + 0.5'},expressions
  base=r"""
 #include <stdint.h>
 #include <stdbool.h>
@@ -313,8 +327,10 @@ struct status {int nvols;struct volume vols[2];};
 """
  code=base+helper+'\n'+formatter
  for i,block in enumerate(aggregates):
-  code+='\nstatic void aggregate'+str(i)+'(struct status *st){\n'+block+r"""
- assert(isfinite(used)&&isfinite(total)&&isfinite(free_gb));
+  code+='\nstatic void aggregate'+str(i)+'(struct status *st){\n'+block
+  if 'free_gb' in block:code+='assert(isfinite(free_gb));\n'
+  code+=r"""
+ assert(isfinite(used)&&isfinite(total));
  assert(used==(double)FLT_MAX*2 && total==(double)FLT_MAX*2);
  assert(gauge_value(used/total*100)==100);
  char b[80];fmt_cap(b,sizeof b,total);assert(!strstr(b,"inf")&&!strstr(b,"nan"));
@@ -344,7 +360,7 @@ int main(void){
    assert old!=code;src.write_text(old);subprocess.run(flags,check=True,capture_output=True)
    r=subprocess.run([str(exe)],capture_output=True,env=env,timeout=10)
    assert r.returncode and b'outside the range' in r.stderr,r.stderr
-  old=code.replace('double used = 0, total = 0, free_gb = 0;','float used = 0, total = 0, free_gb = 0;')
+  old=code.replace('double used = 0, total = 0','float used = 0, total = 0')
   assert old!=code;src.write_text(old);subprocess.run(flags,check=True,capture_output=True)
   r=subprocess.run([str(exe)],capture_output=True,env=env,timeout=10)
   assert r.returncode and b'isfinite(used)' in r.stderr,r.stderr

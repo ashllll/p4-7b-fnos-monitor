@@ -52,6 +52,7 @@ add_executable(preview
   "${COMP}/fnos_perf.c"
   "${COMP}/ui_kit/uk.c"
     "${COMP}/ui_kit/uk_number.c"
+  "${COMP}/ui_kit/uk_meter.c"
   "${COMP}/ui_kit/uk_theme.c"
   ${FONT_SRC}
 )

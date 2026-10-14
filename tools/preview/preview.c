@@ -566,6 +566,7 @@ void fnos_data_diag(fnos_data_diag_t *out)
 static int64_t s_seq;
 static bool s_override_sample_enabled;
 static fnos_sample_t s_override_sample;
+static bool s_history_lock_busy;
 int fnos_data_hist_read(int64_t since_seq, fnos_sample_t *out, int max, int64_t *next_seq)
 {
     int n = 0;
@@ -579,6 +580,7 @@ int fnos_data_hist_read(int64_t since_seq, fnos_sample_t *out, int max, int64_t 
         out[n].mem    = (float)(62.0 +  4.0 * sin(t * 0.11) + 1.5 * sin(t * 0.9));
         out[n].rx_kbs = (float)(9000.0 + 6500.0 * sin(t * 0.23) + 3200.0 * sin(t * 1.1) + 900.0 * sin(t * 4.7));
         out[n].tx_kbs = (float)(2600.0 + 1400.0 * sin(t * 0.19 + 1.0) + 700.0 * sin(t * 2.3));
+        out[n].interval_ms = fnos_data_poll_interval_ms();
         if (out[n].rx_kbs < 60.0f) out[n].rx_kbs = 60.0f;
         if (out[n].tx_kbs < 40.0f) out[n].tx_kbs = 40.0f;
         n++;
@@ -589,6 +591,10 @@ int fnos_data_hist_read(int64_t since_seq, fnos_sample_t *out, int max, int64_t 
 int fnos_data_hist_read_ex(int64_t since_seq,fnos_sample_t *out,int max,int64_t *next_seq,bool *reset)
 {
     if (reset) *reset=false;
+    if (s_history_lock_busy) {
+        if (next_seq) *next_seq=since_seq;
+        return 0;
+    }
     return fnos_data_hist_read(since_seq,out,max,next_seq);
 }
 
@@ -1555,7 +1561,7 @@ static void verify_transitions(void)
        不穿隐藏子树，和看门狗的规则一致）。 */
     fnos_ui_set_page(0);
     vtick_advance(300); lv_timer_handler();
-    assert(visible_text(lv_screen_active(), "CPU 使用率"));
+    assert(visible_text(lv_screen_active(), "CPU"));
     fnos_ui_set_page(2);
     vtick_advance(300); lv_timer_handler();
     assert(visible_text(lv_screen_active(), "网络吞吐 · 最近 7 分钟 · 有断流"));
@@ -1608,17 +1614,17 @@ static void verify_transitions(void)
     vtick_advance(500); lv_timer_handler();
     lv_obj_update_layout(lv_screen_active());
     assert(visible_text(lv_screen_active(), "暂无告警事件"));
-    assert(visible_text(lv_screen_active(), "当前监控维度"));
-    assert(visible_text_containing(lv_screen_active(), " 个卷 · 最高 "));
-    assert(visible_text_containing(lv_screen_active(), " 路 · 最热 "));
-    assert(visible_text_containing(lv_screen_active(), " 次 · 失败 "));
+    assert(visible_text(lv_screen_active(), "存储容量"));
+    assert(visible_text_containing(lv_screen_active(), "最高 "));
+    assert(visible_text_containing(lv_screen_active(), "°C\n"));
+    assert(visible_text_containing(lv_screen_active(), "在线\n"));
     snapshot("06-alerts-health");
     fnos_ui_set_page(0);
     assert(visible_text(lv_screen_active(), "无采集告警"));
     /* 结论带那行文案曾经把 "%d/%d" 原样印到屏上（set_txt 的 "%s" 吃的实参里带着格式串，
-       实机 2026-10-08 抓到）。这里守两道：文案得有真正的运行数，且屏上不许残留
+       实机 2026-10-08 抓到）。正常首页不再重复容器摘要，且屏上不许残留
        没被消费掉的格式说明符。 */
-    assert(visible_text_containing(lv_screen_active(), "运行 · 无待处理事件"));
+    assert(!visible_text_containing(lv_screen_active(), "运行 · 无待处理事件"));
     assert(!visible_text_containing(lv_screen_active(), "%d"));
     s_state = ST_LOCKBUSY;
     vtick_advance(500); lv_timer_handler();
@@ -1726,7 +1732,8 @@ static void regression_tick(void)
 
 static lv_obj_t *find_widget(lv_obj_t *root, const lv_obj_class_t *type)
 {
-    if (lv_obj_check_type(root, type)) return root;
+    /* Numeric labels and streaming charts retain their native base interfaces. */
+    if (lv_obj_has_class(root, type)) return root;
     for (uint32_t i = 0; i < lv_obj_get_child_count(root); i++) {
         lv_obj_t *found = find_widget(lv_obj_get_child(root, i), type);
         if (found) return found;
@@ -1744,10 +1751,107 @@ static lv_obj_t *overview_object(const char *title, const lv_obj_class_t *type)
 
 static int chart_values_equal(lv_obj_t *chart, int series_index, int32_t value)
 {
-    const int32_t *data = lv_chart_get_series_y_array(chart, uk_trend_series(chart, series_index));
+    const int32_t *data = lv_chart_get_series_y_array(chart, uk_trend_raw_series(chart, series_index));
     int count = 0;
     for (uint32_t i = 0; i < lv_chart_get_point_count(chart); i++) if (data[i] == value) count++;
     return count;
+}
+
+/* Module freshness must agree between summaries and entity readings. */
+static void verify_module_freshness(void)
+{
+    preview_state_t previous = s_state;
+    int previous_page = fnos_ui_page();
+    fnos_status_t fixture = {0}; fill_live(&fixture);
+    fixture.nalerts = 0;
+    int temps = -1, cpu = -1, vols = -1, raid = -1, net = -1;
+    for (int i = 0; i < fixture.nmods; i++) {
+        if (!strcmp(fixture.mods[i].name, "temps")) temps = i;
+        if (!strcmp(fixture.mods[i].name, "cpu")) cpu = i;
+        if (!strcmp(fixture.mods[i].name, "vols")) vols = i;
+        if (!strcmp(fixture.mods[i].name, "raid")) raid = i;
+        if (!strcmp(fixture.mods[i].name, "net")) net = i;
+    }
+    assert(temps >= 0 && cpu >= 0 && vols >= 0 && raid >= 0 && net >= 0);
+    for (int i = 0; i < fixture.ntemps; i++) fixture.temps[i].c = 45.6f;
+    fixture.cpu.temp_c = 32;
+    s_override_status = &fixture;
+    fnos_status_text(&fixture, &fixture.mods[temps].status, "stale");
+    fnos_ui_set_page(3); regression_tick();
+    lv_obj_t *value = visible_text(lv_screen_active(), "45.6");
+    assert(value && lv_color_eq(lv_obj_get_style_text_color(value, 0), uk_c(UK_T3)));
+    if (fnos_ui_refresh_period_ms() < UK_NUMBER_PRESENT_MS) {
+        vtick_advance(UK_NUMBER_PRESENT_MS); lv_timer_handler();
+        for (int i = 0; i < fixture.ntemps; i++) fixture.temps[i].c = 46.7f;
+        vtick_advance(fnos_ui_refresh_period_ms()); lv_timer_handler();
+        assert(visible_text(lv_screen_active(), "46.7"));
+        assert(!visible_text(lv_screen_active(), "45.6"));
+        for (int i = 0; i < fixture.ntemps; i++) fixture.temps[i].c = 45.6f;
+    }
+    fnos_ui_set_page(4); regression_tick();
+    value = visible_text(lv_screen_active(), "45.6");
+    assert(value && lv_color_eq(lv_obj_get_style_text_color(value, 0), uk_c(UK_T3)));
+    snapshot("14-temperature-stale");
+    fnos_status_text(&fixture, &fixture.mods[temps].status, "ok");
+    fnos_status_text(&fixture, &fixture.mods[cpu].status, "denied");
+    fnos_ui_set_page(0); regression_tick();
+    value = visible_text(lv_screen_active(), "46");
+    assert(value && lv_color_eq(lv_obj_get_style_text_color(value, 0), uk_c(UK_T1)));
+    fnos_ui_set_page(5); regression_tick();
+    assert(visible_text(lv_screen_active(), "46°C\n无超限"));
+    for (int i = 0; i < fixture.ntemps; i++) fixture.temps[i].c = 0;
+    regression_tick();
+    assert(visible_text(lv_screen_active(), "0°C\n无超限"));
+    for (int i = 0; i < fixture.ntemps; i++) fixture.temps[i].c = 45.6f;
+    fnos_status_text(&fixture, &fixture.mods[cpu].status, "ok");
+    fixture.cpu.temp_c = 85;
+    regression_tick();
+    assert(visible_text(lv_screen_active(), "85°C\n关注 1 路"));
+    fnos_status_text(&fixture, &fixture.mods[temps].status, "stale");
+    for (int i = 0; i < fixture.ntemps; i++) fixture.temps[i].c = 80;
+    regression_tick();
+    char old_count[64];
+    snprintf(old_count, sizeof old_count, "85°C\n关注 %d 路 · 旧值", fixture.ntemps);
+    assert(visible_text(lv_screen_active(), old_count));
+    fnos_status_text(&fixture, &fixture.mods[temps].status, "denied");
+    fnos_ui_set_page(4); regression_tick();
+    assert(!visible_text(lv_screen_active(), "80.0"));
+    assert(visible_text(lv_screen_active(), "没权限"));
+    fnos_status_text(&fixture, &fixture.mods[vols].status, "stale");
+    fnos_status_text(&fixture, &fixture.mods[raid].status, "stale");
+    fnos_ui_set_page(1); regression_tick();
+    value = visible_text(lv_screen_active(), "17.8 TB");
+    assert(value && lv_color_eq(lv_obj_get_style_text_color(value, 0), uk_c(UK_T3)));
+    value = visible_text(lv_screen_active(), "54%");
+    assert(value && lv_color_eq(lv_obj_get_style_text_color(value, 0), uk_c(UK_T3)));
+    value = visible_text(lv_screen_active(), "正常");
+    assert(value && lv_color_eq(lv_obj_get_style_text_color(value, 0), uk_c(UK_T3)));
+    snapshot("14-storage-stale");
+    fnos_status_text(&fixture, &fixture.mods[vols].status, "denied");
+    regression_tick();
+    assert(!visible_text(lv_screen_active(), "17.8 TB"));
+    assert(!visible_text(lv_screen_active(), fixture.vols[0].mnt));
+    fnos_status_text(&fixture, &fixture.mods[net].status, "stale");
+    fnos_ui_set_page(2); regression_tick();
+    value = visible_text(lv_screen_active(), "12.2");
+    assert(value && lv_color_eq(lv_obj_get_style_text_color(value, 0), uk_c(UK_T3)));
+    snapshot("14-network-stale");
+    fnos_status_text(&fixture, &fixture.mods[net].status, "denied");
+    regression_tick();
+    assert(!visible_text(lv_screen_active(), "12.2"));
+    assert(visible_text_containing(lv_screen_active(), "没权限"));
+    snapshot("14-network-denied");
+    fixture.net.rx_kbs = fixture.net.tx_kbs = 0;
+    regression_tick();
+    assert(!visible_text(lv_screen_active(), "0.0"));
+    fnos_status_text(&fixture, &fixture.mods[net].status, "ok");
+    regression_tick();
+    value = visible_text(lv_screen_active(), "0.0");
+    assert(value && !lv_color_eq(lv_obj_get_style_text_color(value, 0), uk_c(UK_T3)));
+    s_override_status = NULL; s_state = previous;
+    fnos_ui_set_page(previous_page); regression_tick();
+    fnos_status_release(&fixture);
+    puts("checks: module freshness summaries and entity readings PASS");
 }
 
 /* Real zero histories, monotonic cursor, local stale modules, and full-volume scroll. */
@@ -1775,19 +1879,18 @@ static void verify_overview_charts(void)
     fnos_ui_set_page(0);
     s_seq += CONFIG_FNOS_CHART_WINDOW;
     for (int i = 0; i < (CONFIG_FNOS_CHART_WINDOW + 63) / 64 + 1; i++) regression_tick();
-    lv_obj_t *cpu = overview_object("CPU 使用率", &lv_chart_class);
-    lv_obj_t *mem = overview_object("内存使用率", &lv_chart_class);
+    lv_obj_t *cpu = overview_object("CPU", &lv_chart_class);
+    lv_obj_t *mem = overview_object("内存", &lv_chart_class);
     lv_obj_t *net = overview_object("网络吞吐", &lv_chart_class);
-    assert(cpu && mem && net);
+    assert(cpu && mem && !net); /* Speed curves belong only to Network. */
     assert(lv_chart_get_point_count(cpu) == CONFIG_FNOS_CHART_WINDOW);
     assert(chart_values_equal(cpu, 0, 0) == CONFIG_FNOS_CHART_WINDOW);
     assert(chart_values_equal(mem, 0, 0) == CONFIG_FNOS_CHART_WINDOW);
-    assert(chart_values_equal(net, 0, 0) == CONFIG_FNOS_CHART_WINDOW);
-    assert(chart_values_equal(net, 1, 0) == CONFIG_FNOS_CHART_WINDOW);
-    /* The replica hero intentionally has no arc; real zero samples and both
-       visible numeric values remain required observables. */
-    assert(visible_text(overview_object("CPU 使用率", &lv_obj_class), "0"));
-    assert(visible_text(overview_object("内存使用率", &lv_obj_class), "0"));
+    /* Gauges and numeric values share the same real-zero contract. */
+    assert(lv_arc_get_value(overview_object("CPU", &lv_arc_class)) == 0);
+    assert(lv_arc_get_value(overview_object("内存", &lv_arc_class)) == 0);
+    assert(visible_text(overview_object("CPU", &lv_obj_class), "0"));
+    assert(visible_text(overview_object("内存", &lv_obj_class), "0"));
     snapshot("10-overview-zero");
 
     s_override_sample = (fnos_sample_t){ .cpu = 17, .mem = 42, .rx_kbs = 128, .tx_kbs = 64 };
@@ -1797,24 +1900,18 @@ static void verify_overview_charts(void)
     s_seq++;
     regression_tick();
     assert(chart_values_equal(cpu, 0, 17) == 1 && chart_values_equal(mem, 0, 42) == 1);
-    assert(chart_values_equal(net, 0, 128) == 1 && chart_values_equal(net, 1, 64) == 1);
     for (int i = 0; i < 8; i++) regression_tick();
-    assert(chart_values_equal(cpu, 0, 17) == 1 && chart_values_equal(net, 0, 128) == 1);
+    assert(chart_values_equal(cpu, 0, 17) == 1);
+    assert(lv_arc_get_value(overview_object("CPU", &lv_arc_class)) == 17 * UK_METER_SCALE);
+    assert(lv_arc_get_value(overview_object("内存", &lv_arc_class)) == 42 * UK_METER_SCALE);
     fnos_ui_set_page(2); regression_tick();
     lv_obj_t *title = visible_text_containing(lv_screen_active(), "网络吞吐");
     assert(title);
     lv_obj_t *detail = find_widget(lv_obj_get_parent(lv_obj_get_parent(title)), &lv_chart_class);
+    assert(detail);
+    assert(chart_values_equal(detail, 0, 64) == 1);
+    assert(chart_values_equal(detail, 1, 128) == 1);
     size_t bytes = CONFIG_FNOS_CHART_WINDOW * sizeof(int32_t);
-    /* Compare chronological values; a recovery gap can change physical ring offsets. */
-    for (int series = 0; series < 2; series++) {
-        lv_chart_series_t *a = uk_trend_series(net, series);
-        lv_chart_series_t *b = uk_trend_series(detail, 1 - series);
-        const int32_t *ad = lv_chart_get_series_y_array(net, a);
-        const int32_t *bd = lv_chart_get_series_y_array(detail, b);
-        uint32_t ax = lv_chart_get_x_start_point(net, a), bx = lv_chart_get_x_start_point(detail, b);
-        for (int i = 0; i < CONFIG_FNOS_CHART_WINDOW; i++)
-            assert(ad[(ax + i) % CONFIG_FNOS_CHART_WINDOW] == bd[(bx + i) % CONFIG_FNOS_CHART_WINDOW]);
-    }
     fnos_ui_set_page(0); regression_tick();
 
     fnos_status_text(&fixture, &fixture.mods[0].status, "stale");
@@ -1826,7 +1923,8 @@ static void verify_overview_charts(void)
     regression_tick();
     assert(chart_values_equal(cpu, 0, 17) == 1); // stale resource is frozen
     assert(chart_values_equal(mem, 0, 42) == 3); // healthy module still advances
-    assert(chart_values_equal(net, 0, 128) == 1 && lv_obj_has_flag(net, LV_OBJ_FLAG_HIDDEN));
+    assert(visible_text(lv_screen_active(), "没权限"));
+    assert(!overview_object("网络吞吐", &lv_chart_class));
     assert(visible_text_containing(lv_screen_active(), "阵列旧值"));
     assert(visible_text_containing(lv_screen_active(), "温度旧值"));
     assert(lv_obj_get_style_opa(cpu, 0) == LV_OPA_40);
@@ -1836,15 +1934,14 @@ static void verify_overview_charts(void)
     s_seq++;
     regression_tick();
     assert(chart_values_equal(cpu, 0, LV_CHART_POINT_NONE) == 1);
-    assert(chart_values_equal(net, 0, LV_CHART_POINT_NONE) == 1);
     fixture.online = false;
     snprintf(fixture.last_err, sizeof fixture.last_err, "timeout");
     int32_t old[CONFIG_FNOS_CHART_WINDOW];
-    memcpy(old, lv_chart_get_series_y_array(net, uk_trend_series(net, 0)), bytes);
+    memcpy(old, lv_chart_get_series_y_array(cpu, uk_trend_raw_series(cpu, 0)), bytes);
     s_seq++;
     regression_tick();
-    assert(!memcmp(old, lv_chart_get_series_y_array(net, uk_trend_series(net, 0)), bytes));
-    assert(visible_text(lv_screen_active(), "旧历史 · 暂停更新"));
+    assert(!memcmp(old, lv_chart_get_series_y_array(cpu, uk_trend_raw_series(cpu, 0)), bytes));
+    assert(visible_text(lv_screen_active(), "旧值"));
     snapshot("10-overview-old-history");
 
     fixture.online = true;
@@ -1908,7 +2005,6 @@ static void verify_overview_charts(void)
     regression_tick();
     assert(chart_values_equal(cpu, 0, LV_CHART_POINT_NONE) == CONFIG_FNOS_CHART_WINDOW);
     assert(chart_values_equal(mem, 0, LV_CHART_POINT_NONE) == CONFIG_FNOS_CHART_WINDOW);
-    assert(chart_values_equal(net, 0, LV_CHART_POINT_NONE) == CONFIG_FNOS_CHART_WINDOW);
     snapshot("10-overview-reset");
     s_override_sample_enabled = false;
     s_override_status = NULL;
@@ -1954,7 +2050,7 @@ static void verify_navigation_hit_targets(void)
         audit_bounds(lv_screen_active());
     }
     static const struct { const char *title; int page; } details[] = {
-        {"CPU 使用率",3},{"内存使用率",3},{"网络吞吐",2},{"存储容量",1},{"最热温度",4}
+        {"CPU",3},{"内存",3},{"设备状态",3},{"网络吞吐",2},{"存储容量",1},{"最热温度",4}
     };
     for (size_t i=0;i<sizeof details/sizeof details[0];i++) {
         fnos_ui_set_page(0); regression_tick();
@@ -1989,24 +2085,39 @@ static void verify_enhanced_metrics(void)
 
     fixture.disks[0].has_read_ms=false; fixture.disks[0].has_write_ms=true; fixture.disks[0].write_ms=0;
     fnos_ui_set_page(1); regression_tick();
-    lv_obj_t *disk=visible_text_containing(lv_screen_active(),"平均延迟 -- / 0.00 ms");
+    assert(!visible_text_containing(lv_screen_active(),"平均延迟 -- / 0.00 ms"));
+    lv_obj_t *disk=visible_text(lv_screen_active(),fixture.disks[0].dev);
     assert(disk);
+    lv_obj_scroll_to_view_recursive(disk,LV_ANIM_OFF); regression_tick();
+    click_object_center(disk);
+    assert(visible_text_containing(lv_screen_active(),"平均延迟 -- / 0.00 ms"));
+    click_object_center(visible_text_clickable(lv_screen_active(),"返回列表"));
     lv_obj_t *last=visible_text(lv_screen_active(),fixture.disks[fixture.ndisks-1].dev);
     assert(last); lv_obj_scroll_to_view_recursive(last,LV_ANIM_OFF); regression_tick();
     snapshot("12-disk-metrics");
     for (int i=0;i<fixture.nmods;i++) if (!strcmp(fixture.mods[i].name,"docker"))
         fnos_status_text(&fixture,&fixture.mods[i].status,"ok");
     fnos_ui_set_page(3); regression_tick();
+    assert(!visible_text_containing(lv_screen_active(),"CPU 3.5% · 内存 128 MB"));
+    lv_obj_t *container=visible_text(lv_screen_active(),fixture.docker[0].n);
+    assert(container);
+    lv_obj_scroll_to_view_recursive(container,LV_ANIM_OFF); regression_tick();
+    click_object_center(container);
     assert(visible_text_containing(lv_screen_active(),"CPU 3.5% · 内存 128 MB"));
     snapshot("12-container-metrics");
+    click_object_center(visible_text_clickable(lv_screen_active(),"返回列表"));
     for (int i=0;i<fixture.ndocker;i++) {
         fixture.docker[i].has_cpu=fixture.docker[i].has_mem=fixture.docker[i].has_restarts=false;
         fixture.docker[i].metrics_ts=0;
     }
     regression_tick();
+    container=visible_text(lv_screen_active(),fixture.docker[0].n);
+    lv_obj_scroll_to_view_recursive(container,LV_ANIM_OFF); regression_tick();
+    click_object_center(container);
     assert(visible_text_containing(lv_screen_active(),"CPU -- · 内存 --"));
     assert(visible_text_containing(lv_screen_active(),"重启 -- · 资源未采集"));
     snapshot("12-metrics-unavailable");
+    click_object_center(visible_text_clickable(lv_screen_active(),"返回列表"));
     s_override_status=NULL; s_state=saved_state; regression_tick(); fnos_status_release(&fixture);
     puts("checks: physical link utilization, unknown/virtual links, nullable latency, container values/age and unavailable metrics PASS");
 }
@@ -2184,7 +2295,7 @@ static void verify_docker_module_states(void)
     lv_obj_t *title = visible_text(lv_screen_active(), "容器服务");
     assert(title);
     lv_obj_t *card = lv_obj_get_parent(lv_obj_get_parent(title));
-    lv_obj_t *running = visible_text_containing(card, "运行中\nCPU");
+    lv_obj_t *running = visible_text(card, "运行中");
     assert(running);
     assert(lv_color_to_u32(lv_obj_get_style_text_color(running, LV_PART_MAIN)) == lv_color_to_u32(uk_c(UK_T2)));
 
@@ -2228,13 +2339,13 @@ static void verify_docker_module_states(void)
     assert(!visible_text(card, first_name));
     fixture.ever_ok = true;
     regression_tick();
-    running = visible_text_containing(card, "运行中\nCPU");
+    running = visible_text(card, "运行中");
     assert(running);
     assert(lv_color_to_u32(lv_obj_get_style_text_color(running, LV_PART_MAIN)) == lv_color_to_u32(uk_c(UK_T2)));
     fixture.nmods = 0; /* Collector v1 has no segment metadata. */
     regression_tick();
     assert(visible_text(card, first_name));
-    running = visible_text_containing(card, "运行中\nCPU");
+    running = visible_text(card, "运行中");
     assert(running);
     assert(lv_color_to_u32(lv_obj_get_style_text_color(running, LV_PART_MAIN)) == lv_color_to_u32(uk_c(UK_T2)));
 
@@ -2265,9 +2376,9 @@ static void verify_ui_regressions(void)
     /* The footer appends its event count; the home band must independently show
        the same highest-severity event, rather than the first source row. */
     assert(visible_text(lv_screen_active(), fixture.alerts[1].m));
-    lv_obj_t *poll = visible_text_containing(lv_screen_active(), "采 ");
-    assert(poll);
-    lv_obj_t *critical = visible_text_containing(lv_obj_get_parent(poll), fixture.alerts[1].m);
+    char footer_event[256];
+    snprintf(footer_event, sizeof footer_event, "%s · 共 %d 个事件", fixture.alerts[1].m, fixture.nalerts);
+    lv_obj_t *critical = visible_text(lv_screen_active(), footer_event);
     assert(critical);
     assert(lv_color_to_u32(lv_obj_get_style_text_color(critical, LV_PART_MAIN)) == lv_color_to_u32(uk_c(UK_DANGER)));
 
@@ -3858,7 +3969,9 @@ static void hardware_inventory(const char *path)
         snapshot("hardware-network-stale");
         fnos_status_text(&fixture,&fixture.mods[net_module].status,"denied");
         regression_tick();
-        assert(!hardware_contains(lv_screen_active(),"网口与接口"));
+        assert(hardware_contains(lv_screen_active(),"没权限"));
+        assert(!hardware_contains(lv_screen_active(),"上次 · 下行"));
+        assert(visible_text(lv_screen_active(),"--"));
     }
     /* Shrink back to an empty frame: no removed device may return as an old tile. */
     char *old=fixture.nvols ? strdup(fixture.vols[fixture.nvols-1].mnt) : NULL;
@@ -3917,16 +4030,59 @@ static void record_numbers(void)
     }
     number_frame(timeline,"number-unavailable",0,"unavailable");
     evidence_close(timeline, "numeric motion.csv");
-    puts("checks: linear telemetry curve, carry, retarget continuity, repeat, missing, allocation and deletion PASS");
+    puts(UK_NUMBER_MS == 0 || UK_NUMBER_REDUCED ?
+         "checks: in-place numeric replacements, stable origin, zero, missing and no glyph motion PASS" :
+         "checks: damped telemetry, meter/glyph velocity continuity, carry, repeat, missing, allocation and deletion PASS");
+}
+
+/* Check the actual product rows, including separate units, across digit carry. */
+static unsigned verify_numeric_unit_positions(lv_obj_t *root)
+{
+    if (lv_obj_has_flag(root, LV_OBJ_FLAG_HIDDEN)) return 0;
+    unsigned checked = 0;
+    uint32_t count = lv_obj_get_child_count(root);
+    for (uint32_t i = 0; i + 1 < count; i++) {
+        lv_obj_t *value = lv_obj_get_child(root, i), *unit = lv_obj_get_child(root, i + 1);
+        if (!lv_obj_has_class(value, &lv_label_class) || !lv_obj_has_class(unit, &lv_label_class)) continue;
+        const lv_font_t *font = lv_obj_get_style_text_font(value, 0);
+        if (font != UK_FONT_NUM_20 && font != UK_FONT_NUM_32 && font != UK_FONT_NUM_44) continue;
+        const char *u = lv_label_get_text(unit);
+        if (strcmp(u, "%") && strcmp(u, "°C") && strcmp(u, "KB/s") && strcmp(u, "MB/s") &&
+            strcmp(u, "GB/s") && strcmp(u, "GB") && strcmp(u, "ms")) continue;
+        char *original = strdup(lv_label_get_text(value)); assert(original);
+        lv_obj_update_layout(root);
+        lv_area_t origin, fixed; lv_obj_get_coords(value, &origin); lv_obj_get_coords(unit, &fixed);
+        const char *targets[] = { "99", "100", "0", "--", "99.9", "100.0", "-9.9" };
+        unsigned target_count = !strcmp(u, "%") ? 4 : sizeof targets / sizeof targets[0];
+        for (unsigned j = 0; j < target_count; j++) {
+            uk_number_set_text(value, targets[j], false);
+            lv_obj_update_layout(root);
+            lv_area_t v, now; lv_obj_get_coords(value, &v); lv_obj_get_coords(unit, &now);
+            const bool centered = lv_obj_get_style_align(value,0)==LV_ALIGN_CENTER;
+            const bool anchored = centered ? abs((v.x1+v.x2)-(origin.x1+origin.x2))<=1 :
+                                  v.x1==origin.x1 || v.x2==origin.x2;
+            assert(anchored && v.y1==origin.y1);
+            if (now.x1 != fixed.x1 || now.y1 != fixed.y1)
+                fprintf(stderr, "numeric unit moved: page=%d original=%s target=%s unit=%s [%d,%d] -> [%d,%d]\n",
+                        fnos_ui_page(), original, targets[j], u, (int)fixed.x1, (int)fixed.y1, (int)now.x1, (int)now.y1);
+            assert(now.x1 == fixed.x1 && now.y1 == fixed.y1);
+        }
+        uk_number_set_text(value, original, false); free(original);
+        checked++;
+    }
+    for (uint32_t i = 0; i < count; i++) checked += verify_numeric_unit_positions(lv_obj_get_child(root, i));
+    return checked;
 }
 
 static void record_data_numbers(void)
 {
     FILE *timeline=number_timeline();
+    unsigned unit_rows = 0;
     for (int page=0;page<FNOS_UI_PAGE_COUNT;page++) {
         fnos_ui_set_page(page);
         vtick_advance(500); lv_timer_handler();
         fnos_ui_motion_settle(); uk_anim_settle(lv_screen_active());
+        unit_rows += verify_numeric_unit_positions(lv_screen_active());
         char name[64]; snprintf(name,sizeof name,"data-p%d-before",page); number_frame(timeline,name,page,"before");
         s_motion_fixture.cpu.pct=page%2 ? 37 : 63;
         s_motion_fixture.cpu.load1+=.12f;
@@ -3946,16 +4102,115 @@ static void record_data_numbers(void)
             s_motion_fixture.disks[i].wr_kbs+=512;
         }
         s_no_settle=true;
-        vtick_advance(500); lv_timer_handler();
-        for (unsigned elapsed=0;elapsed<=UK_NUMBER_MS+UK_NUMBER_MAX_STAGGER_MS;elapsed+=25) {
+        vtick_advance(UK_NUMBER_PRESENT_MS + fnos_ui_refresh_period_ms()); lv_timer_handler();
+        for (unsigned elapsed=0;elapsed<=2*UK_NUMBER_MS+UK_NUMBER_MAX_STAGGER_MS;elapsed+=25) {
             snprintf(name,sizeof name,"data-p%d-%03u",page,elapsed); number_frame(timeline,name,page,"transition");
             vtick_advance(25); lv_timer_handler();
         }
         s_no_settle=false;
         snprintf(name,sizeof name,"data-p%d-after",page); number_frame(timeline,name,page,"after");
     }
+    assert(unit_rows >= 5);
+    printf("checks: %u product numeric/unit rows keep position across integer/decimal carry, negative, zero and missing PASS\n", unit_rows);
     evidence_close(timeline, "numeric motion.csv");
     puts("checks: six-page numeric transition frames and geometry PASS");
+}
+
+/* Actual native frames with 200 ms input and independent 40 ms rendering. */
+static void verify_live_batch_motion(void)
+{
+    lv_obj_t *title = visible_text_containing(lv_screen_active(), "网络吞吐");
+    assert(title);
+    lv_obj_t *chart = find_widget(lv_obj_get_parent(lv_obj_get_parent(title)), &lv_chart_class);
+    assert(chart);
+    lv_chart_series_t *series = uk_trend_series(chart, 0);
+    uk_trend_settle(chart);
+    uint32_t points = lv_chart_get_point_count(chart);
+    uint32_t last = (lv_chart_get_x_start_point(chart, series) + points - 1) % points;
+    lv_point_t before, immediate, moving;
+    lv_chart_get_point_pos_by_id(chart, series, last, &before);
+    s_override_sample.interval_ms = 200;
+    s_seq += 2; /* A delayed UI consumes two real arrivals together. */
+    vtick_advance(200); lv_timer_handler();
+    lv_chart_get_point_pos_by_id(chart, series, last, &immediate);
+    assert(abs(immediate.x - before.x) <= 1);
+    vtick_advance(80); lv_anim_refr_now();
+    lv_chart_get_point_pos_by_id(chart, series, last, &moving);
+    assert(moving.x < before.x);
+    vtick_advance(400); lv_timer_handler();
+    puts("checks: a coalesced live batch preserves continuous travel instead of snapping PASS");
+}
+
+static void verify_backfill_after_busy_read(void)
+{
+    lv_obj_t *title = visible_text_containing(lv_screen_active(), "网络吞吐");
+    assert(title);
+    lv_obj_t *chart = find_widget(lv_obj_get_parent(lv_obj_get_parent(title)), &lv_chart_class);
+    assert(chart);
+    lv_chart_series_t *series = uk_trend_series(chart, 0);
+    s_override_sample.interval_ms = 200;
+    s_seq += 66;
+    vtick_advance(200); lv_timer_handler(); /* Full 64-point backfill batch. */
+    uint32_t points = lv_chart_get_point_count(chart);
+    uint32_t last = (lv_chart_get_x_start_point(chart, series) + points - 1) % points;
+    lv_point_t before, immediate, later;
+    lv_chart_get_point_pos_by_id(chart, series, last, &before);
+    s_history_lock_busy = true;
+    vtick_advance(200); lv_timer_handler(); /* Failed empty read must preserve syncing. */
+    s_history_lock_busy = false;
+    vtick_advance(200); lv_timer_handler(); /* Final two-point backfill tail. */
+    lv_chart_get_point_pos_by_id(chart, series, last, &immediate);
+    assert(immediate.x < before.x);
+    vtick_advance(80); lv_anim_refr_now();
+    lv_chart_get_point_pos_by_id(chart, series, last, &later);
+    assert(later.x == immediate.x);
+    puts("checks: full backfill, failed empty read and partial tail settle without replay PASS");
+}
+
+static void record_streaming(void)
+{
+    FILE *timeline = number_timeline();
+    s_override_sample_enabled = false;
+    for (int i = 0; i < (CONFIG_FNOS_CHART_WINDOW + 63) / 64 + 1; i++) regression_tick();
+    s_override_sample_enabled = true;
+    const int pages[] = { 0, 2, 4 }; /* All product views containing live history. */
+    unsigned units = 0;
+    s_no_settle = true;
+    for (unsigned p = 0; p < sizeof pages / sizeof pages[0]; p++) {
+        fnos_ui_set_page(pages[p]);
+        vtick_advance(200); lv_timer_handler(); fnos_ui_motion_settle();
+        uk_anim_settle(lv_screen_active());
+        if (pages[p] == 2) {
+            verify_live_batch_motion();
+            verify_backfill_after_busy_read();
+        }
+        units += verify_numeric_unit_positions(lv_screen_active());
+        for (unsigned frame = 0; frame < 60; frame++) {
+            if (frame % 5 == 0) {
+                double t = (double)s_seq;
+                s_override_sample = (fnos_sample_t){
+                    .cpu = (float)(34 + 11 * sin(t * .31) + 5 * sin(t * 1.7)),
+                    .mem = (float)(62 + 4 * sin(t * .11)),
+                    .rx_kbs = (float)(9000 + 6500 * sin(t * .23) + 1800 * sin(t * 1.1)),
+                    .tx_kbs = (float)(2600 + 1400 * sin(t * .19 + 1) + 700 * sin(t * 2.3)),
+                    .temp_max = (float)(58 + 8 * sin(t * .08)), .interval_ms = 200,
+                };
+                s_motion_fixture.cpu.pct = s_override_sample.cpu;
+                s_motion_fixture.mem.pct = s_override_sample.mem;
+                s_motion_fixture.net.rx_kbs = s_override_sample.rx_kbs;
+                s_motion_fixture.net.tx_kbs = s_override_sample.tx_kbs;
+                if (s_motion_fixture.ntemps) s_motion_fixture.temps[0].c = s_override_sample.temp_max;
+                s_seq++;
+            }
+            vtick_advance(40); lv_timer_handler();
+            char name[64]; snprintf(name, sizeof name, "stream-p%d-%03u", pages[p], frame);
+            number_frame(timeline, name, pages[p], "stream");
+        }
+    }
+    s_no_settle = false;
+    assert(units >= 5);
+    evidence_close(timeline, "streaming motion.csv");
+    puts("checks: all three trend views, independent input/render cadence and stable units PASS");
 }
 
 /* Dedicated production-LVGL coordinate check, before building the FNOS tree. */
@@ -3987,8 +4242,118 @@ static void verify_chart_mapping(void)
     int32_t h = lv_obj_get_content_height(chart);
     assert(point.y >= h / 2 && point.y <= h / 2 + 1);
     lv_refr_now(lv_display_get_default());
+    lv_chart_set_type(chart, LV_CHART_TYPE_SCATTER);
+    lv_chart_set_axis_range(chart, LV_CHART_AXIS_PRIMARY_X, 0, 2);
+    lv_chart_set_series_value_by_id2(chart, series, 0, 0, INT32_MIN);
+    lv_chart_set_series_value_by_id2(chart, series, 1, 1, 0);
+    lv_chart_set_series_value_by_id2(chart, series, 2, 2, INT32_MAX - 1);
+    lv_chart_get_point_pos_by_id(chart, series, 1, &point);
+    assert(point.y >= h / 2 && point.y <= h / 2 + 1);
+    lv_refr_now(lv_display_get_default());
     lv_obj_delete(chart);
     puts("checks: production LVGL line chart large/full-int32 coordinates and draw PASS");
+
+    chart = uk_trend_create(lv_screen_active(), 32, 2);
+    for (int i = 0; i < 32; i++) {
+        uk_trend_push(chart, 0, i % 2 ? 80 : 20, 0);
+        uk_trend_push(chart, 1, 40, 0);
+    }
+    series = uk_trend_series(chart, 0);
+    uint32_t start = lv_chart_get_x_start_point(chart, series);
+    int32_t *values = lv_chart_get_series_y_array(chart, series);
+    int32_t latest = values[(start + 31) % 32];
+    if (UK_TREND_SMOOTH_SAMPLES > 1) assert(latest >= 40 && latest <= 60);
+    else assert(latest == 80);
+    series = uk_trend_raw_series(chart, 0);
+    values = lv_chart_get_series_y_array(chart, series);
+    for (int i = 0; i < 32; i++) assert(values[i] == (i % 2 ? 80 : 20));
+    series = uk_trend_series(chart, 1);
+    values = lv_chart_get_series_y_array(chart, series);
+    for (int i = 0; i < 32; i++) assert(values[i] == 40);
+    uk_trend_push(chart, 0, LV_CHART_POINT_NONE, 0);
+    uk_trend_push(chart, 0, 100, 0);
+    series = uk_trend_series(chart, 0);
+    start = lv_chart_get_x_start_point(chart, series);
+    values = lv_chart_get_series_y_array(chart, series);
+    assert(values[(start + 30) % 32] == LV_CHART_POINT_NONE);
+    assert(values[(start + 31) % 32] == 100);
+    lv_obj_delete(chart);
+    puts("checks: smooth trends attenuate oscillation, retain constant values and reset at gaps PASS");
+
+    chart = uk_trend_create(lv_screen_active(), 32, 1);
+    lv_obj_set_size(chart, 400, 200);
+    for (int i = 0; i < 32; i++) uk_trend_push(chart, 0, i, 0);
+    lv_obj_update_layout(chart);
+    series = uk_trend_series(chart, 0);
+    lv_point_t before, immediate, quarter, halfway, end;
+    lv_chart_get_point_pos_by_id(chart, series, 31, &before);
+    vtick_advance(200);
+    uk_trend_push(chart, 0, 32, 200);
+    lv_chart_get_point_pos_by_id(chart, series, 31, &immediate);
+    vtick_advance(50); lv_anim_refr_now();
+    lv_chart_get_point_pos_by_id(chart, series, 31, &quarter);
+    vtick_advance(50); lv_anim_refr_now();
+    lv_chart_get_point_pos_by_id(chart, series, 31, &halfway);
+    vtick_advance(100); lv_anim_refr_now();
+    lv_chart_get_point_pos_by_id(chart, series, 31, &end);
+    /* An existing peak must travel continuously, rather than jump one column. */
+    assert(abs(immediate.x - before.x) <= 1);
+    assert(before.x > quarter.x && quarter.x > halfway.x && halfway.x > end.x);
+    assert(abs((before.x - halfway.x) * 2 - (before.x - end.x)) <= 2);
+    assert(lv_chart_get_series_y_array(chart, uk_trend_raw_series(chart, 0))[0] == 32);
+    /* Early and late UI consumption must use the same producer velocity. */
+    uk_trend_push(chart, 0, 33, 200);
+    lv_chart_get_point_pos_by_id(chart, series, 31, &before);
+    vtick_advance(50); lv_anim_refr_now();
+    lv_chart_get_point_pos_by_id(chart, series, 31, &quarter);
+    vtick_advance(100); lv_anim_refr_now();
+    lv_chart_get_point_pos_by_id(chart, series, 31, &halfway);
+    uk_trend_push(chart, 0, 34, 200); /* consumed after 150 ms */
+    lv_chart_get_point_pos_by_id(chart, series, 31, &immediate);
+    assert(abs(immediate.x - halfway.x) <= 1);
+    vtick_advance(50); lv_anim_refr_now();
+    lv_chart_get_point_pos_by_id(chart, series, 31, &end);
+    assert(abs((before.x - quarter.x) - (halfway.x - end.x)) <= 1);
+    vtick_advance(250); lv_anim_refr_now();
+    uk_trend_push(chart, 0, 35, 200); /* consumed late, duration remains source-based */
+    lv_chart_get_point_pos_by_id(chart, series, 31, &before);
+    vtick_advance(50); lv_anim_refr_now();
+    lv_chart_get_point_pos_by_id(chart, series, 31, &quarter);
+    vtick_advance(150); lv_anim_refr_now();
+    lv_chart_get_point_pos_by_id(chart, series, 31, &end);
+    assert(abs((before.x - quarter.x) * 4 - (before.x - end.x)) <= 3);
+    uk_trend_clear(chart);
+    values = lv_chart_get_series_y_array(chart, uk_trend_raw_series(chart, 0));
+    for (int i = 0; i < 32; i++) assert(values[i] == LV_CHART_POINT_NONE);
+    /* Long-running position rebasing must preserve raw values and the window. */
+    for (int i = 0; i < 1000; i++) uk_trend_push(chart, 0, i, 0);
+    start = lv_chart_get_x_start_point(chart, series);
+    lv_chart_get_point_pos_by_id(chart, series, (start + 31) % 32, &point);
+    assert(abs(point.x - lv_obj_get_content_width(chart)) <= 1);
+    assert(values[(start + 31) % 32] == 999);
+    vtick_advance(200); uk_trend_push(chart, 0, 1000, 200);
+    lv_obj_add_flag(chart, LV_OBJ_FLAG_HIDDEN);
+    vtick_advance(100); lv_anim_refr_now();
+    lv_obj_remove_flag(chart, LV_OBJ_FLAG_HIDDEN);
+    start = lv_chart_get_x_start_point(chart, series);
+    lv_chart_get_point_pos_by_id(chart, series, (start + 31) % 32, &point);
+    assert(abs(point.x - lv_obj_get_content_width(chart)) <= 1);
+    /* Suppressed paints must not accumulate permanent time-axis lag. */
+    uk_trend_clear(chart);
+    for (int i = 0; i < 32; i++) uk_trend_push(chart, 0, i, 0);
+    for (int i = 32; i < 52; i++) {
+        vtick_advance(200);
+        uk_trend_push(chart, 0, i, 200); /* no animation repaint between arrivals */
+    }
+    start = lv_chart_get_x_start_point(chart, series);
+    lv_chart_get_point_pos_by_id(chart, series, (start + 31) % 32, &point);
+    int32_t width = lv_obj_get_content_width(chart);
+    assert(point.x >= width && point.x <= width + width / 30 + 2);
+    vtick_advance(200); lv_anim_refr_now();
+    lv_chart_get_point_pos_by_id(chart, series, (start + 31) % 32, &point);
+    assert(abs(point.x - width) <= 1);
+    lv_obj_delete(chart);
+    puts("checks: streaming chart moves existing points continuously at constant speed PASS");
 }
 
 static unsigned s_refresh_size_changes, s_refresh_nav_styles;
@@ -4087,17 +4452,15 @@ static void verify_refresh_work(void)
     assert(volume_title);
     lv_obj_t *volume_card = lv_obj_get_parent(lv_obj_get_parent(volume_title));
     int32_t original_width = lv_obj_get_width(volume_card);
-    int32_t original_height = s_scr_h;
-    s_scr_h = original_height == 480 ? 600 : 480;
-    lv_display_set_resolution(display, s_scr_w, s_scr_h);
+    /* Exercise section reflow on the actual landscape board. */
+    pointer_text("卷");
     regression_tick();
     assert(lv_obj_get_width(volume_card) != original_width);
-    snapshot("refresh-resized-viewport");
-    s_scr_h = original_height;
-    lv_display_set_resolution(display, s_scr_w, s_scr_h);
+    snapshot("refresh-filtered-inventory");
+    pointer_text("全部");
     regression_tick();
     assert(lv_obj_get_width(volume_card) == original_width);
-    puts("checks: stable refresh, repeated current-page navigation, same-count long-name reflow, viewport resize and untruncated formatting PASS");
+    puts("checks: stable refresh, repeated current-page navigation, same-count long-name reflow, filtered inventory reflow and untruncated formatting PASS");
 }
 
 int main(int argc, char **argv)
@@ -4135,7 +4498,7 @@ int main(int argc, char **argv)
         s_scr_w = (int)w; s_scr_h = (int)h;
     }
     lv_display_t *d = lv_display_create(s_scr_w, s_scr_h);
-    static uint16_t buf[SCR_MAX_W * SCR_MAX_H];
+    _Alignas(LV_DRAW_BUF_ALIGN) static uint16_t buf[SCR_MAX_W * SCR_MAX_H];
     lv_display_set_color_format(d, LV_COLOR_FORMAT_RGB565);
     if (getenv("PREVIEW_PARTIAL"))
         lv_display_set_buffers(d,buf,NULL,(size_t)s_scr_w*50*sizeof(uint16_t),LV_DISPLAY_RENDER_MODE_PARTIAL);
@@ -4147,7 +4510,7 @@ int main(int argc, char **argv)
     lv_indev_set_read_cb(touch, touch_read);
     lv_indev_set_display(touch, d);
 
-    /* 预览用 KK_PALETTE=<名字> 选配色，出路数图给用户挑；不设则用默认 unifi。
+    /* 预览用 KK_PALETTE=<名字> 选配色，出路数图给用户挑；不设则用默认 cuktech。
        必须在 fnos_ui_create() 之前 —— 颜色在建构件时就被拷进样式里了。 */
     fnos_ui_theme_use(getenv("KK_PALETTE"));
     fprintf(stderr, "palette: %s\n", fnos_ui_theme_name());
@@ -4170,7 +4533,11 @@ int main(int argc, char **argv)
     if (getenv("PREVIEW_NUMBERS")) { record_numbers(); return preview_finish(); }
     fnos_ui_create();
     if (getenv("PREVIEW_REFRESH_WORK")) { verify_refresh_work(); return preview_finish(); }
-    if (getenv("PREVIEW_DATA_MOTION")) { record_data_numbers(); return preview_finish(); }
+    if (getenv("PREVIEW_DATA_MOTION")) {
+        if (!strcmp(getenv("PREVIEW_DATA_MOTION"), "stream")) record_streaming();
+        else record_data_numbers();
+        return preview_finish();
+    }
 
     /* 卡片几何的"唯一来源"：把已建好的卡片按真实 coords 吐出来，
        看门狗（scroll_gap.js）读它。手抄一张卡片表 → 抄错一次就报 15 处假不合格。 */
@@ -4199,6 +4566,11 @@ int main(int argc, char **argv)
         return preview_finish();
     }
 
+    /* A static state matrix must not race the real three-second provisioning
+       deadline while writing images. Wi-Fi flows below advance their own
+       fixture explicitly; keep board time stable just as in motion recordings. */
+    s_motion_clock_us = esp_timer_get_time();
+    s_motion_clock_frozen = true;
     snapshot("00-startup");
     run_state(ST_WARMING, 1);
     run_state(ST_LIVE, 2);
@@ -4220,6 +4592,7 @@ int main(int argc, char **argv)
     verify_docker_module_states();
     verify_temperature_protocol_limit();
     verify_overview_charts();
+    verify_module_freshness();
 
     /* ── 夜间模式：一整套独立配色，预览从来没渲染过 ──
        run_state 会把四页都拍一遍，所以这里先量白天的对比度、再开夜间量一次。 */

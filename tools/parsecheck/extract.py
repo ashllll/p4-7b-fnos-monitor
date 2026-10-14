@@ -140,12 +140,14 @@ float s_h_cpu[FNOS_HIST_MAX], s_h_mem[FNOS_HIST_MAX];
 float s_h_rx[FNOS_HIST_MAX], s_h_tx[FNOS_HIST_MAX], s_h_temp[FNOS_HIST_MAX];
 int64_t s_seq;
 int64_t s_h_ts[FNOS_HIST_MAX];
+uint32_t s_h_interval[FNOS_HIST_MAX];
 int s_hist_count;
 int64_t s_hist_reset_seq=-1;
 bool s_hist_backfilled;
 fnos_status_t s_status;
 bool s_valid;
-#define esp_timer_get_time() 1000000
+int64_t host_timer_us = 1000000;
+#define esp_timer_get_time() host_timer_us
 #define http_ring_push(ms) ((void)0)
 
 /* fnos_snapshot.c 里字符串 arena 的类型与容量上限：函数原文要用，类型照抠、上限照抄同样的兜底值。 */

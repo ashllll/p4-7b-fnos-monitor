@@ -26,7 +26,7 @@ open tools/preview/out/02-live-p0.png
 41 个键的行内边界、滚动后的可见性和固定页脚。
 拆开跑则 `tools/preview/build/preview <目录>`（写 PPM）+ `python3 tools/preview/ppm2png.py <目录>`。
 
-默认 `unifi` 主题及触控适配见 [最新设计记录](../../docs/ui-unifi-v11-2026-10-12.md)。新增分类筛选、恢复全部、跨页保留筛选、详情遮罩阻挡底层输入、返回列表及冻结实体身份的真实指针测试；输出 `13-*` 七帧，包含长名称详情与筛选空结果。默认流程还通过指针点击全部导航项与五个详情入口，并生成长连接失败原因、网口占用、磁盘指标、容器资源和资源未采集样张。信息增强见 [说明](../../docs/ui-telemetry-2026-10-12.md)。
+默认 `cuktech` 仪表主题及底部导航见 [最新设计记录](../../docs/ui-cuktech-2026-10-14.md)。新增分类筛选、恢复全部、跨页保留筛选、详情遮罩阻挡底层输入、返回列表及冻结实体身份的真实指针测试；输出 `13-*` 七帧，包含长名称详情与筛选空结果。默认流程还通过指针点击全部导航项与五个详情入口，并生成长连接失败原因、网口占用、磁盘指标、容器资源和资源未采集样张。信息增强见 [说明](../../docs/ui-telemetry-2026-10-12.md)。
 
 每张快照（连同夜间矩阵与夜间样张）还会扫一遍可见文案里有没有**没被消费掉的格式说明符**
 （`%d`/`%s`/`%u`，裸 `%` 与 `%%` 放行）：`set_txt(x, "%s", cond ? "A" : "容器 %d/%d 运行", n, m)`
@@ -37,7 +37,9 @@ open tools/preview/out/02-live-p0.png
 此项检查使用原生样式颜色，不能代替实物面板的环境光和色彩测量。
 健康样例与满列表样例分别验证 8、16 个容器在反复切页和自适应重排后保持采集器顺序。
 
-### 换分辨率渲染（"分辨率自适应"的取证手段）
+### 历史多尺寸工具（已退出当前验收范围）
+
+2026-10-14 用户明确要求后续仅迭代 1024×600 开发板横屏，不再迭代窄屏或竖屏。以下保留为历史工具用法，当前验收不运行多尺寸矩阵。
 
 ```bash
 PREVIEW_SIZE=800x480  tools/preview/build/preview /tmp/out-800    # 同一份 UI，矮屏一档
@@ -146,7 +148,7 @@ PREVIEW_MOTION=0,1,0 PREVIEW_MOTION_SCROLL=1 PREVIEW_MOTION_RESPONSIVENESS=1 \
 默认验收 `PREVIEW_MOTION_RESPONSE_MS=32`、`PREVIEW_MOTION_COMPLETE_MS=180`，两个预算独立于生产动画令牌。
 响应包含自动输入采样及跟手调度；慢短划从首次采样后的识别过程量起。
 输入/动画期间仍检查终帧像素、内容不透明和历史不被伪造。两个预算都设为 0 时仅测量而不执行预算断言。
-可增加 `PREVIEW_SIZE=800x480` 或 `1280x800` 验证相同手势在不同视口上的行为。
+当前仅在 1024×600 开发板横屏范围验证手势。
 
 稳定数据刷新回归已加入 `run.sh` 的默认验收，也可单独执行：
 
@@ -156,11 +158,26 @@ PREVIEW_REFRESH_WORK=1 tools/preview/build/preview /tmp/fnos-refresh-work
 
 它检查六页连续刷新不重复改导航样式、存储清单不反复伸缩；同时以数量不变的长卷名和
 长容器名验证换行、重排、缩回与完整字符串保留，并覆盖长文本分配失败提示和下一拍恢复。
-同一棵 UI 树还会切换视口高度并恢复，检查清单列宽随布局重新测量。
+同一棵 UI 树在 1024×600 横屏中切换“卷 / 全部”筛选并恢复，检查清单列宽随可用区域重新测量。
 `CONFIG_FNOS_UI_TEXT_SCRATCH_BYTES` 控制单次格式化的栈缓冲，默认 256 字节、范围 64–1024；
 超长内容继续使用精确分配，不能通过截断名称节省开销。调整后须重建设备配置、重跑栈检查。
 页面过渡期间数字显示最新读数，数字滚动在过渡结束后恢复；隐藏数字的既有动画会在下一次
 动画采样释放图层。这些检查与主机帧采样不代表实机帧率，实机 A/B 必须另行记录。
+
+### 电流表式动效（1024×600 横屏）
+
+参数与边界见 [电流表式遥测动效](../../docs/ui-ammeter-motion-2026-10-14.md)。
+`PREVIEW_NUMBERS=1` 验证共用阻尼公式、位置/速度重定向、单位切换立即发布、仪表与数字生命周期；
+`PREVIEW_DATA_MOTION=1` 录制全部六页，含仪表尾段与数字/单位锚点检查。仍使用真实 UI 代码和匿名夹具。
+
+```bash
+PREVIEW_NUMBERS=1 tools/preview/build/preview /tmp/fnos-numbers
+PREVIEW_DATA_MOTION=1 tools/preview/build/preview /tmp/fnos-data-motion
+python3 tools/preview/ppm2png.py /tmp/fnos-data-motion
+python3 tools/preview/motion_view.py /tmp/fnos-data-motion
+```
+
+播放器帧间隔为 25ms，代表主机采样取证，不代表 P4 实机帧率。只迭代当前横屏；本轮按用户要求以肉眼体验实屏，不拍照。
 
 ## 前置
 

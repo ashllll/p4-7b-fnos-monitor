@@ -51,10 +51,10 @@
 #define UK_HEX_NAV_SEL   0x272A2D
 #define UK_NAV_SEL_OPA   54
 #define UK_EDGE_RAIL     20
-#define UK_EDGE_OPA      18         /* 卡片外沿：表面分组优先于边框   */
+#define UK_EDGE_OPA      28         /* Quiet edges distinguish adjacent product surfaces */
 #define UK_EDGE_STRONG   45         /* 焦点 / 选中卡片（18% 白）      */
 #define UK_EDGE_CTRL     64         /* 按钮边界（25% 白）             */
-#define UK_FOCUS_RING_OPA 87
+#define UK_FOCUS_RING_OPA 180
 #define UK_HAIRLINE_HEX  "#F9FAFA12"
 #define UK_ROW_TINT_OPA  LV_OPA_20  /* 清单按相同语义使用同一表面     */
 #define UK_NIGHT_MIX     LV_OPA_50
@@ -68,21 +68,36 @@
 #define UK_LIST_MIN_WIDTH CONFIG_FNOS_UI_LIST_MIN_WIDTH
 
 /* ── 度量 ─────────────────────────────────────────────────────────── */
-#define UK_RADIUS        8          /* Touch adaptation; not an official UniFi size */
-#define UK_RADIUS_SM     4          /* 胶囊 / 按钮                    */
-#define UK_BAR_H         4          /* 阈值条高                       */
-#define UK_BAR_H_HERO    8          /* 主容量条高                     */
-/* 值条补间时长：LVGL 的 lv_bar_set_value(..., LV_ANIM_ON) 从 LV_STYLE_ANIM_DURATION
-   取时长，而主题/样式默认不给这条属性（=0 ⇒ 一次到位）。所以要在**建条时**显式设置，
-   否则 uk_bar_set 传的 LV_ANIM_ON 等于白传（条形跳变，数字却在滑）。 */
-#define UK_BAR_ANIM_MS   180
+#define UK_RADIUS        4          /* Compact instrument housing */
+#define UK_RADIUS_SM     3          /* Object tiles and controls */
+#define UK_BAR_H         8          /* 阈值条高                       */
+#define UK_BAR_H_HERO    12          /* 主容量条高                     */
+/* Continuous telemetry shares one damped response; native animation styles
+   retain the duration for callers that inspect it. */
+#define UK_BAR_ANIM_MS   UK_NUMBER_MS
 #define UK_SCR_W         1024
 #define UK_SCR_H         600
 #define UK_RAIL_W        76         /* 左导航宽（中文标签，令牌 44 是桌面值） */
 #define UK_HEAD_H        44
 #define UK_DOCK_H        56
 #define UK_NAV_ITEM_H    64         /* Icon + Chinese label + touch padding */
-#define UK_ENTITY_MIN_WIDTH (2 * UK_LIST_MIN_WIDTH) /* Identity + metric comparison columns */
+#define UK_NAV_ICON_SIZE 24         /* Navigation glyph canvas; geometry scales within it */
+#define UK_NAV_FEEDBACK_MS 120
+#define UK_NAV_ICON_STROKE 2        /* Shared outline weight at the nominal canvas size */
+#ifndef CONFIG_FNOS_UI_TREND_SMOOTH_SAMPLES
+#define CONFIG_FNOS_UI_TREND_SMOOTH_SAMPLES 3
+#endif
+#define UK_TREND_SMOOTH_SAMPLES CONFIG_FNOS_UI_TREND_SMOOTH_SAMPLES
+#ifndef CONFIG_FNOS_UI_TREND_SCROLL_MS
+#define CONFIG_FNOS_UI_TREND_SCROLL_MS 2000
+#endif
+#ifndef CONFIG_FNOS_UI_TREND_FPS
+#define CONFIG_FNOS_UI_TREND_FPS 30
+#endif
+#define UK_TREND_SCROLL_MS CONFIG_FNOS_UI_TREND_SCROLL_MS
+#define UK_TREND_FPS CONFIG_FNOS_UI_TREND_FPS
+#define UK_TREND_STROKE 2
+#define UK_ENTITY_MIN_WIDTH (3 * UK_LIST_MIN_WIDTH / 2) /* Identity + metric comparison columns */
 #define UK_DETAIL_WIDTH (2 * UK_LIST_MIN_WIDTH)
 #define UK_CONTENT_COLUMNS 3       /* Preferred comparison columns before rail collapses */
 #define UK_PANEL_GAP     4
@@ -92,10 +107,10 @@
 #define UK_MOTION_MIN_MS 80
 #define UK_MOTION_DAMPING 10.0f /* critical damping: residual below one logical pixel */
 #ifndef CONFIG_FNOS_UI_NUMBER_MS
-#define CONFIG_FNOS_UI_NUMBER_MS 300
+#define CONFIG_FNOS_UI_NUMBER_MS 450
 #endif
 #ifndef CONFIG_FNOS_UI_NUMBER_PRESENT_MS
-#define CONFIG_FNOS_UI_NUMBER_PRESENT_MS 1200
+#define CONFIG_FNOS_UI_NUMBER_PRESENT_MS 600
 #endif
 #ifndef CONFIG_FNOS_UI_NUMBER_STAGGER_MS
 #define CONFIG_FNOS_UI_NUMBER_STAGGER_MS 0
@@ -104,7 +119,7 @@
 #define CONFIG_FNOS_UI_NUMBER_MAX_STAGGER_MS 0
 #endif
 #ifndef CONFIG_FNOS_UI_NUMBER_TRAVEL_PCT
-#define CONFIG_FNOS_UI_NUMBER_TRAVEL_PCT 8
+#define CONFIG_FNOS_UI_NUMBER_TRAVEL_PCT 4
 #endif
 #ifndef CONFIG_FNOS_UI_NUMBER_BLUR_PCT
 #define CONFIG_FNOS_UI_NUMBER_BLUR_PCT 0
@@ -112,6 +127,12 @@
 #ifndef CONFIG_FNOS_UI_NUMBER_BUDGET_BYTES
 #define CONFIG_FNOS_UI_NUMBER_BUDGET_BYTES 131072
 #endif
+/* Fixed-point native widget values retain sub-percent movement. */
+#define UK_METER_SCALE 100
+#ifndef CONFIG_FNOS_UI_TELEMETRY_DAMPING
+#define CONFIG_FNOS_UI_TELEMETRY_DAMPING 8
+#endif
+#define UK_TELEMETRY_DAMPING CONFIG_FNOS_UI_TELEMETRY_DAMPING
 #define UK_NUMBER_BUDGET_BYTES CONFIG_FNOS_UI_NUMBER_BUDGET_BYTES
 #define UK_NUMBER_MS CONFIG_FNOS_UI_NUMBER_MS
 #define UK_NUMBER_PRESENT_MS CONFIG_FNOS_UI_NUMBER_PRESENT_MS
@@ -140,8 +161,8 @@
 #define UK_DOT           8
 #define UK_SCROLL_W      4
 #define UK_SCROLL_INSET  12
-#define UK_GLOW_W        10
-#define UK_GLOW_OPA      140
+#define UK_GLOW_W        0          /* Status dots remain flat at every severity */
+#define UK_GLOW_OPA      LV_OPA_TRANSP
 
 /* ── 字体（tools/gen_fonts.sh 生成的子集字库；行高才是真实占位） ───── */
 #define UK_FONT_CJK_12   (&ui_font_cjk_12)
@@ -157,7 +178,7 @@
 
 #include "fnos_fonts.h"   /* LV_FONT_DECLARE(ui_font_*) */
 
-/* ── 运行时配色（预置表见 uk_theme.c：unifi / device / graphite / abyss / phosphor） ── */
+/* ── 运行时配色（预置表见 uk_theme.c：cuktech / unifi / device / graphite / abyss / phosphor） ── */
 typedef struct {
     uint32_t bg, s0, s1, surf_t, s2, s3, off, line;
     uint32_t t1, t2, t3, t4;

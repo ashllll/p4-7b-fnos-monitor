@@ -4,20 +4,36 @@
 #include <string.h>
 
 /* ── 预置 ─────────────────────────────────────────────────────────── */
+/* Instrument palette: yellow is focus, cyan/blue identify data directions.
+   Status colours remain independent of identity and selection. */
+static const uk_pal_t P_CUKTECH = {
+    .bg = 0x000000, .s0 = 0x04080C, .s1 = 0x080D12, .surf_t = 0x101B24,
+    .s2 = 0x12202B, .s3 = 0x243441, .off = 0x4A5260, .line = 0x25313E,
+    .t1 = 0xF5F7FA, .t2 = 0xD4DFE8, .t3 = 0xA5B4C2, .t4 = 0x94A3B1,
+    .blue = 0xFFC800, .blue_txt = 0xFFC800,
+    .ok = 0x36D27E, .warn = 0xFFAD54, .danger = 0xFF6878,
+    .s_cpu = 0x3FA9F5, .s_mem = 0xC8E63C, .s_temp = 0xFFC800,
+    .s_down = 0x37C4D6, .s_up = 0x3FA9F5, .s_zfs = 0xC8E63C,
+    .rail_n = 0x000000, .rail_day = 0x000000, .nav = 0x000000, .nav_sel = 0x24200A,
+    .resource_primary = 0x080D12, .resource_secondary = 0x080D12,
+    .summary = 0x0A131B, .on_summary = 0xF5F7FA, .summary_light = false,
+    .on_primary = 0x080D12, .on_danger = 0x080D12,
+};
+
 /* Network 10.6.106 dark observations, adapted for a NAS touch display.
    Surfaces/text/accent follow the recorded baseline; chart/status colours are
    project choices with separate semantics, not an official UniFi token set. */
 static const uk_pal_t P_UNIFI = {
-    .bg = 0x131416, .s0 = 0x0E0F11, .s1 = 0x1C1E21, .surf_t = 0x202328,
-    .s2 = 0x282B2F, .s3 = 0x34383D, .off = 0x42474D, .line = 0x34383D,
+    .bg = 0x111316, .s0 = 0x0E1115, .s1 = 0x1A1E23, .surf_t = 0x20252B,
+    .s2 = 0x252B32, .s3 = 0x343D47, .off = 0x42474D, .line = 0x323B45,
     .t1 = 0xF9FAFA, .t2 = 0xDEE0E3, .t3 = 0xB7BCC2, .t4 = 0xA0A7B0,
     .blue = 0x0068F5, .blue_txt = 0x4797FF,
     .ok = 0x62D28A, .warn = 0xF4BB60, .danger = 0xFF8C94,
     .s_cpu = 0x4797FF, .s_mem = 0x70C9E8, .s_temp = 0xD5BC72,
     .s_down = 0x70C9E8, .s_up = 0xB99AE8, .s_zfs = 0x62D28A,
-    .rail_n = 0x131416, .rail_day = 0x131416, .nav = 0x131416, .nav_sel = 0x1D304A,
-    .resource_primary = 0x1C1E21, .resource_secondary = 0x1C1E21,
-    .summary = 0x202328, .on_summary = 0xDEE0E3, .summary_light = false,
+    .rail_n = 0x111316, .rail_day = 0x111316, .nav = 0x111316, .nav_sel = 0x1D304A,
+    .resource_primary = 0x1A1E23, .resource_secondary = 0x1A1E23,
+    .summary = 0x202833, .on_summary = 0xDEE0E3, .summary_light = false,
     .on_primary = 0xFFFFFF, .on_danger = 0x19202A,
 };
 
@@ -80,6 +96,7 @@ static const uk_pal_t P_PHOSPHOR = {
 };
 
 static const struct { const char *name; const uk_pal_t *p; } PRESETS[] = {
+    { "cuktech", &P_CUKTECH },
     { "unifi", &P_UNIFI },
     { "device", &P_DEVICE },
     { "graphite", &P_GRAPHITE },
@@ -87,8 +104,8 @@ static const struct { const char *name; const uk_pal_t *p; } PRESETS[] = {
     { "phosphor", &P_PHOSPHOR },
 };
 
-uk_pal_t g_uk_pal = P_UNIFI;
-static const char *s_pal_name = "unifi";
+uk_pal_t g_uk_pal = P_CUKTECH;
+static const char *s_pal_name = "cuktech";
 
 void uk_theme_use(const char *name)
 {
@@ -113,7 +130,7 @@ void fnos_ui_theme_use(const char *name)
     for (size_t i = 0; i < sizeof PRESETS / sizeof PRESETS[0]; i++) {
         if (strcmp(PRESETS[i].name, name) == 0) { uk_theme_use(name); return; }
     }
-    uk_theme_use("unifi");
+    uk_theme_use("cuktech");
 }
 
 const char *fnos_ui_theme_name(void) { return s_pal_name; }

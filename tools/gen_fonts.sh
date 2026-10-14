@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 生成 LVGL 字体（Inter 拉丁 + Noto Sans SC 动态设备名称）。
+# 生成 LVGL 字体（Chakra Petch 仪表数字 + Inter 标签 + Noto Sans SC 设备名称）。
 #
 # 为什么要有这个脚本：界面标签是中文 + 拉丁数字混排，字体必须覆盖代码里真正用到的字形，
 # 而且要在换字号/换字体时能一键复现。运行时设备名使用可配置字符区间，
@@ -114,8 +114,7 @@ for CH in $'—' $'–' $'−' $'－'; do
 done
 echo "中文字形数: $(printf '%s' "$CJK" | python3 -c 'import sys;print(len(sys.stdin.read().strip()))')"
 
-# v6（UniFi）字号阶梯：KPI 数字一律 600（SemiBold），次级数字与标签 500（Medium），
-# 元信息 400（Regular）。整套比 v5 小一档 —— 这是"克制"的一半，别随手调大。
+# 仪表数字使用 Chakra Petch Bold；辅助标签保持 Inter / Noto Sans SC。
 # Angular display digits for the reference device theme (SIL OFL 1.1).
 # Fetch the upstream font; keep the licence alongside the embedded subsets.
 if [ ! -s ChakraPetch-Bold.ttf ]; then
@@ -128,10 +127,10 @@ for size in 64 96; do
     -r 0x20-0x3A --lv-include lvgl.h -o "$OUT/ui_font_display_$size.c"
 done
 
-echo "== 数值（Inter SemiBold） =="
-$LV --font Inter-SemiBold.ttf --size 44 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
+echo "== 数值（Chakra Petch Bold） =="
+$LV --font ChakraPetch-Bold.ttf --size 44 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
     -r 0x20-0x7E -r 0xB0 -r 0xB7 -r 0x2014 -r 0x2026 -r 0x2190-0x2193 -r 0x2264-0x2265 --lv-include lvgl.h -o "$OUT/ui_font_num_44.c"
-$LV --font Inter-SemiBold.ttf --size 32 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
+$LV --font ChakraPetch-Bold.ttf --size 32 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
     -r 0x20-0x7E -r 0xB0 -r 0xB7 -r 0x2014 -r 0x2026 -r 0x2190-0x2193 -r 0x2264-0x2265 --lv-include lvgl.h -o "$OUT/ui_font_num_32.c"
 $LV --font Inter-Medium.ttf --size 20 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
     -r 0x20-0x7E -r 0xB0 -r 0xB7 -r 0x2014 -r 0x2026 -r 0x2190-0x2193 -r 0x2264-0x2265 --lv-include lvgl.h -o "$OUT/ui_font_num_20.c"

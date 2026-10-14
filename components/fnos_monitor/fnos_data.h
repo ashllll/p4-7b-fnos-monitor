@@ -117,7 +117,12 @@ bool fnos_status_parse(const char *json, fnos_status_t *out, const char **reason
 void fnos_status_copy(fnos_status_t *out, const fnos_status_t *source);
 void fnos_status_release(fnos_status_t *out);
 
-typedef struct { float cpu, mem, rx_kbs, tx_kbs, temp_max; } fnos_sample_t;
+typedef struct {
+    float cpu, mem, rx_kbs, tx_kbs, temp_max;
+    /* Monotonic interval between successful data-layer receipts, independent of
+       LVGL scheduling. Zero means first sample/backfill/unknown, never NAS time. */
+    uint32_t interval_ms;
+} fnos_sample_t;
 
 // 启动轮询任务（幂等）。未联网时任务自己等待，不阻塞调用方。
 void fnos_data_start(void);
