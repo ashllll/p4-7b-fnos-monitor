@@ -19,7 +19,7 @@ bash tools/preview/run.sh [输出目录]     # 默认 tools/preview/out/；内�
 open tools/preview/out/02-live-p0.png
 ```
 
-当前完整流程生成 **101 张 1024×600 PNG**，覆盖启动/等待/在线告警/离线/正常/满列表/旧版采集端/夜间/配网/配对等状态 × 六页，
+当前完整流程生成 **105 张 1024×600 PNG**，覆盖启动/等待/在线告警/离线/正常/满列表/旧版采集端/夜间/配网/配对等状态 × 六页，
 外加列表底部、诊断面板与配对全流程。内置断言验证缺字/文本高度、子对象越界、卡片重叠、满列表滚动、
 告警消退、诊断按钮、锁超时保留快照、连接失败原因逐个标签可翻译。
 行内数值还检查数字与单位的总宽度；配对检查键盘可达及页脚固定，配网检查六阶段按钮宽度、
@@ -95,12 +95,12 @@ PREVIEW_ALLOC_FAIL_AT=0 PREVIEW_HARDWARE_FIXTURE=/tmp/fnos-hardware-fixtures/mix
 ### 首次进入配对页
 
 ```bash
-PREVIEW_SIZE=800x480 PREVIEW_PAIR_FIRST_ENTRY=1 tools/preview/build/preview /tmp/out-pair-first
+PREVIEW_SIZE=1024x600 PREVIEW_PAIR_FIRST_ENTRY=1 tools/preview/build/preview /tmp/out-pair-first
 ```
 
 此模式先配置匿名 Wi-Fi 替身，在 UI 创建后直接进入 NAS 配对，不依赖前面的切页测试初始化网络。
 输出 7 帧并检查输入、握手、指纹确认、完成和失败，以及反复进入配对、切换模块和按钮命中。
-它与完整 75 帧流程分别验证首次布局和经过其他页面后的布局。
+它与完整状态流程分别验证首次布局和经过其他页面后的布局。
 
 ### 三个只读探针（不改布局，只打印）
 
@@ -187,7 +187,7 @@ python3 tools/preview/motion_view.py /tmp/fnos-data-motion
 
 ## 实测开销
 
-构建时间和产物大小取决于主机与依赖缓存，以当前输出为准。当前 main 包含六页与 94 张完整状态预览；历史图片、FPK 和设备证据的边界见[项目 README](../../README.md#最近迭代与版本边界)。
+构建时间和产物大小取决于主机与依赖缓存，以当前输出为准。当前完整状态预览包含六页与 105 张 PNG；历史图片、FPK 和设备证据的边界见[项目 README](../../README.md#最近迭代与版本边界)。
 
 ## 边界与坑
 

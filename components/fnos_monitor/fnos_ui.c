@@ -3762,7 +3762,7 @@ static void temp_blk_fill(int i)
 
     /* Equal lengths mean equal temperatures; full scale is the high reference. */
     lv_bar_set_range(b->bar, 0, (int32_t)UK_TEMP_DANGER * UK_METER_SCALE);
-    uk_meter_set(b->bar, (int32_t)lroundf(fmaxf(0, g->max_c) * UK_METER_SCALE), on);
+    uk_meter_set(b->bar, (int32_t)lroundf(fminf(UK_TEMP_DANGER, fmaxf(0, g->max_c)) * UK_METER_SCALE), on);
     lv_obj_set_style_bg_color(b->bar, uk_c(on ? UK_S_TEMP : UK_OFF), LV_PART_INDICATOR);
 
     int count = b->collapsed || g->inline_ch ? 0 : g->count;
@@ -4044,7 +4044,10 @@ static temperature_summary_t temperature_summary(const fnos_status_t *st)
         if (out.have && (t->c < out.c || (t->c == out.c && (out.live || !live)))) continue;
         out.sensor=t; out.c=t->c; out.have=true; out.live=live;
     }
-    if (out.have && out.c >= UK_TEMP_WARM && !out.warm) out.warm=1;
+    if (out.have && out.c >= UK_TEMP_WARM && !out.warm) {
+        out.warm=1;
+        out.warm_live = out.warm_live && out.live;
+    }
     if (!readable || !st->ntemps) out.warm_live=out.live;
     return out;
 }
@@ -4061,6 +4064,24 @@ static const char *docker_module_note(const fnos_status_t *st)
     if (!strcmp(state, "missing")) return "来源不存在";
     if (!strcmp(state, "error")) return "读取失败";
     return mod_status_cn(state); /* Includes stale/partial and future status words. */
+}
+
+static int32_t overview_card_min_height(lv_obj_t *card)
+{
+    lv_obj_t *body = uk_card_body(card);
+    int32_t needed = lv_obj_get_height(lv_obj_get_child(card, 0)) +
+        lv_obj_get_style_pad_top(card, 0) + lv_obj_get_style_pad_bottom(card, 0) +
+        2 * lv_obj_get_style_border_width(card, 0) + lv_obj_get_style_pad_row(card, 0);
+    int visible = 0;
+    for (uint32_t i = 0; i < lv_obj_get_child_count(body); i++) {
+        lv_obj_t *child = lv_obj_get_child(body, i);
+        if (lv_obj_has_flag(child, LV_OBJ_FLAG_HIDDEN)) continue;
+        needed += lv_obj_get_style_flex_grow(child, 0) ?
+                  lv_obj_get_style_min_height(child, 0) : lv_obj_get_height(child);
+        visible++;
+    }
+    if (visible > 1) needed += (visible - 1) * lv_obj_get_style_pad_row(body, 0);
+    return needed;
 }
 
 static void overview_layout(void)
@@ -4089,20 +4110,8 @@ static void overview_layout(void)
     for (size_t r = 0; r < sizeof cards / sizeof cards[0]; r++) {
         lv_obj_t *card = cards[r];
         if (!card || lv_obj_get_width(card) <= 0) continue;
-        lv_obj_t *body = uk_card_body(card);
         lv_obj_update_layout(card);
-        int32_t needed = lv_obj_get_height(lv_obj_get_child(card, 0)) +
-            lv_obj_get_style_pad_top(card, 0) + lv_obj_get_style_pad_bottom(card, 0) +
-            2 * lv_obj_get_style_border_width(card, 0) + lv_obj_get_style_pad_row(card, 0);
-        int visible = 0;
-        for (uint32_t i = 0; i < lv_obj_get_child_count(body); i++) {
-            lv_obj_t *child = lv_obj_get_child(body, i);
-            if (lv_obj_has_flag(child, LV_OBJ_FLAG_HIDDEN)) continue;
-            needed += lv_obj_get_style_flex_grow(child, 0) ?
-                      lv_obj_get_style_min_height(child, 0) : lv_obj_get_height(child);
-            visible++;
-        }
-        if (visible > 1) needed += (visible - 1) * lv_obj_get_style_pad_row(body, 0);
+        int32_t needed = overview_card_min_height(card);
         lv_obj_set_style_min_height(card, needed, 0);
         minimum = resource_stacked ? minimum + needed : LV_MAX(minimum, needed);
     }
@@ -4152,20 +4161,8 @@ static void overview_layout(void)
     int32_t strip_min = 0;
     for (uint32_t i = 0; i < count; i++) {
         lv_obj_t *card = lv_obj_get_child(objects, i);
-        lv_obj_t *body = uk_card_body(card);
         lv_obj_update_layout(card);
-        int32_t needed = lv_obj_get_height(lv_obj_get_child(card, 0)) +
-            lv_obj_get_style_pad_top(card, 0) + lv_obj_get_style_pad_bottom(card, 0) +
-            2 * lv_obj_get_style_border_width(card, 0) + lv_obj_get_style_pad_row(card, 0);
-        int visible = 0;
-        for (uint32_t j = 0; j < lv_obj_get_child_count(body); j++) {
-            lv_obj_t *child = lv_obj_get_child(body, j);
-            if (lv_obj_has_flag(child, LV_OBJ_FLAG_HIDDEN)) continue;
-            needed += lv_obj_get_style_flex_grow(child, 0) ?
-                      lv_obj_get_style_min_height(child, 0) : lv_obj_get_height(child);
-            visible++;
-        }
-        if (visible > 1) needed += (visible - 1) * lv_obj_get_style_pad_row(body, 0);
+        int32_t needed = overview_card_min_height(card);
         lv_obj_set_style_min_height(card, needed, 0);
         strip_min = stacked ? strip_min + needed : LV_MAX(strip_min, needed);
     }
@@ -4256,8 +4253,8 @@ static void overview_refresh(const fnos_status_t *st)
     bool storage_live = storage && overview_live(st, "vols");
     (storage_live ? set_num : set_txt)(s_ui.capacity, "%s", storage ? fmt_cap(b, sizeof b, used) : "--");
     lv_obj_set_style_text_color(s_ui.capacity, uk_c(storage_live ? UK_T1 : UK_T3), 0);
-    if (storage) set_num(s_ui.capacity_detail, "/ %s", fmt_cap(c1, sizeof c1, total));
-    else set_num(s_ui.capacity_detail, "%s", st->ever_ok ? "没有可用容量数据" : "等待存储数据");
+    if (storage) (storage_live ? set_num : set_txt)(s_ui.capacity_detail, "/ %s", fmt_cap(c1, sizeof c1, total));
+    else set_txt(s_ui.capacity_detail, "%s", st->ever_ok ? "没有可用容量数据" : "等待存储数据");
     show(s_ui.capacity_bar, storage);
     uk_meter_set(s_ui.capacity_bar, (total > 0 ? gauge_value(used / total * 100) : 0) * UK_METER_SCALE, storage_live);
     lv_obj_set_style_bg_color(s_ui.capacity_bar, uk_c(storage_live ? UK_S_CPU : UK_OFF), LV_PART_INDICATOR);

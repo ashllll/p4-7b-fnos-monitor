@@ -220,6 +220,7 @@ bash nas/fpk/test_lifecycle.sh
 | [docs/ui-cuktech-2026-10-14.md](docs/ui-cuktech-2026-10-14.md) | 当前横屏仪表界面合同 |
 | [docs/ui-ammeter-motion-2026-10-14.md](docs/ui-ammeter-motion-2026-10-14.md) | 连续阻尼参数、实现与阶段验证 |
 | [docs/ui-post-motion-audit-2026-10-14.md](docs/ui-post-motion-audit-2026-10-14.md) | 最新缺陷回归、烧录及验收边界 |
+| [docs/skills-workflow-2026-10-14.md](docs/skills-workflow-2026-10-14.md) | Skills 全流程复核、追加修复与最新验证 |
 | [docs/adr/](docs/adr/README.md) | 架构决策、取舍和编号索引 |
 | [GLOSSARY.md](GLOSSARY.md) | 采集状态、读数与健康结论的领域术语 |
 | [docs/agents/](docs/agents/domain.md) | skills 的领域文档、任务入口与分诊约定 |

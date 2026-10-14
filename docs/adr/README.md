@@ -4,6 +4,8 @@
 
 工程 skills 的领域文档消费规则见 [domain.md](../agents/domain.md)，任务入口见 [issue-tracker.md](../agents/issue-tracker.md)，分诊角色见 [triage-labels.md](../agents/triage-labels.md)。
 
+本轮完整流程、追加修复与最新验证见 [Skills 全流程复核](../skills-workflow-2026-10-14.md)。
+
 | ADR | 决策 |
 | --- | --- |
 | [0001](0001-native-instrument-ui.md) | 通过共享原生 LVGL 构件统一横屏仪表界面 |

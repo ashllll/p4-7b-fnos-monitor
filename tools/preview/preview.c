@@ -14,6 +14,7 @@
 #include <string.h>
 #include <time.h>
 #include <math.h>
+#include <float.h>
 #include <sys/stat.h>
 
 #include "lvgl.h"
@@ -1807,6 +1808,10 @@ static void verify_module_freshness(void)
     fixture.cpu.temp_c = 85;
     regression_tick();
     assert(visible_text(lv_screen_active(), "85°C\n关注 1 路"));
+    fnos_status_text(&fixture, &fixture.mods[cpu].status, "stale");
+    regression_tick();
+    assert(visible_text(lv_screen_active(), "旧值 85°C\n关注 1 路 · 旧值"));
+    fnos_status_text(&fixture, &fixture.mods[cpu].status, "ok");
     fnos_status_text(&fixture, &fixture.mods[temps].status, "stale");
     for (int i = 0; i < fixture.ntemps; i++) fixture.temps[i].c = 80;
     regression_tick();
@@ -1817,8 +1822,40 @@ static void verify_module_freshness(void)
     fnos_ui_set_page(4); regression_tick();
     assert(!visible_text(lv_screen_active(), "80.0"));
     assert(visible_text(lv_screen_active(), "没权限"));
+    fnos_status_text(&fixture, &fixture.mods[temps].status, "ok");
+    for (int i = 0; i < fixture.ntemps; i++) fixture.temps[i].c = 30000000.f;
+    regression_tick();
+    value = visible_text(lv_screen_active(), "30000000.0");
+    assert(value);
+    lv_obj_t *bar = overview_object("设备温度", &lv_bar_class);
+    assert(bar && lv_bar_get_value(bar) == lv_bar_get_max_value(bar));
+    for (int i = 0; i < fixture.ntemps; i++) fixture.temps[i].c = FLT_MAX;
+    regression_tick();
+    assert(lv_bar_get_value(bar) == lv_bar_get_max_value(bar));
+    for (int i = 0; i < fixture.ntemps; i++) fixture.temps[i].c = -5;
+    regression_tick();
+    assert(lv_bar_get_value(bar) == 0);
+    for (int i = 0; i < fixture.ntemps; i++) fixture.temps[i].c = 0;
+    regression_tick();
+    assert(lv_bar_get_value(bar) == 0);
+    fnos_status_text(&fixture, &fixture.mods[temps].status, "denied");
     fnos_status_text(&fixture, &fixture.mods[vols].status, "stale");
     fnos_status_text(&fixture, &fixture.mods[raid].status, "stale");
+    if (fnos_ui_refresh_period_ms() < UK_NUMBER_PRESENT_MS) {
+        const int nvols = fixture.nvols;
+        const float total = fixture.vols[0].total_gb;
+        fixture.nvols = 1;
+        fixture.vols[0].total_gb = 2048;
+        fnos_ui_set_page(0); regression_tick();
+        assert(visible_text(lv_screen_active(), "/ 2.0 TB"));
+        vtick_advance(UK_NUMBER_PRESENT_MS); lv_timer_handler();
+        fixture.vols[0].total_gb = 3072;
+        vtick_advance(fnos_ui_refresh_period_ms()); lv_timer_handler();
+        assert(visible_text(lv_screen_active(), "/ 3.0 TB"));
+        assert(!visible_text(lv_screen_active(), "/ 2.0 TB"));
+        fixture.nvols = nvols;
+        fixture.vols[0].total_gb = total;
+    }
     fnos_ui_set_page(1); regression_tick();
     value = visible_text(lv_screen_active(), "17.8 TB");
     assert(value && lv_color_eq(lv_obj_get_style_text_color(value, 0), uk_c(UK_T3)));
