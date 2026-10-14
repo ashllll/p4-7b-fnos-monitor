@@ -1,0 +1,196 @@
+{
+  "rendered_on": "2026-10-14",
+  "ui_source_commit": "a4bfd51439fed2c6221b47fbd376aca412957760",
+  "fixture_path": "tools/preview/preview.c",
+  "fixture_sha256": "5e13be04974a55f6ab736c1b0c9d0966dfb08d1826044249d0c225b010c28349",
+  "renderer": "native LVGL 9.5, RGB565, synthetic host fixtures",
+  "width": 1024,
+  "height": 600,
+  "data": "synthetic fixture values, generic device/service/network names, fixed fake certificate fingerprint",
+  "ui_config": {
+    "CONFIG_FNOS_UI_REFRESH_MS": "100",
+    "CONFIG_FNOS_UI_TREND_SMOOTH_SAMPLES": "3",
+    "CONFIG_FNOS_UI_TREND_SCROLL_MS": "2000",
+    "CONFIG_FNOS_UI_TREND_FPS": "30",
+    "CONFIG_FNOS_UI_TEXT_SCRATCH_BYTES": "256",
+    "CONFIG_FNOS_UI_NUMBER_BUDGET_BYTES": "131072",
+    "CONFIG_FNOS_UI_NUMBER_MS": "450",
+    "CONFIG_FNOS_UI_TELEMETRY_DAMPING": "8",
+    "CONFIG_FNOS_UI_NUMBER_PRESENT_MS": "600",
+    "CONFIG_FNOS_UI_NUMBER_STAGGER_MS": "0",
+    "CONFIG_FNOS_UI_NUMBER_MAX_STAGGER_MS": "0",
+    "CONFIG_FNOS_UI_NUMBER_TRAVEL_PCT": "4",
+    "CONFIG_FNOS_UI_NUMBER_BLUR_PCT": "0",
+    "CONFIG_FNOS_UI_USAGE_WARM": "80",
+    "CONFIG_FNOS_UI_USAGE_HIGH": "90",
+    "CONFIG_FNOS_UI_TEMP_WARM": "75",
+    "CONFIG_FNOS_UI_TEMP_HIGH": "80",
+    "CONFIG_FNOS_UI_LIST_MIN_WIDTH": "260",
+    "CONFIG_FNOS_PALETTE": "cuktech-console"
+  },
+  "palette": "cuktech-console",
+  "ui_source_state": "ULTRA default-theme release worktree based on ui_source_commit; exact sources identified by ui_source_sha256",
+  "render_command": "env -u KK_PALETTE bash tools/preview/run.sh out-ultra-publish-20261014",
+  "ui_source_sha256": {
+    "components/fnos_monitor/fnos_ui.c": "44d8a1ab94b0b848a29fb688ba4adf515af31061c8643b37ebc8cae778484c6e",
+    "components/fnos_monitor/ui_kit/uk.c": "e96872e92b4a4dcf33c5020fbb371175a4dd66fa142efaa60a2e7f75aed94943",
+    "components/fnos_monitor/ui_kit/uk_theme.c": "1aba6dd597c89774267f62d34fcf758deded15af5a67f1a2520e0032d3153139",
+    "components/fnos_monitor/ui_kit/uk_theme.h": "9efb9541bb9ac7e588e67520576fe77b305e4ec0d58141a144d214f27e72037e",
+    "components/fnos_monitor/Kconfig": "c4fa25eed89dc6d0695e31d542981cb0c8376664181a02dc58ee3de76282651b",
+    "tools/preview/palette_check.py": "a485b6946b4893ccf709c1c2e809cd806fedb0342e886115dbe9d7b50f72507b",
+    "components/fnos_monitor/ui_kit/uk.h": "d86194b2a6e86bd117dfd4b1b51735e2641e39ef9c6145f4872782bc66640569",
+    "tools/preview/preview.c": "5e13be04974a55f6ab736c1b0c9d0966dfb08d1826044249d0c225b010c28349",
+    "tools/preview/run.sh": "740f22f765c8d58f84c5cfa30eb5e7d8b47b164c89221ad38b786cf2768a5f93",
+    "sdkconfig.defaults": "95d4c9f6981ed6bfc7ba13f802c3f3160c205f4b0282855fb16987a6e53654d5"
+  },
+  "images": [
+    {
+      "file": "overview.png",
+      "title": "总览",
+      "source_frame": "04-healthy-p0.png",
+      "sha256": "2e509a79ac5c4c853cd7ef2c4c36d46cba2132e4ab161d32cab42d00b172d228",
+      "bytes": 25423
+    },
+    {
+      "file": "storage.png",
+      "title": "存储",
+      "source_frame": "04-healthy-p1.png",
+      "sha256": "7274ecfa78aac5f17357586c59945212220d3f3a522e087618b2c79a8dbc3825",
+      "bytes": 22111
+    },
+    {
+      "file": "network.png",
+      "title": "网络",
+      "source_frame": "04-healthy-p2.png",
+      "sha256": "217e0753f34559b2fbcc05ff9a1832580eae417043af6780bd60c612b66aaeef",
+      "bytes": 26472
+    },
+    {
+      "file": "system.png",
+      "title": "系统",
+      "source_frame": "04-healthy-p3.png",
+      "sha256": "1eb2b6e8a611f7055ba317ff1ab2fde7f06d1c7362d21ee08e1dcf0a9cba0489",
+      "bytes": 25705
+    },
+    {
+      "file": "temperature.png",
+      "title": "温度",
+      "source_frame": "04-healthy-p4.png",
+      "sha256": "d0c53f337522275dc07c9ecb6dd06a59dc5cf812109be1e94a4ee5b78e17bec6",
+      "bytes": 15459
+    },
+    {
+      "file": "alerts.png",
+      "title": "告警",
+      "source_frame": "02-live-p5.png",
+      "sha256": "963b8dd58dfbf14528e68c0bf48736a19a682c1d7e9d0da887c723752de70fed",
+      "bytes": 15912
+    },
+    {
+      "file": "wifi-scan.png",
+      "title": "Wi-Fi 扫描",
+      "source_frame": "10-wifi-scan.png",
+      "sha256": "377a6300eff364b7a45f91a057db06b243426cb57d1d8dd5da1ff2a211659508",
+      "bytes": 18672
+    },
+    {
+      "file": "wifi-keyboard.png",
+      "title": "Wi-Fi 键盘",
+      "source_frame": "10-wifi-pass.png",
+      "sha256": "18630e78cc60a7bf04ab3574240f33e99677b1d9b18af79c73cf5882bb2fb750",
+      "bytes": 19207
+    },
+    {
+      "file": "pairing.png",
+      "title": "配对码",
+      "source_frame": "07-pair-code.png",
+      "sha256": "0609291654587b79171db3d925a62f5a42eb66ed7a4f022bc91c5bec00a1fd38",
+      "bytes": 22619
+    },
+    {
+      "file": "pairing-certificate.png",
+      "title": "证书核对",
+      "source_frame": "07-pair-confirm.png",
+      "sha256": "f2ab1fec1d67612b08097fc69250374163aed582887c055975636420d43ed760",
+      "bytes": 28668
+    },
+    {
+      "file": "volume-detail.png",
+      "title": "卷详情",
+      "source_frame": "13-volume-detail.png",
+      "sha256": "cfa598528275aa2675a1defaa49fe23f6aff0021b82b6425c5f87c9146930ae9",
+      "bytes": 17636
+    },
+    {
+      "file": "container-detail.png",
+      "title": "容器详情",
+      "source_frame": "13-container-detail.png",
+      "sha256": "601ec261e830b934ef65857924f074392dbcc2f7613112728b5efe1460fae866",
+      "bytes": 20172
+    },
+    {
+      "file": "diagnostics.png",
+      "title": "设置与诊断",
+      "source_frame": "06-diagnostics.png",
+      "sha256": "ce7b77431529610302860fbfe07aced451602964b5c2a5bacfe74ea98221873b",
+      "bytes": 15794
+    },
+    {
+      "file": "night.png",
+      "title": "夜间总览",
+      "source_frame": "08-night-p0.png",
+      "sha256": "9877a2fefeba867e4c780e18741cdcf03319a08670ab6054c560ee4e71478766",
+      "bytes": 25025
+    },
+    {
+      "file": "health-summary.png",
+      "title": "无告警体检",
+      "source_frame": "06-alerts-health.png",
+      "sha256": "d2ca604c9b5ecbfbc9d1603c8fb6c0f05e0709c1ac6fc46c00497e3145463396",
+      "bytes": 18436
+    },
+    {
+      "file": "usage-low.png",
+      "title": "低占用 · 总览",
+      "source_frame": "16-usage-low.png",
+      "sha256": "29ffb7eff59a18d0ea0f186742ab173120294e72c34469d3803a50c6df00ca9a",
+      "bytes": 23539
+    },
+    {
+      "file": "usage-low-storage.png",
+      "title": "低占用 · 存储",
+      "source_frame": "16-usage-low-storage.png",
+      "sha256": "a9e25b960aa78c1f74d4a37cc0d64946b9e09506edf5f579b6677bf59869cdd9",
+      "bytes": 19129
+    },
+    {
+      "file": "usage-warn.png",
+      "title": "提醒阈值 · 总览",
+      "source_frame": "16-usage-warn.png",
+      "sha256": "9aa736eb60249acb37781eea2f775a1045531a48138288d9b07020a9d3c7a40b",
+      "bytes": 23656
+    },
+    {
+      "file": "usage-warn-storage.png",
+      "title": "提醒阈值 · 存储",
+      "source_frame": "16-usage-warn-storage.png",
+      "sha256": "e3a2deeee086e7924c2455e1da18e2a7590a4a92662afbefaf4adfd6106b7263",
+      "bytes": 19277
+    },
+    {
+      "file": "usage-high.png",
+      "title": "接近上限 · 总览",
+      "source_frame": "16-usage-high.png",
+      "sha256": "ac2c5ac12c6526bcfa29359e8406fc4660e024284c2a7e2f91935d2ee9049400",
+      "bytes": 23533
+    },
+    {
+      "file": "usage-high-storage.png",
+      "title": "接近上限 · 存储",
+      "source_frame": "16-usage-high-storage.png",
+      "sha256": "ff91400c368e64fad56c881a611805748e8cc183ab4c168e0d7c1d4f2471a9ec",
+      "bytes": 19064
+    }
+  ],
+  "visual_reference": "User-supplied ULTRA product image plus explicit blue/yellow and red saturation corrections; adapted tokens, not measured panel RGB"
+}

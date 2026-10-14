@@ -1316,6 +1316,7 @@ static void entity_open_cb(lv_event_t *e)
     set_txt(s_ui.detail_name, "%s", lv_label_get_text(row->name1));
     set_txt(s_ui.detail_meta, "%s", lv_label_get_text(row->name2));
     set_txt(s_ui.detail_value, "%s %s", lv_label_get_text(row->val), lv_label_get_text(row->unit));
+    lv_obj_set_style_text_color(s_ui.detail_value, lv_obj_get_style_text_color(row->val, 0), 0);
     set_txt(s_ui.detail_context, "%s · 打开时快照 · %s", NAV_TXT[s_page],
             s_st.online ? "采集在线" : "采集不可用，保留上次读数");
     if (uk_alloc_failed()) {
@@ -1656,8 +1657,9 @@ static void build_p2(lv_obj_t *page)
         lv_obj_set_style_text_font(s_ui.kpi2[i]->label, UK_FONT_CJK_16, 0);
         lv_obj_set_style_text_font(s_ui.kpi2[i]->val, i < 2 ? UK_FONT_NUM_44 : UK_FONT_NUM_32, 0);
         if (s_ui.ncards < UI_CARDS) s_ui.cards[s_ui.ncards++] = s_ui.kpi2[i]->box;
-        /* 数值色 = 曲线色：上行紫、下行青，和趋势图两条线一一对应 */
-        lv_obj_set_style_text_color(s_ui.kpi2[i]->val, uk_c(tcol[i]), 0);
+        /* White readings stay primary; labels and edges identify each history. */
+        lv_obj_set_style_text_color(s_ui.kpi2[i]->val, uk_c(UK_T1), 0);
+        lv_obj_set_style_text_color(s_ui.kpi2[i]->label, uk_c(tcol[i]), 0);
         if (i < 2) {
             lv_obj_set_style_border_side(s_ui.kpi2[i]->box, LV_BORDER_SIDE_LEFT, 0);
             lv_obj_set_style_border_width(s_ui.kpi2[i]->box, UK_NAV_ICON_STROKE, 0);
@@ -4187,7 +4189,10 @@ static void overview_refresh(const fnos_status_t *st)
         else (live ? set_num : set_txt)(r->meta, "可用 %.1f / %.1fG · 交换 %.1fG", st->mem.avail_mb / 1024.f, st->mem.total_mb / 1024.f, st->mem.swap_used_mb / 1024.f);
         set_txt(uk_card_note(r->card), "%s", live ? "" : readable ? "旧值" : "不可用");
         uk_meter_set(r->gauge, readable ? (int32_t)lroundf(fminf(100, fmaxf(0, pct)) * UK_METER_SCALE) : 0, live);
-        lv_obj_set_style_arc_color(r->gauge, uk_c(live ? (i == 0 ? UK_S_CPU : UK_S_MEM) : UK_OFF), LV_PART_INDICATOR);
+        const uint32_t usage_color = live ? uk_pct_color(pct) : UK_OFF;
+        lv_obj_set_style_arc_color(r->gauge, uk_c(usage_color), LV_PART_INDICATOR);
+        /* History keeps its metric identity; only the current gauge encodes load. */
+        lv_chart_set_series_color(r->chart, uk_trend_series(r->chart, 0), uk_c(i == 0 ? UK_S_CPU : UK_S_MEM));
         show(r->meta, !readable);
         show(r->context, !live || !chart_sample_count(r->chart));
         lv_obj_set_style_text_color(r->value, uk_c(live ? UK_T1 : UK_T3), 0);
@@ -4235,7 +4240,7 @@ static void overview_refresh(const fnos_status_t *st)
     const bool docker_readable = overview_readable(st, "docker");
     const bool docker_live = docker_readable && overview_live(st, "docker");
     (docker_live ? set_num : set_txt)(s_ui.overview_services, docker_readable ? "%d/%d" : "--", running, st->ndocker);
-    lv_obj_set_style_text_color(s_ui.overview_services, uk_c(!docker_live ? UK_T3 : running == st->ndocker ? UK_OK : UK_WARN), 0);
+    lv_obj_set_style_text_color(s_ui.overview_services, uk_c(docker_live ? UK_T1 : UK_T3), 0);
     set_txt(s_ui.overview_service_note, "%s", !docker_readable ? "容器不可用" : !docker_live ? "旧值" : !st->ndocker ? "未发现容器" : running == st->ndocker ? "全部运行" : "部分停止");
 
     double used = 0, total = 0;
@@ -4257,7 +4262,7 @@ static void overview_refresh(const fnos_status_t *st)
     else set_txt(s_ui.capacity_detail, "%s", st->ever_ok ? "没有可用容量数据" : "等待存储数据");
     show(s_ui.capacity_bar, storage);
     uk_meter_set(s_ui.capacity_bar, (total > 0 ? gauge_value(used / total * 100) : 0) * UK_METER_SCALE, storage_live);
-    lv_obj_set_style_bg_color(s_ui.capacity_bar, uk_c(storage_live ? UK_S_CPU : UK_OFF), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(s_ui.capacity_bar, uk_c(storage_live ? uk_pct_color(used / total * 100) : UK_OFF), LV_PART_INDICATOR);
     int count = storage ? st->nvols : 0;
     if (count > s_ui.overview_volume_capacity) {
         overview_volume_t *grown = uk_realloc(s_ui.overview_volume, (size_t)count * sizeof *grown);
@@ -4293,8 +4298,8 @@ static void overview_refresh(const fnos_status_t *st)
         (storage_live ? set_num : set_txt)(row->value, vol->total_gb > 0 ? "%.0f%%" : "--", vol->pct);
         show(row->bar, vol->total_gb > 0);
         uk_meter_set(row->bar, gauge_value(vol->pct) * UK_METER_SCALE, storage_live);
-        lv_obj_set_style_bg_color(row->bar, uk_c(storage_live ? UK_S_CPU : UK_OFF), LV_PART_INDICATOR);
-        lv_obj_set_style_text_color(row->value, uk_c(storage_live ? uk_pct_color(gauge_value(vol->pct)) : UK_T3), 0);
+        lv_obj_set_style_bg_color(row->bar, uk_c(storage_live ? uk_pct_color(vol->pct) : UK_OFF), LV_PART_INDICATOR);
+        lv_obj_set_style_text_color(row->value, uk_c(storage_live ? UK_T1 : UK_T3), 0);
         not_clickable(row->box);
     }
     for (int i = count; i < s_ui.overview_volume_made; i++) {
@@ -4590,7 +4595,7 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
         if (s_ui.storage_bar) {
             int32_t pct = (readable && st->nvols && total > 0) ? gauge_value(used / total * 100.0 + 0.5) : 0;
             uk_meter_set(s_ui.storage_bar, LV_MAX(0,pct) * UK_METER_SCALE, live);
-            lv_obj_set_style_bg_color(s_ui.storage_bar, uk_c(live ? uk_pct_color(pct) : UK_OFF), LV_PART_INDICATOR);
+            lv_obj_set_style_bg_color(s_ui.storage_bar, uk_c(live && total > 0 ? uk_pct_color(used / total * 100) : UK_OFF), LV_PART_INDICATOR);
         }
     }
     if (page == 0) {
@@ -4660,8 +4665,8 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
                  fmt_cap(c1, sizeof c1, v->free_gb), fmt_cap(c2, sizeof c2, v->total_gb),
                  v->fs[0] ? v->fs : "-");
         snprintf(c1, sizeof c1, "%.0f%%", v->pct);
-        /* 条色/数字色都走配置后的 uk_pct_color，
-           与旧实现的 80/90 不一致是**有意改的**：全项目只能有一套阈值。
+        /* 条色走配置后的 uk_pct_color，读数保持白色：
+           全项目只能有一套阈值，颜色限于局部仪表。
            百分号写在数值里（val = "54%"）而不是拆到 unit：预览会断言
            "54%" 这个**整串**在屏幕上，拆成两个 label 就找不到了。 */
         /* 副行交给 uk_row_set（它会把 name2 也走数字过渡）；再 set_txt 覆盖一遍
@@ -4672,8 +4677,8 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
             uk_anim_settle(row->row);
         }
         show(row->name2, false);
-        lv_obj_set_style_text_color(row->val, uk_c(vols_live ? uk_pct_color(gauge_value(v->pct)) : UK_T3), 0);
-        lv_obj_set_style_bg_color(row->bar, uk_c(vols_live ? uk_pct_color(gauge_value(v->pct)) : UK_OFF), LV_PART_INDICATOR);
+        lv_obj_set_style_text_color(row->val, uk_c(vols_live ? UK_T1 : UK_T3), 0);
+        lv_obj_set_style_bg_color(row->bar, uk_c(vols_live ? uk_pct_color(v->pct) : UK_OFF), LV_PART_INDICATOR);
     }
     pool_layout(&s_p1_vol_n, &s_p1_vol_w, &s_p1_vol_h, nvol, s_ui.vol_pool, UK_ENTITY_MIN_WIDTH, false, NULL);
 
@@ -4781,7 +4786,6 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
         rate_split(nb, &v, &u);
         uk_kpi_set(s_ui.kpi2[2], v, u, st->net.ifname[0] ? st->net.ifname : "—", -1);
 
-        const uint32_t colors[] = {UK_S_UP, UK_S_DOWN, UK_T1};
         for (int i = 0; i < 3; i++) {
             uk_kpi_t *k = s_ui.kpi2[i];
             if (!k) continue;
@@ -4793,7 +4797,7 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
                 uk_number_set_reading(k->val, k->unit, net_readable ? v : "--", net_readable ? u : "", false);
                 uk_anim_settle(k->box);
             }
-            lv_obj_set_style_text_color(k->val, uk_c(net_live ? colors[i] : UK_T3), 0);
+            lv_obj_set_style_text_color(k->val, uk_c(net_live ? UK_T1 : UK_T3), 0);
         }
 
         snprintf(nb, sizeof nb, "%d ms", st->http_ms);

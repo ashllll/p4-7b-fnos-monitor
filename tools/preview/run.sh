@@ -146,6 +146,7 @@ python3 ppm2png.py "$OUT_REAL"
 # reflow. Keep this regression in the normal gate rather than a manual-only mode.
 env $(preview_env_args) PREVIEW_REFRESH_WORK=1 ./build/preview "$OUT_REAL/refresh-work"
 python3 ppm2png.py "$OUT_REAL/refresh-work"
+python3 palette_check.py "$OUT_REAL"
 
 # snapshot_check 是 ownership / 并发 / 容量预算三项验收的**唯一**自动化证据。
 # 以前 CMake 建了它、run.sh 却只编译 preview、从不执行（审计 M16），唯一执行处是

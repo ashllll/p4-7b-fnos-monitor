@@ -44,18 +44,22 @@ menu "fnOS monitor"
             平时保持 0，交给你自己点导航/滑动翻页。
 
     config FNOS_PALETTE
-        string "配色方案（cuktech / unifi / device / graphite / abyss / phosphor）"
-        default "cuktech"
+        string "主题（cuktech / unifi / cuktech-console / device / graphite / abyss / phosphor）"
+        default "cuktech-console"
         help
             预置配色见 components/fnos_monitor/ui_kit/uk_theme.c：
-              cuktech   近黑仪表、青蓝数据色与黄色焦点（默认）
-              unifi     UniFi Network 深色配色
-              device    深紫画布 + 薄荷绿 / 桃橙（旧参考设备）
-              graphite  中性石墨蓝灰
-              abyss     深空蓝 + 青，像网络运维终端
-              phosphor  近黑 + 磷光绿，对比度最高
-            配色只管颜色：版面几何全在 ui_kit/（LVGL 原生 flex，不推导坐标），与配色无关
-            —— 换配色不会挪动任何一个元素。名字写错会退回 cuktech（设备照样能开机）。
+              cuktech          暖黑仪表、象牙白与香槟金（历史备选）
+              unifi            中性深灰控制台、白色强调与分隔线清单
+              cuktech-console  ULTRA 参考：黑底白字，冰青/蓝强调、局部橙色（默认）
+              device           暖黑与铜色
+              graphite         暖中性石墨
+              abyss            深黑与暖金
+              phosphor         橄榄暖黑
+            主题集中控制配色、圆角和清单视觉；页面由 ui_kit/ 原生 LVGL flex 排版。
+            占用率阈值由 FNOS_UI_USAGE_WARM/HIGH 控制，颜色来自当前主题。
+            cuktech-console 低占用为冰青，提醒为蓝色，接近上限为朱红。
+            状态色用于圆弧与进度条，历史曲线保持指标身份色；避免紫色。
+            名字写错会退回 cuktech-console（设备照样能开机）。
 
     config FNOS_STATUS_MAX_BYTES
         int "Maximum telemetry response bytes"

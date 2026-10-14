@@ -6,16 +6,16 @@
 <title>从 NAS 数据，到桌面仪表</title>
 <style>
 * { box-sizing: border-box; }
-body { margin: 0; padding: 24px; background: #000000; color: #F5F7FA; font-family: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif; }
+body { margin: 0; padding: 24px; background: #000000; color: #F8F8F8; font-family: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif; }
 .frame { max-width: 960px; min-width: 0; margin: 0 auto; }
 .diagram-container { width: 100%; overflow-x: auto; }
 svg { width: 100%; min-width: 960px; display: block; }
-svg text { font-family: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif; fill: #F5F7FA; font-size: 12px; }
+svg text { font-family: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif; fill: #F8F8F8; font-size: 12px; }
 svg .heading { font-size: 28px; font-weight: 600; }
 svg .name { font-size: 20px; font-weight: 600; }
-svg .caption { fill: #A5B4C2; font-size: 14px; font-weight: 500; }
-svg .tech { font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace; fill: #D4DFE8; font-size: 12px; }
-svg .tag { font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace; fill: #A5B4C2; font-size: 8px; letter-spacing: 1px; }
+svg .caption { fill: #B8B8B8; font-size: 14px; font-weight: 500; }
+svg .tech { font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace; fill: #E0E0E0; font-size: 12px; }
+svg .tag { font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace; fill: #B8B8B8; font-size: 8px; letter-spacing: 1px; }
 @media print { body { padding: 0; } .diagram-container { overflow-x: visible; } svg { min-width: 0; } }
 </style>
 </head>
@@ -27,31 +27,31 @@ svg .tag { font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace; fil
 <desc id="runtime-data-flow-desc">NAS 应用采集本机状态，可选 Docker 辅助进程提供容器数据；开发板主动通过 HTTPS 请求遥测，解析为快照后由 LVGL 线程显示。</desc>
 <defs>
 <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-<polygon points="0 0, 8 3, 0 6" fill="#D4DFE8"/>
+<polygon points="0 0, 8 3, 0 6" fill="#E0E0E0"/>
 </marker>
 <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-<polygon points="0 0, 8 3, 0 6" fill="#FFC800"/>
+<polygon points="0 0, 8 3, 0 6" fill="#75BFFF"/>
 </marker>
 <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-<polygon points="0 0, 8 3, 0 6" fill="#37C4D6"/>
+<polygon points="0 0, 8 3, 0 6" fill="#8ED7E5"/>
 </marker>
 </defs>
 <rect width="960" height="680" fill="#000000"/>
 <text x="40" y="32" text-anchor="start" class="tag">FNOS MONITOR / RUNTIME DATA FLOW</text>
 <text x="40" y="68" text-anchor="start" class="heading">从 NAS 数据，到桌面仪表</text>
 <text x="40" y="96" text-anchor="start" class="caption">管理页与遥测分属两条通路 · UI 读取快照，网络请求由轮询任务完成</text>
-<rect x="40" y="120" width="568" height="360" rx="8" fill="#04080C" stroke="#25313E"/>
-<rect x="696" y="120" width="224" height="456" rx="8" fill="#04080C" stroke="#25313E"/>
+<rect x="40" y="120" width="568" height="360" rx="8" fill="#0E0D0B" stroke="#282828"/>
+<rect x="696" y="120" width="224" height="456" rx="8" fill="#0E0D0B" stroke="#282828"/>
 <text x="56" y="144" text-anchor="start" class="tag">NAS / fnOS</text>
 <text x="712" y="144" text-anchor="start" class="tag">ESP32-P4 / LVGL</text>
 <!-- Orthogonal routes, distinct ports, and a separate HTTPS return path. -->
-<path d="M 248,188 H 296 Q 304,188 304,196 V 260 Q 304,268 312,268 H 376" fill="none" stroke="#D4DFE8" stroke-width="1.2" marker-end="url(#arrow)"/>
-<path d="M 248,292 H 376" fill="none" stroke="#D4DFE8" stroke-width="1.2" marker-end="url(#arrow)" stroke-dasharray="4,3"/>
-<path d="M 248,408 H 328 Q 336,408 336,400 V 324 Q 336,316 344,316 H 376" fill="none" stroke="#D4DFE8" stroke-width="1.2" marker-end="url(#arrow)"/>
-<path d="M 712,276 H 584" fill="none" stroke="#37C4D6" stroke-width="1.2" marker-end="url(#arrow-link)"/>
-<path d="M 584,308 H 712" fill="none" stroke="#37C4D6" stroke-width="1.2" marker-end="url(#arrow-link)" stroke-dasharray="4,3"/>
-<path d="M 808,340 V 392" fill="none" stroke="#D4DFE8" stroke-width="1.2" marker-end="url(#arrow)"/>
-<path d="M 808,456 V 488" fill="none" stroke="#D4DFE8" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M 248,188 H 296 Q 304,188 304,196 V 260 Q 304,268 312,268 H 376" fill="none" stroke="#E0E0E0" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M 248,292 H 376" fill="none" stroke="#E0E0E0" stroke-width="1.2" marker-end="url(#arrow)" stroke-dasharray="4,3"/>
+<path d="M 248,408 H 328 Q 336,408 336,400 V 324 Q 336,316 344,316 H 376" fill="none" stroke="#E0E0E0" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M 712,276 H 584" fill="none" stroke="#8ED7E5" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+<path d="M 584,308 H 712" fill="none" stroke="#8ED7E5" stroke-width="1.2" marker-end="url(#arrow-link)" stroke-dasharray="4,3"/>
+<path d="M 808,340 V 392" fill="none" stroke="#E0E0E0" stroke-width="1.2" marker-end="url(#arrow)"/>
+<path d="M 808,456 V 488" fill="none" stroke="#E0E0E0" stroke-width="1.2" marker-end="url(#arrow)"/>
 <g data-role="edge-label">
 <rect x="256" y="156" width="48" height="24" rx="2" fill="#000000"/>
 <text x="280.0" y="173" text-anchor="middle" class="caption">采集</text>
@@ -82,42 +82,42 @@ svg .tag { font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace; fil
 </g>
 <!-- Nodes paint over their own endpoints only. -->
 <g data-node-id="localMetrics">
-<rect x="56" y="156" width="192" height="64" rx="6" fill="#080D12" stroke="#A5B4C2"/>
+<rect x="56" y="156" width="192" height="64" rx="6" fill="#101010" stroke="#B8B8B8"/>
 <text x="152.0" y="184" text-anchor="middle" class="name">Linux 本机状态</text>
 <text x="152.0" y="208" text-anchor="middle" class="caption">负载、网络、存储、温度</text>
 </g>
 <g data-node-id="dockerHelper">
-<rect x="56" y="260" width="192" height="64" rx="6" fill="#080D12" stroke="#A5B4C2" stroke-dasharray="4,3"/>
+<rect x="56" y="260" width="192" height="64" rx="6" fill="#101010" stroke="#B8B8B8" stroke-dasharray="4,3"/>
 <text x="152.0" y="288" text-anchor="middle" class="name">Docker 辅助进程</text>
 <text x="152.0" y="312" text-anchor="middle" class="caption">只读 · 显式启用</text>
 </g>
 <g data-node-id="management">
-<rect x="56" y="376" width="192" height="64" rx="6" fill="#080D12" stroke="#A5B4C2"/>
+<rect x="56" y="376" width="192" height="64" rx="6" fill="#101010" stroke="#B8B8B8"/>
 <text x="152.0" y="404" text-anchor="middle" class="name">飞牛桌面管理页</text>
 <text x="152.0" y="428" text-anchor="middle" class="caption">配置、配对与诊断</text>
 </g>
 <g data-node-id="companion">
-<rect x="376" y="244" width="208" height="96" rx="6" fill="#080D12" stroke="#A5B4C2"/>
+<rect x="376" y="244" width="208" height="96" rx="6" fill="#101010" stroke="#B8B8B8"/>
 <text x="480.0" y="288" text-anchor="middle" class="name">飞牛监控应用</text>
 <text x="480.0" y="312" text-anchor="middle" class="caption">采集与遥测服务</text>
 </g>
 <g data-node-id="boardClient">
-<rect x="712" y="244" width="192" height="96" rx="6" fill="#080D12" stroke="#A5B4C2"/>
+<rect x="712" y="244" width="192" height="96" rx="6" fill="#101010" stroke="#B8B8B8"/>
 <text x="808.0" y="288" text-anchor="middle" class="name">遥测客户端</text>
 <text x="808.0" y="312" text-anchor="middle" class="caption">默认 HTTPS :8798</text>
 </g>
 <g data-node-id="snapshot">
-<rect x="712" y="392" width="192" height="64" rx="6" fill="#080D12" stroke="#A5B4C2"/>
+<rect x="712" y="392" width="192" height="64" rx="6" fill="#101010" stroke="#B8B8B8"/>
 <text x="808.0" y="420" text-anchor="middle" class="name">有效快照与历史</text>
 <text x="808.0" y="444" text-anchor="middle" class="caption">失败保留最后有效值</text>
 </g>
 <g data-node-id="instrument">
-<rect x="712" y="488" width="192" height="64" rx="6" fill="#24200A" stroke="#FFC800"/>
+<rect x="712" y="488" width="192" height="64" rx="6" fill="#181818" stroke="#75BFFF"/>
 <text x="808.0" y="516" text-anchor="middle" class="name">六页仪表与详情</text>
 <text x="808.0" y="540" text-anchor="middle" class="caption">由 LVGL 线程更新</text>
 </g>
-<line x1="40" y1="600" x2="920" y2="600" stroke="#25313E"/>
-<text x="40" y="628" text-anchor="start" class="caption">实线：请求或内部数据流　虚线：可选数据／响应　青色：HTTPS 通信；箭头表示方向</text>
+<line x1="40" y1="600" x2="920" y2="600" stroke="#282828"/>
+<text x="40" y="628" text-anchor="start" class="caption">实线：请求或内部数据流　虚线：可选数据／响应　请求与响应独立连线；箭头表示方向</text>
 </svg>
 </div>
 </main>

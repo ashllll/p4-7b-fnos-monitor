@@ -12,13 +12,13 @@ ESP32-P4 · 7 英寸触控 · 1024 × 600 · 原生 LVGL · HTTPS 配对
 
 </div>
 
-![fnOS Monitor 总览：CPU、内存、运行状态、网络、容量与最高温](docs/images/ui-2026-10-14/overview.png)
+![fnOS Monitor 总览：CPU、内存、运行状态、网络、容量与最高温](docs/images/ui-cuktech-ultra-2026-10-14/overview.png)
 
 **一个独立屏幕，持续呈现 NAS 的运行状态。** fnOS 配套应用负责采集，ESP32-P4 开发板负责显示；日常查看负载、传输、存储和温度，直接看仪表、趋势与状态。遇到异常，再进入对应页面和详情。
 
-本项目由开发板固件和飞牛配套应用组成。当前界面面向 **Waveshare ESP32-P4-WIFI6-Touch-LCD-7B 的 1024×600 横屏**，采用 CUKTECH 仪表语言、近黑背景与黄色交互焦点。
+本项目由开发板固件和飞牛配套应用组成。当前界面面向 **Waveshare ESP32-P4-WIFI6-Touch-LCD-7B 的 1024×600 横屏**，采用 CUKTECH ULTRA 参考语言：黑底、白色主读数、蓝色交互与提醒、冰青和少量橙色指标标识，朱红用于严重异常。
 
-> 图中均为当前源码通过真实 LVGL 渲染的演示画面，使用通用设备名称、合成读数和固定测试指纹；不是个人 NAS 快照或物理屏幕照片。[图片来源与复现](docs/images/ui-2026-10-14/README.md)。
+> 图中均为当前源码通过真实 LVGL 渲染的演示画面，使用通用设备名称、合成读数和固定测试指纹；不是个人 NAS 快照或物理屏幕照片。[图片来源与复现](docs/images/ui-cuktech-ultra-2026-10-14/README.md)。
 
 ## 产品特性
 
@@ -27,6 +27,8 @@ ESP32-P4 · 7 英寸触控 · 1024 × 600 · 原生 LVGL · HTTPS 配对
 | **六张首页状态卡**：CPU、内存、运行时长、服务、网络、容量与温度 | **六个专用页面**：总览、存储、网络、系统、温度和告警 | **状态分开表达**：实时、旧值、无数据、权限不足和离线 |
 | **真实采样趋势**：CPU、内存、温度；网速曲线集中在网络页 | **动态设备清单**：卷、阵列、磁盘、网口、容器和温度通道随数据创建 | **真实零值保留**：缺失和采集失败使用占位与原因 |
 | **连续阻尼读数**：数字、环表和条形顺滑跟随变化 | **筛选与只读详情**：长名称和长清单通过换行、滚动继续查看 | **HTTPS 设备配对**：在屏幕核对证书指纹，无需写入 NAS 管理员密码 |
+
+占用率默认低于 80% 显示冰青，80%–90% 显示蓝色，达到 90% 显示朱红；阈值可配置。历史曲线与主数字不随当前负载整块变色。[查看三档占用率与全部 21 张界面](docs/images/ui-cuktech-ultra-2026-10-14/README.md)。
 
 点击底部导航直达页面，横向拖动跟随手指；清单支持纵向滚动。温度多通道手动展开，设备身份与展开选择保持关联。夜间模式与显示参数可配置。
 
@@ -38,38 +40,38 @@ ESP32-P4 · 7 英寸触控 · 1024 × 600 · 原生 LVGL · HTTPS 配对
 
 已用、总量与可用空间集中呈现；按卷、阵列和磁盘筛选，查看占用、同步进度与读写活动。
 
-![存储界面：容量摘要、存储卷与阵列健康](docs/images/ui-2026-10-14/storage.png)
+![存储界面：容量摘要、存储卷与阵列健康](docs/images/ui-cuktech-ultra-2026-10-14/storage.png)
 
 ### 网络 · 看清收发与近期波动
 
 上行、下行、合计与采集延迟配合双线趋势；各接口展示链路状态和占用。**网速曲线仅在网络页显示。**
 
-![网络界面：收发速率、吞吐趋势与网络接口](docs/images/ui-2026-10-14/network.png)
+![网络界面：收发速率、吞吐趋势与网络接口](docs/images/ui-cuktech-ultra-2026-10-14/network.png)
 
 ### 系统 · 看清服务与硬件
 
 系统摘要、容器运行状态和硬件温度放在同一页；容器、硬件可分别筛选，资源字段按采集能力显示。
 
-![系统界面：容器服务、硬件温度与系统摘要](docs/images/ui-2026-10-14/system.png)
+![系统界面：容器服务、硬件温度与系统摘要](docs/images/ui-cuktech-ultra-2026-10-14/system.png)
 
 ### 温度 · 找到最热的来源
 
 最高读数与近期趋势优先；下方按设备分组，滚动访问完整清单，点击设备展开各温度通道。
 
-![温度界面：最高温、温度趋势与设备温度清单](docs/images/ui-2026-10-14/temperature.png)
+![温度界面：最高温、温度趋势与设备温度清单](docs/images/ui-cuktech-ultra-2026-10-14/temperature.png)
 
 ### 告警 · 先处理重要事件
 
 严重、警告和提示分层显示，可按等级筛选。没有告警事件时，页面继续展示存储、温度、容器与采集体检。
 
-![告警界面：严重程度与分组事件](docs/images/ui-2026-10-14/alerts.png)
+![告警界面：严重程度与分组事件](docs/images/ui-cuktech-ultra-2026-10-14/alerts.png)
 
 <details>
 <summary><strong>无告警时的体检界面与夜间模式</strong></summary>
 
 | 体检摘要 | 夜间模式 |
 | --- | --- |
-| ![无告警时的四项体检摘要](docs/images/ui-2026-10-14/health-summary.png) | ![夜间总览界面](docs/images/ui-2026-10-14/night.png) |
+| ![无告警时的四项体检摘要](docs/images/ui-cuktech-ultra-2026-10-14/health-summary.png) | ![夜间总览界面](docs/images/ui-cuktech-ultra-2026-10-14/night.png) |
 
 无告警事件不等于所有指标都正常：容量等关注项仍会独立提示。夜间背光需在真实屏幕上体验。
 
@@ -81,22 +83,22 @@ ESP32-P4 · 7 英寸触控 · 1024 × 600 · 原生 LVGL · HTTPS 配对
 
 | 选择 Wi-Fi | 输入网络口令 |
 | --- | --- |
-| ![Wi-Fi 扫描：通用演示网络与信号状态](docs/images/ui-2026-10-14/wifi-scan.png) | ![Wi-Fi 输入界面与屏上键盘](docs/images/ui-2026-10-14/wifi-keyboard.png) |
+| ![Wi-Fi 扫描：通用演示网络与信号状态](docs/images/ui-cuktech-ultra-2026-10-14/wifi-scan.png) | ![Wi-Fi 输入界面与屏上键盘](docs/images/ui-cuktech-ultra-2026-10-14/wifi-keyboard.png) |
 
 | 输入六位配对码 | 核对 NAS 证书指纹 |
 | --- | --- |
-| ![NAS 配对码输入与三步指引](docs/images/ui-2026-10-14/pairing.png) | ![证书指纹确认界面，使用固定测试指纹](docs/images/ui-2026-10-14/pairing-certificate.png) |
+| ![NAS 配对码输入与三步指引](docs/images/ui-cuktech-ultra-2026-10-14/pairing.png) | ![证书指纹确认界面，使用固定测试指纹](docs/images/ui-cuktech-ultra-2026-10-14/pairing-certificate.png) |
 
 | 存储卷详情 | 容器详情 |
 | --- | --- |
-| ![只读存储卷详情](docs/images/ui-2026-10-14/volume-detail.png) | ![只读容器资源详情](docs/images/ui-2026-10-14/container-detail.png) |
+| ![只读存储卷详情](docs/images/ui-cuktech-ultra-2026-10-14/volume-detail.png) | ![只读容器资源详情](docs/images/ui-cuktech-ultra-2026-10-14/container-detail.png) |
 
 详情保留**打开时的快照**，方便稳定阅读。列表刷新或设备改名不会悄悄更换正在查看的对象。
 
 <details>
 <summary><strong>设置与采集诊断</strong></summary>
 
-![设置与诊断：连接、采集和运行信息](docs/images/ui-2026-10-14/diagnostics.png)
+![设置与诊断：连接、采集和运行信息](docs/images/ui-cuktech-ultra-2026-10-14/diagnostics.png)
 
 连接失败时可查看阶段、最近原因、数据年龄和来源状态；配网、配对入口集中在同一面板。
 
@@ -151,7 +153,7 @@ cp components/fnos_monitor/fnos_config.example.h components/fnos_monitor/fnos_co
 ./idf.sh build
 ```
 
-模板可直接构建。真实参数可保存在被忽略的 `fnos_config.h`，也可通过屏幕配置；无需把个人凭据提交到仓库。已有 `sdkconfig` 不会自动被新默认值覆盖，更新设置前先备份；依赖版本见 [dependencies.lock](dependencies.lock)。
+模板可直接构建。真实参数可保存在被忽略的 `fnos_config.h`，也可通过屏幕配置；无需把个人凭据提交到仓库。已有 `sdkconfig` 不会自动被新默认值覆盖；升级本版时在 menuconfig 的 fnOS monitor 主题项选择 `cuktech-console`，更新设置前先备份；依赖版本见 [dependencies.lock](dependencies.lock)。
 
 识别开发板串口，替换示例路径后烧录：
 
@@ -181,7 +183,7 @@ export FNOS_SERIAL_PORT='/dev/cu.YOUR_BOARD_PORT'
 
 ![日常数据流：NAS 采集、可选 Docker、管理网关、开发板 HTTPS 拉取与 LVGL 快照显示](docs/diagrams/runtime-data-flow.svg)
 
-两张图使用 `diagram-design` 重绘，沿用本项目黑黄仪表视觉；[可编辑源文件与导出说明](docs/diagrams/README.md)随仓库保留。
+两张图使用 `diagram-design` 重绘，沿用本项目黑底蓝青仪表视觉；[可编辑源文件与导出说明](docs/diagrams/README.md)随仓库保留。
 
 管理页通过飞牛应用网关打开，遥测端口供屏幕取数据。网络请求在轮询任务执行，UI 只读取内存快照；请求或解析失败保留最后有效数据，并提示连接／新鲜度状态。采集使用 Linux 本机来源；当前实现没有调用飞牛私有遥测 API。
 
@@ -209,7 +211,7 @@ export FNOS_SERIAL_PORT='/dev/cu.YOUR_BOARD_PORT'
 | `CONFIG_FNOS_SNAPSHOT_MAX_BYTES` | 1048576 B | 单份清单与字符串存储预算 |
 | `CONFIG_FNOS_UI_LIST_MIN_WIDTH` | 260 px | 首选清单宽度，实际列数由空间与文本推导 |
 | `CONFIG_FNOS_UI_REDUCED_MOTION` | 关闭 | 保留跟手，松手直接落定 |
-| `CONFIG_FNOS_PALETTE` | `cuktech` | 另有 `unifi`、`device`、`graphite`、`abyss`、`phosphor` |
+| `CONFIG_FNOS_PALETTE` | `cuktech-console` | ULTRA 蓝青／朱红版；其余六个历史预置仍可选择 |
 
 预算限制字节资源，不限定设备数量。受控 UI 分配失败有提示与重试；真实 LVGL 内存耗尽恢复仍是开放验收项。[硬件自适应记录](docs/ui-hardware-adaptive-audit-2026-10-08.md)包含清单、名称与滚动验证范围。
 
@@ -226,13 +228,15 @@ python3 tools/stack_check.py
 python3 tools/test_history_merge.py
 ```
 
-默认预览生成 **105 张 1024×600 状态 PNG**，执行字形、格式残留、标签溢出、对象越界、触控重叠与对比度审计，并覆盖不同硬件组合和受控分配失败。数字、仪表及切页动效的独立入口见 [预览说明](tools/preview/README.md)。本页产品图的文件映射与校验值见 [图片清单](docs/images/ui-2026-10-14/manifest.json)。
+默认预览生成 **111 张 1024×600 状态 PNG + 3 张刷新回归 PNG**，执行字形、格式残留、标签溢出、对象越界、触控重叠与对比度审计，并覆盖不同硬件组合和受控分配失败。数字、仪表及切页动效的独立入口见 [预览说明](tools/preview/README.md)。本页产品图的文件映射与校验值见 [图片清单](docs/images/ui-cuktech-ultra-2026-10-14/manifest.json)。
 
 固件构建和主机渲染不代替实机验收。完整物理触控、实屏动画手感、72 小时运行、掉电／旧 NVS 回退、真实内存耗尽恢复和更广泛的硬件／权限矩阵继续开放，详见 [未闭环事项](docs/open-items-2026-10-11.md)。
 
 ### 最近迭代与版本边界
 
-- **当前界面基线 `7647d9b`**：CUKTECH 六页横屏、连续阻尼与新鲜度修复；模板构建、主机回归、静态检查、烧录哈希与短时串口观察已完成。[完整验证记录](docs/skills-workflow-2026-10-14.md)。
+- **当前 ULTRA 默认界面（2026-10-14）**：统一六页与配网／配对／详情，黄色改蓝色，粉红改朱红；历史曲线保持指标身份色，占用率只改变局部弧／条。README 同步 21 张匿名产品与阈值图。默认预览、模板构建、并行审查与开发板烧录通过；30 秒串口观察失败计数为 0。[设计](docs/ui-cuktech-ultra-2026-10-14.md) · [本轮归档与验证](docs/ui-ultra-release-2026-10-14.md)。
+
+- **前一阶段界面基线 `7647d9b`**：CUKTECH 六页横屏、连续阻尼与新鲜度修复；模板构建、主机回归、静态检查、烧录哈希与短时串口观察已完成。[完整验证记录](docs/skills-workflow-2026-10-14.md)。
 - **当前仓库安装包 1.2.7**：本页校验值来自当前已跟踪文件及包内 manifest；这次文档与图片更新没有重新部署 NAS，也不把历史实机记录扩展成该文件的新增验收。
 - **历史 NAS 与设备证据**：[FPK 性能和 1.2.7 阶段记录](docs/fpk-performance-2026-10-12.md)、[1.2.4 发布记录](docs/release-1.2.4.md)、[架构重构](docs/architecture-refactor-2026-10-13.md)、[触控调度](docs/perf-touch-2026-10-12.md)和[交互优化](docs/perf-system-motion-2026-10-12.md)保留各自的源码、产物和验收范围。
 
@@ -252,9 +256,9 @@ python3 tools/test_history_merge.py
 | 想做什么 | 文档 |
 | --- | --- |
 | 安装与维护 NAS 应用 | [飞牛应用](nas/fpk/README.md) · [可选旧采集器](nas/README.md) |
-| 理解当前界面与动效 | [CUKTECH 设计](docs/ui-cuktech-2026-10-14.md) · [电流表式动效](docs/ui-ammeter-motion-2026-10-14.md) |
-| 复现产品图与主机检查 | [截图来源](docs/images/ui-2026-10-14/README.md) · [预览工具](tools/preview/README.md) |
-| 查看最新验证和剩余事项 | [Skills 全流程](docs/skills-workflow-2026-10-14.md) · [缺陷复核](docs/ui-post-motion-audit-2026-10-14.md) · [未闭环事项](docs/open-items-2026-10-11.md) |
+| 理解当前界面与动效 | [ULTRA 配色](docs/ui-cuktech-ultra-2026-10-14.md) · [页面合同](docs/ui-cuktech-2026-10-14.md) · [电流表式动效](docs/ui-ammeter-motion-2026-10-14.md) |
+| 复现产品图与主机检查 | [截图来源](docs/images/ui-cuktech-ultra-2026-10-14/README.md) · [预览工具](tools/preview/README.md) |
+| 查看最新验证和剩余事项 | [本轮发布归档](docs/ui-ultra-release-2026-10-14.md) · [历史 Skills 全流程](docs/skills-workflow-2026-10-14.md) · [缺陷复核](docs/ui-post-motion-audit-2026-10-14.md) · [未闭环事项](docs/open-items-2026-10-11.md) |
 | 理解源码与架构 | [固件](components/fnos_monitor/) · [共享 UI](components/fnos_monitor/ui_kit/) · [原生 UI 架构](docs/ui-v12-lvgl-native.md) · [ADR](docs/adr/README.md) |
 | 配置显示与资源 | [Kconfig](components/fnos_monitor/Kconfig) · [硬件清单验证](docs/ui-hardware-adaptive-audit-2026-10-08.md) |
 | 参与工程协作 | [术语表](GLOSSARY.md) · [领域约定](docs/agents/domain.md) · [任务入口](docs/agents/issue-tracker.md) |

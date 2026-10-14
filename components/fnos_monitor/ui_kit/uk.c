@@ -95,7 +95,7 @@ lv_obj_t *uk_shell(lv_obj_t *scr, lv_obj_t **out_rail, lv_obj_t **out_head, lv_o
     lv_obj_t *head = lv_obj_create(scr);
     lv_obj_set_size(head, LV_PCT(100), LV_SIZE_CONTENT);
     lv_obj_set_style_min_height(head, UK_HEAD_H, 0);
-    style_surface(head, UK_SURF_S1, 0);
+    style_surface(head, UK_FLAT_ROWS ? UK_SURF_S2 : UK_SURF_S1, 0);
     lv_obj_set_style_border_side(head, LV_BORDER_SIDE_BOTTOM, 0);
     lv_obj_set_style_border_width(head, 0, 0);
     lv_obj_set_style_border_color(head, uk_c(UK_LINE), 0);
@@ -144,7 +144,7 @@ lv_obj_t *uk_shell(lv_obj_t *scr, lv_obj_t **out_rail, lv_obj_t **out_head, lv_o
     lv_obj_t *rail = lv_obj_create(scr);
     lv_obj_set_size(rail, LV_PCT(100), UK_DOCK_H);
     lv_obj_move_to_index(rail, 2); /* Content -> page dock -> event footer. */
-    style_surface(rail, UK_BG, 0);
+    style_surface(rail, UK_FLAT_ROWS ? UK_NAV : UK_BG, 0);
     lv_obj_set_flex_flow(rail, LV_FLEX_FLOW_ROW);
     lv_obj_set_style_pad_row(rail, UK_S1, 0);
     lv_obj_set_flex_align(rail, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -401,13 +401,14 @@ uk_row_t *uk_row_create(lv_obj_t *parent, bool with_led, bool with_bar)
     if (!r) return NULL;
     memset(r, 0, sizeof *r);
     const bool separated = lv_obj_get_style_pad_row(parent, 0) > 0;
+    const bool tile = separated && !UK_FLAT_ROWS;
 
     lv_obj_t *row = lv_obj_create(parent);
     lv_obj_set_width(row, LV_PCT(100));
     lv_obj_set_height(row, LV_SIZE_CONTENT);
     lv_obj_set_style_bg_color(row, uk_c(UK_SURF_T), 0);
-    lv_obj_set_style_bg_opa(row, separated ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
-    lv_obj_set_style_radius(row, separated ? UK_RADIUS_SM : 0, 0);
+    lv_obj_set_style_bg_opa(row, tile ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+    lv_obj_set_style_radius(row, tile ? UK_RADIUS_SM : 0, 0);
     lv_obj_set_style_border_width(row, 0, 0);
     lv_obj_set_style_pad_all(row, 0, 0);
     /* Separated tiles have inner breathing room; dense Wi-Fi rows retain their own layout. */
@@ -417,7 +418,7 @@ uk_row_t *uk_row_create(lv_obj_t *parent, bool with_led, bool with_bar)
     /* 1px 下边线 = 清单分隔线（也是行与行之间的视觉间距）；
        行高只有 1px 的代价，比 pad_row 便宜，24 路才能一屏排下。 */
     lv_obj_set_style_border_width(row, 1, 0);
-    lv_obj_set_style_border_side(row, separated ? LV_BORDER_SIDE_FULL : LV_BORDER_SIDE_BOTTOM, 0);
+    lv_obj_set_style_border_side(row, tile ? LV_BORDER_SIDE_FULL : LV_BORDER_SIDE_BOTTOM, 0);
     lv_obj_set_style_border_color(row, uk_c(UK_LINE), 0);
     lv_obj_set_style_border_opa(row, LV_OPA_60, 0);
     lv_obj_set_flex_flow(row, LV_FLEX_FLOW_COLUMN);
@@ -859,7 +860,6 @@ void uk_kpi_set(uk_kpi_t *k, const char *val, const char *unit, const char *sub,
 }
 
 /* ── 原生控件封装 ─────────────────────────────────────────────────── */
-static const uint32_t SERIES_HEX[3] = { 0x4797FF, 0x63BDE3, 0xA0BD28 };
 
 /* Native XY charts let the time axis advance without moving the grid or labels.
    Fixed-point sample positions provide subpixel motion at any viewport width. */
@@ -970,12 +970,13 @@ lv_obj_t *uk_trend_create(lv_obj_t *parent, int32_t points, int32_t series)
     lv_chart_set_type(c, LV_CHART_TYPE_SCATTER);
     lv_chart_set_point_count(c, (uint32_t)points);
     lv_chart_set_div_line_count(c, 2, 4);
+    const uint32_t series_colors[] = { UK_S_DOWN, UK_S_UP, UK_S_TEMP };
     for (int32_t i = 0; i < series; i++) {
         /* LVGL owns both rings. The hidden ring remains an exact source for
            current/peak/quality calculations; only the second ring is drawn. */
-        lv_chart_series_t *raw = lv_chart_add_series(c, uk_c(SERIES_HEX[i % 3]), LV_CHART_AXIS_PRIMARY_Y);
+        lv_chart_series_t *raw = lv_chart_add_series(c, uk_c(series_colors[i % 3]), LV_CHART_AXIS_PRIMARY_Y);
         if (raw) lv_chart_hide_series(c, raw, true);
-        lv_chart_add_series(c, uk_c(SERIES_HEX[i % 3]), LV_CHART_AXIS_PRIMARY_Y);
+        lv_chart_add_series(c, uk_c(series_colors[i % 3]), LV_CHART_AXIS_PRIMARY_Y);
     }
     uk_trend_clear(c);
     return c;

@@ -1749,6 +1749,69 @@ static lv_obj_t *overview_object(const char *title, const lv_obj_class_t *type)
     return find_widget(card, type);
 }
 
+static int assert_usage_bars(lv_obj_t *root, uint32_t color)
+{
+    if (lv_obj_has_flag(root, LV_OBJ_FLAG_HIDDEN)) return 0;
+    int count = 0;
+    if (lv_obj_has_class(root, &lv_bar_class)) {
+        assert(lv_color_eq(lv_obj_get_style_bg_color(root, LV_PART_INDICATOR), uk_c(color)));
+        count++;
+    }
+    for (uint32_t i = 0; i < lv_obj_get_child_count(root); i++)
+        count += assert_usage_bars(lv_obj_get_child(root, i), color);
+    return count;
+}
+
+/* Load colours agree across gauges and bars; histories keep metric identity. */
+static void verify_usage_colors(void)
+{
+    const int previous_page = fnos_ui_page();
+    fnos_status_t fixture = {0}; fill_live(&fixture);
+    fixture.nmods = fixture.nalerts = 0;
+    fixture.nvols = 1;
+    s_override_status = &fixture;
+    const float values[] = {UK_PCT_WARM / 2, UK_PCT_WARM, UK_PCT_FULL};
+    const uint32_t colors[] = {UK_USAGE_LOW, UK_PCT_WARM < UK_PCT_FULL ? UK_USAGE_WARN : UK_USAGE_HIGH, UK_USAGE_HIGH};
+    const char *const frames[] = {"16-usage-low", "16-usage-warn", "16-usage-high"};
+    assert(uk_pct_color(-1) == UK_OFF);
+    assert(uk_pct_color(UK_PCT_WARM - 0.25f) == colors[0]);
+    assert(uk_pct_color(UK_PCT_FULL - 0.25f) == (UK_PCT_WARM < UK_PCT_FULL ? colors[1] : colors[0]));
+    assert(uk_pct_color(100) == colors[2]);
+    assert(uk_pct_color(NAN) == UK_OFF && uk_pct_color(INFINITY) == UK_OFF);
+    for (int i = 0; i < 3; i++) {
+        fixture.cpu.pct = fixture.mem.pct = fixture.vols[0].pct = values[i];
+        fixture.vols[0].total_gb = 100;
+        fixture.vols[0].used_gb = values[i];
+        fixture.vols[0].free_gb = 100 - values[i];
+        assert(uk_pct_color(values[i]) == colors[i]);
+        fnos_ui_set_page(0); regression_tick();
+        const char *const titles[] = {"CPU", "内存"};
+        for (int j = 0; j < 2; j++) {
+            lv_obj_t *arc = overview_object(titles[j], &lv_arc_class);
+            assert(arc && lv_color_eq(lv_obj_get_style_arc_color(arc, LV_PART_INDICATOR), uk_c(colors[i])));
+            lv_obj_t *chart = overview_object(titles[j], &lv_chart_class);
+            assert(chart && lv_color_eq(lv_chart_get_series_color(chart, uk_trend_series(chart, 0)), uk_c(j == 0 ? UK_S_CPU : UK_S_MEM)));
+        }
+        assert(assert_usage_bars(overview_object("存储容量", &lv_obj_class), colors[i]) == 2);
+        snapshot(frames[i]);
+        fnos_ui_set_page(1); regression_tick();
+        click_text("全部"); regression_tick();
+        lv_obj_t *used = visible_text(lv_screen_active(), "已用空间"); assert(used);
+        lv_obj_t *body = lv_obj_get_parent(lv_obj_get_parent(lv_obj_get_parent(used)));
+        assert(assert_usage_bars(body, colors[i]) == 1);
+        assert(assert_usage_bars(overview_object("存储卷", &lv_obj_class), colors[i]) == 1);
+        char frame[64]; snprintf(frame, sizeof frame, "%s-storage", frames[i]); snapshot(frame);
+    }
+    fixture.online = false;
+    fnos_ui_set_page(0); regression_tick();
+    assert(lv_color_eq(lv_obj_get_style_arc_color(overview_object("CPU", &lv_arc_class), LV_PART_INDICATOR), uk_c(UK_OFF)));
+    assert(assert_usage_bars(overview_object("存储容量", &lv_obj_class), UK_OFF) == 2);
+    s_override_status = NULL;
+    fnos_ui_set_page(previous_page); regression_tick();
+    fnos_status_release(&fixture);
+    puts("checks: occupancy colours agree across gauges and bars; history identity stays stable; stale is neutral PASS");
+}
+
 static int chart_values_equal(lv_obj_t *chart, int series_index, int32_t value)
 {
     const int32_t *data = lv_chart_get_series_y_array(chart, uk_trend_raw_series(chart, series_index));
@@ -4546,7 +4609,7 @@ int main(int argc, char **argv)
     lv_indev_set_read_cb(touch, touch_read);
     lv_indev_set_display(touch, d);
 
-    /* 预览用 KK_PALETTE=<名字> 选配色，出路数图给用户挑；不设则用默认 cuktech。
+    /* 预览用 KK_PALETTE=<名字> 选配色，出路数图给用户挑；不设则用默认 cuktech-console。
        必须在 fnos_ui_create() 之前 —— 颜色在建构件时就被拷进样式里了。 */
     fnos_ui_theme_use(getenv("KK_PALETTE"));
     fprintf(stderr, "palette: %s\n", fnos_ui_theme_name());
@@ -4628,6 +4691,7 @@ int main(int argc, char **argv)
     verify_docker_module_states();
     verify_temperature_protocol_limit();
     verify_overview_charts();
+    verify_usage_colors();
     verify_module_freshness();
 
     /* ── 夜间模式：一整套独立配色，预览从来没渲染过 ──

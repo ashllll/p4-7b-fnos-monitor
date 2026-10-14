@@ -1,119 +1,119 @@
 {
   "rendered_on": "2026-10-14",
-  "ui_source_commit": "7647d9bb9353216ca297895a51906686e3c8c99d",
+  "ui_source_commit": "a4bfd51439fed2c6221b47fbd376aca412957760",
   "fixture_path": "tools/preview/preview.c",
   "fixture_sha256": "db3b94ce6dd1dfc2ea69f37b4bd2971337305f49f8f4cf0282f62db6604e7492",
   "renderer": "native LVGL 9.5, RGB565, synthetic host fixtures",
   "palette": "cuktech",
   "width": 1024,
   "height": 600,
-  "render_command": "bash tools/preview/run.sh out-product-public-20261014",
+  "render_command": "bash tools/preview/run.sh out-warm-20261014",
   "data": "synthetic fixture values, generic device/service/network names, fixed fake certificate fingerprint",
   "images": [
     {
       "file": "overview.png",
       "title": "总览",
       "source_frame": "04-healthy-p0.png",
-      "sha256": "d999df73ba811ada328694465f60fba6d51e0f59a98637d5b3560514ba0ed180",
-      "bytes": 25689
+      "sha256": "ecc4d539c958a226b53d9af4d6f2897ffdf5b77d825361a92eebc0ec38ec4b44",
+      "bytes": 26065
     },
     {
       "file": "storage.png",
       "title": "存储",
       "source_frame": "04-healthy-p1.png",
-      "sha256": "f6e6636c74bef5e18d12686d1e78f09ee315a8dd6cfe0f2343efd20e3e8ac16e",
-      "bytes": 22176
+      "sha256": "30dfe80d7b82cce74da6ad02ec73a30fe9cba1f8e82483d9ae3a1208bdfc3b1d",
+      "bytes": 21912
     },
     {
       "file": "network.png",
       "title": "网络",
       "source_frame": "04-healthy-p2.png",
-      "sha256": "045e744faff415b63a058dbce55ee433cbdcf0e5c49089e7f49220474063eba7",
-      "bytes": 25948
+      "sha256": "d22d14b629bee1b60c9edcd97e0f2384e3142204c612c0efba836ce3319b3ec4",
+      "bytes": 25320
     },
     {
       "file": "system.png",
       "title": "系统",
       "source_frame": "04-healthy-p3.png",
-      "sha256": "78fd54a4f24e6881db3e010714752f90d46811ddf4dec72a8c03c91190ecce7a",
-      "bytes": 25691
+      "sha256": "f04f7c0ecbf6ba8e84fde8b2b05bacc8268707e4a873bd77e237430aafd7c4c4",
+      "bytes": 25429
     },
     {
       "file": "temperature.png",
       "title": "温度",
       "source_frame": "04-healthy-p4.png",
-      "sha256": "83c095ffca5f36fd7e814d3db537339e5ffbdace81ac54b054c7d2c33522e5d5",
-      "bytes": 15276
+      "sha256": "c4ef320ab69ad05e94bc83f94f6ce71b3df3821f6c1627e98c367abdd307bb6d",
+      "bytes": 15112
     },
     {
       "file": "alerts.png",
       "title": "告警",
       "source_frame": "02-live-p5.png",
-      "sha256": "8cfb037df175e649d7d195d6dee33f166eb659ffd726b7b06c0af6c839747591",
-      "bytes": 15835
+      "sha256": "c2ab238b13be71a73928400dbdfc4388d3aa5993114a6b06b386c03ad4a247c3",
+      "bytes": 15667
     },
     {
       "file": "wifi-scan.png",
       "title": "Wi-Fi 扫描",
       "source_frame": "10-wifi-scan.png",
-      "sha256": "ab3747470190af41907c60181394988ff2acf3c99d202f1cbcb06fae1a89af0d",
-      "bytes": 18874
+      "sha256": "90275abb7d917ffed2eeffabd6898161352095df5933eb5e7106a0d5b87e29c4",
+      "bytes": 18738
     },
     {
       "file": "wifi-keyboard.png",
       "title": "Wi-Fi 键盘",
       "source_frame": "10-wifi-pass.png",
-      "sha256": "a62937fda49fd17a55cd1591b537a10055ce2c841ed062cebd7bce697d517ba9",
-      "bytes": 18419
+      "sha256": "1d46a091dd1407e5b2bfdbb0a6846d52033e533070ad957e9fc39ffe7dc81d6c",
+      "bytes": 18485
     },
     {
       "file": "pairing.png",
       "title": "配对码",
       "source_frame": "07-pair-code.png",
-      "sha256": "74e5621d8437e6e696eb7496a83de824bd86375f22dd46b3610127a188ea4c30",
-      "bytes": 22434
+      "sha256": "a687cfa57243ebfbf01e65f3b8761ce94e43dfba28aad9227a5cd3db93b10496",
+      "bytes": 21973
     },
     {
       "file": "pairing-certificate.png",
       "title": "证书核对",
       "source_frame": "07-pair-confirm.png",
-      "sha256": "fdda49fd111465e3c6923a2db637ed5e6fd6d80d7b4a9a7625f0bd09c7a95f5e",
-      "bytes": 28214
+      "sha256": "f7442dbf909da79f58b4ebf0bfade86c6d120513997c696c5da5678da4925ba3",
+      "bytes": 28394
     },
     {
       "file": "volume-detail.png",
       "title": "卷详情",
       "source_frame": "13-volume-detail.png",
-      "sha256": "7ad7d56ec095c6d8181abf35dc8954b6f98b05e2a56d909794fa043a4729b62d",
-      "bytes": 17421
+      "sha256": "a7b3ab57446e12d79e56d889df3ccb1d1e8ee1fead241b10d80370cfac68efeb",
+      "bytes": 17390
     },
     {
       "file": "container-detail.png",
       "title": "容器详情",
       "source_frame": "13-container-detail.png",
-      "sha256": "fd9c9069177c3ed4ac1c0c53011a9b4489e24b55173e3c391fd0dd45d67b3a98",
-      "bytes": 19744
+      "sha256": "dafbde064d7455a6c764148c4931cc5a2f9685da1a15aa35c9d9f2aba19cd746",
+      "bytes": 19645
     },
     {
       "file": "diagnostics.png",
       "title": "设置与诊断",
       "source_frame": "06-diagnostics.png",
-      "sha256": "3631a4b559bd6f2f80d1521528d2f0c6bb37ee57bd1bf603ae397e1cbb2d1b32",
-      "bytes": 15571
+      "sha256": "04f741f31eeab90e8813f5e025a683d2c70de034ce904d7c4c85db16e7fbca25",
+      "bytes": 15384
     },
     {
       "file": "night.png",
       "title": "夜间总览",
       "source_frame": "08-night-p0.png",
-      "sha256": "eb967e9dca46e1618db9c726d1e45af29af0a14d0bfb6efdb9df426ab6cda06b",
-      "bytes": 25209
+      "sha256": "f7571aac1db634f4cdea353a1c42db354500fb76a8e5fbb333e18ad26d85e307",
+      "bytes": 26703
     },
     {
       "file": "health-summary.png",
       "title": "无告警体检",
       "source_frame": "06-alerts-health.png",
-      "sha256": "739510446fcfe37b808dfbac3be420e2c7d4d08c2744e57927a7462d01caa218",
-      "bytes": 17518
+      "sha256": "045ec0266b75a487282a6ed8c7569512d1ea1db5a6545e99d761111013ddb984",
+      "bytes": 17379
     }
   ],
   "ui_config": {
@@ -135,5 +135,11 @@
     "CONFIG_FNOS_UI_TEMP_WARM": "75",
     "CONFIG_FNOS_UI_TEMP_HIGH": "80",
     "CONFIG_FNOS_UI_LIST_MIN_WIDTH": "260"
+  },
+  "ui_source_state": "warm-neutral working tree revision; source hashes below identify rendered code",
+  "ui_source_sha256": {
+    "components/fnos_monitor/fnos_ui.c": "877f42fe4f7b9186a3b35f91856259d1c36224813b770ffff3435ae0dc87be64",
+    "components/fnos_monitor/ui_kit/uk.c": "f7201d6354d1eafecd864127973bb3bfd0ec2f2abc37cc8ed5f9818acd3ca298",
+    "components/fnos_monitor/ui_kit/uk_theme.c": "e93ad1e129d779eb753d90fa0f015dac78f18216618007bda2d680dba8d3d726"
   }
 }

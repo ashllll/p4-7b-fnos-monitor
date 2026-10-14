@@ -68,8 +68,9 @@
 #define UK_LIST_MIN_WIDTH CONFIG_FNOS_UI_LIST_MIN_WIDTH
 
 /* ── 度量 ─────────────────────────────────────────────────────────── */
-#define UK_RADIUS        4          /* Compact instrument housing */
-#define UK_RADIUS_SM     3          /* Object tiles and controls */
+#define UK_RADIUS        (g_uk_pal.radius)
+#define UK_RADIUS_SM     (g_uk_pal.radius_sm)
+#define UK_FLAT_ROWS     (g_uk_pal.flat_rows)
 #define UK_BAR_H         8          /* 阈值条高                       */
 #define UK_BAR_H_HERO    12          /* 主容量条高                     */
 /* Continuous telemetry shares one damped response; native animation styles
@@ -178,7 +179,7 @@
 
 #include "fnos_fonts.h"   /* LV_FONT_DECLARE(ui_font_*) */
 
-/* ── 运行时配色（预置表见 uk_theme.c：cuktech / unifi / device / graphite / abyss / phosphor） ── */
+/* Runtime themes, including cuktech-console, are listed in uk_theme.c. */
 typedef struct {
     uint32_t bg, s0, s1, surf_t, s2, s3, off, line;
     uint32_t t1, t2, t3, t4;
@@ -186,7 +187,10 @@ typedef struct {
     uint32_t s_cpu, s_mem, s_temp, s_down, s_up, s_zfs;
     uint32_t rail_n, rail_day, nav, nav_sel;
     uint32_t resource_primary, resource_secondary, summary, on_summary, on_primary, on_danger;
+    uint32_t usage_low, usage_warn, usage_high;
     bool summary_light;
+    uint8_t radius, radius_sm;
+    bool flat_rows; /* Console lists use separators rather than nested tiles. */
 } uk_pal_t;
 
 extern uk_pal_t g_uk_pal;
@@ -224,6 +228,9 @@ extern uk_pal_t g_uk_pal;
 #define UK_ON_SUMMARY       (g_uk_pal.on_summary)
 #define UK_ON_PRIMARY (g_uk_pal.on_primary)
 #define UK_ON_DANGER  (g_uk_pal.on_danger)
+#define UK_USAGE_LOW  (g_uk_pal.usage_low)
+#define UK_USAGE_WARN (g_uk_pal.usage_warn)
+#define UK_USAGE_HIGH (g_uk_pal.usage_high)
 
 #ifdef __cplusplus
 extern "C" {

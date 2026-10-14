@@ -2,110 +2,143 @@
 #include "uk_theme.h"
 
 #include <string.h>
+#include <math.h>
 
 /* ── 预置 ─────────────────────────────────────────────────────────── */
-/* Instrument palette: yellow is focus, cyan/blue identify data directions.
+/* Warm instrument palette: ivory and champagne identify data directions.
    Status colours remain independent of identity and selection. */
 static const uk_pal_t P_CUKTECH = {
-    .bg = 0x000000, .s0 = 0x04080C, .s1 = 0x080D12, .surf_t = 0x101B24,
-    .s2 = 0x12202B, .s3 = 0x243441, .off = 0x4A5260, .line = 0x25313E,
-    .t1 = 0xF5F7FA, .t2 = 0xD4DFE8, .t3 = 0xA5B4C2, .t4 = 0x94A3B1,
-    .blue = 0xFFC800, .blue_txt = 0xFFC800,
-    .ok = 0x36D27E, .warn = 0xFFAD54, .danger = 0xFF6878,
-    .s_cpu = 0x3FA9F5, .s_mem = 0xC8E63C, .s_temp = 0xFFC800,
-    .s_down = 0x37C4D6, .s_up = 0x3FA9F5, .s_zfs = 0xC8E63C,
-    .rail_n = 0x000000, .rail_day = 0x000000, .nav = 0x000000, .nav_sel = 0x24200A,
-    .resource_primary = 0x080D12, .resource_secondary = 0x080D12,
-    .summary = 0x0A131B, .on_summary = 0xF5F7FA, .summary_light = false,
-    .on_primary = 0x080D12, .on_danger = 0x080D12,
+    .bg = 0x080807, .s0 = 0x0E0D0B, .s1 = 0x151411, .surf_t = 0x1B1A16,
+    .s2 = 0x24221D, .s3 = 0x35322A, .off = 0xA59D90, .line = 0x353129,
+    .t1 = 0xF1EDE4, .t2 = 0xD8D1C5, .t3 = 0xB9B0A2, .t4 = 0xABA294,
+    .blue = 0xC7AD7D, .blue_txt = 0xC7AD7D,
+    .ok = 0xA8BF8D, .warn = 0xE2B66E, .danger = 0xE88B78,
+    .s_cpu = 0xE8E2D6, .s_mem = 0xBCA580, .s_temp = 0xD3A286,
+    .s_down = 0xE8E2D6, .s_up = 0xC7AD7D, .s_zfs = 0xB9B0A2,
+    .rail_n = 0x080807, .rail_day = 0x0E0D0B, .nav = 0x0E0D0B, .nav_sel = 0x29261F,
+    .resource_primary = 0x191814, .resource_secondary = 0x151411,
+    .summary = 0x1B1915, .on_summary = 0xF1EDE4, .summary_light = false,
+    .on_primary = 0x151411, .on_danger = 0x151411,
+    .usage_low = 0x75BFFF, .usage_warn = 0xF2D34F, .usage_high = 0xFF8780,
+    .radius = 4, .radius_sm = 3, .flat_rows = false,
 };
 
-/* Network 10.6.106 dark observations, adapted for a NAS touch display.
-   Surfaces/text/accent follow the recorded baseline; chart/status colours are
-   project choices with separate semantics, not an official UniFi token set. */
+/* Legacy preset names remain configuration-compatible. Utilization has shared
+   blue/yellow/red state colours; base surfaces remain neutral or warm neutral. */
+/* UniFi Network dark-console inspired candidate. Neutralized surfaces and
+   interaction white are project adaptations to the user's no-blue constraint. */
 static const uk_pal_t P_UNIFI = {
-    .bg = 0x111316, .s0 = 0x0E1115, .s1 = 0x1A1E23, .surf_t = 0x20252B,
-    .s2 = 0x252B32, .s3 = 0x343D47, .off = 0x42474D, .line = 0x323B45,
-    .t1 = 0xF9FAFA, .t2 = 0xDEE0E3, .t3 = 0xB7BCC2, .t4 = 0xA0A7B0,
-    .blue = 0x0068F5, .blue_txt = 0x4797FF,
-    .ok = 0x62D28A, .warn = 0xF4BB60, .danger = 0xFF8C94,
-    .s_cpu = 0x4797FF, .s_mem = 0x70C9E8, .s_temp = 0xD5BC72,
-    .s_down = 0x70C9E8, .s_up = 0xB99AE8, .s_zfs = 0x62D28A,
-    .rail_n = 0x111316, .rail_day = 0x111316, .nav = 0x111316, .nav_sel = 0x1D304A,
-    .resource_primary = 0x1A1E23, .resource_secondary = 0x1A1E23,
-    .summary = 0x202833, .on_summary = 0xDEE0E3, .summary_light = false,
-    .on_primary = 0xFFFFFF, .on_danger = 0x19202A,
+    .bg = 0x101010, .s0 = 0x101010, .s1 = 0x181818, .surf_t = 0x202020,
+    .s2 = 0x282828, .s3 = 0x383838, .off = 0xACACA6, .line = 0x303030,
+    .t1 = 0xF7F7F5, .t2 = 0xDEDEDA, .t3 = 0xBEBEB8, .t4 = 0xACACA6,
+    .blue = 0xE8E8E4, .blue_txt = 0xE8E8E4,
+    .ok = 0x98C581, .warn = 0xE0B56C, .danger = 0xE58680,
+    .s_cpu = 0xE8E8E4, .s_mem = 0xBDBDAB, .s_temp = 0xDDB775,
+    .s_down = 0xA2C78B, .s_up = 0xDDB775, .s_zfs = 0xBDBDAB,
+    .rail_n = 0x101010, .rail_day = 0x181818, .nav = 0x181818, .nav_sel = 0x303030,
+    .resource_primary = 0x202020, .resource_secondary = 0x181818,
+    .summary = 0x202020, .on_summary = 0xF7F7F5, .summary_light = false,
+    .on_primary = 0x101010, .on_danger = 0x101010,
+    .usage_low = 0x75BFFF, .usage_warn = 0xF2D34F, .usage_high = 0xFF8780,
+    .radius = 8, .radius_sm = 4, .flat_rows = true,
+};
+
+/* User's ULTRA reference: black, white readings, small orange/cyan accents.
+   The user's follow-up replaces yellow focus/warning accents with blue. */
+static const uk_pal_t P_CUKTECH_CONSOLE = {
+    .bg = 0x000000, .s0 = 0x080808, .s1 = 0x101010, .surf_t = 0x181818,
+    .s2 = 0x181818, .s3 = 0x303030, .off = 0xB0B0B0, .line = 0x282828,
+    .t1 = 0xF8F8F8, .t2 = 0xE0E0E0, .t3 = 0xB8B8B8, .t4 = 0xA8A8A8,
+    .blue = 0x75BFFF, .blue_txt = 0x75BFFF,
+    .ok = 0x8ED49C, .warn = 0x75BFFF, .danger = 0xFF5A45,
+    .s_cpu = 0xFFA23A, .s_mem = 0x8ED7E5, .s_temp = 0xE0E0E0,
+    .s_down = 0x8ED7E5, .s_up = 0xFFA23A, .s_zfs = 0x8ED49C,
+    .rail_n = 0x000000, .rail_day = 0x101010, .nav = 0x080808, .nav_sel = 0x181818,
+    .resource_primary = 0x101010, .resource_secondary = 0x101010,
+    .summary = 0x101010, .on_summary = 0xF8F8F8, .summary_light = false,
+    .on_primary = 0x101010, .on_danger = 0x101010,
+    .usage_low = 0x8ED7E5, .usage_warn = 0x75BFFF, .usage_high = 0xFF5A45,
+    .radius = 8, .radius_sm = 4, .flat_rows = true,
 };
 
 static const uk_pal_t P_DEVICE = {
-    .bg = 0x15131F, .s0 = 0x11101B, .s1 = 0x211E2F, .surf_t = 0x252235,
-    .s2 = 0x302B40, .s3 = 0x423A50, .off = 0x51495F, .line = 0x4A435C,
-    .t1 = 0xBCC7F5, .t2 = 0xB9B8D6, .t3 = 0xAAA8C6, .t4 = 0x9C96B0,
-    .blue = 0xD69C82, .blue_txt = 0xE9B49A,
-    .ok = 0x8BD1AD, .warn = 0xE9B08C, .danger = 0xFF8E98,
-    .s_cpu = 0xAFC2EE, .s_mem = 0xAFC2EE, .s_temp = 0xD69C82,
-    .s_down = 0x8FC8BB, .s_up = 0xD7A68D, .s_zfs = 0x8BD1AD,
-    .rail_n = 0x15131F, .rail_day = 0x15131F, .nav = 0x1C1929, .nav_sel = 0x302737,
-    .resource_primary = 0x264439, .resource_secondary = 0x233D39, .summary = 0xCA957D, .on_summary = 0x242131,
-    .summary_light = true,
-    .on_primary = 0x242131, .on_danger = 0x242131,
+    .bg = 0x14110E, .s0 = 0x17130F, .s1 = 0x201B15, .surf_t = 0x28211A,
+    .s2 = 0x30281F, .s3 = 0x40372C, .off = 0xA59D90, .line = 0x40372C,
+    .t1 = 0xF1EDE4, .t2 = 0xD8D1C5, .t3 = 0xB9B0A2, .t4 = 0xABA294,
+    .blue = 0xD4AE8C, .blue_txt = 0xD4AE8C,
+    .ok = 0xA8BF8D, .warn = 0xE2B66E, .danger = 0xE88B78,
+    .s_cpu = 0xE8E2D6, .s_mem = 0xBCA580, .s_temp = 0xD3A286,
+    .s_down = 0xE8E2D6, .s_up = 0xD4AE8C, .s_zfs = 0xB9B0A2,
+    .rail_n = 0x080807, .rail_day = 0x0E0D0B, .nav = 0x17130F, .nav_sel = 0x352A20,
+    .resource_primary = 0x191814, .resource_secondary = 0x151411, .summary = 0x1B1915, .on_summary = 0xF1EDE4,
+    .summary_light = false,
+    .on_primary = 0x151411, .on_danger = 0x151411,
+    .usage_low = 0x75BFFF, .usage_warn = 0xF2D34F, .usage_high = 0xFF8780,
+    .radius = 4, .radius_sm = 3, .flat_rows = false,
 };
 
 static const uk_pal_t P_GRAPHITE = {
-    .bg = 0x131416, .s0 = 0x0E0F11, .s1 = 0x1C1E21, .surf_t = 0x1F2226,
-    .s2 = 0x282B2F, .s3 = 0x34383D, .off = 0x42474D, .line = 0x2E3238,
-    .t1 = 0xF9FAFA, .t2 = 0xDEE0E3, .t3 = 0xB7BCC2, .t4 = 0x8F98A2,
-    .blue = 0x0068F5, .blue_txt = 0x4797FF,
-    .ok = 0x37BE5F, .warn = 0xE79913, .danger = 0xF5777C,
-    .s_cpu = 0x4797FF, .s_mem = 0x63BDE3, .s_temp = 0xA0BD28,
-    .s_down = 0x63BDE3, .s_up = 0xB47CDE, .s_zfs = 0xA0BD28,
-    .rail_n = 0x141518, .rail_day = 0x1C1F22, .nav = 0x232629, .nav_sel = 0x272A2D,
-    .resource_primary = 0x294D43, .resource_secondary = 0x203833, .summary = 0xBE937E, .on_summary = 0x19202A,
-    .summary_light = true,
-    .on_primary = 0xFFFFFF, .on_danger = 0x19202A,
+    .bg = 0x10100F, .s0 = 0x141413, .s1 = 0x1B1B18, .surf_t = 0x22221E,
+    .s2 = 0x292822, .s3 = 0x38362F, .off = 0xA59D90, .line = 0x353129,
+    .t1 = 0xF1EDE4, .t2 = 0xD8D1C5, .t3 = 0xB9B0A2, .t4 = 0xABA294,
+    .blue = 0xD4C7AF, .blue_txt = 0xD4C7AF,
+    .ok = 0xA8BF8D, .warn = 0xE2B66E, .danger = 0xE88B78,
+    .s_cpu = 0xE8E2D6, .s_mem = 0xBCA580, .s_temp = 0xD3A286,
+    .s_down = 0xE8E2D6, .s_up = 0xC7AD7D, .s_zfs = 0xB9B0A2,
+    .rail_n = 0x080807, .rail_day = 0x0E0D0B, .nav = 0x141413, .nav_sel = 0x302D27,
+    .resource_primary = 0x191814, .resource_secondary = 0x151411, .summary = 0x1B1915, .on_summary = 0xF1EDE4,
+    .summary_light = false,
+    .on_primary = 0x151411, .on_danger = 0x151411,
+    .usage_low = 0x75BFFF, .usage_warn = 0xF2D34F, .usage_high = 0xFF8780,
+    .radius = 4, .radius_sm = 3, .flat_rows = false,
 };
 
 static const uk_pal_t P_ABYSS = {
-    .bg = 0x0A1018, .s0 = 0x060A10, .s1 = 0x121A24, .surf_t = 0x14202C,
-    .s2 = 0x1B2632, .s3 = 0x27343F, .off = 0x3A4A57, .line = 0x2A3A48,
-    .t1 = 0xF7FBFF, .t2 = 0xD6E2EC, .t3 = 0xAFC1CF, .t4 = 0x8097A8,
-    .blue = 0x1E6BFF, .blue_txt = 0x55A0FF,
-    .ok = 0x3FD07A, .warn = 0xF0A62B, .danger = 0xFF6B70,
-    .s_cpu = 0x35C7F0, .s_mem = 0x7FA8FF, .s_temp = 0xB8D43C,
-    .s_down = 0x35C7F0, .s_up = 0xC08BF0, .s_zfs = 0xB8D43C,
-    .rail_n = 0x0B1219, .rail_day = 0x121A24, .nav = 0x1A2532, .nav_sel = 0x1F2C3B,
-    .resource_primary = 0x244A48, .resource_secondary = 0x193335, .summary = 0xC99A7C, .on_summary = 0x12202C,
-    .summary_light = true,
-    .on_primary = 0xFFFFFF, .on_danger = 0x12202C,
+    .bg = 0x050504, .s0 = 0x090908, .s1 = 0x11110F, .surf_t = 0x181713,
+    .s2 = 0x211F1A, .s3 = 0x302D25, .off = 0xA59D90, .line = 0x353129,
+    .t1 = 0xF1EDE4, .t2 = 0xD8D1C5, .t3 = 0xB9B0A2, .t4 = 0xABA294,
+    .blue = 0xC9A875, .blue_txt = 0xC9A875,
+    .ok = 0xA8BF8D, .warn = 0xE2B66E, .danger = 0xE88B78,
+    .s_cpu = 0xE8E2D6, .s_mem = 0xBCA580, .s_temp = 0xD3A286,
+    .s_down = 0xE8E2D6, .s_up = 0xC7AD7D, .s_zfs = 0xB9B0A2,
+    .rail_n = 0x080807, .rail_day = 0x0E0D0B, .nav = 0x090908, .nav_sel = 0x282319,
+    .resource_primary = 0x191814, .resource_secondary = 0x151411, .summary = 0x1B1915, .on_summary = 0xF1EDE4,
+    .summary_light = false,
+    .on_primary = 0x151411, .on_danger = 0x151411,
+    .usage_low = 0x75BFFF, .usage_warn = 0xF2D34F, .usage_high = 0xFF8780,
+    .radius = 4, .radius_sm = 3, .flat_rows = false,
 };
 
-/* 磷光：底最黑、字最亮；交互色（选中条/可点边）用琥珀，与"绿=健康"分色域。
-   blue 仍是蓝：它兼着左上角 App 图标块底色，白字要 3:1 以上。 */
+/* Olive-tinted warm preset. The legacy blue field means interaction accent;
+   status green remains independent of focus and metric identity. */
 static const uk_pal_t P_PHOSPHOR = {
-    .bg = 0x08090A, .s0 = 0x040506, .s1 = 0x111315, .surf_t = 0x141719,
-    .s2 = 0x1B1F21, .s3 = 0x2A2F31, .off = 0x3C4245, .line = 0x272C2E,
-    .t1 = 0xFFFFFF, .t2 = 0xDCE3E0, .t3 = 0xAEB8B4, .t4 = 0x848E89,
-    .blue = 0x2B62D9, .blue_txt = 0xFFC44D,
-    .ok = 0x3BE07A, .warn = 0xFFB000, .danger = 0xFF5F56,
-    .s_cpu = 0x3BE07A, .s_mem = 0x39C6D6, .s_temp = 0xC8E04A,
-    .s_down = 0x39C6D6, .s_up = 0xE07AC8, .s_zfs = 0xC8E04A,
-    .rail_n = 0x0B0D0E, .rail_day = 0x111315, .nav = 0x191C1E, .nav_sel = 0x1E2224,
-    .resource_primary = 0x254A36, .resource_secondary = 0x1B3227, .summary = 0xCB9E71, .on_summary = 0x15221A,
-    .summary_light = true,
-    .on_primary = 0xFFFFFF, .on_danger = 0x15221A,
+    .bg = 0x090A08, .s0 = 0x10110D, .s1 = 0x171912, .surf_t = 0x1D2017,
+    .s2 = 0x26291E, .s3 = 0x35382B, .off = 0xA59D90, .line = 0x353129,
+    .t1 = 0xF1EDE4, .t2 = 0xD8D1C5, .t3 = 0xB9B0A2, .t4 = 0xABA294,
+    .blue = 0xC4B281, .blue_txt = 0xC4B281,
+    .ok = 0xB0C394, .warn = 0xE2B66E, .danger = 0xE88B78,
+    .s_cpu = 0xE8E2D6, .s_mem = 0xBCA580, .s_temp = 0xD3A286,
+    .s_down = 0xE8E2D6, .s_up = 0xC7AD7D, .s_zfs = 0xB9B0A2,
+    .rail_n = 0x080807, .rail_day = 0x0E0D0B, .nav = 0x10110D, .nav_sel = 0x292B20,
+    .resource_primary = 0x191814, .resource_secondary = 0x151411, .summary = 0x1B1915, .on_summary = 0xF1EDE4,
+    .summary_light = false,
+    .on_primary = 0x151411, .on_danger = 0x151411,
+    .usage_low = 0x75BFFF, .usage_warn = 0xF2D34F, .usage_high = 0xFF8780,
+    .radius = 4, .radius_sm = 3, .flat_rows = false,
 };
 
 static const struct { const char *name; const uk_pal_t *p; } PRESETS[] = {
     { "cuktech", &P_CUKTECH },
     { "unifi", &P_UNIFI },
+    { "cuktech-console", &P_CUKTECH_CONSOLE },
     { "device", &P_DEVICE },
     { "graphite", &P_GRAPHITE },
     { "abyss",    &P_ABYSS },
     { "phosphor", &P_PHOSPHOR },
 };
 
-uk_pal_t g_uk_pal = P_CUKTECH;
-static const char *s_pal_name = "cuktech";
+uk_pal_t g_uk_pal = P_CUKTECH_CONSOLE;
+static const char *s_pal_name = "cuktech-console";
 
 void uk_theme_use(const char *name)
 {
@@ -130,18 +163,18 @@ void fnos_ui_theme_use(const char *name)
     for (size_t i = 0; i < sizeof PRESETS / sizeof PRESETS[0]; i++) {
         if (strcmp(PRESETS[i].name, name) == 0) { uk_theme_use(name); return; }
     }
-    uk_theme_use("cuktech");
+    uk_theme_use("cuktech-console");
 }
 
 const char *fnos_ui_theme_name(void) { return s_pal_name; }
 
 /* ── 阈值配色：条、点、数字共用同一处判断 ────────────────────────── */
-uint32_t uk_pct_color(int32_t pct)
+uint32_t uk_pct_color(float pct)
 {
-    if (pct < 0) return UK_OFF;
-    if ((float)pct >= UK_PCT_FULL) return UK_DANGER;
-    if ((float)pct >= UK_PCT_WARM) return UK_WARN;
-    return UK_OK;
+    if (!isfinite(pct) || pct < 0) return UK_OFF;
+    if (pct >= UK_PCT_FULL) return UK_USAGE_HIGH;
+    if (pct >= UK_PCT_WARM) return UK_USAGE_WARN;
+    return UK_USAGE_LOW;
 }
 
 uint32_t uk_temp_color(float c)

@@ -229,7 +229,7 @@ void uk_anim_reveal_settle(lv_obj_t *panel);
 void uk_bar_set(lv_obj_t *bar, int32_t v);
 
 /* ── 阈值配色（唯一来源，供条/点/数字复用） ──────────────────────── */
-uint32_t uk_pct_color(int32_t pct);
+uint32_t uk_pct_color(float pct);
 uint32_t uk_temp_color(float c);
 
 #ifdef __cplusplus
