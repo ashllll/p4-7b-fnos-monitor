@@ -1,108 +1,27 @@
-<div align="center">
+<p align="center">
+  <img src="assets/readme/hero.svg" width="100%" alt="fnOS Monitor — 飞牛 NAS 的桌面状态屏；负载、流量、容量与温度，一眼可见。">
+</p>
 
 # fnOS Monitor
 
-**飞牛 NAS 的桌面状态屏**
+**飞牛 NAS 的桌面状态屏。** ESP32-P4 · 7 英寸触控 · 1024 × 600 · 原生 LVGL
 
-让负载、流量、容量与温度，一眼可见。
+[快速开始](#快速开始) · [六页界面](#界面预览) · [硬件要求](#硬件要求) · [设计总览](docs/design-overview-2026-10-14.md) · [文档导航](#文档导航)
 
-ESP32-P4 · 7 英寸触控 · 1024 × 600 · 原生 LVGL · HTTPS 配对
+![fnOS Monitor 总览：CPU、内存、设备状态、网络、存储容量与最热温度](docs/images/ui-cuktech-ultra-2026-10-14/overview.png)
 
-[界面预览](#界面预览) · [设计总览](docs/design-overview-2026-10-14.md) · [快速开始](#快速开始) · [硬件要求](#硬件要求) · [开发与验证](#开发与验证) · [文档导航](#文档导航)
+一个独立屏幕，持续呈现 NAS 的运行状态。日常看仪表、趋势和状态；需要深入时，再进入存储、网络、系统、温度与告警页面。fnOS 配套应用负责采集，开发板负责显示。
 
-</div>
+> 画面由当前源码通过真实 LVGL 在主机渲染，使用匿名夹具与合成读数；不是个人 NAS 快照或物理屏幕照片。[查看全部 21 张界面与复现说明](docs/images/ui-cuktech-ultra-2026-10-14/README.md)。
 
-![fnOS Monitor 总览：CPU、内存、运行状态、网络、容量与最高温](docs/images/ui-cuktech-ultra-2026-10-14/overview.png)
+## 一眼掌握，按需深入
 
-**一个独立屏幕，持续呈现 NAS 的运行状态。** fnOS 配套应用负责采集，ESP32-P4 开发板负责显示；日常查看负载、传输、存储和温度，直接看仪表、趋势与状态。遇到异常，再进入对应页面和详情。
+- **读数与趋势**：CPU、内存、容量、流量与温度集中呈现；网速双线趋势位于网络页。
+- **清单随设备变化**：卷、阵列、磁盘、网口、容器与温度通道按实际数据创建，长名称与长清单可换行、滚动查看。
+- **数据状态清楚表达**：实时、旧值、无数据、权限不足与离线分别提示；保留真实零值，缺失不会伪装成健康。
+- **屏幕完成配置**：Wi-Fi、HTTPS 配对与证书指纹核对无需写入 NAS 管理员密码；详情保留打开时的快照。
 
-本项目由开发板固件和飞牛配套应用组成。当前界面面向 **Waveshare ESP32-P4-WIFI6-Touch-LCD-7B 的 1024×600 横屏**，采用 CUKTECH ULTRA 参考语言：黑底、白色主读数、蓝色交互与提醒、冰青和少量橙色指标标识，朱红用于严重异常。
-
-> 图中均为当前源码通过真实 LVGL 渲染的演示画面，使用通用设备名称、合成读数和固定测试指纹；不是个人 NAS 快照或物理屏幕照片。[图片来源与复现](docs/images/ui-cuktech-ultra-2026-10-14/README.md)。
-
-## 产品特性
-
-| 一眼掌握 | 按需深入 | 清楚可信 |
-| --- | --- | --- |
-| **六张首页状态卡**：CPU、内存、运行时长、服务、网络、容量与温度 | **六个专用页面**：总览、存储、网络、系统、温度和告警 | **状态分开表达**：实时、旧值、无数据、权限不足和离线 |
-| **真实采样趋势**：CPU、内存、温度；网速曲线集中在网络页 | **动态设备清单**：卷、阵列、磁盘、网口、容器和温度通道随数据创建 | **真实零值保留**：缺失和采集失败使用占位与原因 |
-| **连续阻尼读数**：数字、环表和条形顺滑跟随变化 | **筛选与只读详情**：长名称和长清单通过换行、滚动继续查看 | **HTTPS 设备配对**：在屏幕核对证书指纹，无需写入 NAS 管理员密码 |
-
-占用率默认低于 80% 显示冰青，80%–90% 显示蓝色，达到 90% 显示朱红；阈值可配置。历史曲线与主数字不随当前负载整块变色。[查看三档占用率与全部 21 张界面](docs/images/ui-cuktech-ultra-2026-10-14/README.md)。
-
-点击底部导航直达页面，横向拖动跟随手指；清单支持纵向滚动。温度多通道手动展开，设备身份与展开选择保持关联。夜间模式与显示参数可配置。
-
-## 界面预览
-
-首页总览见上方主图。以下为另外五个主页面，点击图片可查看 1024×600 原图。
-
-### 存储 · 看清容量与阵列
-
-已用、总量与可用空间集中呈现；按卷、阵列和磁盘筛选，查看占用、同步进度与读写活动。
-
-![存储界面：容量摘要、存储卷与阵列健康](docs/images/ui-cuktech-ultra-2026-10-14/storage.png)
-
-### 网络 · 看清收发与近期波动
-
-上行、下行、合计与采集延迟配合双线趋势；各接口展示链路状态和占用。**网速曲线仅在网络页显示。**
-
-![网络界面：收发速率、吞吐趋势与网络接口](docs/images/ui-cuktech-ultra-2026-10-14/network.png)
-
-### 系统 · 看清服务与硬件
-
-系统摘要、容器运行状态和硬件温度放在同一页；容器、硬件可分别筛选，资源字段按采集能力显示。
-
-![系统界面：容器服务、硬件温度与系统摘要](docs/images/ui-cuktech-ultra-2026-10-14/system.png)
-
-### 温度 · 找到最热的来源
-
-最高读数与近期趋势优先；下方按设备分组，滚动访问完整清单，点击设备展开各温度通道。
-
-![温度界面：最高温、温度趋势与设备温度清单](docs/images/ui-cuktech-ultra-2026-10-14/temperature.png)
-
-### 告警 · 先处理重要事件
-
-严重、警告和提示分层显示，可按等级筛选。没有告警事件时，页面继续展示存储、温度、容器与采集体检。
-
-![告警界面：严重程度与分组事件](docs/images/ui-cuktech-ultra-2026-10-14/alerts.png)
-
-<details>
-<summary><strong>无告警时的体检界面与夜间模式</strong></summary>
-
-| 体检摘要 | 夜间模式 |
-| --- | --- |
-| ![无告警时的四项体检摘要](docs/images/ui-cuktech-ultra-2026-10-14/health-summary.png) | ![夜间总览界面](docs/images/ui-cuktech-ultra-2026-10-14/night.png) |
-
-无告警事件不等于所有指标都正常：容量等关注项仍会独立提示。夜间背光需在真实屏幕上体验。
-
-</details>
-
-## 从连接到查看详情
-
-配网、配对和诊断沿用主界面的控件语言。地址、Wi-Fi 与设备信任可在屏幕上配置。
-
-| 选择 Wi-Fi | 输入网络口令 |
-| --- | --- |
-| ![Wi-Fi 扫描：通用演示网络与信号状态](docs/images/ui-cuktech-ultra-2026-10-14/wifi-scan.png) | ![Wi-Fi 输入界面与屏上键盘](docs/images/ui-cuktech-ultra-2026-10-14/wifi-keyboard.png) |
-
-| 输入六位配对码 | 核对 NAS 证书指纹 |
-| --- | --- |
-| ![NAS 配对码输入与三步指引](docs/images/ui-cuktech-ultra-2026-10-14/pairing.png) | ![证书指纹确认界面，使用固定测试指纹](docs/images/ui-cuktech-ultra-2026-10-14/pairing-certificate.png) |
-
-| 存储卷详情 | 容器详情 |
-| --- | --- |
-| ![只读存储卷详情](docs/images/ui-cuktech-ultra-2026-10-14/volume-detail.png) | ![只读容器资源详情](docs/images/ui-cuktech-ultra-2026-10-14/container-detail.png) |
-
-详情保留**打开时的快照**，方便稳定阅读。列表刷新或设备改名不会悄悄更换正在查看的对象。
-
-<details>
-<summary><strong>设置与采集诊断</strong></summary>
-
-![设置与诊断：连接、采集和运行信息](docs/images/ui-cuktech-ultra-2026-10-14/diagnostics.png)
-
-连接失败时可查看阶段、最近原因、数据年龄和来源状态；配网、配对入口集中在同一面板。
-
-</details>
+底部导航直达六页，横向拖动跟随手指；清单纵向滚动。当前默认 `cuktech-console` 使用黑底、白色读数、冰青／蓝色标识与朱红异常提示，夜间模式及显示参数可配置。
 
 ## 硬件要求
 
@@ -175,6 +94,81 @@ export FNOS_SERIAL_PORT='/dev/cu.YOUR_BOARD_PORT'
 
 应用默认端口是 `8798`；模板中的 `8799` 为旧采集器回退值，保存后的配对端点覆盖模板。换证书需要重新确认信任，撤销设备后该设备的遥测请求被拒绝。首次明文引导只提供公开证书，不能代替指纹核对。
 
+## 界面预览
+
+总览主图展示日常最常看的指标。其余页面各自回答一个问题：
+
+| 页面 | 关注什么 |
+| --- | --- |
+| 存储 | 容量还够吗？卷、阵列、磁盘的健康与读写如何？ |
+| 网络 | 当前收发多快？近期吞吐是否波动？各接口是否在线？ |
+| 系统 | 容器是否运行？系统摘要与硬件状态如何？ |
+| 温度 | 哪个设备最热？展开设备查看完整温度通道。 |
+| 告警 | 哪些事件需要先处理？无告警时继续查看采集体检。 |
+
+### 存储：容量与阵列健康
+
+![存储界面：容量摘要、存储卷与阵列健康](docs/images/ui-cuktech-ultra-2026-10-14/storage.png)
+
+<details>
+<summary><strong>展开网络、系统、温度与告警界面</strong></summary>
+
+### 网络：收发速率、双线趋势与接口状态
+
+![网络：收发速率、双线趋势与接口状态](docs/images/ui-cuktech-ultra-2026-10-14/network.png)
+
+### 系统：容器、硬件温度与摘要
+
+![系统：容器、硬件温度与摘要](docs/images/ui-cuktech-ultra-2026-10-14/system.png)
+
+### 温度：最高温、趋势与设备通道
+
+![温度：最高温、趋势与设备通道](docs/images/ui-cuktech-ultra-2026-10-14/temperature.png)
+
+### 告警：按严重程度筛选事件
+
+![告警：按严重程度筛选事件](docs/images/ui-cuktech-ultra-2026-10-14/alerts.png)
+
+</details>
+
+<details>
+<summary><strong>展开配网、配对、详情与夜间模式</strong></summary>
+
+### 从连接到查看详情
+
+配网、配对和诊断沿用主界面的控件语言。地址、Wi-Fi 与设备信任可在屏幕上配置。
+
+| 选择 Wi-Fi | 输入网络口令 |
+| --- | --- |
+| ![Wi-Fi 扫描：通用演示网络与信号状态](docs/images/ui-cuktech-ultra-2026-10-14/wifi-scan.png) | ![Wi-Fi 输入界面与屏上键盘](docs/images/ui-cuktech-ultra-2026-10-14/wifi-keyboard.png) |
+
+| 输入六位配对码 | 核对 NAS 证书指纹 |
+| --- | --- |
+| ![NAS 配对码输入与三步指引](docs/images/ui-cuktech-ultra-2026-10-14/pairing.png) | ![证书指纹确认界面，使用固定测试指纹](docs/images/ui-cuktech-ultra-2026-10-14/pairing-certificate.png) |
+
+| 存储卷详情 | 容器详情 |
+| --- | --- |
+| ![只读存储卷详情](docs/images/ui-cuktech-ultra-2026-10-14/volume-detail.png) | ![只读容器资源详情](docs/images/ui-cuktech-ultra-2026-10-14/container-detail.png) |
+
+详情保留**打开时的快照**，方便稳定阅读。列表刷新或设备改名不会悄悄更换正在查看的对象。
+
+<details>
+<summary><strong>设置与采集诊断</strong></summary>
+
+![设置与诊断：连接、采集和运行信息](docs/images/ui-cuktech-ultra-2026-10-14/diagnostics.png)
+
+连接失败时可查看阶段、最近原因、数据年龄和来源状态；配网、配对入口集中在同一面板。
+
+</details>
+
+| 体检摘要 | 夜间模式 |
+| --- | --- |
+| ![无告警时的体检摘要](docs/images/ui-cuktech-ultra-2026-10-14/health-summary.png) | ![夜间总览](docs/images/ui-cuktech-ultra-2026-10-14/night.png) |
+
+无告警事件不等于所有指标都正常；夜间背光需在真实屏幕上体验。
+
+</details>
+
 ## 两端如何连接
 
 ### 日常数据流
@@ -232,6 +226,9 @@ python3 tools/test_history_merge.py
 
 固件构建和主机渲染不代替实机验收。完整物理触控、实屏动画手感、72 小时运行、掉电／旧 NVS 回退、真实内存耗尽恢复和更广泛的硬件／权限矩阵继续开放，详见 [未闭环事项](docs/open-items-2026-10-11.md)。
 
+<details>
+<summary><strong>最近迭代与版本边界</strong></summary>
+
 ### 最近迭代与版本边界
 
 - **当前 ULTRA 默认界面（2026-10-14）**：统一六页与配网／配对／详情，黄色改蓝色，粉红改朱红；历史曲线保持指标身份色，占用率只改变局部弧／条。README 同步 21 张匿名产品与阈值图。默认预览、模板构建、并行审查与开发板烧录通过；30 秒串口观察失败计数为 0。[设计](docs/ui-cuktech-ultra-2026-10-14.md) · [本轮归档与验证](docs/ui-ultra-release-2026-10-14.md)。
@@ -239,6 +236,8 @@ python3 tools/test_history_merge.py
 - **前一阶段界面基线 `7647d9b`**：CUKTECH 六页横屏、连续阻尼与新鲜度修复；模板构建、主机回归、静态检查、烧录哈希与短时串口观察已完成。[完整验证记录](docs/skills-workflow-2026-10-14.md)。
 - **当前仓库安装包 1.2.7**：本页校验值来自当前已跟踪文件及包内 manifest；这次文档与图片更新没有重新部署 NAS，也不把历史实机记录扩展成该文件的新增验收。
 - **历史 NAS 与设备证据**：[FPK 性能和 1.2.7 阶段记录](docs/fpk-performance-2026-10-12.md)、[1.2.4 发布记录](docs/release-1.2.4.md)、[架构重构](docs/architecture-refactor-2026-10-13.md)、[触控调度](docs/perf-touch-2026-10-12.md)和[交互优化](docs/perf-system-motion-2026-10-12.md)保留各自的源码、产物和验收范围。
+
+</details>
 
 ## 常见问题
 
