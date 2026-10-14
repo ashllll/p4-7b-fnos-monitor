@@ -8,7 +8,7 @@
 
 ESP32-P4 · 7 英寸触控 · 1024 × 600 · 原生 LVGL · HTTPS 配对
 
-[界面预览](#界面预览) · [快速开始](#快速开始) · [硬件要求](#硬件要求) · [开发与验证](#开发与验证) · [文档导航](#文档导航)
+[界面预览](#界面预览) · [设计总览](docs/design-overview-2026-10-14.md) · [快速开始](#快速开始) · [硬件要求](#硬件要求) · [开发与验证](#开发与验证) · [文档导航](#文档导航)
 
 </div>
 
@@ -255,6 +255,7 @@ python3 tools/test_history_merge.py
 
 | 想做什么 | 文档 |
 | --- | --- |
+| 全面理解产品、界面与工程设计 | [设计总览：页面、视觉、动效、数据、架构与验收](docs/design-overview-2026-10-14.md) |
 | 安装与维护 NAS 应用 | [飞牛应用](nas/fpk/README.md) · [可选旧采集器](nas/README.md) |
 | 理解当前界面与动效 | [ULTRA 配色](docs/ui-cuktech-ultra-2026-10-14.md) · [页面合同](docs/ui-cuktech-2026-10-14.md) · [电流表式动效](docs/ui-ammeter-motion-2026-10-14.md) |
 | 复现产品图与主机检查 | [截图来源](docs/images/ui-cuktech-ultra-2026-10-14/README.md) · [预览工具](tools/preview/README.md) |
