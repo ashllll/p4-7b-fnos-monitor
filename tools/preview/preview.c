@@ -60,13 +60,13 @@ static char        s_wifi_submit_reason[128] = "";
 static fnos_ap_t   s_wifi_aps[FNOS_AP_MAX];
 static int         s_wifi_ap_n;
 
-/* 固定的一批网络：和真机现场看到的形状一致（一个自己的、几个邻居、一个开放网络） */
+/* Synthetic public networks cover encrypted/open entries and signal ordering. */
 static void wifi_stub_reset(void)
 {
     static const struct { const char *ssid; int8_t rssi; bool secure; } def[] = {
         { "Demo",           -46, true  },
-        { "ChinaNet-8x2K",  -61, true  },
-        { "HONOR-203",      -72, true  },
+        { "Demo-Guest",  -61, true  },
+        { "Demo-IoT",      -72, true  },
         { "Guest-Open",     -80, false },
     };
     s_wifi_ap_n = (int)(sizeof def / sizeof def[0]);
@@ -310,33 +310,32 @@ static void fill_live(fnos_status_t *s)
     /* 温度桩：**与真机同形** —— 采集端把每一个通道都发上来（CPU 每核心、网卡
        PHY/MAC、每块 NVMe 的每个 Sensor），每一路带 dev（内核短名）、ch（通道名）
        和 dn（**人读的设备名**，用户要拿它认清"是哪台设备在热"）。
-       命名照抄 2026-10-06 那台 NAS 的真实设备。桩件与设备端不一致时预览给的是
-       假绿灯 —— 这条已经踩过一次。 */
+       Public names are synthetic; retain duplicate-model identities and per-channel structure. */
     temp_stub_t t[] = {
-        { "enp1s0",  "PHY",          "Marvell AQC113 10GbE",    74.2f },
-        { "enp1s0",  "MAC",          "Marvell AQC113 10GbE",    74.2f },
-        { "nvme0n1", "Composite",    "PCIe-8-SSD 512GB", 43.9f },
-        { "nvme1n1", "Composite",    "ZHITAI TiPlus7100 1TB",     42.9f },
-        { "nvme3n1", "Composite",    "PCIe-8-SSD 512GB",     41.9f },
-        { "nvme0n1", "Sensor 1",     "PCIe-8-SSD 512GB", 41.9f },
-        { "nvme2n1", "Composite",    "ZHITAI TiPlus7100 1TB", 41.0f },
-        { "nvme0n1", "Sensor 2",     "PCIe-8-SSD 512GB", 40.9f },
-        { "nvme1n1", "Sensor 1",     "ZHITAI TiPlus7100 1TB",     40.9f },
-        { "nvme1n1", "Sensor 2",     "ZHITAI TiPlus7100 1TB",     39.9f },
-        { "nvme3n1", "Sensor 1",     "PCIe-8-SSD 512GB",     39.9f },
-        { "nvme2n1", "Sensor 1",     "ZHITAI TiPlus7100 1TB", 38.9f },
-        { "nvme3n1", "Sensor 2",     "PCIe-8-SSD 512GB",     38.9f },
-        { "nvme3n1", "Sensor 3",     "PCIe-8-SSD 512GB",     37.9f },
-        { "nvme2n1", "Sensor 2",     "ZHITAI TiPlus7100 1TB", 37.9f },
-        { "nvme2n1", "Sensor 3",     "ZHITAI TiPlus7100 1TB", 36.9f },
-        { "i915",    "temp1",        "Intel UHD Graphics",      35.0f },
-        { "CPU",     "Package id 0", "Intel N100",              34.0f },
-        { "CPU",     "Core 5",       "Intel N100",              33.5f },
-        { "CPU",     "Core 4",       "Intel N100",              33.4f },
-        { "CPU",     "Core 3",       "Intel N100",              33.3f },
-        { "CPU",     "Core 2",       "Intel N100",              33.2f },
-        { "CPU",     "Core 1",       "Intel N100",              33.1f },
-        { "CPU",     "Core 0",       "Intel N100",              33.0f },
+        { "enp1s0",  "PHY",          "Ethernet Controller 10GbE",    74.2f },
+        { "enp1s0",  "MAC",          "Ethernet Controller 10GbE",    74.2f },
+        { "nvme0n1", "Composite",    "NVMe Demo Drive A", 43.9f },
+        { "nvme1n1", "Composite",    "NVMe Demo Drive B",     42.9f },
+        { "nvme3n1", "Composite",    "NVMe Demo Drive A",     41.9f },
+        { "nvme0n1", "Sensor 1",     "NVMe Demo Drive A", 41.9f },
+        { "nvme2n1", "Composite",    "NVMe Demo Drive B", 41.0f },
+        { "nvme0n1", "Sensor 2",     "NVMe Demo Drive A", 40.9f },
+        { "nvme1n1", "Sensor 1",     "NVMe Demo Drive B",     40.9f },
+        { "nvme1n1", "Sensor 2",     "NVMe Demo Drive B",     39.9f },
+        { "nvme3n1", "Sensor 1",     "NVMe Demo Drive A",     39.9f },
+        { "nvme2n1", "Sensor 1",     "NVMe Demo Drive B", 38.9f },
+        { "nvme3n1", "Sensor 2",     "NVMe Demo Drive A",     38.9f },
+        { "nvme3n1", "Sensor 3",     "NVMe Demo Drive A",     37.9f },
+        { "nvme2n1", "Sensor 2",     "NVMe Demo Drive B", 37.9f },
+        { "nvme2n1", "Sensor 3",     "NVMe Demo Drive B", 36.9f },
+        { "i915",    "temp1",        "Integrated Graphics",      35.0f },
+        { "CPU",     "Package id 0", "Demo Processor",              34.0f },
+        { "CPU",     "Core 5",       "Demo Processor",              33.5f },
+        { "CPU",     "Core 4",       "Demo Processor",              33.4f },
+        { "CPU",     "Core 3",       "Demo Processor",              33.3f },
+        { "CPU",     "Core 2",       "Demo Processor",              33.2f },
+        { "CPU",     "Core 1",       "Demo Processor",              33.1f },
+        { "CPU",     "Core 0",       "Demo Processor",              33.0f },
     };
     s->ntemps = (int)(sizeof t / sizeof t[0]);
     /* 设备端的 fnos_data.c 会把温度按"设备名 + 通道名"**固定排序**（不按温度），
@@ -351,14 +350,14 @@ static void fill_live(fnos_status_t *s)
     }
 
     struct { const char *n; bool up; const char *st; } k[] = {
-        { "jellyfin",     true,  "Up 3 days" },
-        { "immich-server",true,  "Up 3 days" },
-        { "qbittorrent",  true,  "Up 11 hours" },
-        { "vaultwarden",  true,  "Up 3 days" },
-        { "nginx-proxy",  true,  "Up 6 days" },
-        { "code-server",  false, "Exited (0) 2 hours ago" },
-        { "postgres",     true,  "Up 3 days (healthy)" },
-        { "redis",        false, "Exited (137) 5 minutes ago" },
+        { "media-service",     true,  "Up 3 days" },
+        { "photo-service",true,  "Up 3 days" },
+        { "download-service",  true,  "Up 11 hours" },
+        { "password-service",  true,  "Up 3 days" },
+        { "proxy-service",  true,  "Up 6 days" },
+        { "editor-service",  false, "Exited (0) 2 hours ago" },
+        { "database-service",     true,  "Up 3 days (healthy)" },
+        { "cache-service",        false, "Exited (137) 5 minutes ago" },
     };
     s->ndocker = 8;
     for (int i = 0; i < s->ndocker; i++) {
@@ -378,7 +377,7 @@ static void fill_live(fnos_status_t *s)
     fnos_status_text(s, &s->alerts[1].lv, "%s", "crit");
     fnos_status_text(s, &s->alerts[1].m, "%s", "/vol3 free 4.6% left");
     fnos_status_text(s, &s->alerts[2].lv, "%s", "warn");
-    fnos_status_text(s, &s->alerts[2].m, "%s", "container qbittorrentee down");
+    fnos_status_text(s, &s->alerts[2].m, "%s", "container download-service down");
     fnos_status_text(s, &s->alerts[3].lv, "%s", "info");
     fnos_status_text(s, &s->alerts[3].m, "%s", "md1 resync 47.3%");
     s->nalerts = 4;
@@ -1605,7 +1604,7 @@ static void verify_transitions(void)
     s_state = ST_HEALTHY;
     vtick_advance(500); lv_timer_handler();
     assert(visible_text(lv_screen_active(), "暂无告警事件"));
-    assert(!visible_text(lv_screen_active(), "container qbittorrentee down"));
+    assert(!visible_text(lv_screen_active(), "container download-service down"));
     assert(!visible_text(lv_screen_active(), "/vol4 used 95%"));
     /* 告警页的健康态不是"一屏留白"：它要顺带回答"看住了什么、现在什么状态"。
        这一帧同时是那四行的审计面（字形覆盖 / 标签溢出 / 越界 / 对比度都靠它），
@@ -2459,7 +2458,7 @@ static void verify_ui_regressions(void)
     fixture.recv_ms = esp_timer_get_time() / 1000;
     fnos_ui_set_page(4);
     regression_tick();
-    lv_obj_t *name = visible_text(lv_screen_active(), "Intel N100");
+    lv_obj_t *name = visible_text(lv_screen_active(), "Demo Processor");
     assert(name);
     lv_obj_t *cpu = temperature_device_block(name);
     assert(cpu);
@@ -2517,14 +2516,14 @@ static void verify_temperature_protocol_limit(void)
     fixture.ntemps = PREVIEW_TEMPS;
     for (int i = 0; i < fixture.ntemps; i++) {
         fnos_status_text(&fixture, &fixture.temps[i].dev, "%s", "CPU");
-        fnos_status_text(&fixture, &fixture.temps[i].dn, "%s", "Intel N100");
+        fnos_status_text(&fixture, &fixture.temps[i].dn, "%s", "Demo Processor");
         fnos_status_text(&fixture, &fixture.temps[i].ch, "Core %02d", i);
         fixture.temps[i].c = 40.0f + i * 0.1f;
     }
     s_override_status = &fixture;
     fnos_ui_set_page(4);
     regression_tick();
-    lv_obj_t *name = visible_text(lv_screen_active(), "Intel N100");
+    lv_obj_t *name = visible_text(lv_screen_active(), "Demo Processor");
     assert(name);
     lv_obj_t *cpu = temperature_device_block(name);
     assert(cpu);
@@ -2573,7 +2572,7 @@ static void verify_temperature_protocol_limit(void)
     snapshot("12-temperature-device-added");
     memcpy(fixture.temps, channels, sizeof channels);
     regression_tick();
-    name = visible_text(lv_screen_active(), "Intel N100");
+    name = visible_text(lv_screen_active(), "Demo Processor");
     cpu = temperature_device_block(name);
     assert(visible_text(lv_screen_active(), last_name));
     click_object_center(name);
@@ -2898,7 +2897,7 @@ static void verify_wifi(void)
     vtick_advance(500); lv_timer_handler();
     assert(visible_text(lv_screen_active(), "接入 Wi-Fi"));
     assert(visible_text(lv_screen_active(), "重新扫描"));
-    assert(visible_text(lv_screen_active(), "ChinaNet-8x2K"));   /* 扫描结果真的填进去了 */
+    assert(visible_text(lv_screen_active(), "Demo-Guest"));   /* 扫描结果真的填进去了 */
     snapshot("10-wifi-scan");
     verify_wifi_footer("重新扫描");
 

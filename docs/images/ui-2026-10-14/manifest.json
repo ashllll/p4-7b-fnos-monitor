@@ -1,0 +1,139 @@
+{
+  "rendered_on": "2026-10-14",
+  "ui_source_commit": "7647d9bb9353216ca297895a51906686e3c8c99d",
+  "fixture_path": "tools/preview/preview.c",
+  "fixture_sha256": "db3b94ce6dd1dfc2ea69f37b4bd2971337305f49f8f4cf0282f62db6604e7492",
+  "renderer": "native LVGL 9.5, RGB565, synthetic host fixtures",
+  "palette": "cuktech",
+  "width": 1024,
+  "height": 600,
+  "render_command": "bash tools/preview/run.sh out-product-public-20261014",
+  "data": "synthetic fixture values, generic device/service/network names, fixed fake certificate fingerprint",
+  "images": [
+    {
+      "file": "overview.png",
+      "title": "总览",
+      "source_frame": "04-healthy-p0.png",
+      "sha256": "d999df73ba811ada328694465f60fba6d51e0f59a98637d5b3560514ba0ed180",
+      "bytes": 25689
+    },
+    {
+      "file": "storage.png",
+      "title": "存储",
+      "source_frame": "04-healthy-p1.png",
+      "sha256": "f6e6636c74bef5e18d12686d1e78f09ee315a8dd6cfe0f2343efd20e3e8ac16e",
+      "bytes": 22176
+    },
+    {
+      "file": "network.png",
+      "title": "网络",
+      "source_frame": "04-healthy-p2.png",
+      "sha256": "045e744faff415b63a058dbce55ee433cbdcf0e5c49089e7f49220474063eba7",
+      "bytes": 25948
+    },
+    {
+      "file": "system.png",
+      "title": "系统",
+      "source_frame": "04-healthy-p3.png",
+      "sha256": "78fd54a4f24e6881db3e010714752f90d46811ddf4dec72a8c03c91190ecce7a",
+      "bytes": 25691
+    },
+    {
+      "file": "temperature.png",
+      "title": "温度",
+      "source_frame": "04-healthy-p4.png",
+      "sha256": "83c095ffca5f36fd7e814d3db537339e5ffbdace81ac54b054c7d2c33522e5d5",
+      "bytes": 15276
+    },
+    {
+      "file": "alerts.png",
+      "title": "告警",
+      "source_frame": "02-live-p5.png",
+      "sha256": "8cfb037df175e649d7d195d6dee33f166eb659ffd726b7b06c0af6c839747591",
+      "bytes": 15835
+    },
+    {
+      "file": "wifi-scan.png",
+      "title": "Wi-Fi 扫描",
+      "source_frame": "10-wifi-scan.png",
+      "sha256": "ab3747470190af41907c60181394988ff2acf3c99d202f1cbcb06fae1a89af0d",
+      "bytes": 18874
+    },
+    {
+      "file": "wifi-keyboard.png",
+      "title": "Wi-Fi 键盘",
+      "source_frame": "10-wifi-pass.png",
+      "sha256": "a62937fda49fd17a55cd1591b537a10055ce2c841ed062cebd7bce697d517ba9",
+      "bytes": 18419
+    },
+    {
+      "file": "pairing.png",
+      "title": "配对码",
+      "source_frame": "07-pair-code.png",
+      "sha256": "74e5621d8437e6e696eb7496a83de824bd86375f22dd46b3610127a188ea4c30",
+      "bytes": 22434
+    },
+    {
+      "file": "pairing-certificate.png",
+      "title": "证书核对",
+      "source_frame": "07-pair-confirm.png",
+      "sha256": "fdda49fd111465e3c6923a2db637ed5e6fd6d80d7b4a9a7625f0bd09c7a95f5e",
+      "bytes": 28214
+    },
+    {
+      "file": "volume-detail.png",
+      "title": "卷详情",
+      "source_frame": "13-volume-detail.png",
+      "sha256": "7ad7d56ec095c6d8181abf35dc8954b6f98b05e2a56d909794fa043a4729b62d",
+      "bytes": 17421
+    },
+    {
+      "file": "container-detail.png",
+      "title": "容器详情",
+      "source_frame": "13-container-detail.png",
+      "sha256": "fd9c9069177c3ed4ac1c0c53011a9b4489e24b55173e3c391fd0dd45d67b3a98",
+      "bytes": 19744
+    },
+    {
+      "file": "diagnostics.png",
+      "title": "设置与诊断",
+      "source_frame": "06-diagnostics.png",
+      "sha256": "3631a4b559bd6f2f80d1521528d2f0c6bb37ee57bd1bf603ae397e1cbb2d1b32",
+      "bytes": 15571
+    },
+    {
+      "file": "night.png",
+      "title": "夜间总览",
+      "source_frame": "08-night-p0.png",
+      "sha256": "eb967e9dca46e1618db9c726d1e45af29af0a14d0bfb6efdb9df426ab6cda06b",
+      "bytes": 25209
+    },
+    {
+      "file": "health-summary.png",
+      "title": "无告警体检",
+      "source_frame": "06-alerts-health.png",
+      "sha256": "739510446fcfe37b808dfbac3be420e2c7d4d08c2744e57927a7462d01caa218",
+      "bytes": 17518
+    }
+  ],
+  "ui_config": {
+    "CONFIG_FNOS_UI_REFRESH_MS": "100",
+    "CONFIG_FNOS_UI_TREND_SMOOTH_SAMPLES": "3",
+    "CONFIG_FNOS_UI_TREND_SCROLL_MS": "2000",
+    "CONFIG_FNOS_UI_TREND_FPS": "30",
+    "CONFIG_FNOS_UI_TEXT_SCRATCH_BYTES": "256",
+    "CONFIG_FNOS_UI_NUMBER_BUDGET_BYTES": "131072",
+    "CONFIG_FNOS_UI_NUMBER_MS": "450",
+    "CONFIG_FNOS_UI_TELEMETRY_DAMPING": "8",
+    "CONFIG_FNOS_UI_NUMBER_PRESENT_MS": "600",
+    "CONFIG_FNOS_UI_NUMBER_STAGGER_MS": "0",
+    "CONFIG_FNOS_UI_NUMBER_MAX_STAGGER_MS": "0",
+    "CONFIG_FNOS_UI_NUMBER_TRAVEL_PCT": "4",
+    "CONFIG_FNOS_UI_NUMBER_BLUR_PCT": "0",
+    "CONFIG_FNOS_UI_USAGE_WARM": "80",
+    "CONFIG_FNOS_UI_USAGE_HIGH": "90",
+    "CONFIG_FNOS_UI_TEMP_WARM": "75",
+    "CONFIG_FNOS_UI_TEMP_HIGH": "80",
+    "CONFIG_FNOS_UI_LIST_MIN_WIDTH": "260"
+  }
+}
