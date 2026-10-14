@@ -16,6 +16,6 @@
 | accent-tint | `#24200A` | 焦点表面 |
 | link | `#37C4D6` | HTTPS 请求与响应 |
 
-标题、节点和中文说明使用无衬线字体栈 `Noto Sans SC, PingFang SC, Microsoft YaHei, system-ui, sans-serif`；技术标识使用 `ui-monospace, SFMono-Regular, Consolas, monospace`。字体来源为系统，保留各平台回退；没有嵌入固件字库，也不宣称与开发板字体完全一致。标准图表字号为标题 28 px、中文节点及说明 12 px、技术标签 9 px、英文眉题 8 px。
+标题、节点和中文说明使用无衬线字体栈 `Noto Sans SC, PingFang SC, Microsoft YaHei, system-ui, sans-serif`；技术标识使用 `ui-monospace, SFMono-Regular, Consolas, monospace`。字体来源为系统，保留各平台回退；没有嵌入固件字库，也不宣称与开发板字体完全一致。为适应 GitHub README 正文栏缩放，覆盖技能标准字号：标题 28 px、节点 20 px、中文说明与分支标签 14 px、技术标签 12 px、英文眉题 8 px。主节点缩短文案，尺寸不够时拆成主文字与辅助说明；两张 SVG 声明原生宽高，点击可查看完整矢量图。
 
 节点结构沿 4 px 栅格，连线使用直线或半径 8 px 的正交转角。判断分支以文字标注，箭头标签留独立背景及 8 px 间距；成功与停止依靠形状及文案识别，黄色只突出关键关口与最终仪表。

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg viewBox="0 0 960 720" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="first-connection-title first-connection-desc" id="first-connection-root">
+<svg width="960" height="720" viewBox="0 0 960 720" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="first-connection-title first-connection-desc" id="first-connection-root">
 <title id="first-connection-title">首次配对，建立设备信任</title>
 <desc id="first-connection-desc">先准备 NAS 应用和开发板，人工核对证书指纹，配对完成后进入总览；指纹无法确认或配对失败时停止并排查。</desc>
 <defs>
@@ -7,9 +7,9 @@
       #first-connection-root .diagram-container { width: 100%; overflow-x: auto; }
       #first-connection-root text { font-family: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif; fill: #F5F7FA; font-size: 12px; }
       #first-connection-root .heading { font-size: 28px; font-weight: 600; }
-      #first-connection-root .name { font-weight: 600; }
-      #first-connection-root .caption { fill: #A5B4C2; font-weight: 500; }
-      #first-connection-root .tech { font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace; fill: #D4DFE8; font-size: 9px; }
+      #first-connection-root .name { font-size: 20px; font-weight: 600; }
+      #first-connection-root .caption { fill: #A5B4C2; font-size: 14px; font-weight: 500; }
+      #first-connection-root .tech { font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace; fill: #D4DFE8; font-size: 12px; }
       #first-connection-root .tag { font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace; fill: #A5B4C2; font-size: 8px; letter-spacing: 1px; }
       #first-connection-root .diagram-container { overflow-x: visible; }</style>
 <marker id="first-connection-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
@@ -36,60 +36,64 @@
 <path d="M 800,508 V 552" fill="none" stroke="#D4DFE8" stroke-width="1.2" marker-end="url(#first-connection-arrow)"/>
 <path d="M 696,464 H 640" fill="none" stroke="#D4DFE8" stroke-width="1.2" marker-end="url(#first-connection-arrow)"/>
 <g data-role="edge-label">
-<rect x="608" y="316" width="64" height="16" rx="2" fill="#000000"/>
+<rect x="604" y="308" width="72" height="24" rx="2" fill="#000000"/>
 <text x="640.0" y="328" text-anchor="middle" class="caption">确认一致</text>
 </g>
 <g data-role="edge-label">
-<rect x="200" y="376" width="144" height="16" rx="2" fill="#000000"/>
-<text x="272.0" y="388" text-anchor="middle" class="caption">不一致／无法确认</text>
+<rect x="200" y="368" width="144" height="24" rx="2" fill="#000000"/>
+<text x="272.0" y="385" text-anchor="middle" class="caption">不一致／无法确认</text>
 </g>
 <g data-role="edge-label">
-<rect x="808" y="520" width="40" height="16" rx="2" fill="#000000"/>
-<text x="828.0" y="532" text-anchor="middle" class="caption">成功</text>
+<rect x="808" y="516" width="48" height="24" rx="2" fill="#000000"/>
+<text x="832.0" y="533" text-anchor="middle" class="caption">成功</text>
 </g>
 <g data-role="edge-label">
-<rect x="648" y="440" width="40" height="16" rx="2" fill="#000000"/>
-<text x="668.0" y="452" text-anchor="middle" class="caption">失败</text>
+<rect x="644" y="432" width="48" height="24" rx="2" fill="#000000"/>
+<text x="668.0" y="449" text-anchor="middle" class="caption">失败</text>
 </g>
 <!-- Nodes: nine primary ideas, two focal treatments. -->
 <g data-node-id="nasReady">
 <rect x="40" y="124" width="360" height="56" rx="6" fill="#080D12" stroke="#A5B4C2"/>
-<text x="220.0" y="150.0" text-anchor="middle" class="name">NAS：安装应用，生成配对码</text>
-<text x="220.0" y="169.0" text-anchor="middle" class="caption">启用 HTTPS，确认遥测端口</text>
+<text x="220.0" y="148" text-anchor="middle" class="name">NAS：安装应用，生成配对码</text>
+<text x="220.0" y="172" text-anchor="middle" class="caption">启用 HTTPS，确认遥测端口</text>
 </g>
 <g data-node-id="boardReady">
 <rect x="560" y="124" width="360" height="56" rx="6" fill="#080D12" stroke="#A5B4C2"/>
-<text x="740.0" y="150.0" text-anchor="middle" class="name">开发板：烧录固件，连接 Wi-Fi</text>
-<text x="740.0" y="169.0" text-anchor="middle" class="caption">确保能够访问 NAS</text>
+<text x="740.0" y="148" text-anchor="middle" class="name">开发板：烧录固件，连接 Wi-Fi</text>
+<text x="740.0" y="172" text-anchor="middle" class="caption">确保能够访问 NAS</text>
 </g>
 <g data-node-id="enterPair">
 <rect x="320" y="216" width="320" height="56" rx="6" fill="#080D12" stroke="#A5B4C2"/>
-<text x="480.0" y="248.0" text-anchor="middle" class="name">屏幕：填写地址、端口与配对码</text>
+<text x="480.0" y="240" text-anchor="middle" class="name">屏幕：填写配对信息</text>
+<text x="480.0" y="260" text-anchor="middle" class="caption">地址 · 端口 · 六位配对码</text>
 </g>
 <g data-node-id="fingerprint">
 <polygon points="480,300.0 600.0,340 480,380.0 360.0,340" fill="#000000" stroke="#FFC800"/>
-<text x="480" y="344" text-anchor="middle" class="name">两端证书指纹一致？</text>
+<text x="480" y="344" text-anchor="middle" class="name">指纹一致？</text>
 </g>
 <g data-node-id="stopPair">
 <rect x="40" y="420" width="280" height="56" rx="20" fill="#080D12" stroke="#A5B4C2"/>
-<text x="180.0" y="452.0" text-anchor="middle" class="name">取消配对，检查地址与证书</text>
+<text x="180.0" y="444" text-anchor="middle" class="name">取消配对</text>
+<text x="180.0" y="464" text-anchor="middle" class="caption">检查地址与证书</text>
 </g>
 <g data-node-id="acceptPair">
 <rect x="680" y="312" width="240" height="56" rx="6" fill="#080D12" stroke="#A5B4C2"/>
-<text x="800.0" y="344.0" text-anchor="middle" class="name">接受证书并提交配对</text>
+<text x="800.0" y="336" text-anchor="middle" class="name">接受证书</text>
+<text x="800.0" y="356" text-anchor="middle" class="caption">提交配对</text>
 </g>
 <g data-node-id="pairResult">
 <polygon points="800,420.0 904.0,464 800,508.0 696.0,464" fill="#000000" stroke="#A5B4C2"/>
-<text x="800" y="468" text-anchor="middle" class="name">显示配对完成？</text>
+<text x="800" y="468" text-anchor="middle" class="name">配对完成？</text>
 </g>
 <g data-node-id="retryPair">
 <rect x="440" y="436" width="200" height="56" rx="6" fill="#080D12" stroke="#A5B4C2"/>
-<text x="540.0" y="468.0" text-anchor="middle" class="name">按提示排查后重新配对</text>
+<text x="540.0" y="460" text-anchor="middle" class="name">配对未完成</text>
+<text x="540.0" y="480" text-anchor="middle" class="caption">排查后重新配对</text>
 </g>
 <g data-node-id="dashboard">
 <rect x="680" y="552" width="240" height="56" rx="20" fill="#24200A" stroke="#FFC800"/>
-<text x="800.0" y="578.0" text-anchor="middle" class="name">进入总览</text>
-<text x="800.0" y="597.0" text-anchor="middle" class="caption">检查新鲜度与采集来源</text>
+<text x="800.0" y="576" text-anchor="middle" class="name">进入总览</text>
+<text x="800.0" y="600" text-anchor="middle" class="caption">检查新鲜度与采集来源</text>
 </g>
 <line x1="40" y1="640" x2="920" y2="640" stroke="#25313E"/>
 <text x="40" y="668" text-anchor="start" class="caption">矩形：操作步骤　◇：判断关口　圆角终点：完成或停止；失败出口不代表已建立信任</text>
