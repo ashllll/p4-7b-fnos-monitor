@@ -33,6 +33,7 @@ idf_component_register(
     INCLUDE_DIRS
         ${CMAKE_CURRENT_LIST_DIR}
         ${CMAKE_CURRENT_LIST_DIR}/ui_kit
+    PRIV_REQUIRES esp_driver_ppa esp_lcd
     REQUIRES
         esp_wifi
         esp_netif
@@ -60,3 +61,22 @@ target_compile_options(
 
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/fnos_chart_math.cmake")
 fnos_use_safe_chart_map(__idf_lvgl__lvgl)
+
+if(CONFIG_FNOS_UI_PERF_BENCH)
+    target_sources(${COMPONENT_LIB} PRIVATE "fnos_perf_display.c")
+    # Use the installed adapter's exact private signatures, without copying layouts.
+    target_include_directories(${COMPONENT_LIB} PRIVATE
+        $<TARGET_PROPERTY:__idf_espressif__esp_lvgl_adapter,INCLUDE_DIRECTORIES>)
+    foreach(probe ppa_do_scale_rotate_mirror display_bridge_dma2d_copy_sync
+                  esp_lcd_panel_draw_bitmap display_bridge_pipeline_wait_free_buf)
+        target_link_libraries(${COMPONENT_LIB} INTERFACE
+            "-Wl,--wrap=${probe},--undefined=__wrap_${probe}")
+    endforeach()
+    if(CONFIG_FNOS_UI_PERF_DRAW)
+        foreach(probe lv_draw_add_task lv_draw_get_available_task lv_draw_get_next_available_task
+                      lv_draw_sw_blend lv_draw_sw_label lv_draw_sw_letter)
+            target_link_libraries(${COMPONENT_LIB} INTERFACE
+                "-Wl,--wrap=${probe},--undefined=__wrap_${probe}")
+        endforeach()
+    endif()
+endif()

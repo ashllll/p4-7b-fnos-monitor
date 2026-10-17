@@ -227,8 +227,8 @@ lv_obj_t *uk_card(lv_obj_t *parent, const char *title, const char *note)
     lv_obj_set_height(c, LV_SIZE_CONTENT);
     style_surface(c, UK_SURF_S1, UK_RADIUS);
     style_card_edge(c);
-    lv_obj_set_style_pad_all(c, UK_S3, 0);
-    lv_obj_set_style_pad_row(c, UK_S2, 0);
+    lv_obj_set_style_pad_all(c, UK_CARD_PAD, 0);
+    lv_obj_set_style_pad_row(c, UK_CONTENT_GAP, 0);
     lv_obj_set_flex_flow(c, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(c, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     lv_obj_set_style_min_height(c, 0, 0);
@@ -248,12 +248,12 @@ lv_obj_t *uk_card(lv_obj_t *parent, const char *title, const char *note)
     lv_obj_set_flex_flow(head, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(head, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    lv_obj_t *tl = mk_label_raw(head, UK_FONT_CJK_16, UK_T1);
+    lv_obj_t *tl = mk_label_raw(head, UK_TYPE_TITLE, UK_T1);
     lv_label_set_long_mode(tl, LV_LABEL_LONG_MODE_DOTS);
     lv_obj_set_flex_grow(tl, 1);
     lv_label_set_text(tl, title ? title : "");   /* 不给就空着，别留 LVGL 默认的 "Text" */
 
-    lv_obj_t *nt = mk_label_raw(head, UK_FONT_CJK_12, UK_T3);
+    lv_obj_t *nt = mk_label_raw(head, UK_TYPE_CAPTION, UK_T3);
     lv_obj_set_style_text_align(nt, LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_set_flex_grow(nt, 0);
     lv_label_set_text(nt, note ? note : "");
@@ -269,7 +269,7 @@ lv_obj_t *uk_card(lv_obj_t *parent, const char *title, const char *note)
     lv_obj_set_style_bg_opa(body, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(body, 0, 0);
     lv_obj_set_style_pad_all(body, 0, 0);
-    lv_obj_set_style_pad_row(body, UK_S2, 0);
+    lv_obj_set_style_pad_row(body, UK_CONTENT_GAP, 0);
     lv_obj_set_flex_flow(body, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(body, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     lv_obj_set_style_min_height(body, 0, 0);
@@ -356,11 +356,8 @@ lv_obj_t *uk_dot(lv_obj_t *parent, uint32_t hex, int32_t d)
 }
 
 /* ── 清单行 ───────────────────────────────────────────────────────── */
-/* 行 = 两行式（与设计合同一致）：
-      line1：状态点 + 设备名（占满整行宽，**永不缩写**，放不下就换行）
-      line2：通道名（左，可省略号）+ 数值/单位（右，不参与伸缩）
-   没有通道名时（老采集端）把数值挪回 line1，line2 整行收起 —— 行形态由数据决定。
-   数值放第二行是关键：它不跟设备名抢宽度，设备名才有整行可用。 */
+/* Row order: identity + right-aligned reading, then optional metadata and bar.
+   Full names wrap within the width left by the reading; metadata wraps below. */
 static lv_obj_t *mk_line(lv_obj_t *parent, int32_t gap)
 {
     lv_obj_t *l = lv_obj_create(parent);
@@ -376,23 +373,6 @@ static lv_obj_t *mk_line(lv_obj_t *parent, int32_t gap)
        竖向滚动条（行里冒出滚动条既不是设计，也会挡住"子对象跑出父对象"审计）。 */
     lv_obj_clear_flag(l, LV_OBJ_FLAG_SCROLLABLE);
     return l;
-}
-
-/* A comparison row keeps identity separate from metrics on wide containers.
-   Compact containers retain the same full text in a vertical reading order. */
-static void comparison_row_layout(lv_event_t *e)
-{
-    uk_row_t *r = lv_event_get_user_data(e);
-    lv_obj_t *a = lv_obj_get_child(r->row, 0), *b = lv_obj_get_child(r->row, 1);
-    if (!a || !b) return;
-    int32_t w = lv_obj_get_content_width(r->row);
-    bool wide = w >= UK_ENTITY_MIN_WIDTH && !lv_obj_has_flag(b, LV_OBJ_FLAG_HIDDEN);
-    lv_flex_flow_t flow = wide ? LV_FLEX_FLOW_ROW_WRAP : LV_FLEX_FLOW_COLUMN;
-    if (lv_obj_get_style_flex_flow(r->row, 0) != flow) lv_obj_set_flex_flow(r->row, flow);
-    int32_t aw = wide ? (w - UK_S3) / 3 : LV_PCT(100);
-    int32_t bw = wide ? w - UK_S3 - aw : LV_PCT(100);
-    if (lv_obj_get_style_width(a, 0) != aw) lv_obj_set_width(a, aw);
-    if (lv_obj_get_style_width(b, 0) != bw) lv_obj_set_width(b, bw);
 }
 
 uk_row_t *uk_row_create(lv_obj_t *parent, bool with_led, bool with_bar)
@@ -411,10 +391,10 @@ uk_row_t *uk_row_create(lv_obj_t *parent, bool with_led, bool with_bar)
     lv_obj_set_style_radius(row, tile ? UK_RADIUS_SM : 0, 0);
     lv_obj_set_style_border_width(row, 0, 0);
     lv_obj_set_style_pad_all(row, 0, 0);
-    /* Separated tiles have inner breathing room; dense Wi-Fi rows retain their own layout. */
-    lv_obj_set_style_pad_hor(row, separated ? UK_S2 : UK_S1, 0);
-    lv_obj_set_style_pad_ver(row, separated ? UK_S1 : 0, 0);
-    lv_obj_set_style_pad_row(row, 0, 0);
+    /* Inventory and Wi-Fi rows share the same insets and touch floor. */
+    lv_obj_set_style_pad_hor(row, UK_ROW_PAD_H, 0);
+    lv_obj_set_style_pad_ver(row, UK_ROW_PAD_V, 0);
+    lv_obj_set_style_pad_row(row, UK_CONTENT_GAP, 0);
     /* 1px 下边线 = 清单分隔线（也是行与行之间的视觉间距）；
        行高只有 1px 的代价，比 pad_row 便宜，24 路才能一屏排下。 */
     lv_obj_set_style_border_width(row, 1, 0);
@@ -441,17 +421,15 @@ uk_row_t *uk_row_create(lv_obj_t *parent, bool with_led, bool with_bar)
     lv_obj_set_style_min_width(namebox, 0, 0);
     lv_obj_clear_flag(namebox, LV_OBJ_FLAG_SCROLLABLE);
 
-    r->name1 = mk_label_raw(namebox, UK_FONT_CJK_16, UK_T2);
+    r->name1 = mk_label_raw(namebox, UK_TYPE_BODY, UK_T2);
     lv_label_set_long_mode(r->name1, LV_LABEL_LONG_MODE_WRAP);   /* 设备名永不缩写 */
     lv_obj_set_width(r->name1, LV_PCT(100));
 
     lv_obj_t *line2 = mk_line(row, UK_S2);
-    r->name2 = mk_label_raw(line2, UK_FONT_CJK_12, UK_T3);
+    r->name2 = mk_label_raw(line2, UK_TYPE_CAPTION, UK_T3);
     lv_obj_set_flex_grow(r->name2, 1);
     lv_obj_set_width(r->name2, LV_PCT(100));
-    /* 第二行**永远只占一行**：行高必须可预测，池的列数/是否装得下都按行高算。
-       DOTS 是按对象高度收尾的，钉成一行行高才能拿到"单行 + 省略号"，
-       否则它会换行成两行、把行撑高 20px，池就误判成"装得下"。 */
+    /* Metadata retains its full text; the pool measures the wrapped height. */
     lv_label_set_long_mode(r->name2, LV_LABEL_LONG_MODE_WRAP);
     lv_obj_set_height(r->name2, LV_SIZE_CONTENT);
 
@@ -463,16 +441,16 @@ uk_row_t *uk_row_create(lv_obj_t *parent, bool with_led, bool with_bar)
     lv_obj_set_style_bg_opa(valbox, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(valbox, 0, 0);
     lv_obj_set_style_pad_all(valbox, 0, 0);
-    lv_obj_set_style_pad_column(valbox, 2, 0);
+    lv_obj_set_style_pad_column(valbox, UK_S1, 0);
     lv_obj_set_flex_flow(valbox, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(valbox, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
     lv_obj_set_style_min_width(valbox, 0, 0);
     lv_obj_clear_flag(valbox, LV_OBJ_FLAG_SCROLLABLE);
 
-    r->val  = mk_label_raw(valbox, UK_FONT_NUM_20, UK_T1);
+    r->val  = mk_label_raw(valbox, UK_TYPE_READING, UK_T1);
     lv_label_set_long_mode(r->val, LV_LABEL_LONG_MODE_CLIP);
-    r->unit = mk_label_raw(valbox, UK_FONT_TXT_12, UK_T3);
-    lv_obj_set_style_pad_bottom(r->unit, 3, 0);   /* 与数字基线对齐 */
+    r->unit = mk_label_raw(valbox, UK_TYPE_UNIT, UK_T3);
+    lv_obj_set_style_pad_bottom(r->unit, UK_UNIT_BASELINE, 0);   /* 与数字基线对齐 */
 
     if (with_bar) {
         r->bar = lv_bar_create(row);
@@ -488,7 +466,6 @@ uk_row_t *uk_row_create(lv_obj_t *parent, bool with_led, bool with_bar)
         lv_obj_set_style_anim_duration(r->bar, UK_BAR_ANIM_MS, LV_PART_MAIN);
     }
     lv_obj_set_style_pad_column(row, UK_S3, 0);
-    lv_obj_add_event_cb(row, comparison_row_layout, LV_EVENT_SIZE_CHANGED, r);
     return r;
 }
 
@@ -511,18 +488,17 @@ void uk_row_set(uk_row_t *r, const char *l1, const char *l2,
     uk_number_set_text(r->val,val ? val : "",same_reading);
     uk_set_text(r->unit, "%s", unit ? unit : "");
 
-    /* 数值的位置跟着数据形态走：有通道名 → 第二行右侧；没有 → 回到第一行右侧 */
+    /* Identity and value share the first line; metadata always occupies the next. */
     lv_obj_t *line1 = lv_obj_get_child(r->row, 0);
     lv_obj_t *line2 = lv_obj_get_child(r->row, 1);
     lv_obj_t *valbox = lv_obj_get_parent(r->val);
-    lv_obj_t *want = two ? line2 : line1;
+    lv_obj_t *want = line1;
     if (valbox && lv_obj_get_parent(valbox) != want) lv_obj_set_parent(valbox, want);
     if (line2) {
         if (two) lv_obj_remove_flag(line2, LV_OBJ_FLAG_HIDDEN);
         else     lv_obj_add_flag(line2, LV_OBJ_FLAG_HIDDEN);
     }
 
-    lv_obj_send_event(r->row, LV_EVENT_SIZE_CHANGED, NULL);
     if (r->led) lv_obj_set_style_bg_color(r->led, uk_c(led_hex ? led_hex : UK_OFF), 0);
     if (r->bar) {
         if (pct < 0) lv_obj_add_flag(r->bar, LV_OBJ_FLAG_HIDDEN);
@@ -797,14 +773,14 @@ uk_kpi_t *uk_kpi_create(lv_obj_t *parent, const char *label)
     lv_obj_set_height(box, LV_PCT(100));
     style_surface(box, UK_SURF_S1, UK_RADIUS);
     style_card_edge(box);
-    lv_obj_set_style_pad_all(box, UK_S3, 0);
-    lv_obj_set_style_pad_row(box, UK_S1, 0);
+    lv_obj_set_style_pad_all(box, UK_CARD_PAD, 0);
+    lv_obj_set_style_pad_row(box, UK_CONTENT_GAP, 0);
     lv_obj_set_flex_flow(box, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(box, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     lv_obj_set_style_min_width(box, 0, 0);
     k->box = box;
 
-    k->label = mk_label_raw(box, UK_FONT_CJK_12, UK_T3);
+    k->label = mk_label_raw(box, UK_TYPE_TITLE, UK_T3);
     lv_label_set_text(k->label, label ? label : "");
 
     lv_obj_t *vr = lv_obj_create(box);
@@ -817,15 +793,15 @@ uk_kpi_t *uk_kpi_create(lv_obj_t *parent, const char *label)
     lv_obj_set_flex_flow(vr, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(vr, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
 
-    k->val  = mk_label_raw(vr, UK_FONT_NUM_32, UK_T1);
+    k->val  = mk_label_raw(vr, UK_TYPE_METRIC, UK_T1);
     lv_obj_set_width(k->val, 0);
     lv_obj_set_flex_grow(k->val, 1);
     lv_obj_set_style_min_width(k->val, 0, 0);
     lv_label_set_long_mode(k->val, LV_LABEL_LONG_MODE_CLIP);
-    k->unit = mk_label_raw(vr, UK_FONT_CJK_12, UK_T3);
+    k->unit = mk_label_raw(vr, UK_TYPE_CAPTION, UK_T3);
     lv_obj_set_style_pad_bottom(k->unit, 4, 0);
 
-    k->sub = mk_label_raw(box, UK_FONT_CJK_12, UK_T3);
+    k->sub = mk_label_raw(box, UK_TYPE_CAPTION, UK_T3);
     lv_obj_set_width(k->sub, LV_PCT(100));
     lv_obj_set_flex_grow(k->sub, 1);
     lv_obj_set_style_text_align(k->sub, LV_TEXT_ALIGN_LEFT, 0);
@@ -904,8 +880,11 @@ static void trend_step(void *obj, int32_t progress)
         lv_anim_delete(obj, trend_step);
         return;
     }
+    /* Use fixed time slots: restarting a 33/16 ms wait at each paint would
+       quantize a 15 ms LVGL cadence down to 22/33 FPS. */
     if (progress != TREND_PROGRESS && UK_TREND_FPS > 0 &&
-        lv_tick_elaps(t->last_paint) < 1000U / UK_TREND_FPS) return;
+        (uint64_t)now * UK_TREND_FPS / 1000U ==
+        (uint64_t)t->last_paint * UK_TREND_FPS / 1000U) return;
     t->last_paint = now;
     trend_window(obj, t->from + (int32_t)((int64_t)(t->target - t->from) * progress / TREND_PROGRESS));
     if (progress == TREND_PROGRESS) t->duration = 0;

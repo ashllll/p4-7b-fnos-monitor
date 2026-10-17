@@ -9,7 +9,7 @@
 // 变成可复现的数字：按下→首帧（P1）与拖动期帧间隔（P2），外加 ui_tick 耗时与各任务
 // CPU 占比；串口命令为 `bench` 与 `prof`（后者控制 LVGL profiler，见 fnos_perf.c）。
 //
-// 关掉配置时下面三个函数都是空实现：生产固件里不建定时器、不注册回调、不读计数器 ——
+// 关掉配置时下面的台架函数都是空实现：生产固件里不建定时器、不注册回调、不读计数器 ——
 // 仪表必须能证明自己没改变被测对象。
 
 #ifdef __cplusplus
@@ -18,6 +18,11 @@ extern "C" {
 
 void fnos_perf_init(void);                 // 幂等；在 LVGL 任务里、持有显示锁时调
 void fnos_perf_note_tick(uint32_t us);     // ui_tick 一次的总耗时
+/* Bench-only linker probes. Values are wall time, including blocking waits. */
+typedef enum { FNOS_PERF_PPA, FNOS_PERF_DMA2D, FNOS_PERF_SUBMIT,
+               FNOS_PERF_FREE_BUFFER, FNOS_PERF_TASK_CREATE, FNOS_PERF_TASK_PICK,
+               FNOS_PERF_BLEND, FNOS_PERF_TEXT, FNOS_PERF_STAGE_COUNT } fnos_perf_stage_t;
+void fnos_perf_note_stage(fnos_perf_stage_t stage, uint32_t us);
 bool fnos_perf_cli(char *line);            // 串口命令 hook；就地分词改写 line；没认出来返回 false
 
 #ifdef __cplusplus

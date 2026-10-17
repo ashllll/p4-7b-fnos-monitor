@@ -100,6 +100,61 @@ static int64_t s_last_frame_us;
 static int64_t s_frame_start_us, s_last_ready_us;
 static bool s_have_ready;
 
+/* LVGL owns frame windows; native software drawing can run on another task. */
+static TaskHandle_t s_owner;
+static portMUX_TYPE s_stage_lock = portMUX_INITIALIZER_UNLOCKED;
+static bool s_stage_frame;
+static struct {
+    uint64_t frame_us, flush_us, flush_wait_us;
+    uint32_t frames, worker_calls;
+    TaskHandle_t worker;
+    int64_t flush_start, wait_start;
+    struct { uint64_t us; uint32_t calls, max_us; } stage[FNOS_PERF_STAGE_COUNT];
+} s_parts;
+
+static void pf_stage_gate(bool open)
+{
+    portENTER_CRITICAL(&s_stage_lock);
+    s_stage_frame = open;
+    portEXIT_CRITICAL(&s_stage_lock);
+}
+
+void fnos_perf_note_stage(fnos_perf_stage_t stage, uint32_t us)
+{
+    if ((unsigned)stage >= FNOS_PERF_STAGE_COUNT) return;
+    TaskHandle_t current = xTaskGetCurrentTaskHandle();
+    bool owner = current == s_owner;
+    if (!owner && stage < FNOS_PERF_BLEND) return;
+    /* Frame close synchronizes with the last worker update before report/reset. */
+    portENTER_CRITICAL(&s_stage_lock);
+    if (s_stage_frame) {
+        s_parts.stage[stage].us += us;
+        s_parts.stage[stage].calls++;
+        if (!owner) { s_parts.worker_calls++; s_parts.worker = current; }
+        if (us > s_parts.stage[stage].max_us) s_parts.stage[stage].max_us = us;
+    }
+    portEXIT_CRITICAL(&s_stage_lock);
+}
+
+static void pf_parts_cb(lv_event_t *e)
+{
+    if (!s_run.active || !s_run.frame_arm || !s_frame_start_us) return;
+    int64_t now = esp_timer_get_time();
+    switch (lv_event_get_code(e)) {
+    case LV_EVENT_FLUSH_START: s_parts.flush_start = now; break;
+    case LV_EVENT_FLUSH_FINISH:
+        if (s_parts.flush_start) s_parts.flush_us += now - s_parts.flush_start;
+        s_parts.flush_start = 0;
+        break;
+    case LV_EVENT_FLUSH_WAIT_START: s_parts.wait_start = now; break;
+    case LV_EVENT_FLUSH_WAIT_FINISH:
+        if (s_parts.wait_start) s_parts.flush_wait_us += now - s_parts.wait_start;
+        s_parts.wait_start = 0;
+        break;
+    default: break;
+    }
+}
+
 /* ---------------------------------------------------------------- 统计 */
 
 static int pf_cmp(const void *a, const void *b)
@@ -134,6 +189,7 @@ static void pf_push(uint32_t *buf, int *n, uint32_t v)
 typedef struct {
     char name[configMAX_TASK_NAME_LEN];
     uint32_t run;
+    TaskHandle_t handle;
 } pf_task_t;
 
 static pf_task_t s_cpu0[PF_TASKS], s_cpu1[PF_TASKS];
@@ -148,25 +204,27 @@ static int pf_snap_tasks(pf_task_t *out)
     for (int i = 0; i < k; i++) {
         snprintf(out[i].name, sizeof out[i].name, "%s", st[i].pcTaskName);
         out[i].run = (uint32_t)st[i].ulRunTimeCounter;
+        out[i].handle = st[i].xHandle;
     }
     return k;
 }
 
 /* 双核：把「各任务 delta 之和」当 100%，于是 lvgl/idle 的占比可以跨核比较。 */
-static void pf_cpu_delta(uint32_t *total, uint32_t *lvgl, uint32_t *idle)
+static void pf_cpu_delta(uint32_t *total, uint32_t *lvgl, uint32_t *idle, uint32_t *worker)
 {
-    uint32_t t = 0, l = 0, i2 = 0;
+    uint32_t t = 0, l = 0, i2 = 0, w = 0;
     for (int i = 0; i < s_ncpu1; i++) {
         for (int j = 0; j < s_ncpu0; j++) {
-            if (strcmp(s_cpu0[j].name, s_cpu1[i].name) != 0) continue;
+            if (s_cpu0[j].handle != s_cpu1[i].handle) continue;
             uint32_t d = s_cpu1[i].run - s_cpu0[j].run;   /* 计数器回绕概率可忽略 */
             t += d;
             if (strcmp(s_cpu1[i].name, "lvgl") == 0) l += d;
             if (strncmp(s_cpu1[i].name, "IDLE", 4) == 0) i2 += d;
+            if (s_cpu1[i].handle == s_parts.worker) w += d;
             break;
         }
     }
-    *total = t; *lvgl = l; *idle = i2;
+    *total = t; *lvgl = l; *idle = i2; *worker = w;
 }
 
 /* ------------------------------------------------------------ 合成指针 */
@@ -220,6 +278,7 @@ static void pf_start_cb(lv_event_t *e)
     LV_PROFILER_BEGIN_TAG("frame");   /* profiler：一帧的顶，配对在 RENDER_READY */
     int64_t now = esp_timer_get_time();
     s_frame_start_us = now;
+    pf_stage_gate(s_run.active && s_run.frame_arm);
     if (!s_run.active) { s_last_ready_us = 0; s_have_ready = false; return; }
     if (s_run.frame_arm && s_have_ready && s_last_ready_us) {
         pf_push(s_rr2rs, &s_nrr2rs, (uint32_t)(now - s_last_ready_us));   /* 与 iv 同一批样本 */
@@ -232,6 +291,7 @@ static void pf_render_cb(lv_event_t *e)
     if (lv_event_get_code(e) != LV_EVENT_RENDER_READY) return;
     LV_PROFILER_END_TAG("frame");
     int64_t now = esp_timer_get_time();
+    pf_stage_gate(false);
     if (!s_run.active) { s_last_frame_us = now; s_frame_start_us = 0; return; }
 
     s_run.frames++;
@@ -239,6 +299,10 @@ static void pf_render_cb(lv_event_t *e)
     if (s_run.wait_rel)   { s_run.wait_rel   = false; pf_push(s_r2f, &s_nr2f, (uint32_t)(now - s_run.release_us)); }
     if (s_run.frame_arm && s_last_frame_us) pf_push(s_iv, &s_niv, (uint32_t)(now - s_last_frame_us));
     if (s_frame_start_us) {
+        if (s_run.frame_arm) {
+            s_parts.frames++;
+            s_parts.frame_us += now - s_frame_start_us;
+        }
         if (s_run.frame_arm) pf_push(s_rs2rr, &s_nrs2rr, (uint32_t)(now - s_frame_start_us));
         s_frame_start_us = 0;
     }
@@ -255,9 +319,35 @@ static void pf_report(void)
 {
     uint32_t wall_ms = (uint32_t)((esp_timer_get_time() - s_run.run_us) / 1000);
     s_ncpu1 = pf_snap_tasks(s_cpu1);
-    uint32_t total = 0, lvgl = 0, idle = 0;
-    pf_cpu_delta(&total, &lvgl, &idle);
+    uint32_t total = 0, lvgl = 0, idle = 0, worker = 0;
+    pf_cpu_delta(&total, &lvgl, &idle, &worker);
     uint32_t iv50 = pf_pct(s_iv, s_niv, 50);
+
+    /* Nested probes are subsets of flush_us, not additional frame time. */
+    printf("[bench_parts] kind=%s page=%d frames=%u frame_us=%llu flush_us=%llu flush_wait_us=%llu",
+           s_run.kind == PF_IDLE ? "idle" : s_run.kind == PF_SWIPE ? "swipe" : "tap",
+           s_run.page, s_parts.frames, (unsigned long long)s_parts.frame_us,
+           (unsigned long long)s_parts.flush_us, (unsigned long long)s_parts.flush_wait_us);
+    static const char *const names[] = {"ppa", "dma2d", "submit", "freebuf"};
+    for (unsigned i = 0; i < FNOS_PERF_TASK_CREATE; i++)
+        printf(" %s_us=%llu %s_n=%u %s_max_us=%u", names[i],
+               (unsigned long long)s_parts.stage[i].us, names[i], s_parts.stage[i].calls,
+               names[i], s_parts.stage[i].max_us);
+    printf("\n");
+
+    /* Text contains blend time; these are inclusive probes, never summed. */
+    printf("[bench_draw] kind=%s page=%d frames=%u units=%u worker_n=%u cpu_worker=%.1f",
+           s_run.kind == PF_IDLE ? "idle" : s_run.kind == PF_SWIPE ? "swipe" : "tap",
+           s_run.page, s_parts.frames, (unsigned)lv_draw_get_unit_count(), s_parts.worker_calls,
+           total ? 100.0 * worker / total : 0.0);
+    static const char *const draw_names[] = {"create", "pick", "blend", "text"};
+    for (unsigned i = FNOS_PERF_TASK_CREATE; i < FNOS_PERF_STAGE_COUNT; i++) {
+        const char *name = draw_names[i - FNOS_PERF_TASK_CREATE];
+        printf(" %s_us=%llu %s_n=%u %s_max_us=%u", name,
+               (unsigned long long)s_parts.stage[i].us, name, s_parts.stage[i].calls,
+               name, s_parts.stage[i].max_us);
+    }
+    printf("\n");
 
     printf("[bench] kind=%s page=%d cycles=%d misses=%d p2f_n=%d p2f_p50_us=%u p2f_p95_us=%u p2f_max_us=%u"
            " r2f_n=%d r2f_p50_us=%u r2f_p95_us=%u r2f_max_us=%u"
@@ -411,6 +501,9 @@ static void pf_script_tick(lv_timer_t *t)
 
 static void pf_start(void)
 {
+    /* Initialization can run on main/ui_retry; this callback runs on LVGL. */
+    s_owner = xTaskGetCurrentTaskHandle();
+    pf_stage_gate(false);
     memset(s_p2f, 0, sizeof s_p2f);
     memset(s_r2f, 0, sizeof s_r2f);
     memset(s_iv, 0, sizeof s_iv);
@@ -422,6 +515,7 @@ static void pf_start(void)
     s_have_ready = false;
     s_last_frame_us = 0;
     s_reported = false;
+    memset(&s_parts, 0, sizeof s_parts);
 
     pf_detach();   /* 上一轮留下的挂载先摘干净，否则会把 pf_read_cb 当成"真实回调"套娃 */
     s_nreal = 0;
@@ -448,6 +542,7 @@ static void pf_start(void)
     s_ncpu0 = pf_snap_tasks(s_cpu0);
 
     if (s_run.kind == PF_IDLE) {
+        s_run.frame_arm = true;
         /* 稳态：停在目标页不动，只收帧间隔 / ui_tick / CPU。 */
         fnos_ui_set_page(s_run.page);
         s_run.phase = PH_SETTLE;
@@ -570,6 +665,7 @@ void fnos_perf_init(void)
     if (disp) {
         lv_display_add_event_cb(disp, pf_render_cb, LV_EVENT_RENDER_READY, NULL);
         lv_display_add_event_cb(disp, pf_start_cb, LV_EVENT_RENDER_START, NULL);
+        lv_display_add_event_cb(disp, pf_parts_cb, LV_EVENT_ALL, NULL);
     }
     s_script_timer = lv_timer_create(pf_script_tick, PF_STEP_MS, NULL);
     lv_timer_pause(s_script_timer);
@@ -581,6 +677,7 @@ void fnos_perf_init(void)
 
 void fnos_perf_init(void) {}
 void fnos_perf_note_tick(uint32_t us) { (void)us; }
+void fnos_perf_note_stage(fnos_perf_stage_t stage, uint32_t us) { (void)stage; (void)us; }
 bool fnos_perf_cli(char *line) { (void)line; return false; }
 
 #endif

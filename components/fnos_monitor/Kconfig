@@ -107,7 +107,7 @@ menu "fnOS monitor"
         config FNOS_UI_TREND_FPS
             int "Maximum local streaming chart frame rate"
             range 1 60
-            default 30
+            default 60
             help
                 Limits local drawing only; never changes NAS collection or polling.
 
@@ -137,7 +137,7 @@ menu "fnOS monitor"
         config FNOS_UI_NUMBER_MS
             int "Damped telemetry response duration (ms; 0 disables motion)"
             range 0 1000
-            default 450
+            default 180
             help
                 Critically damped digits, gauges and bars share this response
                 duration; meters retain a subpixel tail for at most twice it.
@@ -197,6 +197,15 @@ menu "fnOS monitor"
                 refresh cost and per-task CPU. Nothing is compiled or called
                 when this is off, and the real touch callback is restored as
                 soon as a run ends. Bench devices only.
+
+        config FNOS_UI_PERF_DRAW
+            bool "High-frequency software draw probes"
+            depends on FNOS_UI_PERF_BENCH
+            default n
+            help
+                Instrument task creation, selection, blending and text drawing.
+                Timer reads on thousands of calls per frame add measurable cost.
+                Enable only for attribution; leave off for performance comparisons.
 
         config FNOS_UI_USAGE_WARM
             int "Usage attention reference (%)"

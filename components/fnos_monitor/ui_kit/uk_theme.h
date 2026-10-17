@@ -93,7 +93,7 @@
 #define CONFIG_FNOS_UI_TREND_SCROLL_MS 2000
 #endif
 #ifndef CONFIG_FNOS_UI_TREND_FPS
-#define CONFIG_FNOS_UI_TREND_FPS 30
+#define CONFIG_FNOS_UI_TREND_FPS 60
 #endif
 #define UK_TREND_SCROLL_MS CONFIG_FNOS_UI_TREND_SCROLL_MS
 #define UK_TREND_FPS CONFIG_FNOS_UI_TREND_FPS
@@ -108,7 +108,7 @@
 #define UK_MOTION_MIN_MS 80
 #define UK_MOTION_DAMPING 10.0f /* critical damping: residual below one logical pixel */
 #ifndef CONFIG_FNOS_UI_NUMBER_MS
-#define CONFIG_FNOS_UI_NUMBER_MS 450
+#define CONFIG_FNOS_UI_NUMBER_MS 180
 #endif
 #ifndef CONFIG_FNOS_UI_NUMBER_PRESENT_MS
 #define CONFIG_FNOS_UI_NUMBER_PRESENT_MS 600
@@ -153,7 +153,7 @@
 #define UK_SWIPE_COMMIT_PCT 24
 #define UK_SWIPE_FLICK_PCT 60 /* viewport percent per second */
 #define UK_ROW_H         44         /* 清单行基准高（装不下时长高）   */
-#define UK_ROW_MIN       40         /* 行最小高（触控/可读下限）      */
+#define UK_ROW_MIN       UK_ROW_H   /* Rows and controls share the touch floor. */
 /* 清单可读性下限：清单容器至少完整露出几行才算"看得清"（见 uk.h 的
    uk_list_readable_min）。这里是**行数**不是像素 —— 行高一律实测。
    没有这道下限时，"这卡能显示几行"全靠每个调用点手算常量：p1 的三张卡
@@ -176,6 +176,16 @@
 #define UK_FONT_TXT_15   (&ui_font_txt_15)
 #define UK_FONT_DISPLAY_64 (&ui_font_display_64)
 #define UK_FONT_DISPLAY_96 (&ui_font_display_96)
+
+/* Semantic typography: choose a role, never a page-specific numeric size. */
+#define UK_TYPE_HEADING  UK_FONT_CJK_20
+#define UK_TYPE_TITLE    UK_FONT_CJK_16
+#define UK_TYPE_BODY     UK_FONT_CJK_16
+#define UK_TYPE_CAPTION  UK_FONT_CJK_12
+#define UK_TYPE_METRIC   UK_FONT_NUM_32
+#define UK_TYPE_READING  UK_FONT_NUM_20
+#define UK_TYPE_UNIT     UK_FONT_TXT_12
+#define UK_UNIT_BASELINE 3 /* Optical offset for the generated 20/12 px font pair. */
 
 #include "fnos_fonts.h"   /* LV_FONT_DECLARE(ui_font_*) */
 

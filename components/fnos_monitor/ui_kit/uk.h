@@ -43,6 +43,12 @@ bool uk_test_alloc_was_triggered(void);
 #define UK_S5 24
 #define UK_S6 32
 
+/* One density across overview, inventory, detail and setup surfaces. */
+#define UK_CARD_PAD UK_S2
+#define UK_CONTENT_GAP UK_S1
+#define UK_ROW_PAD_H UK_S2
+#define UK_ROW_PAD_V UK_S1
+
 /* Distinct cards breathe more than their internal text; compact displays use one step less. */
 #define UK_CARD_GAP (lv_display_get_vertical_resolution(NULL) < UK_SCR_H ? UK_S2 : UK_S3)
 #define UK_ITEM_GAP (lv_display_get_vertical_resolution(NULL) < UK_SCR_H ? UK_S1 : UK_S2)
