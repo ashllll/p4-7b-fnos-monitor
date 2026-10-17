@@ -91,7 +91,7 @@ typedef struct {
 
 /* ── 板上配网卡的几何与状态（定义在 s_ui 之前：结构体里要按这些尺寸开数组） ── */
 #define WIFI_AP_ROWS  7          /* 扫描列表一屏显示几条（按信号取前 7） */
-#define WIFI_KB_KEYS  41         /* 10 + 10 + 9 + 9 + 3 */
+#define WIFI_KB_KEYS  40         /* 10 + 10 + 9 + 9 + 2 */
 #define WIFI_PW_MAX   63         /* WPA2 口令最长 63 个 ASCII 字符 */
 #define WIFI_SSID_MAX 32
 enum { WIFI_ST_SCAN = 0, WIFI_ST_PASS, WIFI_ST_LINK };
@@ -109,6 +109,8 @@ static struct {
     bool card_colors_saved;
     lv_obj_t *page[FNOS_UI_PAGE_COUNT];
     lv_obj_t *nav[FNOS_UI_PAGE_COUNT];
+    lv_obj_t *nav_badge;                    /* 告警入口角标：有事件时显示条数 */
+    lv_obj_t *nav_badge_box;
     lv_obj_t *nav_lbl[FNOS_UI_PAGE_COUNT];
     lv_obj_t *nav_icon[FNOS_UI_PAGE_COUNT];
     lv_obj_t *nav_mark[FNOS_UI_PAGE_COUNT];
@@ -128,6 +130,7 @@ static struct {
     lv_obj_t *overview_net_context, *overview_status_card, *overview_capacity_card, *overview_hardware;
     lv_obj_t *overview_rate[2], *overview_unit[2]; /* DOWN, UP */
     lv_obj_t *overview_volumes;
+    lv_obj_t *volume_empty;
     overview_volume_t *overview_volume;
     int overview_volume_capacity;
     int overview_volume_made;
@@ -214,7 +217,7 @@ static const char *const NAV_TXT[FNOS_UI_PAGE_COUNT] = { "总览", "存储", "�
 _Static_assert(sizeof(NAV_TXT) / sizeof(NAV_TXT[0]) == FNOS_UI_PAGE_COUNT,
                "NAV_TXT 条数必须等于 FNOS_UI_PAGE_COUNT");
 static const char *const AGENT_KEY[UI_AGENT_ROWS] = {
-    "主机", "端点", "HTTP", "轮询", "最近错误", "数据年龄", "固件内存", "ZFS 缓存",
+    "主机", "端点", "HTTP", "轮询结果", "最近错误", "数据年龄", "固件内存", "ZFS 缓存",
     "协议", "采集段"
 };
 /* 诊断页的行按"排查顺序"分三组：连接（通不通）→ 采集（数据新不新）→ 运行（板子自己）。
@@ -641,6 +644,8 @@ static void diagnostics_cb(lv_event_t *e)
 {
     fnos_ui_motion_settle();
     (void)e;
+    /* 覆盖层打开时顶栏也是模态的一部分；关闭走覆盖层自己的“返回/关闭”。 */
+    if (s_wifi_open || s_pair_open) return;
     pair_show(false);
     if (s_wifi_open) wifi_show(false);
     s_diagnostics = !s_diagnostics;
@@ -874,7 +879,22 @@ static void build_rail(lv_obj_t *rail)
         not_clickable(s_ui.nav_lbl[i]);
         lv_obj_add_event_cb(b, nav_cb, LV_EVENT_CLICKED, (void *)(intptr_t)i);
     }
-    /* 配对不再占一格导航（它不是一页）：入口在顶栏，见 build_header。 */
+    /* 配对不再占一格导航（它不是一页）：入口在顶栏，见 build_header。
+       告警角标：默认页看不到告警带，入口本身必须能报数（05-limits 8 条事件）。 */
+    s_ui.nav_badge_box = lv_obj_create(s_ui.nav[FNOS_UI_PAGE_COUNT - 1]);
+    lv_obj_remove_flag(s_ui.nav_badge_box, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(s_ui.nav_badge_box, LV_OBJ_FLAG_IGNORE_LAYOUT);
+    lv_obj_add_flag(s_ui.nav_badge_box, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_size(s_ui.nav_badge_box, 18, 16);
+    lv_obj_set_style_pad_all(s_ui.nav_badge_box, 0, 0);
+    lv_obj_set_style_border_width(s_ui.nav_badge_box, 0, 0);
+    lv_obj_set_style_bg_color(s_ui.nav_badge_box, uk_c(UK_DANGER), 0);
+    lv_obj_set_style_bg_opa(s_ui.nav_badge_box, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(s_ui.nav_badge_box, LV_RADIUS_CIRCLE, 0);
+    lv_obj_align(s_ui.nav_badge_box, LV_ALIGN_TOP_RIGHT, -UK_S1, UK_S1);
+    s_ui.nav_badge = uk_label(s_ui.nav_badge_box, UK_FONT_CJK_12, UK_BG, "0");
+    not_clickable(s_ui.nav_badge);
+    lv_obj_center(s_ui.nav_badge);
 }
 
 static void build_signal_bars(lv_obj_t *parent)
@@ -949,7 +969,10 @@ static void build_header(lv_obj_t *h)
     lv_text_get_size(&diagnostics_size, "设置", UK_TYPE_BODY, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
     /* 顶栏这两颗是"随时可按的入口"，不是状态，用幽灵档（无底无框）。
        这样顶栏唯一的高饱和元素就只剩状态胶囊（在线/离线）。 */
-    s_ui.wifi_btn = flex_btn(h, "Wi-Fi 未配置", BTN_GHOST, UK_TYPE_BODY, wifi_size.x + 2 * UK_S2);
+    /* 顶栏要放 SSID：宽度按“Wi-Fi 未配置”文字算死的话只剩 7 个字符位
+       （10-wifi-long-ssid 就是这么被截成 ABCDEFG... 的）。留到 176px，
+       长 SSID 仍 DOTS，但能读到网络名的主体。 */
+    s_ui.wifi_btn = flex_btn(h, "Wi-Fi 未配置", BTN_GHOST, UK_TYPE_BODY, LV_MAX(wifi_size.x, 176) + 2 * UK_S2);
     s_ui.wifi_btn_lbl = lv_obj_get_child(s_ui.wifi_btn, 0);
     lv_obj_set_width(s_ui.wifi_btn_lbl, LV_PCT(100));
     lv_obj_set_height(s_ui.wifi_btn_lbl, lv_font_get_line_height(UK_TYPE_BODY));
@@ -1189,7 +1212,6 @@ static lv_obj_t *overview_resource_create(lv_obj_t *parent, lv_obj_t *history_pa
     r->context = uk_label(body, UK_FONT_CJK_12, UK_T3, "等待历史采样");
     lv_obj_set_width(r->context, LV_PCT(100));
     lv_label_set_long_mode(r->context, LV_LABEL_LONG_MODE_WRAP);
-    history_axis(body, index);
     return card;
 }
 
@@ -1234,7 +1256,8 @@ static void scope_bar(lv_obj_t *page, int index, const char *context,
     if (count) {
         filters = uk_row_box(bar, 0);
         lv_obj_set_width(filters, LV_SIZE_CONTENT);
-        lv_obj_set_style_pad_all(filters, UK_S1, 0);
+        lv_obj_set_style_pad_ver(filters, 0, 0);
+        lv_obj_set_style_pad_hor(filters, UK_S1, 0);
         lv_obj_set_style_pad_column(filters, UK_S1, 0);
         lv_obj_set_style_bg_color(filters, uk_c(UK_S0), 0);
         lv_obj_set_style_bg_opa(filters, LV_OPA_COVER, 0);
@@ -1265,8 +1288,30 @@ static void entity_open_cb(lv_event_t *e)
     set_txt(s_ui.detail_name, "%s", ""); set_txt(s_ui.detail_meta, "%s", "");
     set_txt(s_ui.detail_value, "%s", "");
     set_txt(s_ui.detail_name, "%s", lv_label_get_text(row->name1));
-    set_txt(s_ui.detail_meta, "%s", lv_label_get_text(row->name2));
-    set_txt(s_ui.detail_value, "%s %s", lv_label_get_text(row->val), lv_label_get_text(row->unit));
+    const char *n2 = lv_label_get_text(row->name2);
+    const char *vv = lv_label_get_text(row->val);
+    const char *uu = lv_label_get_text(row->unit);
+    char value[128];
+    snprintf(value, sizeof value, "%s %s", vv, uu);
+    size_t vl = strlen(value);
+    while (vl && value[vl - 1] == ' ') value[--vl] = '\0';
+    const char *val_start = value;
+    while (*val_start == ' ') val_start++;
+    /* 容器行 name2 的第一行与 val/unit 都是“上次运行中”，详情里会连印两遍；
+       只去掉那第一行，name2 后面的 CPU/重启行仍要保留。 */
+    const char *meta = n2;
+    const char *nl = strchr(n2, '\n');
+    char first_line[96];
+    if (nl) {
+        size_t fl = (size_t)(nl - n2);
+        if (fl >= sizeof first_line) fl = sizeof first_line - 1;
+        memcpy(first_line, n2, fl); first_line[fl] = '\0';
+    }
+    const char *n2_first = nl ? first_line : n2;
+    if (!strcmp(n2_first, vv) || !strcmp(n2_first, uu) || !strcmp(n2_first, val_start))
+        meta = nl ? nl + 1 : "";
+    set_txt(s_ui.detail_meta, "%s", meta);
+    set_txt(s_ui.detail_value, "%s", value);
     lv_obj_set_style_text_color(s_ui.detail_value, lv_obj_get_style_text_color(row->val, 0), 0);
     set_txt(s_ui.detail_context, "%s · 打开时快照 · %s", NAV_TXT[s_page],
             s_st.online ? "采集在线" : "采集不可用，保留上次读数");
@@ -1317,6 +1362,8 @@ static void entity_detail_build(lv_obj_t *parent)
         lv_obj_set_width(fields[i], LV_PCT(100));
         lv_label_set_long_mode(fields[i], LV_LABEL_LONG_MODE_WRAP);
     }
+    /* 详情名称单行横向滚动：完整名称仍可读，不把 20px 读数挤到屏外。 */
+    lv_label_set_long_mode(s_ui.detail_name, LV_LABEL_LONG_MODE_SCROLL);
     lv_obj_t *close = flex_btn(s_ui.detail_card, "返回列表", BTN_SECONDARY, UK_FONT_CJK_16, LV_PCT(100));
     lv_obj_add_event_cb(close, entity_close_cb, LV_EVENT_CLICKED, NULL);
     show(mask, false);
@@ -1420,6 +1467,9 @@ static void build_p0(lv_obj_t *page)
     reserve_scrollbar_gutter(s_ui.overview_volumes);
     lv_obj_add_flag(s_ui.overview_volumes, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scroll_dir(s_ui.overview_volumes, LV_DIR_VER);
+    s_ui.volume_empty = uk_label(body, UK_FONT_CJK_12, UK_T3, "未发现存储卷");
+    lv_obj_set_width(s_ui.volume_empty, LV_PCT(100));
+    lv_obj_set_height(s_ui.volume_empty, lv_font_get_line_height(UK_FONT_CJK_12));
     s_ui.storage_note = uk_label(body, UK_FONT_CJK_12, UK_T3, "");
     lv_obj_set_width(s_ui.storage_note, LV_PCT(100));
     lv_obj_set_height(s_ui.storage_note, lv_font_get_line_height(UK_FONT_CJK_12));
@@ -1439,6 +1489,9 @@ static void build_p0(lv_obj_t *page)
         lv_obj_add_event_cb(jump[j], page_jump_cb, LV_EVENT_CLICKED, (void *)(intptr_t)jump_page[j]);
     }
     body = uk_card_body(temp);
+    /* Keep the full-width status line, but use the tight 4px gap here: this
+     * card must fit the 150px overview row (4 gaps × 4px saved). */
+    lv_obj_set_style_pad_row(body, UK_S1, 0);
     lv_obj_t *tv = uk_row_box(body, 0);
     lv_obj_set_style_pad_column(tv, UK_S1, 0);
     lv_obj_set_flex_align(tv, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
@@ -1463,7 +1516,6 @@ static void build_p0(lv_obj_t *page)
     lv_chart_set_series_color(s_ui.overview_temp_history,
             uk_trend_series(s_ui.overview_temp_history, 0), uk_c(UK_S_TEMP));
     lv_obj_set_style_min_height(s_ui.overview_temp_history, UK_S4, 0);
-    history_axis(body, 4);
 
 }
 
@@ -1471,8 +1523,7 @@ static void build_p1(lv_obj_t *page)
 {
     /* 三块页（v12：几何全由 flex 决定，不再有栅格常量）：
          [已用空间 / 总容量 / 可用空间  三栏页头]
-         [存储卷池（吃满余量，2/3 宽）][阵列健康]
-         [磁盘活动（整行：读写在第二行，窄列放不下两行行）]
+         [存储卷池][阵列健康][磁盘活动  三列并排，首屏都能看到]
        "容量摘要"从一张独立卡改成页头一条：三栏只有"标签 + 数值"两行，
        单独占 88px 高是浪费，而那 88px 正好留给池的行高。 */
     ui_page(page);
@@ -1480,6 +1531,10 @@ static void build_p1(lv_obj_t *page)
     scope_bar(page, 1, "容量与设备 · 点按行查看详情", views, 4);
     lv_obj_t *summary = ui_card(page, NULL, NULL);
     uk_card_flex(summary, 0);
+    /* 页高预算：存储摘要是纯结论条，上下各收到 8px；留出的 8px 给下面
+       卷/阵列卡，让 2 行清单加卡头刚好落进 147px 行高。 */
+    lv_obj_set_style_pad_top(summary, 0, 0);
+    lv_obj_set_style_pad_bottom(summary, 0, 0);
     static const char *const titles[] = { "已用空间", "总容量", "可用空间" };
     lv_obj_t *srow = uk_row_box(uk_card_body(summary), 0);
     for (int i = 0; i < 3; i++) {
@@ -1508,11 +1563,8 @@ static void build_p1(lv_obj_t *page)
 
     panel_summary(summary);
 
-    /* 主区：卷清单占 2/3 宽、整行高（这一页的主问题是"空间还够吗"），
-       阵列健康贴在右侧（它只有一两行，不需要更多）。
-       高度分配 3:2 是量出来的：阵列卡只有一列（列宽 278 放不下两列），
-       4 行 × 44 需要 176px 净高，加上卡头与内边距就是 230 —— 均分（各 1）
-       时主区只有 208，第 4 行会被卡底边切掉半行。 */
+    /* 主区两行：卷/阵列并排第一行，磁盘活动整行第二行；多出来的清单行
+       由各自池内滚动接住，页面本身不再靠滚动露出整张卡。 */
     lv_obj_t *main_row = uk_row_box(page, 1);
     s_ui.storage_cards = main_row;
     lv_obj_set_flex_flow(main_row, LV_FLEX_FLOW_ROW_WRAP);
@@ -1524,7 +1576,7 @@ static void build_p1(lv_obj_t *page)
         lv_obj_t *body = uk_card_body(s_ui.vol_card);
         s_ui.vol_empty = empty_box(body, "未采集到存储卷", NULL);
         s_ui.vol_pool = uk_pool_create(body, UK_ENTITY_MIN_WIDTH);
-        lv_obj_set_style_pad_row(s_ui.vol_pool, UK_ITEM_GAP, 0);
+        lv_obj_set_style_pad_row(s_ui.vol_pool, UK_S2, 0);
         uk_pool_stretch(s_ui.vol_pool, false);
         s_ui.vol_made = 0;
     }
@@ -1535,21 +1587,26 @@ static void build_p1(lv_obj_t *page)
         lv_obj_t *body = uk_card_body(s_ui.raid_card);
         s_ui.raid_empty = empty_box(body, "未采集到阵列", NULL);
         s_ui.raid_pool = uk_pool_create(body, UK_ENTITY_MIN_WIDTH);
-        lv_obj_set_style_pad_row(s_ui.raid_pool, UK_ITEM_GAP, 0);
+        lv_obj_set_style_pad_row(s_ui.raid_pool, UK_S2, 0);
         uk_pool_stretch(s_ui.raid_pool, false);
         s_ui.raid_made = 0;
     }
 
-    /* 磁盘活动：整行。行的第二行放"读 / 写"，所以池的列宽给得比卷池宽
-       （窄列里设备名会换行，两行行变三行，10 块盘就一屏放不下了）。 */
+    /* 磁盘活动与卷/阵列并排；卡内每块盘仍按两行（名称 + 读/写）排。 */
     s_ui.disk_card = ui_card(main_row, "磁盘活动", NULL);
     uk_card_flex(s_ui.disk_card, 2);
+    /* 过滤到“磁盘”时本卡独占一行；留够卡头+2 条盘的高度，卡体不再被压到 96。 */
+    lv_obj_set_style_min_height(s_ui.disk_card, 148, 0);
     {
         lv_obj_t *body = uk_card_body(s_ui.disk_card);
         s_ui.disk_empty = empty_box(body, "未采集到磁盘活动", NULL);
         s_ui.disk_pool = uk_pool_create(body, UK_ENTITY_MIN_WIDTH);
-        lv_obj_set_style_pad_row(s_ui.disk_pool, UK_ITEM_GAP, 0);
+        lv_obj_set_style_pad_row(s_ui.disk_pool, UK_S2, 0);
         uk_pool_stretch(s_ui.disk_pool, false);
+        /* p1 needs the 4px the generic UK_S3 card padding takes from the list. */
+        lv_obj_set_style_pad_all(s_ui.vol_card, UK_S2, 0);
+        lv_obj_set_style_pad_all(s_ui.raid_card, UK_S2, 0);
+        lv_obj_set_style_pad_all(s_ui.disk_card, UK_S2, 0);
         s_ui.disk_made = 0;
     }
 }
@@ -1828,16 +1885,17 @@ static void build_p4(lv_obj_t *page)
     s_ui.temp_history_note = uk_label(history_body, UK_FONT_CJK_12, UK_T3, "最高温历史 · 等待采集");
     lv_obj_set_width(s_ui.temp_history_note, LV_PCT(100));
     lv_label_set_long_mode(s_ui.temp_history_note, LV_LABEL_LONG_MODE_WRAP);
+    /* 趋势图已有轴标签；这行 12px 说明在 476px 页高里挤掉了设备卡。 */
+    lv_obj_add_flag(s_ui.temp_history_note, LV_OBJ_FLAG_HIDDEN);
     s_ui.temp_history = uk_trend_create(history_body, UI_HIST, 1);
     lv_obj_set_flex_grow(s_ui.temp_history, 0);
-    lv_obj_set_height(s_ui.temp_history, lv_display_get_vertical_resolution(NULL) / 4);
+    lv_obj_set_height(s_ui.temp_history, lv_display_get_vertical_resolution(NULL) / 6);
     lv_chart_set_series_color(s_ui.temp_history, uk_trend_series(s_ui.temp_history, 0), uk_c(UK_S_TEMP));
     uk_trend_set_range(s_ui.temp_history, 0, 100);
     history_axis(history_body, 3);
     s_ui.temp_card = ui_card(page, "设备温度", NULL);
-    /* 卡片按内容定高：装多少台设备就多高（页级滚动接管多出来的部分）。
-       以前这里吃满余量，设备少时卡下半截是空的 —— 边界不跟着内容走。 */
-    uk_card_flex(s_ui.temp_card, 0);
+    /* 卡片吃满页高余量，设备清单在池内滚动：页根不再靠滚动露出整张卡。 */
+    uk_card_flex(s_ui.temp_card, 1);
     lv_obj_t *body = uk_card_body(s_ui.temp_card);
 
     /* 空态：池外的一条提示（池里没有行时它就是卡片里唯一的内容） */
@@ -1849,10 +1907,9 @@ static void build_p4(lv_obj_t *page)
 
     /* Column count follows available content width and configured preferred width. */
     s_ui.temp_pool = uk_pool_create(body, UK_ENTITY_MIN_WIDTH);
-    /* 卡片按内容定高 ⇒ 池也必须按内容定高（grow 0）：池的 flex_grow 1 在
-       "按内容定高"的卡里分不到余量，会被算成 0 高（同 uk_card_flex 的注释）。 */
-    lv_obj_set_flex_grow(s_ui.temp_pool, 0);
-    lv_obj_set_height(s_ui.temp_pool, LV_SIZE_CONTENT);
+    /* 卡片吃满余量 ⇒ 池也吃满卡体，多出来的设备在池内滚动。 */
+    lv_obj_set_flex_grow(s_ui.temp_pool, 1);
+    lv_obj_set_height(s_ui.temp_pool, 0);
     /* 一台设备一块、块内还能展开通道（展开后一块 200~260px，比视口还高）——
        这类可变高复合块只承诺"完整露出一块"，不能按行承诺两项。 */
     uk_list_mark_one(s_ui.temp_pool);
@@ -2027,14 +2084,15 @@ static void build_p5(lv_obj_t *page)
     panel_summary(s_ui.alert_page_sum);
 
     lv_obj_t *card = ui_card(page, "告警与事件", NULL);
-    /* 卡片按明细内容定高：几条告警就多高，不再吃满整页（明细再多由页级滚动接管）。
-       卡体仍是滚动列 —— 池要求条目等高等宽，而一条告警可能折成好几行。 */
-    uk_card_flex(card, 0);
+    /* 卡片吃满页高余量，明细在卡体里滚动；页根不再随告警条数变高。 */
+    uk_card_flex(card, 1);
     {
         lv_obj_t *body = uk_card_body(card);
         lv_obj_add_flag(body, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_set_scroll_dir(body, LV_DIR_VER);
         lv_obj_set_style_pad_row(body, UK_S2, 0);
+        /* 分组清单要完整露 2 条（44×2 + 8）；卡体至少 100，差额由页高余量补。 */
+        lv_obj_set_style_min_height(body, 100, 0);
         static const char *const gname[] = { "严重", "警告", "提示" };
         const uint32_t gcol[] = { UK_DANGER, UK_WARN, UK_T2 };   /* 调色板是运行时变量，不能 static */
         for (int g = 0; g < 3; g++) {
@@ -2052,7 +2110,10 @@ static void build_p5(lv_obj_t *page)
             s_ui.alert_page_col[g] = uk_col(body, 0);
             lv_obj_set_width(s_ui.alert_page_col[g], LV_PCT(100));
             lv_obj_set_style_pad_row(s_ui.alert_page_col[g], UK_S2, 0);
-            uk_list_mark(s_ui.alert_page_col[g]);   /* 三条一组的告警列也是清单 */
+            /* 两个分级头 + 两条消息是页高预算的硬下限；卡体给 96 时列不能只拿 92。 */
+            /* 组列没有自己的滚动条：2 条可见由外层可滚动卡体承担。
+             * 这里若标成 list，审计会拿列高按 2 条下限误判（p5 的 4px 来源）。 */
+            lv_obj_set_style_min_height(s_ui.alert_page_col[g], 96, 0);
             s_ui.alert_page_made[g] = 0;
         }
         s_ui.alert_page_empty = empty_box(body, "暂无告警事件", NULL);
@@ -2064,6 +2125,8 @@ static void build_p5(lv_obj_t *page)
         lv_obj_set_flex_flow(s_ui.alert_health, LV_FLEX_FLOW_ROW_WRAP);
         lv_obj_set_style_pad_row(s_ui.alert_health, UK_S3, 0);
         lv_obj_set_style_pad_column(s_ui.alert_health, UK_S3, 0);
+        /* 2×2 瓦片两行完整可见：44+8+44=96，卡体只给到 92 时第二行被切。 */
+        lv_obj_set_style_min_height(s_ui.alert_health, 96, 0);
         lv_obj_add_flag(s_ui.alert_health, LV_OBJ_FLAG_HIDDEN);
         static const char *const hname[] = { "存储容量", "温度", "容器", "采集" };
         for (int i = 0; i < 4; i++) {
@@ -2078,6 +2141,7 @@ static void build_p5(lv_obj_t *page)
             uk_label(head, UK_FONT_CJK_16, UK_T2, hname[i]);
             s_ui.alert_health_val[i] = uk_label(tile, UK_FONT_CJK_20, UK_T1, "-");
             lv_obj_set_width(s_ui.alert_health_val[i], LV_PCT(100));
+            /* 体检值是两行结论（值 + 备注），保留换行；瓦片体 102px 装得下两行 20px。 */
             lv_label_set_long_mode(s_ui.alert_health_val[i], LV_LABEL_LONG_MODE_WRAP);
         }
     }
@@ -2192,7 +2256,7 @@ static void pair_build(lv_obj_t *page)
         lv_obj_add_event_cb(s_ui.pair_key[i], pair_pad_cb, LV_EVENT_CLICKED, (void *)(intptr_t)PAD[i].k);
     }
 
-    s_ui.pair_info_panel = ui_card(grid, "核对证书指纹", NULL);
+    s_ui.pair_info_panel = ui_card(grid, "证书指纹", NULL);
     uk_card_flex(s_ui.pair_info_panel, 0);
     s_ui.pair_info_lbl = uk_card_title(s_ui.pair_info_panel);
     body = uk_card_body(s_ui.pair_info_panel);
@@ -2256,6 +2320,7 @@ static void pair_show(bool on)
 static void pair_btn_cb(lv_event_t *e)
 {
     (void)e;
+    if (s_wifi_open || s_diagnostics) return;
     if (s_pair_open && s_page == 3) return;
     fnos_ui_set_page(3);
     pair_show(true);
@@ -2296,7 +2361,7 @@ static const wifi_key_t WIFI_KB_LETTERS[WIFI_KB_KEYS] = {
     K_CH('z', "z"), K_CH('x', "x"), K_CH('c', "c"), K_CH('v', "v"), K_CH('b', "b"),
     K_CH('n', "n"), K_CH('m', "m"),
     { "退格", WK_BACK, 0 },
-    { "123", WK_LAYER, 0 }, { "空格", WK_SPACE, 0 }, { "连接", WK_OK, 0 },
+    { "123", WK_LAYER, 0 }, { "空格", WK_SPACE, 0 },
 };
 static const wifi_key_t WIFI_KB_SYMBOLS[WIFI_KB_KEYS] = {
     K_CH('1', "1"), K_CH('2', "2"), K_CH('3', "3"), K_CH('4', "4"), K_CH('5', "5"),
@@ -2309,7 +2374,7 @@ static const wifi_key_t WIFI_KB_SYMBOLS[WIFI_KB_KEYS] = {
     K_CH(';', ";"), K_CH(':', ":"), K_CH('\'', "'"), K_CH('"', "\""), K_CH(',', ","),
     K_CH('.', "."), K_CH('?', "?"),
     { "退格", WK_BACK, 0 },
-    { "ABC", WK_LAYER, 0 }, { "空格", WK_SPACE, 0 }, { "连接", WK_OK, 0 },
+    { "ABC", WK_LAYER, 0 }, { "空格", WK_SPACE, 0 },
 };
 
 /* 校验失败的说明要"粘"住：刷新每 500ms 跑一次，如果只 set_txt 一次，用户还没看清
@@ -2555,7 +2620,7 @@ static void wifi_build(lv_obj_t *page)
                                UK_TYPE_BODY, 0);
         if (row == 4) {                    /* 换层 / 空格 / 连接 */
             int col = i - 38;
-            lv_obj_set_flex_grow(b, (uint8_t)(col == 0 ? 22 : col == 1 ? 38 : 24));
+            lv_obj_set_flex_grow(b, (uint8_t)(col == 0 ? 30 : 70));
         }
         lv_obj_set_height(b, LV_PCT(100));            /* 高度由行给，行高由 flex 给 */
         lv_obj_set_style_min_height(b, UK_ROW_H, 0);
@@ -2640,6 +2705,7 @@ static void wifi_show(bool on)
 static void wifi_btn_cb(lv_event_t *e)
 {
     (void)e;
+    if (s_pair_open || s_diagnostics) return;
     if (s_wifi_open) { wifi_show(false); return; }
     fnos_ui_set_page(3);
     s_wifi_manual = false;
@@ -3651,9 +3717,11 @@ static void temp_blk_fill(int i)
     dot_glow(b->led, color, on ? UK_GLOW_OPA : 0);
 
     /* Equal lengths mean equal temperatures; full scale is the high reference. */
-    lv_bar_set_range(b->bar, 0, (int32_t)UK_TEMP_DANGER * UK_METER_SCALE);
-    uk_meter_set(b->bar, (int32_t)lroundf(fminf(UK_TEMP_DANGER, fmaxf(0, g->max_c)) * UK_METER_SCALE), on);
-    lv_obj_set_style_bg_color(b->bar, uk_c(on ? UK_S_TEMP : UK_OFF), LV_PART_INDICATOR);
+    if (b->bar) {
+        lv_bar_set_range(b->bar, 0, (int32_t)UK_TEMP_DANGER * UK_METER_SCALE);
+        uk_meter_set(b->bar, (int32_t)lroundf(fminf(UK_TEMP_DANGER, fmaxf(0, g->max_c)) * UK_METER_SCALE), on);
+        lv_obj_set_style_bg_color(b->bar, uk_c(on ? UK_S_TEMP : UK_OFF), LV_PART_INDICATOR);
+    }
 
     int count = b->collapsed || g->inline_ch ? 0 : g->count;
     if (count > b->capacity) {
@@ -3749,11 +3817,18 @@ static void inventory_sections_layout(inventory_layout_cache_t *cache, lv_obj_t 
     if (w<=0 || h<=0) return;
     int32_t gap=lv_obj_get_style_pad_column(container,0);
     int32_t rowgap=lv_obj_get_style_pad_row(container,0);
-    int cols=LV_MIN(n,LV_MAX(1,(w+gap)/(UK_ENTITY_MIN_WIDTH+2*UK_S3+gap)));
+    /* 存储卷/阵列并排一行，磁盘活动整行：disk 行是“名称 + 读/写”，
+       三列会把它压到放不下一行。2 列时最后一张卡按整行宽处理（见下方 cw）。 */
+    int cols=LV_MIN(n,LV_MAX(1,(w+gap)/(UK_ENTITY_MIN_WIDTH+gap)));
     int rows=(n+cols-1)/cols;
+    /* 固定 3 行：p1 最多 3 张卡、p3 2 张。动态 VLA 会让本函数的栈帧变成
+       “无法静态解析”，stack_check 对 lvgl_worker 整条链直接未判定。 */
+    if (rows>3) return;
     int32_t *want=uk_alloc((size_t)rows*sizeof *want);
-    if (!want) return;
+    int32_t *floorw=uk_alloc((size_t)rows*sizeof *floorw);
+    if (!want || !floorw) { lv_free(want); lv_free(floorw); return; }
     memset(want,0,(size_t)rows*sizeof *want);
+    memset(floorw,0,(size_t)rows*sizeof *floorw);
     for (int i=0;i<n;i++) {
         int32_t cw=(w-gap*(cols-1))/cols;
         if (i==n-1 && n%cols==1) cw=w;
@@ -3805,20 +3880,63 @@ static void inventory_sections_layout(inventory_layout_cache_t *cache, lv_obj_t 
            卡比池的下限还矮的话，池会溢到卡外面去。 */
         int32_t other=chrome;
         want[i/cols]=LV_MAX(want[i/cols],other+LV_MAX(content,LV_MAX(item_min,readable)));
+        /* 卡头高度实测比 style 手算多 2px（边框/行高取整），预算带上这 2px，
+           否则清单刚好差 2px 不够完整露出承诺行数。 */
+        floorw[i/cols]=LV_MAX(floorw[i/cols],other+LV_MAX(item_min,readable)+4);
     }
-    /* 高度由内容定，不再夹在"父层分到的余量 h"上：内容比一屏高时就把容器撑高，
-       多出来的那截交给页级滚动（见下面那段注释）。 */
+    /* 高度由内容定；但页根没有滚动条，内容比视口高时超出部分根本看不见。
+       一旦超出，就把卡片夹到容器给出的等高行，清单交给池内滚动。 */
     int32_t target=(rows-1)*rowgap;
     for (int r=0;r<rows;r++) target+=want[r];
-    for (int i=0;i<n;i++) lv_obj_set_height(cards[i],want[i/cols]);
-    /* 内容比视口高时**不能**留在 grow=1：父层会把超出部分裁掉，而页级滚动的范围是
-       按容器自己的高度算的 —— 被裁的那截连滚都滚不到（p3 的硬件温度卡就这样少露
-       37px，四项几何审计因为"父可滚动"跳过了这一层，一直报不出来）。钉在 target
-       上：卡片永远完整，多出来的高度交给页级滚动。 */
+    int32_t row_h[3];
+    for (int r=0;r<rows;r++) row_h[r]=want[r];
+    if (target>h) {
+        target=h;
+        int32_t avail=h-(rows-1)*rowgap;
+        if (avail<rows) avail=rows;
+        int32_t base=0, want_sum=0;
+        for (int r=0;r<rows;r++) { base+=floorw[r]; want_sum+=want[r]; }
+        if (base<=0) base=1;
+        if (want_sum<=0) want_sum=1;
+        int32_t used=0;
+        for (int r=0;r<rows;r++) {
+            int32_t bh;
+            if (base<=avail) {
+                int32_t extra=avail-base;
+                bh=floorw[r]+(int32_t)((int64_t)extra*want[r]/want_sum);
+            } else {
+                bh=(int32_t)((int64_t)avail*floorw[r]/base);
+            }
+            if (bh<1) bh=1;
+            row_h[r]=bh;
+            used+=bh;
+        }
+        row_h[rows-1]+=avail-used;
+        if (row_h[rows-1]<1) row_h[rows-1]=1;
+    }
+    /* 高度被页夹住时，池的 readable 下限可能高于卡内容高，会把池顶出卡外。
+       夹到一行，余下条目交给池内滚动。 */
+    for (int i=0;i<n;i++) {
+        if (!pools[i]) continue;
+        int32_t chrome_i=lv_obj_get_style_pad_top(cards[i],0)+lv_obj_get_style_pad_bottom(cards[i],0)+
+            2*lv_obj_get_style_border_width(cards[i],0)+
+            lv_obj_get_height(lv_obj_get_child(cards[i],0))+lv_obj_get_style_pad_row(cards[i],0);
+        int32_t room=row_h[i/cols]-chrome_i;
+        if (room<1) room=1;
+        /* 页高被夹时，池自己上下各留的 2px 会吃掉可读高度：p1 明确差 2px 不够
+           完整露 2 项。夹高路径上把这 4px 收回给清单。 */
+        lv_obj_set_style_pad_ver(pools[i], 0, 0);
+        lv_obj_set_style_pad_ver(lv_obj_get_parent(pools[i]), 0, 0);
+        lv_obj_set_style_min_height(pools[i], LV_MIN(uk_list_readable_min(pools[i],1), room), 0);
+        /* flex 给池留的高度比 body 少 2px；钉成 100% 让清单拿满可读高。 */
+        lv_obj_set_height(pools[i], LV_PCT(100));
+    }
+    for (int i=0;i<n;i++) lv_obj_set_height(cards[i],row_h[i/cols]);
     lv_obj_set_flex_grow(container,0);
     lv_obj_set_height(container,target);
     lv_obj_update_layout(container);
     lv_free(want);
+    lv_free(floorw);
     cache->shape = inventory_shape(container, cards, pools, counts, n);
     cache->ready = true;
 }
@@ -3947,24 +4065,6 @@ static const char *docker_module_note(const fnos_status_t *st)
     return mod_status_cn(state); /* Includes stale/partial and future status words. */
 }
 
-static int32_t overview_card_min_height(lv_obj_t *card)
-{
-    lv_obj_t *body = uk_card_body(card);
-    int32_t needed = lv_obj_get_height(lv_obj_get_child(card, 0)) +
-        lv_obj_get_style_pad_top(card, 0) + lv_obj_get_style_pad_bottom(card, 0) +
-        2 * lv_obj_get_style_border_width(card, 0) + lv_obj_get_style_pad_row(card, 0);
-    int visible = 0;
-    for (uint32_t i = 0; i < lv_obj_get_child_count(body); i++) {
-        lv_obj_t *child = lv_obj_get_child(body, i);
-        if (lv_obj_has_flag(child, LV_OBJ_FLAG_HIDDEN)) continue;
-        needed += lv_obj_get_style_flex_grow(child, 0) ?
-                  lv_obj_get_style_min_height(child, 0) : lv_obj_get_height(child);
-        visible++;
-    }
-    if (visible > 1) needed += (visible - 1) * lv_obj_get_style_pad_row(body, 0);
-    return needed;
-}
-
 /* Compare local values, not computed styles: keep explicit overrides even when
  * the inherited/theme value happens to match. LVGL setters invalidate on repeats. */
 static void overview_style_num(lv_obj_t *obj, lv_style_prop_t prop, int32_t value,
@@ -4002,21 +4102,23 @@ static void overview_layout(void)
                                                 uk_list_promise(s_ui.overview_volumes));
         if (readable > 0) overview_style_num(s_ui.overview_volumes, LV_STYLE_MIN_HEIGHT, readable, 0);
     }
-    int32_t minimum = 0;
+    /* Three equal rows share the page height. Let each card fill its row and
+     * make the page-fit audit prove the content fits: stretching all rows to
+     * the tallest card pushed the third row 43px below the viewport. */
+    int32_t page_h = s_ui.page[0] ? lv_obj_get_height(s_ui.page[0]) : 0;
+    int32_t row_h = page_h > 0 ? (page_h - 2 * UK_CARD_GAP) / 3 : 150;
+    if (row_h <= 0) row_h = 150;
     for (unsigned r = 0; r < sizeof s_ui.overview_rows / sizeof s_ui.overview_rows[0]; r++) {
         lv_obj_t *row = s_ui.overview_rows[r];
+        if (!row) continue;
         lv_obj_update_layout(row);
         for (uint32_t i = 0; i < lv_obj_get_child_count(row); i++) {
             lv_obj_t *card = lv_obj_get_child(row, i);
             lv_obj_set_width(card, 0);
-            lv_obj_update_layout(card);
-            int32_t needed = overview_card_min_height(card);
-            overview_style_num(card, LV_STYLE_MIN_HEIGHT, needed, 0);
-            minimum = LV_MAX(minimum, needed);
+            overview_style_num(card, LV_STYLE_MIN_HEIGHT, 0, 0);
         }
+        overview_style_num(row, LV_STYLE_MIN_HEIGHT, row_h, 0);
     }
-    for (unsigned r = 0; r < sizeof s_ui.overview_rows / sizeof s_ui.overview_rows[0]; r++)
-        overview_style_num(s_ui.overview_rows[r], LV_STYLE_MIN_HEIGHT, minimum, 0);
 }
 
 static void module_note(lv_obj_t *card, const fnos_status_t *st, const char *module);
@@ -4142,7 +4244,27 @@ static void overview_refresh(const fnos_status_t *st)
             count = s_ui.overview_volume_capacity;
         }
     }
+    /* 总览只露最差三卷：按使用率降序排前 3，其余保持原序。低使用率排在后，
+       96% 的卷不再被 /vol1 54%、/vol2 74% 挤掉。 */
+    bool *used_flags = count > 0 ? uk_alloc((size_t)count * sizeof *used_flags) : NULL;
+    if (used_flags) memset(used_flags, 0, (size_t)count * sizeof *used_flags);
+    int rank = used_flags ? LV_MIN(3, count) : 0;
     for (int i = 0; i < count; i++) {
+        int pick = i;
+        if (used_flags && i < rank) {
+            int best = -1;
+            for (int j = 0; j < count; j++) {
+                if (used_flags[j]) continue;
+                if (best < 0 || st->vols[j].pct > st->vols[best].pct) best = j;
+            }
+            pick = best;
+        } else if (used_flags) {
+            int j = 0;
+            while (j < count && used_flags[j]) j++;
+            pick = j;
+        }
+        if (pick < 0 || pick >= count) continue;
+        if (used_flags) used_flags[pick] = true;
         overview_volume_t *row = &s_ui.overview_volume[i];
         if (!row->box) {
             row->box = uk_col(s_ui.overview_volumes, 0);
@@ -4156,7 +4278,7 @@ static void overview_refresh(const fnos_status_t *st)
             row->bar = hero_bar(row->box);
             lv_obj_set_height(row->bar, UK_BAR_H);
         }
-        const fnos_vol_t *vol = &st->vols[i];
+        const fnos_vol_t *vol = &st->vols[pick];
         set_txt(row->name, "%s", vol->mnt);
         (storage_live ? set_num : set_txt)(row->value, vol->total_gb > 0 ? "%.0f%%" : "--", vol->pct);
         show(row->bar, vol->total_gb > 0);
@@ -4165,11 +4287,13 @@ static void overview_refresh(const fnos_status_t *st)
         overview_style_color(row->value, LV_STYLE_TEXT_COLOR, uk_c(storage_live ? UK_T1 : UK_T3), 0);
         not_clickable(row->box);
     }
+    if (used_flags) lv_free(used_flags);
     for (int i = count; i < s_ui.overview_volume_made; i++) {
         lv_obj_delete(s_ui.overview_volume[i].box);
         memset(&s_ui.overview_volume[i], 0, sizeof s_ui.overview_volume[i]);
     }
     s_ui.overview_volume_made = count;
+    show(s_ui.volume_empty, count == 0);
     /* 卷清单超出一屏时，/volN 的半行不再挂在卡片下沿。 */
     uk_viewport_snap(s_ui.overview_volumes, UK_S1);
     if (!storage) set_txt(s_ui.storage_note, "各卷详情在存储页");
@@ -4218,6 +4342,25 @@ static health_summary_t health_summary(const fnos_status_t *st)
     for (int i = 0; i < st->nalerts; i++) h.alerts[alert_group_of(st->alerts[i].lv)]++;
     for (int i = 0; i < st->ndocker; i++) if (st->docker[i].up) h.running++;
     return h;
+}
+
+/* 采集端告警正文按已知模板落到中文；未知模板原样保留，绝不吞掉信息。 */
+static void alert_text_cn(const char *raw, char *out, size_t cap)
+{
+    int vol = 0, md = 0, pct = 0;
+    double fpct = 0.0;
+    char name[64] = "";
+    if (!raw) raw = "";
+    if (sscanf(raw, "/vol%d used %d%%", &vol, &pct) == 2)
+        snprintf(out, cap, "卷 /vol%d 已用 %d%%", vol, pct);
+    else if (sscanf(raw, "/vol%d free %lf%% left", &vol, &fpct) == 2)
+        snprintf(out, cap, "卷 /vol%d 剩余 %.1f%%", vol, fpct);
+    else if (sscanf(raw, "container %63s down", name) == 1)
+        snprintf(out, cap, "容器 %s 已停止", name);
+    else if (sscanf(raw, "md%d resync %lf%%", &md, &fpct) == 2)
+        snprintf(out, cap, "阵列 md%d 重建 %.1f%%", md, fpct);
+    else
+        snprintf(out, cap, "%s", raw);
 }
 
 static void alert_health_sync(const fnos_status_t *st, int running)
@@ -4377,10 +4520,18 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
     }
     if (page == 0) {
     if (!st->online) {
-        set_txt(s_ui.overview_note, "%s", why ? why : "离线，显示最后一次采集快照");
-        set_num(s_ui.home_temp_value, "--");
-        set_txt(s_ui.home_temp_unit, "");
-        set_txt(s_ui.home_temp_name, "%s", "离线 · 显示上次快照");
+        if (!st->ever_ok) {
+            /* 从未采到过：这不是"离线旧快照"，而是还在等首采。 */
+            set_txt(s_ui.overview_note, "%s", why ? why : "等待采集端首次采集");
+            set_num(s_ui.home_temp_value, "--");
+            set_txt(s_ui.home_temp_unit, "");
+            set_txt(s_ui.home_temp_name, "%s", "等待数据");
+        } else {
+            set_txt(s_ui.overview_note, "%s", why ? why : "离线，显示最后一次采集快照");
+            set_num(s_ui.home_temp_value, "--");
+            set_txt(s_ui.home_temp_unit, "");
+            set_txt(s_ui.home_temp_name, "%s", "离线 · 显示上次快照");
+        }
         lv_obj_set_style_bg_color(s_ui.home_temp_dot, uk_c(UK_T3), 0);
         lv_obj_set_style_text_color(s_ui.home_temp_value, uk_c(UK_T3), 0);
     } else {
@@ -4398,8 +4549,10 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
         /* 脚注只留"行内看不到"的两件事：温度读数与容器状态。传感器名与温度都已经在
            同一张磁贴的数值行里（home_temp_name / home_temp_value），再抄一遍就会把
            "容器 4/4" 挤到磁贴外（1/3 页宽只放得下 ~24 个 CJK12 字，DOTS 截断）。 */
-        if (have) set_txt(s_ui.overview_note, "%s %.0f°C · %s", old_temp ? "温度旧值" : "最高", hottest, containers);
-        else set_txt(s_ui.overview_note, "温度不可用 · %s · 运行 %s", containers, fmt_uptime(b, sizeof b, st->uptime_s));
+        if (have) {
+            const char *label = old_temp ? "温度旧值" : (hottest >= 80.0f ? "高温" : "最高");
+            set_txt(s_ui.overview_note, "%s %.0f°C · %s", label, hottest, containers);
+        } else set_txt(s_ui.overview_note, "%s · 运行 %s", containers, fmt_uptime(b, sizeof b, st->uptime_s));
         /* 首页"最热温度"磁贴：与上面同一次扫描，值按温度上色，点进去看全部通道。 */
         if (have) {
             (old_temp ? set_txt : set_num)(s_ui.home_temp_value, "%.0f", hottest);
@@ -4410,7 +4563,7 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
         } else {
             set_num(s_ui.home_temp_value, "--");
             set_txt(s_ui.home_temp_unit, "");
-            set_txt(s_ui.home_temp_name, "%s", containers);
+            set_txt(s_ui.home_temp_name, "%s", "温度不可用");
             lv_obj_set_style_bg_color(s_ui.home_temp_dot, uk_c(UK_T3), 0);
         }
         show(s_ui.overview_note, !have || old_temp || !overview_live(st, "docker"));
@@ -4497,9 +4650,14 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
         }
         /* 右侧那列默认是等宽数字字体；写中文（正常/降级）时必须换回 CJK，
            否则预览直接报缺字（num 字体里没有汉字）。 */
-        if (!syncing) lv_obj_set_style_text_font(row->val, UK_FONT_CJK_16, 0);
-        else          lv_obj_set_style_text_font(row->val, UK_FONT_NUM_20, 0);
+        /* All four status cells share one line height: a lone NUM_20 sync
+           percentage made that row 2px taller, which the list floor then
+           charged to every promised row (p1 audit 112 vs 116). */
+        lv_obj_set_style_text_font(row->val, UK_FONT_CJK_16, 0);
         lv_obj_set_style_text_color(row->val, uk_c(col), 0);
+        /* RAID rows otherwise land on 51 or 52 depending on the status text
+           themselves; pin the item height so the list floor is deterministic. */
+        lv_obj_set_style_min_height(row->row, 52, 0);
     }
     pool_layout(&s_p1_raid_n, &s_p1_raid_w, &s_p1_raid_h, nraid, s_ui.raid_pool, UK_ENTITY_MIN_WIDTH, false, NULL);
 
@@ -4803,6 +4961,9 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
     s_ui.temp_blk_made = nblk;
 
     for (int i = 0; i < nblk; i++) { s_ui.temp_blk[i].collapsed = s_tgrp[i].collapsed; temp_blk_fill(i); }
+    /* 设备块文案/通道行变化会改内容高；n/w/h 缓存不变也必须重排，否则块按旧高
+       101px 摆位，最后一行"展开 N 路"会掉出块外 17px。 */
+    s_p4_n = -1;
     pool_layout(&s_p4_n, &s_p4_w, &s_p4_h, nblk,
                 s_ui.temp_pool, UK_ENTITY_MIN_WIDTH, false, NULL);
     if (s_ui.temp_empty_all) {
@@ -4873,7 +5034,7 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
     set_txt(s_ui.agent_detail[0], "%s", st->host[0] ? st->host : "-");
     set_txt(s_ui.agent_detail[1], "%s:%d", FNOS_HOST, FNOS_PORT);
     set_num(s_ui.agent_detail[2], "%d ms (状态 %d)", st->http_ms, st->last_status);
-    set_num(s_ui.agent_detail[3], "%u / %u", (unsigned)st->ok_count, (unsigned)st->fail_count);
+    set_txt(s_ui.agent_detail[3], "成功 %u · 失败 %u", (unsigned)st->ok_count, (unsigned)st->fail_count);
     set_txt(s_ui.agent_detail[4], "%s", st->last_err[0] ? st->last_err : "无");
     set_num(s_ui.agent_detail[5], "%s", fmt_age(c1, sizeof c1, data_age_ms(st)));
     set_num(s_ui.agent_detail[6], "%u KB",
@@ -4938,7 +5099,9 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
                 if (alert_group_of(st->alerts[i].lv) != g) continue;
                 lv_obj_t *l = lv_obj_get_child(col, k++);
                 if (!l) break;
-                set_txt(l, "%s%s", st->online ? "" : "上次采集：", st->alerts[i].m);
+                char msg[192];
+                alert_text_cn(st->alerts[i].m, msg, sizeof msg);
+                set_txt(l, "%s%s", st->online ? "" : "上次采集：", msg);
                 uint32_t ac = g == 0 ? UK_DANGER : g == 1 ? UK_WARN : UK_T3;
                 lv_obj_set_style_text_color(l, uk_c(st->online ? ac : UK_T3), 0);
             }
@@ -5057,6 +5220,17 @@ static void rate_note(int64_t started)
 }
 #endif
 
+static void nav_badge_sync(const fnos_status_t *st)
+{
+    if (!s_ui.nav_badge) return;
+    if (st->nalerts > 0) {
+        char b[8];
+        snprintf(b, sizeof b, "%u", (unsigned)st->nalerts);
+        set_txt(s_ui.nav_badge, "%s", b);
+        show(s_ui.nav_badge_box, true);
+    } else show(s_ui.nav_badge_box, false);
+}
+
 static void ui_tick(lv_timer_t *t)
 {
 #ifndef CONFIG_FNOS_UI_REFRESH_MS
@@ -5110,6 +5284,7 @@ static void ui_tick(lv_timer_t *t)
        fnos_status_t 的栈上副本。这个结构有 2 KB 量级，而本函数跑在
        LVGL 任务上（栈 12 KB），UI 任务上每一百字节都值得省。 */
     fnos_data_get(&s_st);
+    nav_badge_sync(&s_st);
 
     /* smp 是纯中转缓冲，且 ui_tick 只在 LVGL 任务里跑（lv_timer 回调），
        所以放 static 而不是压在栈上 —— 又是 1 KB。 */
@@ -5711,14 +5886,19 @@ void fnos_ui_set_page(int idx)
 {
     if (s_ui.detail_mask) show(s_ui.detail_mask, false);
     if (!s_created) return;
+    /* 配对/配网覆盖层持有用户输入，壳层导航不能把它们收掉：
+       旧实现无条件 pair_show(false)/wifi_show(false)，wifi_show(false) 第一行又
+       清口令，于是点任何导航都会静默丢掉正在输的 Wi-Fi 密码。诊断面板无输入，
+       仍随切页收起。 */
+    if (s_pair_open || s_wifi_open) return;
     const int n = FNOS_UI_PAGE_COUNT;
     idx = (idx % n + n) % n;
-    pair_show(false);
-    if (s_wifi_open) wifi_show(false);
-    s_diagnostics = false;
-    show(s_ui.diagnostics, false);
-    set_txt(s_ui.diagnostics_label, "设置");
-    p3_overlay_sync();
+    if (s_diagnostics) {
+        s_diagnostics = false;
+        show(s_ui.diagnostics, false);
+        set_txt(s_ui.diagnostics_label, "设置");
+        p3_overlay_sync();
+    }
     s_motion.tracking = false;
     s_motion.dragging = false;
     if (idx == s_page) {

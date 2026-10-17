@@ -422,7 +422,9 @@ uk_row_t *uk_row_create(lv_obj_t *parent, bool with_led, bool with_bar)
     lv_obj_clear_flag(namebox, LV_OBJ_FLAG_SCROLLABLE);
 
     r->name1 = mk_label_raw(namebox, UK_TYPE_BODY, UK_T2);
-    lv_label_set_long_mode(r->name1, LV_LABEL_LONG_MODE_WRAP);   /* 设备名永不缩写 */
+    /* 列表里一行裁切；完整名称进详情。长名若换行会把行高撑过点击目标，
+       还会把后面的清单顶出卡外。 */
+    lv_label_set_long_mode(r->name1, LV_LABEL_LONG_MODE_CLIP);
     lv_obj_set_width(r->name1, LV_PCT(100));
 
     lv_obj_t *line2 = mk_line(row, UK_S2);
