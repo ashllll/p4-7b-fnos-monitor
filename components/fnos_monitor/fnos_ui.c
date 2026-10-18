@@ -1337,8 +1337,15 @@ static void entity_open_cb(lv_event_t *e)
     set_txt(s_ui.detail_meta, "%s", meta);
     set_txt(s_ui.detail_value, "%s", value);
     lv_obj_set_style_text_color(s_ui.detail_value, lv_obj_get_style_text_color(row->val, 0), 0);
-    set_txt(s_ui.detail_context, "%s · 打开时快照 · %s", NAV_TXT[s_page],
-            s_st.online ? "采集在线" : "采集不可用，保留上次读数");
+    const char *freshness = s_st.online ? "采集在线" : "采集不可用，保留上次读数";
+    lv_obj_t *cards[] = {s_ui.vol_card, s_ui.raid_card, s_ui.disk_card,
+                        s_ui.net_card, s_ui.dock_card, s_ui.p3_temp_card};
+    for (lv_obj_t *parent = lv_obj_get_parent(row->row); parent; parent = lv_obj_get_parent(parent)) {
+        for (unsigned i = 0; i < sizeof cards / sizeof cards[0]; i++) {
+            if (parent == cards[i]) freshness = lv_label_get_text(uk_card_note(parent));
+        }
+    }
+    set_txt(s_ui.detail_context, "%s · 打开时快照 · %s", NAV_TXT[s_page], freshness);
     if (uk_alloc_failed()) {
         set_txt(s_ui.detail_name, "%s", "详情暂不可用");
         set_txt(s_ui.detail_meta, "%s", "界面内存不足 · 返回列表后重试");
@@ -2330,6 +2337,7 @@ static void pair_build(lv_obj_t *page)
     lv_obj_set_flex_grow(pair_sp, 1);
     s_ui.pair_cancel = flex_btn(foot, "关闭", BTN_SECONDARY, UK_FONT_CJK_16, 0);
     lv_obj_t *pair_right = uk_row_box(foot, 1);
+    lv_obj_set_height(pair_right, LV_SIZE_CONTENT);
     lv_obj_set_flex_align(pair_right, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     s_ui.pair_forget = flex_btn(pair_right, "解除配对", BTN_NEUTRAL, UK_FONT_CJK_16, 0);
     s_ui.pair_ok     = flex_btn(pair_right, "确认", BTN_PRIMARY, UK_FONT_CJK_16, 0);
@@ -4404,22 +4412,32 @@ static health_summary_t health_summary(const fnos_status_t *st)
 }
 
 /* 采集端告警正文按已知模板落到中文；未知模板原样保留，绝不吞掉信息。 */
-static void alert_text_cn(const char *raw, char *out, size_t cap)
+static void alert_text_cn(lv_obj_t *label, const char *raw, const char *prefix)
 {
-    int vol = 0, md = 0, pct = 0;
+    int vol = 0, md = 0, pct = 0, end = 0;
     double fpct = 0.0;
-    char name[64] = "";
     if (!raw) raw = "";
-    if (sscanf(raw, "/vol%d used %d%%", &vol, &pct) == 2)
-        snprintf(out, cap, "卷 /vol%d 已用 %d%%", vol, pct);
-    else if (sscanf(raw, "/vol%d free %lf%% left", &vol, &fpct) == 2)
-        snprintf(out, cap, "卷 /vol%d 剩余 %.1f%%", vol, fpct);
-    else if (sscanf(raw, "container %63s down", name) == 1)
-        snprintf(out, cap, "容器 %s 已停止", name);
-    else if (sscanf(raw, "md%d resync %lf%%", &md, &fpct) == 2)
-        snprintf(out, cap, "阵列 md%d 重建 %.1f%%", md, fpct);
-    else
-        snprintf(out, cap, "%s", raw);
+    if (sscanf(raw, "/vol%d used %d%%%n", &vol, &pct, &end) == 2 && raw[end] == '\0') {
+        set_txt(label, "%s卷 /vol%d 已用 %d%%", prefix, vol, pct);
+        return;
+    }
+    end = 0;
+    if (sscanf(raw, "/vol%d free %lf%% left%n", &vol, &fpct, &end) == 2 && raw[end] == '\0') {
+        set_txt(label, "%s卷 /vol%d 剩余 %.1f%%", prefix, vol, fpct);
+        return;
+    }
+    size_t len = strlen(raw);
+    if (len > 15 && !strncmp(raw, "container ", 10) && !strcmp(raw + len - 5, " down") &&
+        strcspn(raw + 10, " \t\r\n") == len - 15) {
+        set_txt(label, "%s容器 %.*s 已停止", prefix, (int)(len - 15), raw + 10);
+        return;
+    }
+    end = 0;
+    if (sscanf(raw, "md%d resync %lf%%%n", &md, &fpct, &end) == 2 && raw[end] == '\0') {
+        set_txt(label, "%s阵列 md%d 重建 %.1f%%", prefix, md, fpct);
+        return;
+    }
+    set_txt(label, "%s%s", prefix, raw);
 }
 
 static void alert_health_sync(const fnos_status_t *st, int running)
@@ -4878,13 +4896,23 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
     else set_txt(s_ui.system_note, "旧快照 · %s · %d 路温度", dock_summary, st->ntemps);
     if (dock_live) set_txt(s_ui.dock_empty_label, "暂无容器");
     else set_txt(s_ui.dock_empty_label, "容器%s", dock_note);
-    /* 数据层早就有、v7 界面一直没用上的字段：负载 / 进程数 / 交换 / 运行时长 */
-    /* 文案长度受盒宽约束（892px，cjk_12）：40 个中文字 ≈ 890px 就到顶。
-       "0.1 / 2.0 GB" 写成 "0.1/2.0G" 省 60px，否则会折行、第二行被卡片裁掉
-       （audit_bounds 报 `child out of parent`）。 */
-    set_num(s_ui.system_note2, "负载 %.2f/%.2f/%.2f · 进程 %d · 交换 %.1f/%.1f GB · 运行 %s",
-            st->cpu.load1, st->cpu.load5, st->cpu.load15, st->cpu.procs,
-            st->mem.swap_used_mb / 1024.f, st->mem.swap_total_mb / 1024.f,
+    /* Each diagnostic follows its own module state; absent readings are not zero. */
+    const char *cpu_state = overview_module_state(st, "cpu");
+    const char *mem_state = overview_module_state(st, "mem");
+    char swap[96];
+    if (overview_readable(st, "cpu"))
+        snprintf(b, sizeof b, "%s%s负载 %.2f/%.2f/%.2f · 进程 %d",
+                 cpu_state && !strcmp(cpu_state, "partial") ? "部分可读 · " : "",
+                 overview_live(st, "cpu") ? "" : "旧值 · ",
+                 st->cpu.load1, st->cpu.load5, st->cpu.load15, st->cpu.procs);
+    else snprintf(b, sizeof b, "CPU -- · %s", cpu_state ? mod_status_cn(cpu_state) : "等待采集");
+    if (overview_readable(st, "mem"))
+        snprintf(swap, sizeof swap, "%s%s交换 %.1f/%.1f GB",
+                 mem_state && !strcmp(mem_state, "partial") ? "部分可读 · " : "",
+                 overview_live(st, "mem") ? "" : "旧值 · ",
+                 st->mem.swap_used_mb / 1024.f, st->mem.swap_total_mb / 1024.f);
+    else snprintf(swap, sizeof swap, "内存 -- · %s", mem_state ? mod_status_cn(mem_state) : "等待采集");
+    set_txt(s_ui.system_note2, "%s\n%s\n运行 %s", b, swap,
             fmt_uptime(c2, sizeof c2, st->uptime_s));
     }
     /* 空态与池二选一：空态盒子要独占卡体才能居中，所以池空的时候把它收起来
@@ -5172,9 +5200,7 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
                 if (alert_group_of(st->alerts[i].lv) != g) continue;
                 lv_obj_t *l = lv_obj_get_child(col, k++);
                 if (!l) break;
-                char msg[192];
-                alert_text_cn(st->alerts[i].m, msg, sizeof msg);
-                set_txt(l, "%s%s", st->online ? "" : "上次采集：", msg);
+                alert_text_cn(l, st->alerts[i].m, st->online ? "" : "上次采集：");
                 uint32_t ac = g == 0 ? UK_DANGER : g == 1 ? UK_WARN : UK_T3;
                 lv_obj_set_style_text_color(l, uk_c(st->online ? ac : UK_T3), 0);
             }

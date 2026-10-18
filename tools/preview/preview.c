@@ -2535,6 +2535,175 @@ static void verify_unifi_views(void)
     puts("checks: UniFi filters, restore-all, selection persistence, detail pointer input and frozen identity PASS");
 }
 
+static void verify_detail_freshness(void)
+{
+    preview_state_t previous = s_state;
+    int previous_page = fnos_ui_page();
+    fnos_status_t fixture = {0}; fill_live(&fixture);
+    fixture.nvols = fixture.nraid = fixture.ntemps = 1;
+    fixture.temps[0].c = 45.6f;
+    const char *identities[] = { fixture.vols[0].mnt, fixture.raid[0].dev,
+        fixture.temps[0].dn[0] ? fixture.temps[0].dn : fixture.temps[0].dev };
+    static const char *const modules[] = { "vols", "raid", "temps" };
+    static const char *const readings[] = { "54%", "正常", "45.6 °C" };
+    static const char *const states[] = { "stale", "partial" };
+    s_state = ST_LIVE; s_override_status = &fixture;
+    for (unsigned kind = 0; kind < sizeof modules / sizeof modules[0]; kind++) {
+        int module = -1;
+        for (int i = 0; i < fixture.nmods; i++)
+            if (!strcmp(fixture.mods[i].name, modules[kind])) module = i;
+        assert(module >= 0);
+        for (unsigned state = 0; state < sizeof states / sizeof states[0]; state++) {
+            assert(fnos_status_text(&fixture, &fixture.mods[module].status, "%s", states[state]));
+            fixture.vols[0].pct = 54; fixture.raid[0].ok = true; fixture.temps[0].c = 45.6f;
+            fnos_ui_set_page(kind == 2 ? 3 : 1); regression_tick();
+            pointer_text("全部");
+            lv_obj_t *entity = visible_text(lv_screen_active(), identities[kind]);
+            assert(entity); click_object_center(entity);
+            lv_obj_t *heading = visible_text(lv_screen_active(), "实体详情");
+            assert(heading);
+            lv_obj_t *detail = lv_obj_get_parent(lv_obj_get_parent(heading));
+            lv_obj_t *context = visible_text_containing(detail, "打开时快照");
+            assert(context);
+            assert(strstr(lv_label_get_text(context), state == 0 ? "旧值" : "部分"));
+            assert(visible_text(detail, identities[kind]));
+            assert(visible_text(detail, readings[kind]));
+            char shot[64];
+            snprintf(shot, sizeof shot, "18-detail-%s-%s", modules[kind], states[state]);
+            snapshot(shot);
+            char captured_context[256];
+            snprintf(captured_context, sizeof captured_context, "%s", lv_label_get_text(context));
+            /* A later successful sample cannot upgrade the opened retained reading. */
+            assert(fnos_status_text(&fixture, &fixture.mods[module].status, "ok"));
+            fixture.vols[0].pct = 17; fixture.raid[0].ok = false; fixture.temps[0].c = 67.8f;
+            regression_tick();
+            assert(visible_text(detail, captured_context));
+            assert(visible_text(detail, identities[kind]));
+            assert(visible_text(detail, readings[kind]));
+            assert(!visible_text(detail, kind == 0 ? "17%" : kind == 1 ? "状态未知" : "67.8 °C"));
+            pointer_text("返回列表");
+        }
+    }
+    s_override_status = NULL; s_state = previous;
+    fnos_ui_set_page(previous_page); regression_tick(); fnos_status_release(&fixture);
+    puts("checks: retained and partial volume/RAID/temperature details keep freshness and captured values PASS");
+}
+
+static void verify_diagnostic_freshness(void)
+{
+    preview_state_t previous = s_state;
+    int previous_page = fnos_ui_page();
+    fnos_status_t fixture = {0}; fill_live(&fixture);
+    int cpu = -1, mem = -1;
+    for (int i = 0; i < fixture.nmods; i++) {
+        if (!strcmp(fixture.mods[i].name, "cpu")) cpu = i;
+        if (!strcmp(fixture.mods[i].name, "mem")) mem = i;
+    }
+    assert(cpu >= 0 && mem >= 0);
+    s_state = ST_LIVE; s_override_status = &fixture;
+    fnos_ui_set_page(3); regression_tick(); pointer_text("设置");
+    lv_obj_t *heading = visible_text(lv_screen_active(), "设置与诊断");
+    assert(heading);
+    lv_obj_t *diagnostics = lv_obj_get_parent(lv_obj_get_parent(heading));
+    /* These zeros model omitted fields, then genuine zero measurements below. */
+    fixture.cpu.load1 = fixture.cpu.load5 = fixture.cpu.load15 = 0;
+    fixture.cpu.procs = 0;
+    fixture.mem.swap_used_mb = fixture.mem.swap_total_mb = 0;
+    static const char *const unavailable[] = { "missing", "denied" };
+    for (unsigned i = 0; i < sizeof unavailable / sizeof unavailable[0]; i++) {
+        assert(fnos_status_text(&fixture, &fixture.mods[cpu].status, "%s", unavailable[i]));
+        assert(fnos_status_text(&fixture, &fixture.mods[mem].status, "%s", unavailable[1 - i]));
+        regression_tick();
+        assert(!visible_text_containing(diagnostics, "负载 0.00/0.00/0.00"));
+        assert(!visible_text_containing(diagnostics, "进程 0"));
+        assert(!visible_text_containing(diagnostics, "交换 0.0/0.0"));
+        lv_obj_t *summary = visible_text_containing(diagnostics, "CPU --");
+        assert(summary);
+        const char *text = lv_label_get_text(summary);
+        assert(strstr(text, i == 0 ? "读不到" : "权限不足"));
+        assert(strstr(text, "内存 --"));
+        assert(strstr(text, i == 0 ? "权限不足" : "读不到"));
+        lv_obj_scroll_to_view_recursive(summary, LV_ANIM_OFF);
+        char shot[80];
+        snprintf(shot, sizeof shot, "18-diagnostics-cpu-%s-mem-%s", unavailable[i], unavailable[1 - i]);
+        snapshot(shot);
+    }
+    assert(fnos_status_text(&fixture, &fixture.mods[cpu].status, "ok"));
+    assert(fnos_status_text(&fixture, &fixture.mods[mem].status, "ok"));
+    regression_tick();
+    assert(visible_text_containing(diagnostics, "负载 0.00/0.00/0.00"));
+    assert(visible_text_containing(diagnostics, "进程 0"));
+    assert(visible_text_containing(diagnostics, "交换 0.0/0.0"));
+    lv_obj_scroll_to_view_recursive(visible_text_containing(diagnostics, "负载 0.00/0.00/0.00"), LV_ANIM_OFF);
+    snapshot("18-diagnostics-real-zero");
+    fixture.cpu.load1 = 1.42f; fixture.cpu.load5 = 1.18f; fixture.cpu.load15 = 0.96f;
+    fixture.cpu.procs = 412;
+    fixture.mem.swap_used_mb = 137; fixture.mem.swap_total_mb = 2048;
+    static const char *const retained[] = { "stale", "partial" };
+    for (unsigned i = 0; i < sizeof retained / sizeof retained[0]; i++) {
+        assert(fnos_status_text(&fixture, &fixture.mods[cpu].status, "%s", retained[i]));
+        assert(fnos_status_text(&fixture, &fixture.mods[mem].status, "%s", retained[1 - i]));
+        regression_tick();
+        lv_obj_t *summary = visible_text_containing(diagnostics, "负载 1.42/1.18/0.96");
+        assert(summary);
+        const char *text = lv_label_get_text(summary);
+        assert(strstr(text, "进程 412") && strstr(text, "交换 0.1/2.0"));
+        assert(strstr(text, "旧值") && strstr(text, "部分可读"));
+        lv_obj_scroll_to_view_recursive(summary, LV_ANIM_OFF);
+        char shot[80];
+        snprintf(shot, sizeof shot, "18-diagnostics-cpu-%s-mem-%s", retained[i], retained[1 - i]);
+        snapshot(shot);
+    }
+    pointer_text("返回");
+    s_override_status = NULL; s_state = previous;
+    fnos_ui_set_page(previous_page); regression_tick(); fnos_status_release(&fixture);
+    puts("checks: diagnostics distinguish unavailable values, real zero, retained CPU and partial memory PASS");
+}
+
+static void verify_alert_text_preservation(void)
+{
+    preview_state_t previous = s_state;
+    int previous_page = fnos_ui_page();
+    fnos_status_t fixture = {0}; fill_live(&fixture);
+    /* Fixed expected prose is independent of the product's template parser. */
+    static const char long_raw[] =
+        "container download-service-0123456789abcdefghijklmnopqrstuvwxyz-"
+        "0123456789abcdefghijklmnopqrstuvwxyz-0123456789abcdefghijklmnopqrstuvwxyz-"
+        "0123456789abcdefghijklmnopqrstuvwxyz-0123456789abcdefghijklmnopqrstuvwxyz-"
+        "full-identity-tail down";
+    static const char long_expected[] =
+        "容器 download-service-0123456789abcdefghijklmnopqrstuvwxyz-"
+        "0123456789abcdefghijklmnopqrstuvwxyz-0123456789abcdefghijklmnopqrstuvwxyz-"
+        "0123456789abcdefghijklmnopqrstuvwxyz-0123456789abcdefghijklmnopqrstuvwxyz-"
+        "full-identity-tail 已停止";
+    static const char *const unknown[] = {
+        "container exporter restart loop",
+        "container exporter down · restart limit reached",
+        "/vol1 used 85% · snapshot quota unavailable",
+        "md0 resync 47.0% · paused by administrator"
+    };
+    assert(strlen(long_expected) > 192);
+    fixture.nalerts = 1;
+    assert(fnos_status_text(&fixture, &fixture.alerts[0].lv, "warn"));
+    assert(fnos_status_text(&fixture, &fixture.alerts[0].m, "%s", long_raw));
+    s_state = ST_LIVE; s_override_status = &fixture;
+    fnos_ui_set_page(5); regression_tick(); pointer_text("全部");
+    lv_obj_t *message = visible_text(lv_screen_active(), long_expected);
+    assert(message);
+    lv_obj_scroll_to_view_recursive(message, LV_ANIM_OFF); regression_tick();
+    assert(visible_text(lv_screen_active(), long_expected));
+    snapshot("14-alert-long-container");
+    for (unsigned i = 0; i < sizeof unknown / sizeof unknown[0]; i++) {
+        assert(fnos_status_text(&fixture, &fixture.alerts[0].m, "%s", unknown[i]));
+        regression_tick();
+        assert(visible_text(lv_screen_active(), unknown[i]));
+        assert(!visible_text(lv_screen_active(), "容器 exporter 已停止"));
+    }
+    s_override_status = NULL; s_state = previous;
+    fnos_ui_set_page(previous_page); regression_tick(); fnos_status_release(&fixture);
+    puts("checks: long container alert identity is complete and unmatched templates remain verbatim PASS");
+}
+
 static lv_obj_t *temperature_device_block(lv_obj_t *name)
 {
     /* Find the closest column container with a click handler: the semantic device block.
@@ -3390,12 +3559,53 @@ static void verify_wifi(void)
     assert(!strcmp(lv_label_get_text(password_input), "口令"));
 }
 
+/* First-entry keypad checks must not repair clipping by scrolling to a key. */
+static void assert_pair_keypad_visible(void)
+{
+    static const char *const keys[] = {
+        "1", "2", "3", "4", "5", "6", "7", "8", "9", "删除", "0", "确认"
+    };
+    lv_obj_update_layout(lv_screen_active());
+    for (unsigned i = 0; i < sizeof keys / sizeof keys[0]; i++) {
+        lv_obj_t *label = visible_text_clickable(lv_screen_active(), keys[i]);
+        assert(label);
+        lv_obj_t *button = lv_obj_get_parent(label);
+        lv_area_t full, visible;
+        lv_obj_get_coords(button, &full);
+        assert(visible_click_area(button, &visible));
+        if (full.x1 != visible.x1 || full.x2 != visible.x2 ||
+            full.y1 != visible.y1 || full.y2 != visible.y2)
+            fprintf(stderr, "first-entry pair key %s is clipped\n", keys[i]);
+        assert(full.x1 == visible.x1 && full.x2 == visible.x2 &&
+               full.y1 == visible.y1 && full.y2 == visible.y2);
+    }
+}
+
+static void pair_key_in_place(const char *text)
+{
+    assert_pair_keypad_visible();
+    lv_obj_t *label = visible_text_clickable(lv_screen_active(), text);
+    assert(label);
+    lv_area_t area;
+    lv_obj_get_coords(lv_obj_get_parent(label), &area);
+    s_touch_point.x = (area.x1 + area.x2) / 2;
+    s_touch_point.y = (area.y1 + area.y2) / 2;
+    s_touch_down = true; vtick_advance(40); lv_timer_handler();
+    s_touch_down = false; vtick_advance(40); lv_timer_handler();
+    regression_tick();
+}
+
 static void verify_pairing(void)
 {
     s_state = ST_HEALTHY;   /* 只有健康快照才有完整的温度通道，用 ST_LIVE 会断言到空数据 */
     vtick_advance(500); lv_timer_handler();
     click_text("配对");                       /* 侧栏入口：切到系统页并盖上配对卡 */
     assert(visible_text(lv_screen_active(), "与 NAS 配对"));
+    assert_pair_keypad_visible();
+    pair_key_in_place("0"); pair_key_in_place("确认");
+    assert(visible_text(lv_screen_active(), "配对码是 6 位数字，还差 5 位"));
+    pair_key_in_place("删除"); pair_key_in_place("确认");
+    assert(visible_text(lv_screen_active(), "配对码是 6 位数字，还差 6 位"));
     /* 导航入口是选择，不是开关：重复点击留在配对，系统入口明确返回摘要。 */
     click_text("配对"); click_text("配对");
     assert(visible_text(lv_screen_active(), "与 NAS 配对"));
@@ -3438,11 +3648,11 @@ static void verify_pairing(void)
        两者叠在一起过一次（"未配对：用编译期默认地址"盖在"三步完成配对"上）。 */
     assert(!visible_text(lv_screen_active(), "未配对：用编译期默认地址"));
     snapshot("07-pair-code");
-    /* Actions stay on screen while every keypad target remains reachable by scrolling. */
+    /* Actions and all four keypad rows are visible together without scrolling. */
     lv_obj_t *close = lv_obj_get_parent(visible_text_clickable(lv_screen_active(), "关闭"));
     lv_obj_t *code_title = visible_text(lv_screen_active(), "配对码");
     lv_obj_t *grid = lv_obj_get_parent(lv_obj_get_parent(lv_obj_get_parent(code_title)));
-    lv_area_t close_before, close_after, viewport, target;
+    lv_area_t close_before, close_after;
     lv_obj_get_coords(close, &close_before);
     if (close_before.y1 < 0 || close_before.y2 >= lv_display_get_vertical_resolution(NULL))
         fprintf(stderr, "pair actions outside viewport: [%d,%d]-[%d,%d]\n",
@@ -3452,21 +3662,8 @@ static void verify_pairing(void)
     lv_obj_update_layout(lv_screen_active());
     lv_obj_get_coords(close, &close_after);
     assert(memcmp(&close_before, &close_after, sizeof close_before) == 0);
-    static const char *const keys[] = { "1", "2", "3", "4", "5", "6", "7", "8", "9", "删除", "0", "确认" };
-    for (unsigned i = 0; i < sizeof keys / sizeof keys[0]; i++) {
-        lv_obj_t *button = lv_obj_get_parent(visible_text_clickable(grid, keys[i]));
-        lv_obj_scroll_to_view_recursive(button, LV_ANIM_OFF);
-        lv_obj_update_layout(lv_screen_active());
-        lv_obj_get_content_coords(grid, &viewport);
-        lv_obj_get_coords(button, &target);
-        if (target.x1 < viewport.x1 || target.x2 > viewport.x2 || target.y1 < viewport.y1 || target.y2 > viewport.y2)
-            fprintf(stderr, "pair key %s target=[%d,%d]-[%d,%d] viewport=[%d,%d]-[%d,%d]\n", keys[i],
-                    (int)target.x1, (int)target.y1, (int)target.x2, (int)target.y2,
-                    (int)viewport.x1, (int)viewport.y1, (int)viewport.x2, (int)viewport.y2);
-        assert(target.x1 >= viewport.x1 && target.x2 <= viewport.x2);
-        assert(target.y1 >= viewport.y1 && target.y2 <= viewport.y2);
-    }
     lv_obj_scroll_to_y(grid, 0, LV_ANIM_OFF);
+    assert_pair_keypad_visible();
     lv_obj_t *key = lv_obj_get_parent(visible_text_clickable(lv_screen_active(), "1"));
     uint32_t callbacks = lv_obj_get_event_count(key);
     for (int i = 0; i < 60; i++) { vtick_advance(500); lv_timer_handler(); }
@@ -4994,6 +5191,9 @@ int main(int argc, char **argv)
     verify_navigation_hit_targets();
     verify_enhanced_metrics();
     verify_unifi_views();
+    verify_detail_freshness();
+    verify_diagnostic_freshness();
+    verify_alert_text_preservation();
     verify_reasons();
     verify_pairing();
     verify_pair_messages();
