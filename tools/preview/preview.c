@@ -740,6 +740,23 @@ static lv_obj_t *visible_page(lv_obj_t *o)
     return NULL;
 }
 
+/* The pages are no longer direct children of the screen: the shell owns them.
+   Counting USER_1 pages in tree order is the only stable way to map a page
+   number to an object (hidden pages included, so dump_page_cards still works). */
+static lv_obj_t *page_by_index(lv_obj_t *o, int *idx)
+{
+    if (lv_obj_has_flag(o, LV_OBJ_FLAG_USER_1)) {
+        if (*idx == 0) return o;
+        (*idx)--;
+        return NULL;   /* pages may nest another USER_1 object; count only pages */
+    }
+    for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) {
+        lv_obj_t *p = page_by_index(lv_obj_get_child(o, i), idx);
+        if (p) return p;
+    }
+    return NULL;
+}
+
 static void audit_page_fit(const char *name)
 {
     lv_obj_t *page = visible_page(lv_screen_active());
@@ -1356,8 +1373,11 @@ static void snapshot(const char *name)
 {
     if (getenv("PREVIEW_PAGE_CARDS")) {
         int idx = atoi(getenv("PREVIEW_PAGE_CARDS"));
-        lv_obj_t *scr = lv_screen_active();
-        if (idx >= 0 && idx < (int)lv_obj_get_child_count(scr)) dump_page_cards(lv_obj_get_child(scr, idx), idx);
+        if (idx >= 0) {
+            int want = idx;
+            lv_obj_t *page = page_by_index(lv_screen_active(), &want);
+            if (page) dump_page_cards(page, idx);
+        }
     }
     if (getenv("PREVIEW_OVERLAP_TRACE")) {
         fprintf(stderr, "=== suspects @ %s ===\n", name);
@@ -2444,7 +2464,12 @@ static void verify_unifi_views(void)
     assert(visible_text(lv_screen_active(), "实体详情"));
     int before_page = fnos_ui_page();
     click_object_center(lv_obj_get_parent(visible_text_clickable(lv_screen_active(), "网络")));
-    assert(fnos_ui_page() == before_page && visible_text(lv_screen_active(), "实体详情"));
+    /* 点暗层关闭详情，但页面本身仍不切换。 */
+    assert(fnos_ui_page() == before_page);
+    assert(!visible_text(lv_screen_active(), "实体详情"));
+    entity = visible_text(lv_screen_active(), fixture.vols[0].mnt);
+    assert(entity); click_object_center(entity);
+    assert(visible_text(lv_screen_active(), "实体详情"));
     lv_area_t da;
     lv_obj_t *detail_head = visible_text(lv_screen_active(), "实体详情");
     lv_obj_get_coords(lv_obj_get_parent(lv_obj_get_parent(detail_head)), &da);

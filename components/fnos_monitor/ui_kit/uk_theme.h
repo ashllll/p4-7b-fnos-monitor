@@ -253,6 +253,9 @@ void uk_theme_use(const char *name);
 const char *uk_theme_name(void);
 /* 令牌 → lv_color_t（LVGL 9 起 lv_color_hex 已可直用，这里只做统一入口）。 */
 static inline lv_color_t uk_c(uint32_t hex) { return lv_color_hex(hex); }
+/* 运行时“精简动效”开关：诊断页可以切；编译期 Kconfig 仍然是默认/强制。 */
+void uk_motion_set_reduced(bool reduced);
+bool uk_motion_reduced(void);
 #ifdef __cplusplus
 }
 #endif

@@ -208,7 +208,7 @@ void uk_number_set_reading(lv_obj_t *value, lv_obj_t *unit, const char *text,
     /* Holding only the value while updating its unit would fabricate a reading.
        Initial/missing/offline values still publish immediately. */
     if (animate && same_unit && same_numeric_structure(lv_label_get_text(value),text) &&
-        motion_enabled && !UK_NUMBER_REDUCED && UK_NUMBER_MS > 0 &&
+        motion_enabled && !UK_NUMBER_REDUCED && !uk_motion_reduced() && UK_NUMBER_MS > 0 &&
         presentation_gate_enabled && UK_NUMBER_PRESENT_MS > 0 && !presentation_batch_open &&
         lv_obj_is_visible(value) && has_reading(lv_label_get_text(value)) && has_reading(text)) return;
     uk_number_set_text(value, text, animate && same_unit);
@@ -223,7 +223,7 @@ void uk_number_set_text(lv_obj_t *obj, const char *text, bool animate)
     number_label_t *n=(number_label_t *)obj;
     const char *old=lv_label_get_text(obj);
     const lv_font_t *font=lv_obj_get_style_text_font(obj,0);
-    bool eligible=animate && motion_enabled && !UK_NUMBER_REDUCED && motion_period_ms>0 &&
+    bool eligible=animate && motion_enabled && !UK_NUMBER_REDUCED && !uk_motion_reduced() && motion_period_ms>0 &&
         lv_obj_is_visible(obj) && has_reading(old) && has_reading(text) &&
         same_numeric_structure(old,text) &&
         (!n->active || n->font==font);

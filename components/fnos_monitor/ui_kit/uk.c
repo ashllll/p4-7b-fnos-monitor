@@ -11,6 +11,10 @@
 #include <string.h>
 
 static bool s_alloc_failed;
+/* 运行时精简动效；编译期 Kconfig 在 fnos_ui.c 侧叠加，不在这里覆盖。 */
+static bool s_motion_reduced;
+void uk_motion_set_reduced(bool reduced) { s_motion_reduced = reduced; }
+bool uk_motion_reduced(void) { return s_motion_reduced; }
 #ifdef FNOS_UI_TESTING
 static int s_fail_after = -1;
 static bool s_fail_triggered;

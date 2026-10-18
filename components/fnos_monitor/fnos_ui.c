@@ -41,9 +41,11 @@ static const char *TAG = "fnos_ui";
 #define UI_HIST        CONFIG_FNOS_CHART_WINDOW
 /* 一律引用 fnos_data.h 的常量，别手写数字：手写的那个不会跟着改，
    而"界面少一行"和"数据被丢了"看起来一模一样。 */
-#define UI_AGENT_ROWS   10
+#define UI_AGENT_ROWS   11
 #define UI_CARDS       32
 /* 设备和通道数量沿用协议上限；详情按需分配，不按某台 NAS 的数量限流。 */
+
+static bool motion_reduced(void);   /* 定义在页面控制段，诊断页开关也要用 */
 
 /* Overview objects keep the same place and identity across samples and states. */
 typedef struct {
@@ -85,7 +87,7 @@ typedef struct {
 #define PAIR_FP_LINES   4
 #define PAIR_FP_PER     8
 #define PAIR_PAD_KEYS  12
-#define PAIR_PAD_COLS  4     /* 键盘列数：4 列 × 3 行（3 列 × 4 行会把整卡顶出视口） */
+#define PAIR_PAD_COLS  3     /* 键盘列数：3 列 × 4 行，0 在底排中间（手机数字键盘习惯） */
 #define PAIR_CODE_LEN   6
 #define PAIR_STEPS      3
 
@@ -120,6 +122,7 @@ static struct {
     lv_obj_t *capacity, *capacity_unit, *capacity_detail, *capacity_free, *storage_note;
     lv_obj_t *capacity_bar;             /* hero 条（8 高） */
     lv_obj_t *net_axis, *net_note, *system_note, *system_note2;
+    lv_obj_t *net_ylab[3];              /* 网络图 Y 刻度：顶/中/底 */
     lv_obj_t *p3_note, *p3_cols;    /* 系统页正文：三张覆盖层（诊断/配对/配网）显示时要收起来 */
     lv_obj_t *vol_empty, *raid_empty, *disk_empty, *dock_empty, *temp_empty;
     lv_obj_t *dock_empty_label;
@@ -218,13 +221,13 @@ _Static_assert(sizeof(NAV_TXT) / sizeof(NAV_TXT[0]) == FNOS_UI_PAGE_COUNT,
                "NAV_TXT 条数必须等于 FNOS_UI_PAGE_COUNT");
 static const char *const AGENT_KEY[UI_AGENT_ROWS] = {
     "主机", "端点", "HTTP", "轮询结果", "最近错误", "数据年龄", "固件内存", "ZFS 缓存",
-    "协议", "采集段"
+    "协议", "采集段", "动效"
 };
 /* 诊断页的行按"排查顺序"分三组：连接（通不通）→ 采集（数据新不新）→ 运行（板子自己）。
-   十行等权平铺时，最该看的"轮询失败数 / 最近错误"埋在中段，分组后才读得出来。 */
+   十一行等权平铺时，最该看的"轮询失败数 / 最近错误"埋在中段，分组后才读得出来。 */
 #define UI_AGENT_GROUPS 3
 static const struct { const char *title; int first, last; } AGENT_GROUP[UI_AGENT_GROUPS] = {
-    { "连接", 0, 2 }, { "采集", 3, 5 }, { "运行", 6, 9 },
+    { "连接", 0, 2 }, { "采集", 3, 5 }, { "运行", 6, 10 },
 };
 
 /* 采集段状态词 -> 中文。认识的翻，不认识的**原样返回**：应用升级后加了新状态，
@@ -399,18 +402,21 @@ static int32_t gauge_value(double value)
 
 static const char *fmt_cap(char *b, size_t n, double gb)
 {
-    if (gb >= 1024.0f)     snprintf(b, n, "%.1f TB", gb / 1024.0f);
-    else if (gb >= 100.0f) snprintf(b, n, "%.0f GB", gb);
-    else                   snprintf(b, n, "%.1f GB", gb);
+    /* 先进位再选单位：1023.6 GB 显示 1.0 TB，而不是四舍五入成 "1024 GB"。 */
+    if (gb >= 1023.5)      snprintf(b, n, "%.1f TB", gb / 1024.0);
+    else if (gb >= 100.0)  snprintf(b, n, "%.0f GB", gb);
+    else if (gb >= 1.0)    snprintf(b, n, "%.1f GB", gb);
+    else                   snprintf(b, n, "%.2f GB", gb);
     return b;
 }
 
 static const char *fmt_rate(char *b, size_t n, float kbs)
 {
-    if (kbs >= 1048576.0f) snprintf(b, n, "%.1f GB/s", kbs / 1048576.0f);
-    else if (kbs >= 1024.0f) snprintf(b, n, "%.1f MB/s", kbs / 1024.0f);
-    else if (kbs >= 10.0f) snprintf(b, n, "%.0f KB/s", kbs);
-    else                   snprintf(b, n, "%.1f KB/s", kbs);
+    /* 先进位再选单位：1023.7 KB/s 显示 1.0 MB/s，而不是 "1024 KB/s"。 */
+    if (kbs >= 1048575.5f)   snprintf(b, n, "%.1f GB/s", kbs / 1048576.0f);
+    else if (kbs >= 1023.5f) snprintf(b, n, "%.1f MB/s", kbs / 1024.0f);
+    else if (kbs >= 10.0f)   snprintf(b, n, "%.0f KB/s", kbs);
+    else                     snprintf(b, n, "%.1f KB/s", kbs);
     return b;
 }
 
@@ -433,9 +439,9 @@ static const char *fmt_rate_window(char *b, size_t n, float kbs, double window_p
 static const char *fmt_uptime(char *b, size_t n, uint32_t s)
 {
     uint32_t d = s / 86400u, h = (s % 86400u) / 3600u, m = (s % 3600u) / 60u;
-    if (d)      snprintf(b, n, "%ud %02uh", (unsigned)d, (unsigned)h);
-    else if (h) snprintf(b, n, "%uh %02um", (unsigned)h, (unsigned)m);
-    else        snprintf(b, n, "%um", (unsigned)m);
+    if (d)      snprintf(b, n, "%u 天 %02u 小时", (unsigned)d, (unsigned)h);
+    else if (h) snprintf(b, n, "%u 小时 %02u 分", (unsigned)h, (unsigned)m);
+    else        snprintf(b, n, "%u 分钟", (unsigned)m);
     return b;
 }
 
@@ -443,7 +449,7 @@ static const char *fmt_age(char *b, size_t n, int64_t ms)
 {
     if (ms < 1500)       snprintf(b, n, "刚刚");
     else if (ms < 60000) snprintf(b, n, "%d 秒前", (int)(ms / 1000));
-    else                 snprintf(b, n, "%d 分前", (int)(ms / 60000));
+    else                 snprintf(b, n, "%d 分钟前", (int)(ms / 60000));
     return b;
 }
 
@@ -653,6 +659,14 @@ static void diagnostics_cb(lv_event_t *e)
     else lv_obj_add_flag(s_ui.diagnostics, LV_OBJ_FLAG_HIDDEN);
     set_txt(s_ui.diagnostics_label, "%s", s_diagnostics ? "返回" : "设置");
     p3_overlay_sync();
+}
+
+/* 运行时动效开关：只影响之后的动画，不重排页面；编译期 Kconfig 仍然可全禁。 */
+static void motion_toggle_cb(lv_event_t *e)
+{
+    (void)e;
+    uk_motion_set_reduced(!motion_reduced());
+    set_txt(s_ui.agent_detail[UI_AGENT_ROWS - 1], "%s", motion_reduced() ? "精简" : "完整");
 }
 
 /* ── 外壳：rail / head / foot ────────────────────────────────────────
@@ -1202,6 +1216,10 @@ static lv_obj_t *overview_resource_create(lv_obj_t *parent, lv_obj_t *history_pa
 
     /* Current usage is only the arc and percentage; sampled history has its own card. */
     r->chart_card = overview_card(history_parent, index == 0 ? "CPU趋势" : "内存趋势", "");
+    /* The current gauge encodes load; the history line keeps the metric
+       identity. A same-color dot in the header is the legend that ties them. */
+    set_txt(uk_card_note(r->chart_card), "●");
+    lv_obj_set_style_text_color(uk_card_note(r->chart_card), uk_c(identity), 0);
     body = uk_card_body(r->chart_card);
     r->chart = uk_trend_create(body, UI_HIST, 1);
     uk_trend_set_range(r->chart, 0, 100);
@@ -1279,6 +1297,12 @@ static void entity_close_cb(lv_event_t *e)
     show(s_ui.detail_mask, false);
 }
 
+/* 点暗层关闭；点卡片本身不冒泡到暗层。 */
+static void detail_card_stop_cb(lv_event_t *e)
+{
+    lv_event_stop_bubbling(e);
+}
+
 /* Detail text is an owned capture of the selected entity, explicitly time-scoped.
    Refresh/deletion/reordering cannot redirect it to another inventory row. */
 static void entity_open_cb(lv_event_t *e)
@@ -1341,7 +1365,11 @@ static void entity_detail_build(lv_obj_t *parent)
     lv_obj_set_style_bg_opa(mask, LV_OPA_80, 0);
     lv_obj_set_flex_flow(mask, LV_FLEX_FLOW_ROW);
     lv_obj_remove_flag(mask, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(mask, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(mask, entity_close_cb, LV_EVENT_CLICKED, NULL);
     s_ui.detail_card = ui_card(mask, "实体详情", "只读");
+    lv_obj_add_flag(s_ui.detail_card, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(s_ui.detail_card, detail_card_stop_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_set_style_bg_color(s_ui.detail_card, uk_c(UK_SURF_S2), 0);
     lv_obj_set_height(s_ui.detail_card, LV_PCT(100));
     lv_obj_t *body = uk_card_body(s_ui.detail_card);
@@ -1621,6 +1649,16 @@ static void build_p2(lv_obj_t *page)
     lv_obj_t *tcard = NULL;
     s_ui.tr_net = trend_card(page, "网络吞吐 · 最近 3 分钟", 2, &tcard, &s_ui.net_axis);
     s_ui.net_title = uk_card_title(tcard);
+    /* Y 刻度：LVGL 5.x 没有轴标签 API；用“38px 标签列 + 图表”两栏，不再贴图对齐。
+       “量程 0 - X MB/s”仍由卡头 note 承载单位。 */
+    lv_obj_t *yrow = uk_row_box(uk_card_body(tcard), 1);
+    lv_obj_t *ygut = uk_col(yrow, 0);
+    lv_obj_set_width(ygut, 38);
+    lv_obj_set_flex_align(ygut, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    for (int i = 2; i >= 0; i--) s_ui.net_ylab[i] = uk_label(ygut, UK_FONT_CJK_12, UK_T4, "-");
+    lv_obj_set_parent(s_ui.tr_net, yrow);
+    lv_obj_set_flex_grow(s_ui.tr_net, 1);
+    lv_obj_move_to_index(yrow, 0);   /* 图表行放在历史轴之前，横轴标尺回到底部 */
     /* 图表优先：这一页的主问题是"链路现在什么状态"，图先给，KPI 条在它下面。 */
     lv_obj_set_flex_grow(tcard, 2);
     lv_chart_series_t *se_tx = uk_trend_series(s_ui.tr_net, 0);
@@ -1801,7 +1839,7 @@ static void build_p3(lv_obj_t *page)
     }
 
     /* 采集诊断：一张整页卡，键值两列（左列键名定宽，右列拿剩下的宽度）。
-       组名 + 分隔线把十行切成三段（见 AGENT_GROUP），行距因此收紧一档 UK_S1。 */
+       组名 + 分隔线把十一行切成三段（见 AGENT_GROUP），行距因此收紧一档 UK_S1。 */
     s_ui.diagnostics = ui_card(page, "设置与诊断", NULL);
     uk_card_flex(s_ui.diagnostics, 1);
     {
@@ -1833,6 +1871,11 @@ static void build_p3(lv_obj_t *page)
                 s_ui.agent_detail[i] = uk_label(r, UK_FONT_CJK_16, UK_T2, "-");
                 lv_obj_set_flex_grow(s_ui.agent_detail[i], 1);
                 lv_obj_set_style_min_width(s_ui.agent_detail[i], 0, 0);
+                if (i == UI_AGENT_ROWS - 1) {
+                    /* 动效行整行可点：值只有“完整/精简”两态，不另设按钮。 */
+                    lv_obj_add_flag(r, LV_OBJ_FLAG_CLICKABLE);
+                    lv_obj_add_event_cb(r, motion_toggle_cb, LV_EVENT_CLICKED, NULL);
+                }
             }
         }
     }
@@ -2228,17 +2271,17 @@ static void pair_build(lv_obj_t *page)
     lv_obj_set_width(s_ui.pair_code_sub, LV_PCT(100));
     lv_label_set_long_mode(s_ui.pair_code_sub, LV_LABEL_LONG_MODE_WRAP);
 
-    /* 键盘 4 列 × 3 行：3 列 × 4 行要 4×44 + 3×8 = 200px，配对码整卡就会被 grid 视口
-       截掉，"确认"只露半个（底栏正好压在上面）。4 列后只要 3 行 ≈ 140px，整卡进得去。
-       键位按列排：前三列仍是手机键盘的 1-4-7 / 2-5-8 / 3-6-9，第四列是三个功能键
-       （删除 / 0 / 确认）—— 确认落在右下角，正是右手拇指的落点。 */
+    /* 键盘 3 列 × 4 行：1 2 3 / 4 5 6 / 7 8 9 / 删除 0 确认。
+       底排 0 在中间、确认在右下，符合手机数字键盘习惯；4 行 ≈ 4×44 + 3×8 = 200px，
+       配对码卡从 228px 长到约 279px，仍落在页脚上方（07-pair-code 回归）。 */
     s_ui.pair_pad = uk_col(body, 0);
     lv_obj_set_width(s_ui.pair_pad, LV_PCT(100));
     lv_obj_set_style_pad_row(s_ui.pair_pad, UK_S1, 0);
     static const struct { const char *t; int k; } PAD[PAIR_PAD_KEYS] = {
-        { "1", 1 }, { "2", 2 }, { "3", 3 }, { "删除", 10 },
-        { "4", 4 }, { "5", 5 }, { "6", 6 }, { "0", 0 },
-        { "7", 7 }, { "8", 8 }, { "9", 9 }, { "确认", 11 },
+        { "1", 1 }, { "2", 2 }, { "3", 3 },
+        { "4", 4 }, { "5", 5 }, { "6", 6 },
+        { "7", 7 }, { "8", 8 }, { "9", 9 },
+        { "删除", 10 }, { "0", 0 }, { "确认", 11 },
     };
     lv_obj_t *prow = NULL;
     for (int i = 0; i < PAIR_PAD_KEYS; i++) {
@@ -2279,9 +2322,17 @@ static void pair_build(lv_obj_t *page)
     lv_obj_set_flex_flow(foot, LV_FLEX_FLOW_ROW_WRAP);
     lv_obj_set_flex_align(foot, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
     lv_obj_set_style_pad_row(foot, UK_S2, 0);
+    /* 页脚三槽：左空白 / 关闭居中 / 主操作靠右；配对码只有关闭时也保持居中。 */
+    lv_obj_t *pair_sp = lv_obj_create(foot);
+    lv_obj_remove_style_all(pair_sp);
+    lv_obj_set_width(pair_sp, 0);
+    lv_obj_set_height(pair_sp, 1);
+    lv_obj_set_flex_grow(pair_sp, 1);
     s_ui.pair_cancel = flex_btn(foot, "关闭", BTN_SECONDARY, UK_FONT_CJK_16, 0);
-    s_ui.pair_forget = flex_btn(foot, "解除配对", BTN_NEUTRAL, UK_FONT_CJK_16, 0);
-    s_ui.pair_ok     = flex_btn(foot, "确认", BTN_PRIMARY, UK_FONT_CJK_16, 0);
+    lv_obj_t *pair_right = uk_row_box(foot, 1);
+    lv_obj_set_flex_align(pair_right, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    s_ui.pair_forget = flex_btn(pair_right, "解除配对", BTN_NEUTRAL, UK_FONT_CJK_16, 0);
+    s_ui.pair_ok     = flex_btn(pair_right, "确认", BTN_PRIMARY, UK_FONT_CJK_16, 0);
     lv_obj_t *buttons[] = { s_ui.pair_cancel, s_ui.pair_forget, s_ui.pair_ok };
     for (unsigned i = 0; i < sizeof buttons / sizeof buttons[0]; i++) {
         lv_obj_set_flex_grow(buttons[i], 0);
@@ -2345,8 +2396,8 @@ static void pair_btn_cb(lv_event_t *e)
    WIFI_AP_ROWS / WIFI_KB_KEYS / WIFI_PW_MAX / WIFI_SSID_MAX / WIFI_ST_* 定义在
    文件上方 —— s_ui 要按它们开数组，所以不能挪到这里。 */
 
-/* 键的行为：字符 / 大小写 / 退格 / 换层 / 空格 / 连接 */
-enum { WK_CH = 0, WK_SHIFT, WK_BACK, WK_LAYER, WK_SPACE, WK_OK };
+/* 键的行为：字符 / 大小写 / 退格 / 换层 / 换回字母层并保持大写 / 空格 / 连接 */
+enum { WK_CH = 0, WK_SHIFT, WK_BACK, WK_LAYER, WK_LAYER_UPPER, WK_SPACE, WK_OK };
 typedef struct { const char *txt; uint8_t kind; char ch; } wifi_key_t;
 #define K_CH(c, t) { t, WK_CH, c }
 
@@ -2374,7 +2425,7 @@ static const wifi_key_t WIFI_KB_SYMBOLS[WIFI_KB_KEYS] = {
     K_CH(';', ";"), K_CH(':', ":"), K_CH('\'', "'"), K_CH('"', "\""), K_CH(',', ","),
     K_CH('.', "."), K_CH('?', "?"),
     { "退格", WK_BACK, 0 },
-    { "ABC", WK_LAYER, 0 }, { "空格", WK_SPACE, 0 },
+    { "ABC", WK_LAYER_UPPER, 0 }, { "空格", WK_SPACE, 0 },
 };
 
 /* 校验失败的说明要"粘"住：刷新每 500ms 跑一次，如果只 set_txt 一次，用户还没看清
@@ -2652,10 +2703,10 @@ static void wifi_build(lv_obj_t *page)
     lv_obj_set_flex_align(s_ui.wifi_foot, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     lv_obj_set_style_pad_row(s_ui.wifi_foot, UK_S2, 0);
     s_ui.wifi_rescan = flex_btn(s_ui.wifi_foot, "重新扫描", BTN_SECONDARY, UK_FONT_CJK_16, LV_SIZE_CONTENT);
-    s_ui.wifi_manual = flex_btn(s_ui.wifi_foot, "手动输入", BTN_NEUTRAL,   UK_FONT_CJK_16, LV_SIZE_CONTENT);
     s_ui.wifi_back   = flex_btn(s_ui.wifi_foot, "返回",     BTN_NEUTRAL,   UK_FONT_CJK_16, LV_SIZE_CONTENT);
     s_ui.wifi_again  = flex_btn(s_ui.wifi_foot, "换一个网络", BTN_NEUTRAL, UK_FONT_CJK_16, LV_SIZE_CONTENT);
     s_ui.wifi_close   = flex_btn(s_ui.wifi_foot, "关闭", BTN_NEUTRAL, UK_FONT_CJK_16, LV_SIZE_CONTENT);
+    s_ui.wifi_manual = flex_btn(s_ui.wifi_foot, "手动输入", BTN_NEUTRAL,   UK_FONT_CJK_16, LV_SIZE_CONTENT);
     s_ui.wifi_connect = flex_btn(s_ui.wifi_foot, "连接", BTN_PRIMARY, UK_FONT_CJK_16, LV_SIZE_CONTENT);
     s_ui.wifi_done    = flex_btn(s_ui.wifi_foot, "完成", BTN_PRIMARY, UK_FONT_CJK_16, LV_SIZE_CONTENT);
     for (uint32_t i = 0; i < lv_obj_get_child_count(s_ui.wifi_foot); i++)
@@ -2932,6 +2983,10 @@ static void wifi_key_cb(lv_event_t *e)
     case WK_LAYER:
         s_wifi_layer = !s_wifi_layer;
         s_wifi_shift = false;
+        break;
+    case WK_LAYER_UPPER:
+        s_wifi_layer = false;
+        s_wifi_shift = true;
         break;
     case WK_OK:
         wifi_connect_cb(NULL);
@@ -4141,7 +4196,7 @@ static void overview_refresh(const fnos_status_t *st)
         set_txt(r->unit, "%s", readable ? "%" : "");
         if (!readable) (live ? set_num : set_txt)(r->meta, "%s", st->ever_ok && state ? mod_status_cn(state) : "等待数据");
         else if (i == 0) (live ? set_num : set_txt)(r->meta, "%d 核 · 负载 %.2f · 队列 %d", st->cpu.cores, st->cpu.load1, st->cpu.runq);
-        else (live ? set_num : set_txt)(r->meta, "可用 %.1f / %.1fG · 交换 %.1fG", st->mem.avail_mb / 1024.f, st->mem.total_mb / 1024.f, st->mem.swap_used_mb / 1024.f);
+        else (live ? set_num : set_txt)(r->meta, "可用 %.1f / %.1f GB · 交换 %.1f GB", st->mem.avail_mb / 1024.f, st->mem.total_mb / 1024.f, st->mem.swap_used_mb / 1024.f);
         set_txt(uk_card_note(r->card), "%s", live ? "" : readable ? "旧值" : "不可用");
         if (live && chart_sample_count(r->chart))
             set_txt(uk_card_note(r->chart_card), "峰 %d%%", chart_peak(r->chart, 0));
@@ -4757,6 +4812,15 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
                                          st->net.rx_kbs, st->net.tx_kbs, 20);
         uk_trend_set_range(s_ui.tr_net, 0, ymax);
         set_num(s_ui.net_axis, "量程 0 - %s", fmt_rate(b, sizeof b, ymax));
+        /* 左侧 Y 刻度：顶/中/底，数值与卡头量程同源，单位只在 note 里出现一次。 */
+        char *ysp = strchr(b, ' ');
+        if (ysp) *ysp = '\0';
+        set_txt(s_ui.net_ylab[2], "%s", b);
+        fmt_rate(b, sizeof b, ymax / 2);
+        ysp = strchr(b, ' ');
+        if (ysp) *ysp = '\0';
+        set_txt(s_ui.net_ylab[1], "%s", b);
+        set_txt(s_ui.net_ylab[0], "0");
         (net_live ? set_num : set_txt)(s_ui.tr_tx_lbl, "%s · 峰 %s",
                 net_readable ? fmt_rate(c1, sizeof c1, st->net.tx_kbs) : "--", fmt_rate(c2, sizeof c2, peak_tx));
         (net_live ? set_num : set_txt)(s_ui.tr_rx_lbl, "%s · 峰 %s",
@@ -4817,7 +4881,7 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
     /* 文案长度受盒宽约束（892px，cjk_12）：40 个中文字 ≈ 890px 就到顶。
        "0.1 / 2.0 GB" 写成 "0.1/2.0G" 省 60px，否则会折行、第二行被卡片裁掉
        （audit_bounds 报 `child out of parent`）。 */
-    set_num(s_ui.system_note2, "负载 %.2f/%.2f/%.2f · 进程 %d · 交换 %.1f/%.1fG · 运行 %s",
+    set_num(s_ui.system_note2, "负载 %.2f/%.2f/%.2f · 进程 %d · 交换 %.1f/%.1f GB · 运行 %s",
             st->cpu.load1, st->cpu.load5, st->cpu.load15, st->cpu.procs,
             st->mem.swap_used_mb / 1024.f, st->mem.swap_total_mb / 1024.f,
             fmt_uptime(c2, sizeof c2, st->uptime_s));
@@ -4842,6 +4906,9 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
             set_num(s_ui.tr_tx_lbl, "等待数据");
             set_num(s_ui.tr_rx_lbl, "等待数据");
             set_num(s_ui.net_axis, "无数据");
+            set_txt(s_ui.net_ylab[2], "-");
+            set_txt(s_ui.net_ylab[1], "-");
+            set_txt(s_ui.net_ylab[0], "-");
             /* 从没采到过数据：把图清空，不留上一轮的残影 */
             uk_trend_clear(s_ui.tr_net);
         }
@@ -5070,6 +5137,7 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
             lv_free(segments);
         }
     }
+    set_txt(s_ui.agent_detail[UI_AGENT_ROWS - 1], "%s", motion_reduced() ? "精简" : "完整");
     }   /* (page == 3)：诊断明细 */
     if (page == 1) storage_layout();
     if (page == 3) system_layout();
@@ -5654,10 +5722,9 @@ static void motion_render_cb(lv_event_t *e)
 static bool motion_reduced(void)
 {
 #ifdef CONFIG_FNOS_UI_REDUCED_MOTION
-    return CONFIG_FNOS_UI_REDUCED_MOTION;
-#else
-    return false;
+    if (CONFIG_FNOS_UI_REDUCED_MOTION) return true;
 #endif
+    return uk_motion_reduced();
 }
 
 static bool motion_busy(void) { return s_motion.active; }
