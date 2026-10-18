@@ -11,6 +11,10 @@
 #include <string.h>
 
 static bool s_alloc_failed;
+/* 运行时精简动效；编译期 Kconfig 在 fnos_ui.c 侧叠加，不在这里覆盖。 */
+static bool s_motion_reduced;
+void uk_motion_set_reduced(bool reduced) { s_motion_reduced = reduced; }
+bool uk_motion_reduced(void) { return s_motion_reduced; }
 #ifdef FNOS_UI_TESTING
 static int s_fail_after = -1;
 static bool s_fail_triggered;
@@ -422,7 +426,9 @@ uk_row_t *uk_row_create(lv_obj_t *parent, bool with_led, bool with_bar)
     lv_obj_clear_flag(namebox, LV_OBJ_FLAG_SCROLLABLE);
 
     r->name1 = mk_label_raw(namebox, UK_TYPE_BODY, UK_T2);
-    lv_label_set_long_mode(r->name1, LV_LABEL_LONG_MODE_WRAP);   /* 设备名永不缩写 */
+    /* 列表里一行裁切；完整名称进详情。长名若换行会把行高撑过点击目标，
+       还会把后面的清单顶出卡外。 */
+    lv_label_set_long_mode(r->name1, LV_LABEL_LONG_MODE_CLIP);
     lv_obj_set_width(r->name1, LV_PCT(100));
 
     lv_obj_t *line2 = mk_line(row, UK_S2);

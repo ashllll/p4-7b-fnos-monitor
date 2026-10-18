@@ -703,6 +703,16 @@ static void audit_bounds(lv_obj_t *o)
                             lv_obj_has_class(ch, &lv_label_class) ? "label" : "panel",
                             lv_obj_has_class(ch, &lv_label_class) ? lv_label_get_text(ch) : "");
                 }
+                fprintf(stderr, "  parent children=%u:\n", (unsigned)lv_obj_get_child_count(o));
+                for (uint32_t z = 0; z < lv_obj_get_child_count(o); z++) {
+                    lv_obj_t *zc = lv_obj_get_child(o, z);
+                    lv_area_t za; lv_obj_get_coords(zc, &za);
+                    fprintf(stderr, "    [%u] %s [%d,%d]-[%d,%d] hidden=%d text=\"%.24s\"\n", (unsigned)z,
+                            lv_obj_has_class(zc, &lv_label_class) ? "label" : "panel",
+                            (int)za.x1, (int)za.y1, (int)za.x2, (int)za.y2,
+                            lv_obj_has_flag(zc, LV_OBJ_FLAG_HIDDEN),
+                            lv_obj_has_class(zc, &lv_label_class) ? lv_label_get_text(zc) : "");
+                }
                 dump_near(lv_screen_active(), (ca.x1 + ca.x2) / 2, (ca.y1 + ca.y2) / 2, 0);
                 fprintf(stderr, "child out of parent: \"%s\" child=[%d,%d]-[%d,%d] parent=[%d,%d]-[%d,%d]\n",
                         txt, ca.x1, ca.y1, ca.x2, ca.y2, pa.x1, pa.y1, pa.x2, pa.y2);
@@ -714,6 +724,54 @@ static void audit_bounds(lv_obj_t *o)
         }
         audit_bounds(ch);
     }
+}
+
+/* Page-level budget. Card audits deliberately skip direct children of a
+   scrollable parent, so a page that scrolls 43..1276px while its scrollbar is
+   off passed every existing check. The page is the object carrying USER_1. */
+static lv_obj_t *visible_page(lv_obj_t *o)
+{
+    if (lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return NULL;
+    if (lv_obj_has_flag(o, LV_OBJ_FLAG_USER_1)) return o;
+    for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) {
+        lv_obj_t *p = visible_page(lv_obj_get_child(o, i));
+        if (p) return p;
+    }
+    return NULL;
+}
+
+/* The pages are no longer direct children of the screen: the shell owns them.
+   Counting USER_1 pages in tree order is the only stable way to map a page
+   number to an object (hidden pages included, so dump_page_cards still works). */
+static lv_obj_t *page_by_index(lv_obj_t *o, int *idx)
+{
+    if (lv_obj_has_flag(o, LV_OBJ_FLAG_USER_1)) {
+        if (*idx == 0) return o;
+        (*idx)--;
+        return NULL;   /* pages may nest another USER_1 object; count only pages */
+    }
+    for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) {
+        lv_obj_t *p = page_by_index(lv_obj_get_child(o, i), idx);
+        if (p) return p;
+    }
+    return NULL;
+}
+
+static void audit_page_fit(const char *name)
+{
+    lv_obj_t *page = visible_page(lv_screen_active());
+    if (!page) return;
+    /* scroll_top + scroll_bottom is the whole scroll range, even when the page
+       is currently scrolled (a zero bottom alone would hide the overflow). */
+    int32_t top = lv_obj_get_scroll_top(page);
+    int32_t bottom = lv_obj_get_scroll_bottom(page);
+    if (top + bottom <= 0) return;
+    lv_area_t a;
+    lv_obj_get_coords(page, &a);
+    fprintf(stderr, "page overflows viewport: \"%s\" page=[%d,%d]-[%d,%d] scroll=%d top=%d bottom=%d\n",
+            name, (int)a.x1, (int)a.y1, (int)a.x2, (int)a.y2,
+            (int)(top + bottom), (int)top, (int)bottom);
+    if (getenv("PREVIEW_AUDIT_ALL")) s_audit_fail++; else abort();
 }
 
 /* A translated page may legitimately cross the viewport edge. Start the bounds
@@ -739,7 +797,9 @@ static unsigned audit_motion_page_bounds(lv_obj_t *root)
    这条不变量是"卡片太小 / 上下过窄"的**正面**判据：几何审计只查"跑出父对象"，
    而"池里只露出一行"完全合法（内容多时本来就允许滚动），所以 p1 三张卡各只剩
    一行 55px、首页卷池只有 21px（比一行还矮）时，四个审计一个都没报。 */
-static void audit_list_floors(lv_obj_t *o)
+static lv_obj_t *visible_text(lv_obj_t *o, const char *text);
+
+static void audit_list_floors(lv_obj_t *o, const char *name)
 {
     if (lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return;
     if (uk_list_is(o)) {
@@ -753,16 +813,6 @@ static void audit_list_floors(lv_obj_t *o)
         if (floor_h > 0 && lv_obj_get_height(o) < floor_h) {
             lv_area_t a;
             lv_obj_get_coords(o, &a);
-            lv_obj_t *parent = lv_obj_get_parent(o);
-            fprintf(stderr, "list too short: list=[%d,%d]-[%d,%d] h=%d floor=%d items=%d/%u\n",
-                    (int)a.x1, (int)a.y1, (int)a.x2, (int)a.y2, (int)lv_obj_get_height(o),
-                    (int)floor_h, (int)items, (unsigned)lv_obj_get_child_count(o));
-            if (parent) {
-                lv_area_t pa;
-                lv_obj_get_coords(parent, &pa);
-                fprintf(stderr, "  parent=[%d,%d]-[%d,%d] h=%d\n",
-                        (int)pa.x1, (int)pa.y1, (int)pa.x2, (int)pa.y2, (int)lv_obj_get_height(parent));
-            }
             fprintf(stderr, "  → 清单容器至少要完整露出 %d 项（项高实测 %d px，含行距）\n",
                     (int)items, (int)((floor_h - (items - 1) * lv_obj_get_style_pad_row(o, 0)) / items));
             if (getenv("PREVIEW_AUDIT_ALL")) s_audit_fail++; else abort();
@@ -770,7 +820,7 @@ static void audit_list_floors(lv_obj_t *o)
         return;   /* 池里不会再套池 */
     }
     for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++)
-        audit_list_floors(lv_obj_get_child(o, i));
+        audit_list_floors(lv_obj_get_child(o, i), name);
 }
 
 /* 可点击对象之间不许互相压住。这条是针对"控件被画到不该在的地方"最实在的检查：
@@ -998,7 +1048,8 @@ static void audit_labels(lv_obj_t *o)
            measurement while still checking glyph coverage and vertical fit. */
         lv_label_long_mode_t mode = lv_label_get_long_mode(o);
         lv_text_flag_t flags = (mode == LV_LABEL_LONG_MODE_SCROLL ||
-                               mode == LV_LABEL_LONG_MODE_SCROLL_CIRCULAR)
+                               mode == LV_LABEL_LONG_MODE_SCROLL_CIRCULAR ||
+                               mode == LV_LABEL_LONG_MODE_CLIP)
                                   ? LV_TEXT_FLAG_EXPAND : LV_TEXT_FLAG_NONE;
         lv_text_get_size(&size, text, font, lv_obj_get_style_text_letter_space(o, 0),
                          lv_obj_get_style_text_line_space(o, 0), lv_obj_get_width(o), flags);
@@ -1060,10 +1111,15 @@ static void probe_tree(lv_obj_t *o, int depth)
 static void text_glyph_area(lv_obj_t *lbl, lv_area_t *out)
 {
     lv_point_t sz;
+    lv_label_long_mode_t mode = lv_label_get_long_mode(lbl);
+    lv_text_flag_t flags = (mode == LV_LABEL_LONG_MODE_SCROLL ||
+                            mode == LV_LABEL_LONG_MODE_SCROLL_CIRCULAR ||
+                            mode == LV_LABEL_LONG_MODE_CLIP)
+                               ? LV_TEXT_FLAG_EXPAND : LV_TEXT_FLAG_NONE;
     lv_text_get_size(&sz, lv_label_get_text(lbl), lv_obj_get_style_text_font(lbl, 0),
                      lv_obj_get_style_text_letter_space(lbl, 0),
                      lv_obj_get_style_text_line_space(lbl, 0),
-                     lv_obj_get_width(lbl), LV_TEXT_FLAG_NONE);
+                     lv_obj_get_width(lbl), flags);
     lv_area_t c;
     lv_obj_get_coords(lbl, &c);
     int pl = lv_obj_get_style_pad_left(lbl, 0), pr = lv_obj_get_style_pad_right(lbl, 0);
@@ -1317,8 +1373,11 @@ static void snapshot(const char *name)
 {
     if (getenv("PREVIEW_PAGE_CARDS")) {
         int idx = atoi(getenv("PREVIEW_PAGE_CARDS"));
-        lv_obj_t *scr = lv_screen_active();
-        if (idx >= 0 && idx < (int)lv_obj_get_child_count(scr)) dump_page_cards(lv_obj_get_child(scr, idx), idx);
+        if (idx >= 0) {
+            int want = idx;
+            lv_obj_t *page = page_by_index(lv_screen_active(), &want);
+            if (page) dump_page_cards(page, idx);
+        }
     }
     if (getenv("PREVIEW_OVERLAP_TRACE")) {
         fprintf(stderr, "=== suspects @ %s ===\n", name);
@@ -1397,7 +1456,7 @@ static void snapshot(const char *name)
         assert(audit_motion_page_bounds(lv_screen_active()) > 0 &&
                "motion bounds audit requires native page identity metadata");
     } else {
-        audit_list_floors(lv_screen_active());
+        audit_list_floors(lv_screen_active(), name);
         audit_bounds(lv_screen_active());
         audit_overlap();
     }
@@ -1487,6 +1546,7 @@ static void run_state(preview_state_t st, int index)
             probe_tree(lv_screen_active(), 0);
         }
         snapshot(name);
+        audit_page_fit(name);
     }
 }
 
@@ -2083,7 +2143,7 @@ static void verify_overview_charts(void)
     snapshot("10-overview-zero");
     lv_obj_t *temp_card = overview_object("最热温度", &lv_obj_class);
     assert(visible_text(temp_card, "传感器历史"));
-    assert(visible_text_containing(temp_card, "传感器 ·"));
+    /* 150px row budget: p0 trend cards intentionally omit the per-card x-axis. */
 
     s_override_sample = (fnos_sample_t){ .cpu = 17, .mem = 42, .rx_kbs = 128, .tx_kbs = 64,
                                          .temp_max = 71 };
@@ -2266,6 +2326,10 @@ static void click_object_center(lv_obj_t *obj)
    API-only page changes would miss a clipped or non-clickable rail button. */
 static void verify_navigation_hit_targets(void)
 {
+    /* 覆盖层现在是模态的（导航不再替用户关掉它）；这里先把上一个用例留下的
+       配网/配对卡显式关掉，再测导航命中。 */
+    lv_obj_t *overlay_close = visible_text_clickable(lv_screen_active(), "关闭");
+    if (overlay_close) click_object_center(overlay_close);
     static const char *const pages[] = { "总览", "存储", "网络", "系统", "温度", "告警" };
     _Static_assert(sizeof pages / sizeof pages[0] == FNOS_UI_PAGE_COUNT, "navigation coverage");
     for (int p = FNOS_UI_PAGE_COUNT - 1; p >= 0; p--) {
@@ -2361,6 +2425,25 @@ static void pointer_text(const char *text)
     assert(l); click_object_center(lv_obj_get_parent(l));
 }
 
+/* Mirror fnos_ui.c:alert_text_cn(): the panel localizes collector alert text. */
+static const char *alert_expected_cn(const char *raw, char *buf, size_t cap)
+{
+    int vol = 0, md = 0, pct = 0;
+    double fpct = 0.0;
+    char name[64] = "";
+    if (sscanf(raw, "/vol%d used %d%%", &vol, &pct) == 2)
+        snprintf(buf, cap, "卷 /vol%d 已用 %d%%", vol, pct);
+    else if (sscanf(raw, "/vol%d free %lf%% left", &vol, &fpct) == 2)
+        snprintf(buf, cap, "卷 /vol%d 剩余 %.1f%%", vol, fpct);
+    else if (sscanf(raw, "container %63s down", name) == 1)
+        snprintf(buf, cap, "容器 %s 已停止", name);
+    else if (sscanf(raw, "md%d resync %lf%%", &md, &fpct) == 2)
+        snprintf(buf, cap, "阵列 md%d 重建 %.1f%%", md, fpct);
+    else
+        snprintf(buf, cap, "%s", raw);
+    return buf;
+}
+
 static void verify_unifi_views(void)
 {
     int saved = s_state; s_state = ST_LIVE;
@@ -2381,7 +2464,12 @@ static void verify_unifi_views(void)
     assert(visible_text(lv_screen_active(), "实体详情"));
     int before_page = fnos_ui_page();
     click_object_center(lv_obj_get_parent(visible_text_clickable(lv_screen_active(), "网络")));
-    assert(fnos_ui_page() == before_page && visible_text(lv_screen_active(), "实体详情"));
+    /* 点暗层关闭详情，但页面本身仍不切换。 */
+    assert(fnos_ui_page() == before_page);
+    assert(!visible_text(lv_screen_active(), "实体详情"));
+    entity = visible_text(lv_screen_active(), fixture.vols[0].mnt);
+    assert(entity); click_object_center(entity);
+    assert(visible_text(lv_screen_active(), "实体详情"));
     lv_area_t da;
     lv_obj_t *detail_head = visible_text(lv_screen_active(), "实体详情");
     lv_obj_get_coords(lv_obj_get_parent(lv_obj_get_parent(detail_head)), &da);
@@ -2429,7 +2517,9 @@ static void verify_unifi_views(void)
     pointer_text("严重");
     for (int i = 0; i < fixture.nalerts; i++) {
         bool critical = !strcmp(fixture.alerts[i].lv, "crit");
-        assert((visible_text(lv_screen_active(), fixture.alerts[i].m) != NULL) == critical);
+        char expect[128];
+        alert_expected_cn(fixture.alerts[i].m, expect, sizeof expect);
+        assert((visible_text(lv_screen_active(), expect) != NULL) == critical);
     }
     snapshot("13-alert-filter");
     for (int i = 0; i < fixture.nalerts; i++)
@@ -2605,15 +2695,17 @@ static void verify_ui_regressions(void)
     regression_tick();
     assert(strcmp(fixture.alerts[0].lv, "warn") == 0);
     assert(strcmp(fixture.alerts[1].lv, "crit") == 0);
+    char expect1[128];
+    alert_expected_cn(fixture.alerts[1].m, expect1, sizeof expect1);
     for (int page = 0; page < 5; page++) {
         fnos_ui_set_page(page);
         regression_tick();
-        assert(!visible_text(lv_screen_active(), fixture.alerts[1].m));
+        assert(!visible_text(lv_screen_active(), expect1));
         assert(!visible_text(lv_screen_active(), "存在严重告警"));
     }
     fnos_ui_set_page(5);
     regression_tick();
-    assert(visible_text(lv_screen_active(), fixture.alerts[1].m));
+    assert(visible_text(lv_screen_active(), expect1));
     int dropped = fixture.source_dropped;
     fixture.source_dropped = 3;
     regression_tick();
@@ -2630,7 +2722,9 @@ static void verify_ui_regressions(void)
     fnos_status_text(&fixture, &fixture.alerts[0].lv, "caution");
     fnos_status_text(&fixture, &fixture.alerts[1].lv, "future");
     regression_tick();
-    assert(!visible_text(lv_screen_active(), fixture.alerts[0].m));
+    char expect0[128];
+    alert_expected_cn(fixture.alerts[0].m, expect0, sizeof expect0);
+    assert(!visible_text(lv_screen_active(), expect0));
     assert(!visible_text(lv_screen_active(), "无采集告警"));
     fnos_ui_set_page(5); regression_tick();
     assert(visible_text(lv_screen_active(), "严重 0 · 警告 0 · 提示 2"));
@@ -3099,6 +3193,9 @@ static void verify_wifi_keyboard(void)
 
 static void verify_wifi(void)
 {
+    /* 配对卡现在是模态的；上一个用例可能留着它，先显式关掉再走配网流程。 */
+    lv_obj_t *leftover = visible_text_clickable(lv_screen_active(), "关闭");
+    if (leftover) click_object_center(leftover);
     s_state = ST_LIVE;
     wifi_stub(false, false, "", "");
     vtick_advance(500); lv_timer_handler();
@@ -3303,20 +3400,32 @@ static void verify_pairing(void)
     click_text("配对"); click_text("配对");
     assert(visible_text(lv_screen_active(), "与 NAS 配对"));
     click_text("系统");
-    /* "点导航就退出覆盖层"（fnos_ui_set_page → pair_show(false)）：
-       配对卡必须没了，且系统页自己的内容要露出来。
-       注意：刷新只发生在定时器里，点完不跑一拍定时器，标签还是上一次的文本，
-       断言就会假失败（这里踩过一次）。 */
+    /* 覆盖层现在是模态：导航点击不能把配对卡收掉（否则会顺手清掉配网口令）。 */
     vtick_advance(500); lv_timer_handler();
-    /* visible_text 是**整串相等**比较（不是子串），断言必须写整串。
-       路数跟着桩走：桩现在是真机的 24 路通道（原来只有 10 个设备级读数）。 */
-    assert(visible_text(lv_screen_active(), "容器 8/8 运行 · 24 路温度"));
+    assert(visible_text(lv_screen_active(), "与 NAS 配对"));
+    assert(!visible_text(lv_screen_active(), "容器 8/8 运行 · 24 路温度"));
+    click_text("关闭");
+    vtick_advance(500); lv_timer_handler();
     assert(!visible_text(lv_screen_active(), "与 NAS 配对"));
+    assert(visible_text(lv_screen_active(), "容器 8/8 运行 · 24 路温度"));
     click_text("配对");
     assert(visible_text(lv_screen_active(), "与 NAS 配对"));
     click_text("设置");
+    /* 顶栏也是模态的一部分：配对卡开着时“设置”不生效。 */
+    vtick_advance(500); lv_timer_handler();
+    assert(visible_text(lv_screen_active(), "与 NAS 配对"));
+    assert(!visible_text(lv_screen_active(), "返回"));
+    click_text("关闭");
+    click_text("设置");
+    vtick_advance(500); lv_timer_handler();
     assert(visible_text(lv_screen_active(), "返回"));
     assert(!visible_text(lv_screen_active(), "与 NAS 配对"));
+    click_text("配对");
+    vtick_advance(500); lv_timer_handler();
+    assert(visible_text(lv_screen_active(), "返回"));
+    assert(!visible_text(lv_screen_active(), "与 NAS 配对"));
+    click_text("返回");
+    vtick_advance(500); lv_timer_handler();
     click_text("配对");
     assert(visible_text(lv_screen_active(), "与 NAS 配对"));
     /* 面板改成"三步指引 + 配对码槽位 + 键盘 + 操作条"四个模块，标题也从长句
@@ -4176,8 +4285,11 @@ static void hardware_inventory(const char *path)
         for (int i=0;i<fixture.nnets;i++) assert(hardware_contains(lv_screen_active(),fixture.nets[i].ifname));
         /* 系统页的告警卡只列前三条（UI_ALERT_PANEL_ROWS）；九条都在告警页上。 */
         fnos_ui_set_page(5); fnos_ui_motion_settle(); regression_tick();
-        for (int i=0;i<fixture.nalerts;i++) assert(visible_text(lv_screen_active(),fixture.alerts[i].m));
-        for (int i=0;i<fixture.nalerts;i++) assert(visible_text(lv_screen_active(),fixture.alerts[i].m));
+        for (int i=0;i<fixture.nalerts;i++) {
+            char e[128];
+            alert_expected_cn(fixture.alerts[i].m, e, sizeof e);
+            assert(visible_text(lv_screen_active(),e));
+        }
         fnos_ui_set_page(4); fnos_ui_motion_settle(); regression_tick();
         for (int first=0;first<fixture.ntemps;) {
             int end=first+1;
@@ -4676,7 +4788,9 @@ static void verify_inventory_rename(const char **field, const char *sample)
     uk_test_alloc_fail_after(-1);
     regression_tick();
     label = visible_text(lv_screen_active(), expanded);
-    assert(label && lv_obj_get_height(label) > original_height);
+    /* 列表名现在是一行裁切（CLIP），长名不再撑高行；行高必须保持不变，
+       完整名由实体详情承载。 */
+    assert(label && lv_obj_get_height(label) == original_height);
     hardware_reachable(label);
     snapshot(sample);
     bool restored = fnos_status_text(&s_motion_fixture, field, "%s", original);

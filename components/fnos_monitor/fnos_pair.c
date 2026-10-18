@@ -903,7 +903,7 @@ static void do_pair(void)
     }
     if (!nvs_save(next)) {
         xSemaphoreGive(s_lock);
-        set_view(FNOS_PAIR_FAILED, "配对成功但写入 NVS 失败");
+        set_view(FNOS_PAIR_FAILED, "证书已获取，但写入本地存储器失败");
         return;
     }
     s_cfg = *next;
