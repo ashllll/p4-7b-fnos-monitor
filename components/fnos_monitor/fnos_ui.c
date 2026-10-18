@@ -2261,7 +2261,7 @@ static void pair_build(lv_obj_t *page)
     s_ui.pair_info_lbl = uk_card_title(s_ui.pair_info_panel);
     body = uk_card_body(s_ui.pair_info_panel);
     for (int i = 0; i < PAIR_FP_LINES; i++) {
-        s_ui.pair_fp[i] = uk_label(body, UK_FONT_NUM_32, UK_T1, "");
+        s_ui.pair_fp[i] = uk_label(body, UK_FONT_NUM_20, UK_T1, "");
         lv_obj_set_width(s_ui.pair_fp[i], LV_SIZE_CONTENT);
     }
     s_ui.pair_meta = uk_label(body, UK_FONT_CJK_12, UK_T3, "");
@@ -2523,6 +2523,7 @@ static void field_focus(lv_obj_t *box, bool on)
 {
     lv_obj_set_style_border_color(box, uk_c(on ? UK_BLUE : UK_LINE), 0);
     lv_obj_set_style_border_opa(box, on ? LV_OPA_COVER : UK_EDGE_CTRL, 0);
+    lv_obj_set_style_border_width(box, on ? 2 : 1, 0);
 }
 
 static void wifi_set_stage(int st)
@@ -2850,9 +2851,12 @@ static void wifi_refresh(void)
             if (on) {
                 snprintf(b, sizeof b, "%s · 信号 %d dBm\n板子已经记住这个网络，下次开机自动连。",
                          st, (int)fnos_net_rssi());
-            } else {
+            } else if (bad) {
                 snprintf(b, sizeof b,
                          "%s\n请按原因排查后重试；要更换口令，可点「修改密码」。", sr[0] ? sr : st);
+            } else {
+                snprintf(b, sizeof b,
+                         "正在连接，通常几秒内完成；若长时间没有结果，可点「关闭」后重试。");
             }
             set_txt(s_ui.wifi_link_sub, "%s", b);
         }
@@ -3673,6 +3677,13 @@ static void temp_blk_build(int i)
     (void)temp_value_box(h, &b->vmax);
     /* 通道网格：ROW_WRAP + 定宽格子 ⇒ 块窄了自动少列、块宽了自动多列，永远不出容器。
        既是容器就得把 CLICKABLE/SCROLLABLE 清掉，否则展开块的点击与滚动都被它吃掉。 */
+    b->bar = hero_bar(box);
+    lv_obj_set_height(b->bar, UK_BAR_H);
+    b->more = uk_label(box, UK_FONT_CJK_12, UK_T3, "");
+    lv_obj_set_width(b->more, LV_PCT(100));
+    lv_obj_set_height(b->more, lv_font_get_line_height(UK_FONT_CJK_12));
+    uk_label_ellipsis(b->more);
+    lv_obj_add_flag(b->more, LV_OBJ_FLAG_HIDDEN);
     b->grid = lv_obj_create(box);
     lv_obj_set_width(b->grid, LV_PCT(100));
     lv_obj_set_height(b->grid, LV_SIZE_CONTENT);
@@ -3685,13 +3696,6 @@ static void temp_blk_build(int i)
     lv_obj_set_flex_align(b->grid, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     lv_obj_clear_flag(b->grid, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
 
-    b->bar = hero_bar(box);
-    lv_obj_set_height(b->bar, UK_BAR_H);
-    b->more = uk_label(box, UK_FONT_CJK_12, UK_T3, "");
-    lv_obj_set_width(b->more, LV_PCT(100));
-    lv_obj_set_height(b->more, lv_font_get_line_height(UK_FONT_CJK_12));
-    uk_label_ellipsis(b->more);
-    lv_obj_add_flag(b->more, LV_OBJ_FLAG_HIDDEN);
 }
 
 static void temp_blk_fill(int i)
