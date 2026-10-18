@@ -1655,16 +1655,16 @@ static void verify_transitions(void)
     /* 未知字段容错：应用比板子新（协议超范围）+ 状态词板子不认识，
        两种都必须照常显示 —— 显示成空白会让人以为界面漏了数据。 */
     assert(visible_text(lv_screen_active(), "v3（本机只认到 v2，新字段会忽略）"));
-    assert(visible_text(lv_screen_active(), "smart degraded · mem 没权限 · net 正常 · vols 正常 · raid 正常 · disks 正常 · temps 正常 · docker 已关闭 · zfs 读不到"));
+    assert(visible_text(lv_screen_active(), "smart degraded · mem 权限不足 · net 正常 · vols 正常 · raid 正常 · disks 正常 · temps 正常 · docker 未启用 · zfs 读不到"));
     snapshot("06-diagnostics");
     lv_obj_send_event(lv_obj_get_parent(label), LV_EVENT_CLICKED, NULL);
     assert(visible_text(lv_screen_active(), "容器服务"));
-    /* 认识的状态词要翻成中文（unknown -> 原样，denied -> 没权限） */
+    /* 认识的状态词要翻成中文（unknown -> 原样，denied -> 权限不足） */
     s_state = ST_LIVE;
     vtick_advance(500); lv_timer_handler();
     lv_obj_send_event(lv_obj_get_parent(label), LV_EVENT_CLICKED, NULL);
     assert(visible_text(lv_screen_active(), "v2"));
-    assert(visible_text(lv_screen_active(), "cpu 正常 · mem 正常 · net 正常 · vols 正常 · raid 正常 · disks 正常 · temps 正常 · docker 已关闭 · zfs 读不到"));
+    assert(visible_text(lv_screen_active(), "cpu 正常 · mem 正常 · net 正常 · vols 正常 · raid 正常 · disks 正常 · temps 正常 · docker 未启用 · zfs 读不到"));
     lv_obj_send_event(lv_obj_get_parent(label), LV_EVENT_CLICKED, NULL);
 
     s_state = ST_HEALTHY;
@@ -1942,32 +1942,32 @@ static void verify_module_freshness(void)
     fnos_status_text(&fixture, &fixture.mods[temps].status, "ok");
     fnos_status_text(&fixture, &fixture.mods[cpu].status, "denied");
     fnos_ui_set_page(0); regression_tick();
-    value = visible_text(lv_screen_active(), "46");
+    value = visible_text(lv_screen_active(), "45.6");
     assert(value && lv_color_eq(lv_obj_get_style_text_color(value, 0), uk_c(UK_T1)));
     fnos_ui_set_page(5); regression_tick();
-    assert(visible_text(lv_screen_active(), "46°C\n无超限"));
+    assert(visible_text(lv_screen_active(), "45.6°C\n无超限"));
     for (int i = 0; i < fixture.ntemps; i++) fixture.temps[i].c = 0;
     regression_tick();
-    assert(visible_text(lv_screen_active(), "0°C\n无超限"));
+    assert(visible_text(lv_screen_active(), "0.0°C\n无超限"));
     for (int i = 0; i < fixture.ntemps; i++) fixture.temps[i].c = 45.6f;
     fnos_status_text(&fixture, &fixture.mods[cpu].status, "ok");
     fixture.cpu.temp_c = 85;
     regression_tick();
-    assert(visible_text(lv_screen_active(), "85°C\n关注 1 路"));
+    assert(visible_text(lv_screen_active(), "85.0°C\n关注 1 路"));
     fnos_status_text(&fixture, &fixture.mods[cpu].status, "stale");
     regression_tick();
-    assert(visible_text(lv_screen_active(), "旧值 85°C\n关注 1 路 · 旧值"));
+    assert(visible_text(lv_screen_active(), "旧值 85.0°C\n关注 1 路 · 旧值"));
     fnos_status_text(&fixture, &fixture.mods[cpu].status, "ok");
     fnos_status_text(&fixture, &fixture.mods[temps].status, "stale");
     for (int i = 0; i < fixture.ntemps; i++) fixture.temps[i].c = 80;
     regression_tick();
     char old_count[64];
-    snprintf(old_count, sizeof old_count, "85°C\n关注 %d 路 · 旧值", fixture.ntemps);
+    snprintf(old_count, sizeof old_count, "85.0°C\n关注 %d 路 · 旧值", fixture.ntemps);
     assert(visible_text(lv_screen_active(), old_count));
     fnos_status_text(&fixture, &fixture.mods[temps].status, "denied");
     fnos_ui_set_page(4); regression_tick();
     assert(!visible_text(lv_screen_active(), "80.0"));
-    assert(visible_text(lv_screen_active(), "没权限"));
+    assert(visible_text(lv_screen_active(), "权限不足"));
     fnos_status_text(&fixture, &fixture.mods[temps].status, "ok");
     for (int i = 0; i < fixture.ntemps; i++) fixture.temps[i].c = 30000000.f;
     regression_tick();
@@ -2024,7 +2024,7 @@ static void verify_module_freshness(void)
     fnos_status_text(&fixture, &fixture.mods[net].status, "denied");
     regression_tick();
     assert(!visible_text(lv_screen_active(), "12.2"));
-    assert(visible_text_containing(lv_screen_active(), "没权限"));
+    assert(visible_text_containing(lv_screen_active(), "权限不足"));
     snapshot("14-network-denied");
     fixture.net.rx_kbs = fixture.net.tx_kbs = 0;
     regression_tick();
@@ -2158,7 +2158,7 @@ static void verify_overview_charts(void)
     assert(chart_values_equal(temp, 0, 71) == 1);
     /* Raw history updates on this sample; current labels share the 600 ms publish beat. */
     for (int i = 0; i < 8; i++) regression_tick();
-    assert(visible_text(temp_card, "CPU") && visible_text(temp_card, "95"));
+    assert(visible_text(temp_card, "CPU") && visible_text(temp_card, "95.0"));
     assert(chart_values_equal(cpu, 0, 17) == 1);
     assert(lv_arc_get_value(overview_object("CPU", &lv_arc_class)) == 17 * UK_METER_SCALE);
     assert(lv_arc_get_value(overview_object("内存", &lv_arc_class)) == 42 * UK_METER_SCALE);
@@ -2209,7 +2209,7 @@ static void verify_overview_charts(void)
     regression_tick();
     assert(chart_values_equal(cpu, 0, 17) == 1); // stale resource is frozen
     assert(chart_values_equal(mem, 0, 42) == 3); // healthy module still advances
-    assert(visible_text(lv_screen_active(), "没权限"));
+    assert(visible_text(lv_screen_active(), "权限不足"));
     assert(!overview_object("网络吞吐", &lv_chart_class));
     assert(visible_text_containing(lv_screen_active(), "阵列旧值"));
     assert(visible_text_containing(lv_screen_active(), "温度旧值"));
@@ -4350,7 +4350,7 @@ static void hardware_inventory(const char *path)
         snapshot("hardware-network-stale");
         fnos_status_text(&fixture,&fixture.mods[net_module].status,"denied");
         regression_tick();
-        assert(hardware_contains(lv_screen_active(),"没权限"));
+        assert(hardware_contains(lv_screen_active(),"权限不足"));
         assert(!hardware_contains(lv_screen_active(),"上次 · 下行"));
         assert(visible_text(lv_screen_active(),"--"));
     }
