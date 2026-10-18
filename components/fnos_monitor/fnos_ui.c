@@ -237,9 +237,9 @@ static const char *mod_status_cn(const char *s)
     if (!strcmp(s, "ok"))       return "正常";
     if (!strcmp(s, "stale"))    return "旧值";
     if (!strcmp(s, "missing"))  return "读不到";
-    if (!strcmp(s, "denied"))   return "没权限";
+    if (!strcmp(s, "denied"))   return "权限不足";
     if (!strcmp(s, "error"))    return "出错";
-    if (!strcmp(s, "disabled")) return "已关闭";
+    if (!strcmp(s, "disabled")) return "未启用";
     if (!strcmp(s, "partial"))  return "部分可读";
     return s;
 }
@@ -4473,10 +4473,10 @@ static void alert_health_sync(const fnos_status_t *st, int running)
             warn[1] = true;
         } else {
             if (temp.warm > 0)
-                snprintf(v1, sizeof v1, "%s%.0f°C\n关注 %d 路%s", temp.live ? "" : "旧值 ", (double)temp.c, temp.warm,
+                snprintf(v1, sizeof v1, "%s%.1f°C\n关注 %d 路%s", temp.live ? "" : "旧值 ", (double)temp.c, temp.warm,
                         temp.warm_live ? "" : " · 旧值");
             else
-                snprintf(v1, sizeof v1, "%s%.0f°C\n无超限%s", temp.live ? "" : "旧值 ", (double)temp.c,
+                snprintf(v1, sizeof v1, "%s%.1f°C\n无超限%s", temp.live ? "" : "旧值 ", (double)temp.c,
                         temp.warm_live ? "" : " · 旧值");
             warn[1] = !temp.live || !temp.warm_live || temp.warm > 0;
         }
@@ -4501,6 +4501,7 @@ static void alert_health_sync(const fnos_status_t *st, int running)
     txt[0] = v0; txt[1] = v1; txt[2] = v2; txt[3] = v3;
     for (int i = 0; i < 4; i++) {
         set_txt(s_ui.alert_health_val[i], "%s", txt[i]);
+        lv_obj_set_style_text_color(s_ui.alert_health_val[i], uk_c(warn[i] ? UK_WARN : UK_T1), 0);
         lv_obj_set_style_bg_color(s_ui.alert_health_dot[i], uk_c(warn[i] ? UK_WARN : UK_OK), 0);
     }
 }
@@ -4610,11 +4611,11 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
            "容器 4/4" 挤到磁贴外（1/3 页宽只放得下 ~24 个 CJK12 字，DOTS 截断）。 */
         if (have) {
             const char *label = old_temp ? "温度旧值" : (hottest >= 80.0f ? "高温" : "最高");
-            set_txt(s_ui.overview_note, "%s %.0f°C · %s", label, hottest, containers);
+            set_txt(s_ui.overview_note, "%s %.1f°C · %s", label, hottest, containers);
         } else set_txt(s_ui.overview_note, "%s · 运行 %s", containers, fmt_uptime(b, sizeof b, st->uptime_s));
         /* 首页"最热温度"磁贴：与上面同一次扫描，值按温度上色，点进去看全部通道。 */
         if (have) {
-            (old_temp ? set_txt : set_num)(s_ui.home_temp_value, "%.0f", hottest);
+            (old_temp ? set_txt : set_num)(s_ui.home_temp_value, "%.1f", hottest);
             set_txt(s_ui.home_temp_unit, "°C");
             set_txt(s_ui.home_temp_name, "%s", sensor);
             lv_obj_set_style_text_color(s_ui.home_temp_value, uk_c(old_temp ? UK_T3 : UK_T1), 0);
