@@ -175,6 +175,10 @@ lv_obj_t *uk_row_box(lv_obj_t *content, int32_t grow)
     lv_obj_set_style_pad_column(r, UK_PANEL_GAP, 0);
     lv_obj_set_flex_flow(r, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(r, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    /* Rows are layout, not scroll surfaces: a 1px content overshoot used to paint a
+       faint 3px scrollbar strip down the row's right edge (the stray hairlines on the
+       network chart and inside cards). Nothing is reachable by scrolling a row anyway. */
+    lv_obj_set_scrollbar_mode(r, LV_SCROLLBAR_MODE_OFF);
     if (grow > 0) lv_obj_set_flex_grow(r, (uint8_t)grow);
     else          lv_obj_set_height(r, LV_SIZE_CONTENT);
     return r;
@@ -799,10 +803,18 @@ uk_kpi_t *uk_kpi_create(lv_obj_t *parent, const char *label)
     lv_obj_set_flex_flow(vr, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(vr, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
 
+    /* The reading is one atom: the unit sits right after the value. Letting the
+       value grow pushed "MB/s" to the far edge of the card, where it read as a
+       separate element instead of the number's unit. */
     k->val  = mk_label_raw(vr, UK_TYPE_METRIC, UK_T1);
-    lv_obj_set_width(k->val, 0);
-    lv_obj_set_flex_grow(k->val, 1);
-    lv_obj_set_style_min_width(k->val, 0, 0);
+    /* A measured minimum preserves the unit anchor across decimal carries;
+       unusually large readings can still expand instead of being truncated. */
+    lv_point_t reading_size;
+    lv_text_get_size(&reading_size, "100.0", UK_TYPE_METRIC,
+                     lv_obj_get_style_text_letter_space(k->val, 0), 0,
+                     LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    lv_obj_set_style_min_width(k->val, reading_size.x, 0);
+    lv_obj_set_style_text_align(k->val, LV_TEXT_ALIGN_RIGHT, 0);
     lv_label_set_long_mode(k->val, LV_LABEL_LONG_MODE_CLIP);
     k->unit = mk_label_raw(vr, UK_TYPE_CAPTION, UK_T3);
     lv_obj_set_style_pad_bottom(k->unit, 4, 0);
@@ -854,6 +866,43 @@ typedef struct {
 } trend_t;
 
 static void trend_step(void *obj, int32_t progress);
+static void trend_cursors(lv_event_t *e)
+{
+    lv_obj_t *obj = lv_event_get_current_target(e);
+    lv_chart_t *chart = (lv_chart_t *)obj;
+    lv_chart_cursor_t *cursor;
+    /* Resolve the visible line head before native LVGL draws its cursors.
+       Only geometry is interpolated; the sampled series remains untouched. */
+    LV_LL_READ(&chart->cursor_ll, cursor) {
+        lv_chart_series_t *s = cursor->ser;
+        cursor->dir = LV_DIR_NONE;
+        if (!s || s->hidden || !chart->point_cnt) continue;
+        uint32_t at = (s->start_point + chart->point_cnt - 1) % chart->point_cnt;
+        if (s->y_points[at] == LV_CHART_POINT_NONE) continue;
+        lv_point_t head;
+        lv_chart_get_point_pos_by_id(obj, s, at, &head);
+        int32_t right = lv_obj_get_style_pad_left(obj, LV_PART_MAIN) +
+                        lv_obj_get_content_width(obj);
+        for (uint32_t i = 1; head.x > right && i < chart->point_cnt; i++) {
+            at = (at + chart->point_cnt - 1) % chart->point_cnt;
+            if (s->y_points[at] == LV_CHART_POINT_NONE) break;
+            lv_point_t previous;
+            lv_chart_get_point_pos_by_id(obj, s, at, &previous);
+            if (previous.x <= right && head.x > previous.x) {
+                head.y = previous.y + (int64_t)(head.y - previous.y) *
+                         (right - previous.x) / (head.x - previous.x);
+                head.x = right;
+                break;
+            }
+            head = previous;
+        }
+        if (head.x > right || head.x < lv_obj_get_style_pad_left(obj, LV_PART_MAIN)) continue;
+        cursor->pos = head;
+        cursor->pos_set = true;
+        cursor->color = s->color;
+        cursor->dir = LV_DIR_RIGHT; /* Point enabled, crosshair hidden by style. */
+    }
+}
 static void trend_destroy(const lv_obj_class_t *cls, lv_obj_t *obj)
 {
     (void)cls;
@@ -948,6 +997,13 @@ lv_obj_t *uk_trend_create(lv_obj_t *parent, int32_t points, int32_t series)
     lv_obj_set_style_line_width(c, UK_TREND_STROKE, LV_PART_ITEMS);
     lv_obj_set_style_line_rounded(c, true, LV_PART_ITEMS);
     lv_obj_set_style_size(c, 0, 0, LV_PART_INDICATOR);      /* 只要线，不要点 */
+    lv_obj_set_style_size(c, 3 * UK_TREND_STROKE, 3 * UK_TREND_STROKE, LV_PART_CURSOR);
+    lv_obj_set_style_radius(c, LV_RADIUS_CIRCLE, LV_PART_CURSOR);
+    lv_obj_set_style_bg_opa(c, LV_OPA_COVER, LV_PART_CURSOR);
+    lv_obj_set_style_border_width(c, 1, LV_PART_CURSOR);
+    lv_obj_set_style_border_color(c, uk_c(UK_T1), LV_PART_CURSOR);
+    lv_obj_set_style_line_opa(c, LV_OPA_TRANSP, LV_PART_CURSOR);
+    lv_obj_add_event_cb(c, trend_cursors, LV_EVENT_DRAW_MAIN_BEGIN, NULL);
     lv_obj_set_style_bg_opa(c, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_line_color(c, uk_c(UK_LINE), LV_PART_MAIN);
     lv_obj_set_style_line_opa(c, LV_OPA_40, LV_PART_MAIN);
@@ -961,7 +1017,11 @@ lv_obj_t *uk_trend_create(lv_obj_t *parent, int32_t points, int32_t series)
            current/peak/quality calculations; only the second ring is drawn. */
         lv_chart_series_t *raw = lv_chart_add_series(c, uk_c(series_colors[i % 3]), LV_CHART_AXIS_PRIMARY_Y);
         if (raw) lv_chart_hide_series(c, raw, true);
-        lv_chart_add_series(c, uk_c(series_colors[i % 3]), LV_CHART_AXIS_PRIMARY_Y);
+        lv_chart_series_t *line = lv_chart_add_series(c, uk_c(series_colors[i % 3]), LV_CHART_AXIS_PRIMARY_Y);
+        if (line) {
+            lv_chart_cursor_t *cursor = lv_chart_add_cursor(c, line->color, LV_DIR_NONE);
+            if (cursor) lv_chart_set_cursor_point(c, cursor, line, LV_CHART_POINT_NONE);
+        }
     }
     uk_trend_clear(c);
     return c;

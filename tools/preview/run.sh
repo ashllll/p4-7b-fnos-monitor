@@ -144,7 +144,7 @@ python3 ppm2png.py "$OUT_REAL"
 
 # Stable telemetry must reuse layout, while same-count renames still wrap and
 # reflow. Keep this regression in the normal gate rather than a manual-only mode.
-env $(preview_env_args) PREVIEW_REFRESH_WORK=1 ./build/preview "$OUT_REAL/refresh-work"
+env $(preview_env_args) PREVIEW_REFRESH_WORK=1 PREVIEW_PARTIAL=1 ./build/preview "$OUT_REAL/refresh-work"
 python3 ppm2png.py "$OUT_REAL/refresh-work"
 python3 palette_check.py "$OUT_REAL"
 

@@ -212,7 +212,7 @@ void uk_number_set_reading(lv_obj_t *value, lv_obj_t *unit, const char *text,
         presentation_gate_enabled && UK_NUMBER_PRESENT_MS > 0 && !presentation_batch_open &&
         lv_obj_is_visible(value) && has_reading(lv_label_get_text(value)) && has_reading(text)) return;
     uk_number_set_text(value, text, animate && same_unit);
-    uk_set_text(unit, "%s", unit_text);
+    uk_number_set_text(unit, unit_text, false);
 }
 
 void uk_number_set_text(lv_obj_t *obj, const char *text, bool animate)

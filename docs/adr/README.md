@@ -9,9 +9,10 @@
 | ADR | 决策 |
 | --- | --- |
 | [0001](0001-native-instrument-ui.md) | 通过共享原生 LVGL 构件统一横屏仪表界面 |
-| [0002](0002-continuous-telemetry-motion.md) | 连续遥测保留位置与速度，使用共享临界阻尼 |
+| [0002](0002-continuous-telemetry-motion.md) | 连续遥测保留位置与速度（求解器及参数由 0005 替代） |
 | [0003](0003-module-freshness-and-reading-presence.md) | 读数存在性、模块新鲜度和统计新鲜度分别判断 |
 | [0004](0004-identity-and-status-colors.md) | 指标身份色与当前状态色分离，默认 ULTRA 主题统一 |
+| [0005](0005-library-springs-and-attached-cursors.md) | 复用开源阻尼求解器，圆环、条形和曲线游标直接附着图形 |
 
 当前设计合同见 [全界面 CUKTECH 仪表语言](../ui-cuktech-2026-10-14.md)，参数与取舍见 [电流表式动效](../ui-ammeter-motion-2026-10-14.md)，最新缺陷回归及最终烧录证据见 [并行缺陷复核](../ui-post-motion-audit-2026-10-14.md)。历史文档中的窄屏、字体及阶段产物记录不替代这些当前约定。
 

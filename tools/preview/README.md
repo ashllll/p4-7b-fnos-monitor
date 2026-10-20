@@ -19,7 +19,7 @@ bash tools/preview/run.sh [输出目录]     # 默认 tools/preview/out/；内�
 open tools/preview/out/02-live-p0.png
 ```
 
-当前完整流程生成 **111 张 1024×600 状态 PNG，另加 3 张刷新回归 PNG**，覆盖启动/等待/在线告警/离线/正常/满列表/旧版采集端/夜间/配网/配对等状态 × 六页，
+当前完整流程生成 **126 张 1024×600 状态 PNG，另加 5 张刷新回归 PNG**，覆盖启动/等待/在线告警/离线/正常/满列表/旧版采集端/夜间/配网/配对等状态 × 六页，
 外加列表底部、诊断面板与配对全流程。内置断言验证缺字/文本高度、子对象越界、卡片重叠、满列表滚动、
 告警消退、诊断按钮、锁超时保留快照、连接失败原因逐个标签可翻译。
 行内数值还检查数字与单位的总宽度；配对检查键盘可达及页脚固定，配网检查六阶段按钮宽度、
@@ -153,11 +153,14 @@ PREVIEW_MOTION=0,1,0 PREVIEW_MOTION_SCROLL=1 PREVIEW_MOTION_RESPONSIVENESS=1 \
 稳定数据刷新回归已加入 `run.sh` 的默认验收，也可单独执行：
 
 ```bash
-PREVIEW_REFRESH_WORK=1 tools/preview/build/preview /tmp/fnos-refresh-work
+PREVIEW_REFRESH_WORK=1 PREVIEW_PARTIAL=1 tools/preview/build/preview /tmp/fnos-refresh-work
 ```
 
 它检查六页连续刷新不重复改导航样式、存储清单不反复伸缩；同时以数量不变的长卷名和
 长容器名验证换行、重排、缩回与完整字符串保留，并覆盖长文本分配失败提示和下一拍恢复。
+局部绘制模式还统计实际 flush 像素，要求首页四次稳定刷新总量小于一整帧，防止重复设置样式造成整行重绘。
+全帧模式每次必然刷全屏，不能用于这项比较。数字回归保留真实发布节拍，验证 100↔9 的遮罩、
+最大运行时长、旧值标识和跨天时标签与读数同步发布；网络图检查零刻度与图表底边对齐。
 同一棵 UI 树在 1024×600 横屏中切换“卷 / 全部”筛选并恢复，检查清单列宽随可用区域重新测量。
 `CONFIG_FNOS_UI_TEXT_SCRATCH_BYTES` 控制单次格式化的栈缓冲，默认 256 字节、范围 64–1024；
 超长内容继续使用精确分配，不能通过截断名称节省开销。调整后须重建设备配置、重跑栈检查。
@@ -166,9 +169,10 @@ PREVIEW_REFRESH_WORK=1 tools/preview/build/preview /tmp/fnos-refresh-work
 
 ### 电流表式动效（1024×600 横屏）
 
-参数与边界见 [电流表式遥测动效](../../docs/ui-ammeter-motion-2026-10-14.md)。
-`PREVIEW_NUMBERS=1` 验证共用阻尼公式、位置/速度重定向、单位切换立即发布、仪表与数字生命周期；
+当前参数与边界见 [库阻尼与附着游标](../../docs/ui-ammeter-cursors-2026-10-20.md)，旧版记录见 [电流表式遥测动效](../../docs/ui-ammeter-motion-2026-10-14.md)。
+`PREVIEW_NUMBERS=1` 验证第三方求解器的欠阻尼／临界／过阻尼分支、时间步拆分等价性、位置/速度重定向、单位切换立即发布、仪表与数字生命周期；
 `PREVIEW_DATA_MOTION=1` 录制全部六页，含仪表尾段与数字/单位锚点检查。仍使用真实 UI 代码和匿名夹具。
+`PREVIEW_CHART_MAP=1`（已进入默认 `run.sh`）还验证曲线游标随最新样本、滚动与尺寸变化保持附着，隐藏、缺失和清空时消失。
 
 ```bash
 PREVIEW_NUMBERS=1 tools/preview/build/preview /tmp/fnos-numbers
@@ -177,7 +181,7 @@ python3 tools/preview/ppm2png.py /tmp/fnos-data-motion
 python3 tools/preview/motion_view.py /tmp/fnos-data-motion
 ```
 
-播放器帧间隔为 25ms，代表主机采样取证，不代表 P4 实机帧率。只迭代当前横屏；本轮按用户要求以肉眼体验实屏，不拍照。
+播放器帧间隔为 25ms，代表主机采样取证，不代表 P4 实机帧率。只迭代当前横屏；实机视觉验收遵循当前 AGENTS.md 的设备授权和 `capture-board` 流程。
 
 ## 前置
 
@@ -187,7 +191,7 @@ python3 tools/preview/motion_view.py /tmp/fnos-data-motion
 
 ## 实测开销
 
-构建时间和产物大小取决于主机与依赖缓存，以当前输出为准。完整状态预览包含六页、111 张状态图与 3 张刷新回归图；`16-usage-*` 覆盖低占用、提醒和接近上限的首页/存储页，检查共享阈值、固定历史身份色和过期降灰。历史图片、FPK 和设备证据的边界见[项目 README](../../README.md#最近迭代与版本边界)。
+构建时间和产物大小取决于主机与依赖缓存，以当前输出为准。完整状态预览包含六页、126 张状态图与 5 张刷新回归图；`16-usage-*` 覆盖低占用、提醒和接近上限的首页/存储页，检查共享阈值、固定历史身份色和过期降灰；`17-overview-*` 覆盖长运行时长及旧值。最新审查及绘制量对照见[2026-10-20 审查](../../docs/ui-review-2026-10-20.md)。历史图片、FPK 和设备证据的边界见[项目 README](../../README.md#最近迭代与版本边界)。
 
 ## 边界与坑
 

@@ -19,6 +19,7 @@
 
 #include "lvgl.h"
 #include "src/misc/lv_text_private.h"
+#include "src/widgets/chart/lv_chart_private.h"
 #include "fnos_data.h"
 #include "fnos_ui.h"
 #include "fnos_net.h"
@@ -610,9 +611,11 @@ int64_t fnos_data_hist_seq(void) { return s_seq; }
 static int s_scr_w = 1024, s_scr_h = 600;
 static uint16_t s_frame[SCR_MAX_W * SCR_MAX_H];
 static const char *s_outdir = "out";
+static uint64_t s_flushed_pixels;
 
 static void flush_cb(lv_display_t *d, const lv_area_t *area, uint8_t *px_map)
 {
+    s_flushed_pixels += (uint64_t)lv_area_get_width(area) * lv_area_get_height(area);
     const uint16_t *src = (const uint16_t *)px_map;
     for (int y = area->y1; y <= area->y2; y++)
         for (int x = area->x1; x <= area->x2; x++)
@@ -2100,20 +2103,28 @@ static void verify_overview_charts(void)
     lv_obj_get_coords(page, &page_area);
     assert(lv_area_get_width(&screen_area) == 1024 && lv_area_get_height(&screen_area) == 600);
     assert(lv_obj_get_scroll_y(page) == 0);
-    assert(lv_obj_get_parent(cards[0]) == lv_obj_get_parent(cards[1]) &&
-           lv_obj_get_parent(cards[1]) == lv_obj_get_parent(cards[2]) &&
-           lv_obj_get_child_count(lv_obj_get_parent(cards[0])) == 3);
-    assert(lv_obj_get_parent(cards[3]) == lv_obj_get_parent(cards[4]) &&
-           lv_obj_get_parent(cards[4]) == lv_obj_get_parent(cards[5]) &&
-           lv_obj_get_child_count(lv_obj_get_parent(cards[3])) == 3);
-    assert(lv_obj_get_parent(cards[6]) == lv_obj_get_parent(cards[7]) &&
-           lv_obj_get_parent(cards[7]) == lv_obj_get_parent(cards[8]) &&
-           lv_obj_get_child_count(lv_obj_get_parent(cards[6])) == 3);
-    const int32_t reference_width = lv_obj_get_width(cards[0]);
-    const int32_t reference_height = lv_obj_get_height(cards[0]);
+    /* 2026-10-20 首页重排：hero 行（3 张等宽、最高）+ 趋势带（2 张等宽）+ 指标带
+       （4 张，网络卡双宽，因为两列「数值 + 单位」要各自站得下）。行内同父同高。 */
+    lv_obj_t *hero_row = lv_obj_get_parent(cards[0]);
+    lv_obj_t *trend_row = lv_obj_get_parent(cards[3]);
+    lv_obj_t *index_row = lv_obj_get_parent(cards[6]);
+    assert(hero_row && trend_row && index_row &&
+           hero_row != trend_row && trend_row != index_row && hero_row != index_row);
+    assert(lv_obj_get_parent(cards[1]) == hero_row && lv_obj_get_parent(cards[2]) == hero_row);
+    assert(lv_obj_get_child_count(hero_row) == 3);
+    assert(lv_obj_get_parent(cards[4]) == trend_row && lv_obj_get_child_count(trend_row) == 2);
+    assert(lv_obj_get_parent(cards[5]) == index_row && lv_obj_get_parent(cards[7]) == index_row &&
+           lv_obj_get_parent(cards[8]) == index_row && lv_obj_get_child_count(index_row) == 4);
+    assert(lv_obj_get_height(cards[0]) >= lv_obj_get_height(cards[3]) + 60);
+    for (size_t i = 0; i < 3; i++) {
+        assert(lv_obj_get_height(cards[i]) == lv_obj_get_height(cards[0]));
+        assert(LV_ABS((int32_t)lv_obj_get_width(cards[i]) - (int32_t)lv_obj_get_width(cards[0])) <= 1);
+    }
+    assert(lv_obj_get_height(cards[4]) == lv_obj_get_height(cards[3]));
+    assert(LV_ABS((int32_t)lv_obj_get_width(cards[4]) - (int32_t)lv_obj_get_width(cards[3])) <= 1);
+    for (size_t i = 5; i < 9; i++) assert(lv_obj_get_height(cards[i]) == lv_obj_get_height(cards[5]));
+    assert(LV_ABS((int32_t)lv_obj_get_width(cards[6]) - 2 * (int32_t)lv_obj_get_width(cards[5])) <= 2);
     for (size_t i = 0; i < sizeof cards / sizeof cards[0]; i++) {
-        assert(LV_ABS((int32_t)lv_obj_get_width(cards[i]) - reference_width) <= 1);
-        assert(LV_ABS((int32_t)lv_obj_get_height(cards[i]) - reference_height) <= 1);
         lv_area_t card_area, visible_area;
         lv_obj_get_coords(cards[i], &card_area);
         assert(card_area.x1 >= screen_area.x1 && card_area.x2 <= screen_area.x2 &&
@@ -2195,6 +2206,13 @@ static void verify_overview_charts(void)
     assert(title);
     lv_obj_t *detail = find_widget(lv_obj_get_parent(lv_obj_get_parent(title)), &lv_chart_class);
     assert(detail);
+    /* A visible zero must mark the chart baseline, not sit beside its top. */
+    lv_obj_t *zero = visible_text(lv_obj_get_parent(detail), "0");
+    assert(zero);
+    lv_area_t zero_area, chart_area;
+    lv_obj_get_coords(zero, &zero_area);
+    lv_obj_get_coords(detail, &chart_area);
+    assert(LV_ABS(chart_area.y2 - zero_area.y2) <= lv_obj_get_height(zero));
     assert(chart_values_equal(detail, 0, 64) == 1);
     assert(chart_values_equal(detail, 1, 128) == 1);
     size_t bytes = CONFIG_FNOS_CHART_WINDOW * sizeof(int32_t);
@@ -2807,6 +2825,14 @@ static void verify_docker_module_states(void)
         assert(!visible_text_containing(lv_screen_active(), "容器 0/0"));
         assert(!visible_text(card, first_name));
         if (!strcmp(failures[i].status, "disabled")) snapshot("11-docker-disabled");
+        fnos_ui_set_page(0);
+        regression_tick();
+        lv_obj_t *status = overview_object("设备状态", &lv_obj_class);
+        assert(status && visible_text_containing(status, failures[i].reason));
+        if (strcmp(failures[i].status, "disabled"))
+            assert(!visible_text_containing(status, "未启用"));
+        fnos_ui_set_page(3);
+        regression_tick();
     }
 
     fixture.ndocker = populated;
@@ -4639,6 +4665,11 @@ static unsigned verify_numeric_unit_positions(lv_obj_t *root)
             const bool centered = lv_obj_get_style_align(value,0)==LV_ALIGN_CENTER;
             const bool anchored = centered ? abs((v.x1+v.x2)-(origin.x1+origin.x2))<=1 :
                                   v.x1==origin.x1 || v.x2==origin.x2;
+            if (!anchored || v.y1!=origin.y1)
+                fprintf(stderr,"numeric anchor moved: page=%d original=%s target=%s unit=%s "
+                    "[%d,%d,%d,%d] -> [%d,%d,%d,%d]\n",fnos_ui_page(),original,targets[j],u,
+                    (int)origin.x1,(int)origin.y1,(int)origin.x2,(int)origin.y2,
+                    (int)v.x1,(int)v.y1,(int)v.x2,(int)v.y2);
             assert(anchored && v.y1==origin.y1);
             if (now.x1 != fixed.x1 || now.y1 != fixed.y1)
                 fprintf(stderr, "numeric unit moved: page=%d original=%s target=%s unit=%s [%d,%d] -> [%d,%d]\n",
@@ -4792,8 +4823,63 @@ static void record_streaming(void)
 }
 
 /* Dedicated production-LVGL coordinate check, before building the FNOS tree. */
+static void verify_attached_cursors(void)
+{
+    lv_obj_t *chart=uk_trend_create(lv_screen_active(),8,2);
+    lv_obj_set_size(chart,320,160);
+    for (int i=0;i<8;i++) {
+        uk_trend_push(chart,0,20,0);
+        uk_trend_push(chart,1,70,0);
+    }
+    lv_obj_update_layout(chart);
+    lv_refr_now(lv_display_get_default());
+    lv_chart_cursor_t *cursor;
+    unsigned count=0;
+    LV_LL_READ(&((lv_chart_t *)chart)->cursor_ll,cursor) {
+        lv_point_t point;
+        uint32_t at=(lv_chart_get_x_start_point(chart,cursor->ser)+7)%8;
+        lv_chart_get_point_pos_by_id(chart,cursor->ser,at,&point);
+        assert(cursor->dir!=LV_DIR_NONE && cursor->pos_set);
+        assert(cursor->pos.x==point.x && cursor->pos.y==point.y);
+        assert(lv_color_eq(cursor->color,lv_chart_get_series_color(chart,cursor->ser)));
+        count++;
+    }
+    assert(count==2);
+    /* While the next point is offscreen, the cursor stays on the visible
+       constant-height line, rather than jumping offscreen with that sample. */
+    uk_trend_push(chart,0,20,200);
+    uk_trend_push(chart,1,70,200);
+    vtick_advance(50); lv_anim_refr_now();
+    lv_refr_now(lv_display_get_default());
+    LV_LL_READ(&((lv_chart_t *)chart)->cursor_ll,cursor) {
+        assert(cursor->dir!=LV_DIR_NONE);
+        assert(cursor->pos.x==lv_obj_get_content_width(chart));
+        lv_point_t point;
+        lv_chart_get_point_pos_by_id(chart,cursor->ser,
+            (lv_chart_get_x_start_point(chart,cursor->ser)+7)%8,&point);
+        assert(cursor->pos.y==point.y);
+    }
+    lv_obj_set_size(chart,240,120);
+    lv_obj_update_layout(chart);
+    lv_refr_now(lv_display_get_default());
+    LV_LL_READ(&((lv_chart_t *)chart)->cursor_ll,cursor)
+        assert(cursor->pos.x<=lv_obj_get_content_width(chart));
+    uk_trend_push(chart,0,LV_CHART_POINT_NONE,0);
+    lv_chart_hide_series(chart,uk_trend_series(chart,1),true);
+    lv_refr_now(lv_display_get_default());
+    LV_LL_READ(&((lv_chart_t *)chart)->cursor_ll,cursor)
+        assert(cursor->dir==LV_DIR_NONE);
+    uk_trend_clear(chart);
+    lv_refr_now(lv_display_get_default());
+    LV_LL_READ(&((lv_chart_t *)chart)->cursor_ll,cursor)
+        assert(cursor->dir==LV_DIR_NONE);
+    lv_obj_delete(chart);
+    puts("checks: attached curve cursors track time, resize, gaps and hidden series PASS");
+}
+
 static void verify_chart_mapping(void)
 {
+    verify_attached_cursors();
     lv_obj_t *chart = lv_chart_create(lv_screen_active());
     assert(chart);
     lv_obj_set_size(chart, 400, 400);
@@ -4997,6 +5083,70 @@ static void verify_inventory_rename(const char **field, const char *sample)
     assert(label && lv_obj_get_height(label) == original_height);
 }
 
+static void verify_overview_number_masks(void)
+{
+    const fnos_status_t *previous = s_override_status;
+    int page = fnos_ui_page();
+    fnos_status_t fixture = {0};
+    fill_live(&fixture);
+    fixture.nmods = 0;
+    fixture.cpu.pct = fixture.mem.pct = 100;
+    s_override_status = &fixture;
+    fnos_ui_set_page(0);
+    for (int i = 0; i < 4; i++) regression_tick();
+    const char *titles[] = { "CPU", "内存" };
+    lv_obj_t *labels[2];
+    for (int i = 0; i < 2; i++) {
+        labels[i] = visible_text(overview_object(titles[i], &lv_obj_class), "100");
+        assert(labels[i]);
+    }
+    /* Keep the real numeric publication gate active between samples. A new
+       one-digit target must not crop a still-presented three-digit reading. */
+    for (int step = 0; step < 12; step++) {
+        fixture.cpu.pct = fixture.mem.pct = step % 2 ? 100 : 9;
+        vtick_advance(fnos_ui_refresh_period_ms());
+        lv_timer_handler();
+        lv_obj_update_layout(lv_screen_active());
+        for (int i = 0; i < 2; i++) {
+            const lv_font_t *font = lv_obj_get_style_text_font(labels[i], 0);
+            lv_point_t size;
+            lv_text_get_size(&size, lv_label_get_text(labels[i]), font, 0, 0,
+                             LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+            if (size.x > lv_obj_get_content_width(labels[i]))
+                fprintf(stderr, "reading mask: text=%s needs=%d available=%d\n",
+                        lv_label_get_text(labels[i]), (int)size.x,
+                        (int)lv_obj_get_content_width(labels[i]));
+            assert(size.x <= lv_obj_get_content_width(labels[i]));
+            assert(lv_obj_get_height(labels[i]) == lv_font_get_line_height(font));
+        }
+    }
+    fixture.uptime_s = UINT32_MAX;
+    for (int i = 0; i < 4; i++) regression_tick();
+    snapshot("17-overview-long-uptime");
+    lv_obj_t *status = overview_object("设备状态", &lv_obj_class);
+    assert(visible_text(status, "运行 49710 天") && visible_text(status, "06:28"));
+    fixture.nmods = 1;
+    fnos_status_text(&fixture, &fixture.mods[0].name, "cpu");
+    fnos_status_text(&fixture, &fixture.mods[0].status, "stale");
+    regression_tick();
+    assert(visible_text(status, "运行 49710 天 · 旧值") && visible_text(status, "06:28"));
+    snapshot("17-overview-old-uptime");
+    fnos_status_text(&fixture, &fixture.mods[0].status, "ok");
+    fixture.uptime_s = 86340;
+    for (int i = 0; i < 4; i++) regression_tick();
+    assert(visible_text(status, "运行时长") && visible_text(status, "23:59"));
+    fixture.uptime_s = 86400;
+    vtick_advance(fnos_ui_refresh_period_ms());
+    lv_timer_handler();
+    lv_obj_update_layout(lv_screen_active());
+    assert(visible_text(status, "运行 1 天") && visible_text(status, "00:00"));
+    s_override_status = previous;
+    fnos_ui_set_page(page);
+    regression_tick();
+    fnos_status_release(&fixture);
+    puts("checks: gated one/three-digit overview readings remain complete PASS");
+}
+
 static void verify_refresh_work(void)
 {
     lv_display_t *display = lv_display_get_default();
@@ -5031,16 +5181,23 @@ static void verify_refresh_work(void)
         lv_obj_t *home_card = page == 0 ? overview_object("CPU", &lv_obj_class) : NULL;
         if (home_card) lv_obj_add_event_cb(home_card, refresh_work_event, LV_EVENT_STYLE_CHANGED, &s_refresh_home_styles);
         s_refresh_size_changes = s_refresh_nav_styles = s_refresh_home_styles = 0;
+        s_flushed_pixels = 0;
         for (int sample = 0; sample < 4; sample++) {
             vtick_advance(500);
             lv_timer_handler();
         }
-        printf("refresh work: page=%d ticks=4 inventory_size_changes=%u nav_style_changes=%u home_style_changes=%u\n",
-               page, s_refresh_size_changes, s_refresh_nav_styles, s_refresh_home_styles);
+        lv_refr_now(display);
+        printf("refresh work: page=%d ticks=4 inventory_size_changes=%u nav_style_changes=%u home_style_changes=%u flushed_pixels=%llu\n",
+               page, s_refresh_size_changes, s_refresh_nav_styles, s_refresh_home_styles,
+               (unsigned long long)s_flushed_pixels);
         /* A stable snapshot must not restyle unrelated navigation on each tick. */
         assert(s_refresh_nav_styles == 0);
         assert(s_refresh_size_changes == 0);
         assert(s_refresh_home_styles == 0);
+        /* Four unchanged home ticks must paint less than one entire frame.
+           Full render mode deliberately flushes all pixels and is excluded. */
+        if (page == 0 && getenv("PREVIEW_PARTIAL"))
+            assert(s_flushed_pixels < (uint64_t)s_scr_w * s_scr_h);
         if (home_card) lv_obj_remove_event_cb(home_card, refresh_work_event);
         if (inventory) lv_obj_remove_event_cb(inventory, refresh_work_event);
         s_refresh_nav_styles = 0;
@@ -5067,6 +5224,7 @@ static void verify_refresh_work(void)
     pointer_text("全部");
     regression_tick();
     assert(lv_obj_get_width(volume_card) == original_width);
+    verify_overview_number_masks();
     puts("checks: stable refresh, repeated current-page navigation, same-count long-name reflow, filtered inventory reflow and untruncated formatting PASS");
 }
 
@@ -5202,6 +5360,7 @@ int main(int argc, char **argv)
     verify_docker_module_states();
     verify_temperature_protocol_limit();
     verify_overview_charts();
+    verify_overview_number_masks();
     verify_usage_colors();
     verify_module_freshness();
 

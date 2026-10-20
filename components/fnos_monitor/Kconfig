@@ -137,25 +137,34 @@ menu "fnOS monitor"
         config FNOS_UI_NUMBER_MS
             int "Damped telemetry response duration (ms; 0 disables motion)"
             range 0 1000
-            default 180
+            default 300
             help
-                Critically damped digits, gauges and bars share this response
+                Damped digits, gauges and bars share this response
                 duration; meters retain a subpixel tail for at most twice it.
                 New targets preserve current position and velocity.
                 Zero disables motion; sampling and history remain unchanged.
 
         config FNOS_UI_TELEMETRY_DAMPING
-            int "Telemetry settling factor (critical damping)"
+            int "Telemetry natural frequency factor"
             range 6 12
             default 8
             help
-                Natural frequency = factor / settling duration. Eight leaves
-                about 0.3 percent residual at the nominal response duration.
+                Natural frequency = factor / response duration in seconds.
+                Used by the vendored Ryan Juckett Damped Springs solver.
+
+        config FNOS_UI_TELEMETRY_RATIO_PERMILLE
+            int "Telemetry damping ratio (1000 = critical)"
+            range 800 1200
+            default 850
+            help
+                850 gives a restrained ammeter rebound (about 0.6 percent
+                overshoot from rest). 1000 removes that rebound. Gauge output
+                remains bounded by its legal range; source data is unchanged.
 
         config FNOS_UI_NUMBER_PRESENT_MS
             int "Minimum interval between presented numeric changes (ms)"
             range 0 5000
-            default 600
+            default 0
             help
                 Zero publishes each real update in place. A nonzero value can
                 select the newest sample on a slower shared presentation beat.

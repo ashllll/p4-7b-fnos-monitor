@@ -222,7 +222,7 @@ python3 tools/stack_check.py
 python3 tools/test_history_merge.py
 ```
 
-默认预览生成 **111 张 1024×600 状态 PNG + 3 张刷新回归 PNG**，执行字形、格式残留、标签溢出、对象越界、触控重叠与对比度审计，并覆盖不同硬件组合和受控分配失败。数字、仪表及切页动效的独立入口见 [预览说明](tools/preview/README.md)。本页产品图的文件映射与校验值见 [图片清单](docs/images/ui-cuktech-ultra-2026-10-14/manifest.json)。
+默认预览生成 **126 张 1024×600 状态 PNG + 5 张刷新回归 PNG**，执行字形、格式残留、标签溢出、对象越界、触控重叠与对比度审计，并覆盖不同硬件组合和受控分配失败。数字、仪表及切页动效的独立入口见 [预览说明](tools/preview/README.md)。本页产品图仍为 2026-10-14 的匿名样张，文件映射与校验值见 [图片清单](docs/images/ui-cuktech-ultra-2026-10-14/manifest.json)；最新布局与游标行为以以下文档和源码为准。
 
 固件构建和主机渲染不代替实机验收。完整物理触控、实屏动画手感、72 小时运行、掉电／旧 NVS 回退、真实内存耗尽恢复和更广泛的硬件／权限矩阵继续开放，详见 [未闭环事项](docs/open-items-2026-10-11.md)。
 
@@ -231,7 +231,8 @@ python3 tools/test_history_merge.py
 
 ### 最近迭代与版本边界
 
-- **当前 ULTRA 默认界面（2026-10-14）**：统一六页与配网／配对／详情，黄色改蓝色，粉红改朱红；历史曲线保持指标身份色，占用率只改变局部弧／条。README 同步 21 张匿名产品与阈值图。默认预览、模板构建、并行审查与开发板烧录通过；30 秒串口观察失败计数为 0。[设计](docs/ui-cuktech-ultra-2026-10-14.md) · [本轮归档与验证](docs/ui-ultra-release-2026-10-14.md)。
+- **当前 UI 与动效（2026-10-20）**：首页大环表与状态瓦片、告警事件流、单位锚点和稳定刷新优化；圆环、条形与曲线均增加附着游标。复用 Ryan Juckett Damped Springs，默认 300 ms、阻尼比 0.85，保留反向惯性与轻微回摆。源码、算法来源、设计决策和复跑命令一同发布；本次游标版本尚未烧录。[实现与验证](docs/ui-ammeter-cursors-2026-10-20.md) · [算法选型](docs/ui-spring-library-research-2026-10-20.md) · [ADR-0005](docs/adr/0005-library-springs-and-attached-cursors.md)。
+- **ULTRA 配色基线（2026-10-14）**：统一六页与配网／配对／详情，黄色改蓝色，粉红改朱红；历史曲线保持指标身份色，占用率只改变局部弧／条。README 同步 21 张匿名产品与阈值图。默认预览、模板构建、并行审查与开发板烧录通过；30 秒串口观察失败计数为 0。[设计](docs/ui-cuktech-ultra-2026-10-14.md) · [该阶段归档与验证](docs/ui-ultra-release-2026-10-14.md)。
 
 - **前一阶段界面基线 `7647d9b`**：CUKTECH 六页横屏、连续阻尼与新鲜度修复；模板构建、主机回归、静态检查、烧录哈希与短时串口观察已完成。[完整验证记录](docs/skills-workflow-2026-10-14.md)。
 - **当前仓库安装包 1.2.7**：本页校验值来自当前已跟踪文件及包内 manifest；这次文档与图片更新没有重新部署 NAS，也不把历史实机记录扩展成该文件的新增验收。
@@ -256,7 +257,7 @@ python3 tools/test_history_merge.py
 | --- | --- |
 | 全面理解产品、界面与工程设计 | [设计总览：页面、视觉、动效、数据、架构与验收](docs/design-overview-2026-10-14.md) |
 | 安装与维护 NAS 应用 | [飞牛应用](nas/fpk/README.md) · [可选旧采集器](nas/README.md) |
-| 理解当前界面与动效 | [ULTRA 配色](docs/ui-cuktech-ultra-2026-10-14.md) · [页面合同](docs/ui-cuktech-2026-10-14.md) · [电流表式动效](docs/ui-ammeter-motion-2026-10-14.md) |
+| 理解当前界面与动效 | [首页与图标布局](docs/ui-craft-2026-10-20.md) · [附着游标与库阻尼](docs/ui-ammeter-cursors-2026-10-20.md) · [算法选型](docs/ui-spring-library-research-2026-10-20.md) · [ULTRA 配色](docs/ui-cuktech-ultra-2026-10-14.md) |
 | 复现产品图与主机检查 | [截图来源](docs/images/ui-cuktech-ultra-2026-10-14/README.md) · [预览工具](tools/preview/README.md) |
 | 查看最新验证和剩余事项 | [本轮发布归档](docs/ui-ultra-release-2026-10-14.md) · [历史 Skills 全流程](docs/skills-workflow-2026-10-14.md) · [缺陷复核](docs/ui-post-motion-audit-2026-10-14.md) · [未闭环事项](docs/open-items-2026-10-11.md) |
 | 理解源码与架构 | [固件](components/fnos_monitor/) · [共享 UI](components/fnos_monitor/ui_kit/) · [原生 UI 架构](docs/ui-v12-lvgl-native.md) · [ADR](docs/adr/README.md) |
@@ -268,4 +269,4 @@ python3 tools/test_history_merge.py
 
 ## 许可证
 
-项目固件、采集器与飞牛应用采用 [Apache License 2.0](LICENSE)。LVGL / cJSON 为 MIT；Inter、Noto Sans SC、Chakra Petch 字体为 SIL OFL，相关许可保留在 [fonts/](components/fnos_monitor/fonts/)。
+项目自有固件、采集器与飞牛应用采用 [Apache License 2.0](LICENSE)。[Damped Springs](components/fnos_monitor/ui_kit/third_party/README.md) 保留 Ryan Juckett 的 zlib-style 许可；LVGL / cJSON 为 MIT；Inter、Noto Sans SC、Chakra Petch 字体为 SIL OFL，相关许可保留在 [fonts/](components/fnos_monitor/fonts/)。
