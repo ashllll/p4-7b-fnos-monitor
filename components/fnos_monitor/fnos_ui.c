@@ -51,6 +51,7 @@ static bool motion_reduced(void);   /* 定义在页面控制段，诊断页开�
 typedef struct {
     lv_obj_t *card, *value, *unit, *meta, *gauge, *chart_card, *chart, *context;
     lv_obj_t *metric;   /* 环外框：overview_layout() 按行高给它定尺寸 */
+    lv_coord_t num_mask[3];   /* 1/2/3 位数字的读数遮罩宽，按环内径与字号实测 */
 } overview_resource_t;
 typedef struct {
     lv_obj_t *box, *name, *value, *bar;
@@ -1283,6 +1284,34 @@ static lv_obj_t *overview_card(lv_obj_t *parent, const char *title, const char *
     return card;
 }
 
+/* 环的笔画按直径取 7%，下限 6：144 的环配 4px 笔画比例失衡，
+   而 96 的小环再细就只剩一圈虚线。环径与笔画必须一起算。 */
+static int32_t ring_stroke(int32_t diameter) { return LV_MAX(6, diameter * 7 / 100); }
+
+/* 读数随环内径自适应：44 放不下就退 32；数值遮罩同步换宽，
+   单位仍与数字同一基线——字号变了，读数还是一个整体。 */
+static void ring_reading_fit(overview_resource_t *r, int32_t ring, int32_t stroke)
+{
+    if (!r->value) return;
+    const int32_t inner = ring - 2 * (stroke + UK_S1);
+    lv_point_t big, small, unit;
+    lv_text_get_size(&big, "100", UK_FONT_NUM_44, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    lv_text_get_size(&small, "100", UK_FONT_NUM_32, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    lv_text_get_size(&unit, "%", UK_TYPE_UNIT, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    const bool wide = big.x + UK_S1 + unit.x <= inner;
+    const lv_font_t *font = wide ? UK_FONT_NUM_44 : UK_FONT_NUM_32;
+    if (lv_obj_get_style_text_font(r->value, 0) != font) lv_obj_set_style_text_font(r->value, font, 0);
+    /* 遮罩按位数各量一份：常态两位就按两位收，别为三位数常驻一段空隙。 */
+    static const char *const forms[3] = { "8", "88", "888" };
+    for (unsigned d = 0; d < 3; d++) {
+        lv_point_t sz;
+        lv_text_get_size(&sz, forms[d], font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+        r->num_mask[d] = (lv_coord_t)sz.x;
+    }
+    /* 宽度不在这里落：刷新时才知道是几位数；布局若先按两位写死，
+       正在显示的 "100" 会被挤成两行（本机实测）。 */
+}
+
 static lv_obj_t *overview_resource_create(lv_obj_t *parent, lv_obj_t *history_parent, int index,
                                           const char *title, uint32_t identity)
 {
@@ -1308,10 +1337,11 @@ static lv_obj_t *overview_resource_create(lv_obj_t *parent, lv_obj_t *history_pa
     /* Size the ring around its widest reading, including both strokes and
        inner breathing room; font height alone makes three digits hit the arc.
        The unit rides on the same line, so it is part of the inner width. */
-    const int32_t stroke = UK_BAR_H / 2;
     const int32_t inner = value_size.x + UK_S1 + unit_size.x;
-    const int32_t diameter = LV_MAX(inner, value_size.y) +
-                             2 * (stroke + UK_S2);
+    /* 直径与笔画互相依赖：先用最小笔画估一次，再用它算出的笔画重算一圈。 */
+    int32_t diameter = LV_MAX(inner, value_size.y) + 2 * (ring_stroke(inner) + UK_S2);
+    const int32_t stroke = ring_stroke(diameter);
+    diameter = LV_MAX(inner, value_size.y) + 2 * (stroke + UK_S2);
     lv_obj_set_height(metric, diameter);
     lv_obj_set_flex_align(metric, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     r->gauge = lv_arc_create(metric);
@@ -1326,6 +1356,9 @@ static lv_obj_t *overview_resource_create(lv_obj_t *parent, lv_obj_t *history_pa
     lv_obj_set_style_arc_width(r->gauge, stroke, LV_PART_INDICATOR);
     lv_obj_set_style_arc_color(r->gauge, uk_c(UK_SURF_S3), LV_PART_MAIN);
     lv_obj_set_style_arc_color(r->gauge, uk_c(identity), LV_PART_INDICATOR);
+    /* 粗笔画配圆头：平头在 10px 宽时会显得像被裁掉。 */
+    lv_obj_set_style_arc_rounded(r->gauge, true, LV_PART_MAIN);
+    lv_obj_set_style_arc_rounded(r->gauge, true, LV_PART_INDICATOR);
     /* 读数是一个整体："37%" 同一基线，而不是大数字下面挂一个 % 脚注。 */
     lv_obj_t *reading = uk_row_box(r->gauge, 0);
     lv_obj_set_size(reading, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
@@ -4422,6 +4455,10 @@ static void overview_layout(void)
         if (!rr->metric || !rr->gauge) continue;
         lv_obj_set_height(rr->metric, ring);
         lv_obj_set_size(rr->gauge, ring, ring);
+        const int32_t stroke = ring_stroke(ring);
+        lv_obj_set_style_arc_width(rr->gauge, stroke, LV_PART_MAIN);
+        lv_obj_set_style_arc_width(rr->gauge, stroke, LV_PART_INDICATOR);
+        ring_reading_fit(rr, ring, stroke);
     }
     /* 状态瓦片两行铺满卡体：卡体 = hero - 48（实测卡头与边距），瓦片 = (卡体 - 缝) / 2。
        不撑开时两行只占 139px，卡底会留一条空带；读数行 47 + 图标行 17 是硬下限。 */
@@ -4442,6 +4479,11 @@ static void overview_refresh(const fnos_status_t *st)
         bool readable = overview_readable(st, modules[i]);
         bool live = readable && overview_live(st, modules[i]);
         float pct = i == 0 ? st->cpu.pct : st->mem.pct;
+        /* 遮罩跟着位数走：37 与 % 之间不该常驻为 100 预留的空隙；
+           同位数切换时遮罩不变，数字过渡照旧。 */
+        const int digits = !readable ? 2 : pct >= 99.5f ? 3 : pct >= 9.5f ? 2 : 1;
+        if (r->num_mask[digits - 1] && lv_obj_get_style_width(r->value, 0) != r->num_mask[digits - 1])
+            lv_obj_set_width(r->value, r->num_mask[digits - 1]);
         (live ? set_num : set_txt)(r->value, readable ? "%.0f" : "--", pct);
         set_txt(r->unit, "%s", readable ? "%" : "");
         if (!readable) (live ? set_num : set_txt)(r->meta, "%s", st->ever_ok && state ? mod_status_cn(state) : "等待数据");
@@ -5118,6 +5160,19 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
         if (ysp) *ysp = '\0';
         set_txt(s_ui.net_ylab[1], "%s", b);
         set_txt(s_ui.net_ylab[0], "0");
+        /* 刻度槽跟着最宽刻度走：四位数值不该被固定槽宽裁掉。 */
+        lv_obj_t *gut = lv_obj_get_parent(s_ui.net_ylab[0]);
+        if (gut) {
+            int32_t widest = 0;
+            for (int i = 0; i < 3; i++) {
+                lv_point_t s;
+                lv_text_get_size(&s, lv_label_get_text(s_ui.net_ylab[i]), UK_FONT_CJK_12,
+                                 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+                if (s.x > widest) widest = s.x;
+            }
+            const int32_t want = LV_CLAMP(30, widest + UK_S1, 64);
+            if (lv_obj_get_style_width(gut, 0) != want) lv_obj_set_width(gut, want);
+        }
         (net_live ? set_num : set_txt)(s_ui.tr_tx_lbl, "%s · 峰 %s",
                 net_readable ? fmt_rate(c1, sizeof c1, st->net.tx_kbs) : "--", fmt_rate(c2, sizeof c2, peak_tx));
         (net_live ? set_num : set_txt)(s_ui.tr_rx_lbl, "%s · 峰 %s",
