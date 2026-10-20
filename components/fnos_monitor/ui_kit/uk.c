@@ -175,6 +175,10 @@ lv_obj_t *uk_row_box(lv_obj_t *content, int32_t grow)
     lv_obj_set_style_pad_column(r, UK_PANEL_GAP, 0);
     lv_obj_set_flex_flow(r, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(r, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    /* Rows are layout, not scroll surfaces: a 1px content overshoot used to paint a
+       faint 3px scrollbar strip down the row's right edge (the stray hairlines on the
+       network chart and inside cards). Nothing is reachable by scrolling a row anyway. */
+    lv_obj_set_scrollbar_mode(r, LV_SCROLLBAR_MODE_OFF);
     if (grow > 0) lv_obj_set_flex_grow(r, (uint8_t)grow);
     else          lv_obj_set_height(r, LV_SIZE_CONTENT);
     return r;
@@ -799,9 +803,10 @@ uk_kpi_t *uk_kpi_create(lv_obj_t *parent, const char *label)
     lv_obj_set_flex_flow(vr, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(vr, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
 
+    /* The reading is one atom: the unit sits right after the value. Letting the
+       value grow pushed "MB/s" to the far edge of the card, where it read as a
+       separate element instead of the number's unit. */
     k->val  = mk_label_raw(vr, UK_TYPE_METRIC, UK_T1);
-    lv_obj_set_width(k->val, 0);
-    lv_obj_set_flex_grow(k->val, 1);
     lv_obj_set_style_min_width(k->val, 0, 0);
     lv_label_set_long_mode(k->val, LV_LABEL_LONG_MODE_CLIP);
     k->unit = mk_label_raw(vr, UK_TYPE_CAPTION, UK_T3);

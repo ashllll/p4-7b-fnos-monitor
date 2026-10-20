@@ -2100,20 +2100,28 @@ static void verify_overview_charts(void)
     lv_obj_get_coords(page, &page_area);
     assert(lv_area_get_width(&screen_area) == 1024 && lv_area_get_height(&screen_area) == 600);
     assert(lv_obj_get_scroll_y(page) == 0);
-    assert(lv_obj_get_parent(cards[0]) == lv_obj_get_parent(cards[1]) &&
-           lv_obj_get_parent(cards[1]) == lv_obj_get_parent(cards[2]) &&
-           lv_obj_get_child_count(lv_obj_get_parent(cards[0])) == 3);
-    assert(lv_obj_get_parent(cards[3]) == lv_obj_get_parent(cards[4]) &&
-           lv_obj_get_parent(cards[4]) == lv_obj_get_parent(cards[5]) &&
-           lv_obj_get_child_count(lv_obj_get_parent(cards[3])) == 3);
-    assert(lv_obj_get_parent(cards[6]) == lv_obj_get_parent(cards[7]) &&
-           lv_obj_get_parent(cards[7]) == lv_obj_get_parent(cards[8]) &&
-           lv_obj_get_child_count(lv_obj_get_parent(cards[6])) == 3);
-    const int32_t reference_width = lv_obj_get_width(cards[0]);
-    const int32_t reference_height = lv_obj_get_height(cards[0]);
+    /* 2026-10-20 首页重排：hero 行（3 张等宽、最高）+ 趋势带（2 张等宽）+ 指标带
+       （4 张，网络卡双宽，因为两列「数值 + 单位」要各自站得下）。行内同父同高。 */
+    lv_obj_t *hero_row = lv_obj_get_parent(cards[0]);
+    lv_obj_t *trend_row = lv_obj_get_parent(cards[3]);
+    lv_obj_t *index_row = lv_obj_get_parent(cards[6]);
+    assert(hero_row && trend_row && index_row &&
+           hero_row != trend_row && trend_row != index_row && hero_row != index_row);
+    assert(lv_obj_get_parent(cards[1]) == hero_row && lv_obj_get_parent(cards[2]) == hero_row);
+    assert(lv_obj_get_child_count(hero_row) == 3);
+    assert(lv_obj_get_parent(cards[4]) == trend_row && lv_obj_get_child_count(trend_row) == 2);
+    assert(lv_obj_get_parent(cards[5]) == index_row && lv_obj_get_parent(cards[7]) == index_row &&
+           lv_obj_get_parent(cards[8]) == index_row && lv_obj_get_child_count(index_row) == 4);
+    assert(lv_obj_get_height(cards[0]) >= lv_obj_get_height(cards[3]) + 60);
+    for (size_t i = 0; i < 3; i++) {
+        assert(lv_obj_get_height(cards[i]) == lv_obj_get_height(cards[0]));
+        assert(LV_ABS((int32_t)lv_obj_get_width(cards[i]) - (int32_t)lv_obj_get_width(cards[0])) <= 1);
+    }
+    assert(lv_obj_get_height(cards[4]) == lv_obj_get_height(cards[3]));
+    assert(LV_ABS((int32_t)lv_obj_get_width(cards[4]) - (int32_t)lv_obj_get_width(cards[3])) <= 1);
+    for (size_t i = 5; i < 9; i++) assert(lv_obj_get_height(cards[i]) == lv_obj_get_height(cards[5]));
+    assert(LV_ABS((int32_t)lv_obj_get_width(cards[6]) - 2 * (int32_t)lv_obj_get_width(cards[5])) <= 2);
     for (size_t i = 0; i < sizeof cards / sizeof cards[0]; i++) {
-        assert(LV_ABS((int32_t)lv_obj_get_width(cards[i]) - reference_width) <= 1);
-        assert(LV_ABS((int32_t)lv_obj_get_height(cards[i]) - reference_height) <= 1);
         lv_area_t card_area, visible_area;
         lv_obj_get_coords(cards[i], &card_area);
         assert(card_area.x1 >= screen_area.x1 && card_area.x2 <= screen_area.x2 &&
