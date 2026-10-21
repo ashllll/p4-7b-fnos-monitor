@@ -12,7 +12,7 @@
 
 一个独立屏幕，持续呈现 NAS 的运行状态。日常看仪表、趋势和状态；需要深入时，再进入存储、网络、系统、温度与告警页面。fnOS 配套应用负责采集，开发板负责显示。
 
-> 画面由当前源码通过真实 LVGL 在主机渲染，使用匿名夹具与合成读数；不是个人 NAS 快照或物理屏幕照片。[查看全部 21 张界面与复现说明](docs/images/ui-cuktech-ultra-2026-10-14/README.md)。
+> 画面为 2026-10-14 版本通过真实 LVGL 在主机渲染的匿名样张，使用合成读数；不是当前布局的完整展示、个人 NAS 快照或物理屏幕照片。[查看全部 21 张界面与复现说明](docs/images/ui-cuktech-ultra-2026-10-14/README.md)。当前源码与设备验证见[最近迭代与版本边界](#最近迭代与版本边界)。
 
 ## 一眼掌握，按需深入
 
@@ -83,6 +83,24 @@ export FNOS_SERIAL_PORT='/dev/cu.YOUR_BOARD_PORT'
 ```
 
 `idf.sh` 支持 `FNOS_IDF_ENV=/path/to/activation.sh ./idf.sh build`。源码与配置模板随仓库分发，个人实机固件和 NVS 留在本地。
+
+### 核对烧录来源与 GitHub 一致
+
+需要烧录 GitHub `main` 时，在构建前核对发布工作区：
+
+```bash
+git fetch origin main
+git status --short
+git rev-parse HEAD origin/main
+```
+
+确认工作区无源码改动、两个提交哈希一致，再在这个目录构建和烧录；有差异时先处理差异，不能把另一份开发目录的产物当成该提交的固件。记录提交哈希及本地配置版本，烧录后确认每个写入区域均出现 `Hash of data verified.`，并核对启动日志中的 `ELF file SHA256` 与本次产物一致。激活 ESP-IDF 环境后可读取产物信息：
+
+```bash
+python -m esptool --chip esp32p4 image_info --version 2 build/fnos_monitor.bin
+```
+
+运行诊断 `FNOS_DIAG` 的 `fw` 字段也包含固件指纹前缀。源码一致不要求公开 Wi-Fi、令牌或配对数据；本地配置、NVS、固件与原始日志继续留在本地。不同配置和构建环境可能生成不同固件哈希，因此提交哈希与产物指纹需要分别记录。
 
 ### 3. 连 Wi-Fi 并建立设备信任
 
@@ -219,7 +237,9 @@ export FNOS_SERIAL_PORT='/dev/cu.YOUR_BOARD_PORT'
 ./idf.sh build
 bash tools/preview/run.sh
 python3 tools/stack_check.py
+python3 tools/test_history.py
 python3 tools/test_history_merge.py
+bash tools/parsecheck/run.sh
 ```
 
 默认预览生成 **126 张 1024×600 状态 PNG + 5 张刷新回归 PNG**，执行字形、格式残留、标签溢出、对象越界、触控重叠与对比度审计，并覆盖不同硬件组合和受控分配失败。数字、仪表及切页动效的独立入口见 [预览说明](tools/preview/README.md)。本页产品图仍为 2026-10-14 的匿名样张，文件映射与校验值见 [图片清单](docs/images/ui-cuktech-ultra-2026-10-14/manifest.json)；最新布局与游标行为以以下文档和源码为准。
@@ -231,7 +251,9 @@ python3 tools/test_history_merge.py
 
 ### 最近迭代与版本边界
 
-- **当前 UI 与动效（2026-10-20）**：首页大环表与状态瓦片、告警事件流、单位锚点和稳定刷新优化；圆环、条形与曲线均增加附着游标。复用 Ryan Juckett Damped Springs，默认 300 ms、阻尼比 0.85，保留反向惯性与轻微回摆。源码、算法来源、设计决策和复跑命令一同发布；本次游标版本尚未烧录。[实现与验证](docs/ui-ammeter-cursors-2026-10-20.md) · [算法选型](docs/ui-spring-library-research-2026-10-20.md) · [ADR-0005](docs/adr/0005-library-springs-and-attached-cursors.md)。
+- **源码与设备对齐（2026-10-21）**：从 GitHub `main` 的 [`d453cac`](https://github.com/ashllll/p4-7b-fnos-monitor/commit/d453caca76eb9bfc2b7731b0d725dc20d4a7f1ad) 在发布目录构建并烧录，覆盖当前 UI、游标和解析优化。ESP-IDF 5.5.3 构建通过，三个写入区域哈希校验通过；启动日志与运行诊断中的 ELF 指纹匹配本次产物。45 秒串口观察累计轮询成功 150 次、失败 0 次，未发现崩溃或重启循环；实体屏幕显示总览页。照片有反光与局部裁切，本次未完成完整触控、动画手感或长期运行验收。设备已保留 Wi-Fi 与配对配置；回滚备份、原始日志和照片仅保存在本地。
+- **解析与内存优化（2026-10-21）**：快照字符串直接复制、空值复用常量，历史行改为单次顺序读取，保持所有权、字节预算与输入校验。匿名主机样本每帧快照分配从 1051 次降至 833 次、申请字节从 41926 B 降至 38220 B；2000 次解析 CPU 耗时中位数减少约 32%，不代表 ESP32-P4 实机性能。ASan/UBSan、14 个历史场景、11 个合并场景及大帧解析检查通过，两个生产 C 文件的交叉编译静态分析零诊断。[测量条件与验证范围](docs/ponytail-optimization-2026-10-21.md)记录的是优化阶段，后续烧录结果以上一条为准。
+- **当前 UI 与动效（2026-10-20）**：首页大环表与状态瓦片、告警事件流、单位锚点和稳定刷新优化；圆环、条形与曲线均增加附着游标。复用 Ryan Juckett Damped Springs，当前默认响应 600 ms、频率因子 8、临界阻尼比 1.0，数字共享 600 ms 呈现节拍；趋势显示平滑与真实采样历史分离。源码、算法来源、设计决策和复跑命令一同发布。[阶段实现与验证](docs/ui-ammeter-cursors-2026-10-20.md) · [算法选型](docs/ui-spring-library-research-2026-10-20.md) · [当前 ADR-0005](docs/adr/0005-library-springs-and-attached-cursors.md)。历史文档中的“尚未烧录”仅指该阶段。
 - **ULTRA 配色基线（2026-10-14）**：统一六页与配网／配对／详情，黄色改蓝色，粉红改朱红；历史曲线保持指标身份色，占用率只改变局部弧／条。README 同步 21 张匿名产品与阈值图。默认预览、模板构建、并行审查与开发板烧录通过；30 秒串口观察失败计数为 0。[设计](docs/ui-cuktech-ultra-2026-10-14.md) · [该阶段归档与验证](docs/ui-ultra-release-2026-10-14.md)。
 
 - **前一阶段界面基线 `7647d9b`**：CUKTECH 六页横屏、连续阻尼与新鲜度修复；模板构建、主机回归、静态检查、烧录哈希与短时串口观察已完成。[完整验证记录](docs/skills-workflow-2026-10-14.md)。
@@ -259,7 +281,7 @@ python3 tools/test_history_merge.py
 | 安装与维护 NAS 应用 | [飞牛应用](nas/fpk/README.md) · [可选旧采集器](nas/README.md) |
 | 理解当前界面与动效 | [首页与图标布局](docs/ui-craft-2026-10-20.md) · [附着游标与库阻尼](docs/ui-ammeter-cursors-2026-10-20.md) · [算法选型](docs/ui-spring-library-research-2026-10-20.md) · [ULTRA 配色](docs/ui-cuktech-ultra-2026-10-14.md) |
 | 复现产品图与主机检查 | [截图来源](docs/images/ui-cuktech-ultra-2026-10-14/README.md) · [预览工具](tools/preview/README.md) |
-| 查看最新验证和剩余事项 | [本轮发布归档](docs/ui-ultra-release-2026-10-14.md) · [历史 Skills 全流程](docs/skills-workflow-2026-10-14.md) · [缺陷复核](docs/ui-post-motion-audit-2026-10-14.md) · [未闭环事项](docs/open-items-2026-10-11.md) |
+| 查看最新验证和剩余事项 | [当前源码与设备验证](#最近迭代与版本边界) · [解析优化与回归](docs/ponytail-optimization-2026-10-21.md) · [历史发布归档](docs/ui-ultra-release-2026-10-14.md) · [缺陷复核](docs/ui-post-motion-audit-2026-10-14.md) · [未闭环事项](docs/open-items-2026-10-11.md) |
 | 理解源码与架构 | [固件](components/fnos_monitor/) · [共享 UI](components/fnos_monitor/ui_kit/) · [原生 UI 架构](docs/ui-v12-lvgl-native.md) · [ADR](docs/adr/README.md) |
 | 配置显示与资源 | [Kconfig](components/fnos_monitor/Kconfig) · [硬件清单验证](docs/ui-hardware-adaptive-audit-2026-10-08.md) |
 | 参与工程协作 | [术语表](GLOSSARY.md) · [领域约定](docs/agents/domain.md) · [任务入口](docs/agents/issue-tracker.md) |
