@@ -10,9 +10,9 @@ fnOS 配套应用负责采集，ESP32-P4 的 7 英寸触控屏负责显示。抬
 
 [快速开始](#快速开始) · [六页界面](#界面预览) · [验证状态](#验证状态) · [常见问题](#常见问题) · [文档导航](#文档导航)
 
-![总览：CPU 与内存仪表、设备状态、网络、存储容量和最高温度](docs/images/ui-cuktech-ultra-2026-10-14/overview.png)
+![总览：CPU 与内存仪表、设备状态、网络、存储容量和最高温度](docs/images/ui-current-2026-10-21/overview.png)
 
-*2026-10-14 版本的真实 LVGL 主机渲染，使用匿名夹具与合成读数。图片保留当时布局；当前版本已加入附着游标和刷新优化。[全部 21 张样张与来源](docs/images/ui-cuktech-ultra-2026-10-14/README.md)。*
+*2026-10-21 从当前发布源码生成的真实 LVGL 主机渲染，使用匿名夹具与合成读数，展示最新布局与附着游标。[全部 21 张样张、源码与图片校验值](docs/images/ui-current-2026-10-21/README.md)。*
 
 ## 日常看状态，需要时看细节
 
@@ -123,7 +123,7 @@ python -m esptool --chip esp32p4 image_info --version 2 build/fnos_monitor.bin
 
 ## 界面预览
 
-总览之后，五个页面分别回答一个问题。以下仍为 2026-10-14 匿名样张；详情窗口保留打开时的快照，便于稳定阅读。
+总览之后，五个页面分别回答一个问题。以下为当前发布源码的匿名主机样张；详情窗口保留打开时的快照，便于稳定阅读。
 
 - **存储**：可用容量、存储卷、阵列、磁盘健康与读写。
 - **网络**：收发速率、双线趋势和接口状态。
@@ -131,30 +131,30 @@ python -m esptool --chip esp32p4 image_info --version 2 build/fnos_monitor.bin
 - **温度**：最热设备及展开后的完整温度通道。
 - **告警**：按严重程度筛选事件，无告警时查看采集体检。
 
-![存储页：容量摘要、存储卷与阵列健康](docs/images/ui-cuktech-ultra-2026-10-14/storage.png)
+![存储页：容量摘要、存储卷与阵列健康](docs/images/ui-current-2026-10-21/storage.png)
 
 <details>
 <summary>展开网络、系统、温度与告警页面</summary>
 
 ### 网络
 
-![网络页：收发速率、双线趋势与接口状态](docs/images/ui-cuktech-ultra-2026-10-14/network.png)
+![网络页：收发速率、双线趋势与接口状态](docs/images/ui-current-2026-10-21/network.png)
 
 ### 系统
 
-![系统页：容器、硬件温度与系统摘要](docs/images/ui-cuktech-ultra-2026-10-14/system.png)
+![系统页：容器、硬件温度与系统摘要](docs/images/ui-current-2026-10-21/system.png)
 
 ### 温度
 
-![温度页：最高温、趋势与设备通道](docs/images/ui-cuktech-ultra-2026-10-14/temperature.png)
+![温度页：最高温、趋势与设备通道](docs/images/ui-current-2026-10-21/temperature.png)
 
 ### 告警
 
-![告警页：按严重程度筛选事件](docs/images/ui-cuktech-ultra-2026-10-14/alerts.png)
+![告警页：按严重程度筛选事件](docs/images/ui-current-2026-10-21/alerts.png)
 
 </details>
 
-配网键盘、证书确认、详情、诊断和夜间模式见[完整界面图集](docs/images/ui-cuktech-ultra-2026-10-14/README.md)。夜间背光和触摸手感仍需在真实屏幕上体验。
+配网键盘、证书确认、详情、诊断和夜间模式见[完整界面图集](docs/images/ui-current-2026-10-21/README.md)。夜间背光和触摸手感仍需在真实屏幕上体验。
 
 ## 两端如何连接
 
@@ -229,7 +229,7 @@ python3 tools/test_history_merge.py
 bash tools/parsecheck/run.sh
 ```
 
-默认预览生成 **126 张状态图 + 5 张刷新回归图**，检查字形、格式残留、溢出、对象越界、触控重叠和对比度，覆盖不同硬件清单及受控分配失败。动效、硬件矩阵和专项回归命令见[预览工具说明](tools/preview/README.md)。
+默认预览生成 **126 张状态图 + 11 张刷新回归图**，检查字形、格式残留、溢出、对象越界、触控重叠和对比度，覆盖不同硬件清单及受控分配失败。动效、硬件矩阵和专项回归命令见[预览工具说明](tools/preview/README.md)。
 
 字体 C 文件已生成，可直接构建。改界面文案或字库后，先运行 `bash tools/gen_fonts.sh` 再预览。固件发布使用独立发布目录与明确文件清单，真实配置、日志和实机产物不进入源码仓库。
 
@@ -242,7 +242,7 @@ bash tools/parsecheck/run.sh
 
 ## 文档导航
 
-- **安装与使用**：[飞牛应用](nas/fpk/README.md) · [可选旧采集器](nas/README.md) · [完整界面图集](docs/images/ui-cuktech-ultra-2026-10-14/README.md)
+- **安装与使用**：[飞牛应用](nas/fpk/README.md) · [可选旧采集器](nas/README.md) · [完整界面图集](docs/images/ui-current-2026-10-21/README.md)
 - **设计与架构**：[设计总览](docs/design-overview-2026-10-14.md) · [原生 UI 架构](docs/ui-v12-lvgl-native.md) · [ADR](docs/adr/README.md) · [图表可编辑源文件](docs/diagrams/README.md)
 - **验证与改进**：[主机预览](tools/preview/README.md) · [解析优化](docs/ponytail-optimization-2026-10-21.md) · [硬件自适应](docs/ui-hardware-adaptive-audit-2026-10-08.md) · [未闭环事项](docs/open-items-2026-10-11.md)
 - **参与开发**：[固件源码](components/fnos_monitor/) · [共享 UI](components/fnos_monitor/ui_kit/) · [术语表](GLOSSARY.md) · [领域约定](docs/agents/domain.md) · [任务入口](docs/agents/issue-tracker.md)
