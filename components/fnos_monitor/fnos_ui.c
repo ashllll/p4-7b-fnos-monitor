@@ -363,13 +363,13 @@ static void chip_set_glow(lv_obj_t *chip, const char *txt, uint32_t rgb)
     lv_obj_t *lbl = lv_obj_get_child(chip, 1);   /* 第 1 个是文字 */
     if (lbl) {
         set_txt(lbl, "%s", txt);
-        lv_obj_set_style_text_color(lbl, uk_c(rgb), 0);
+        uk_style_color(lbl, LV_STYLE_TEXT_COLOR, uk_c(rgb), 0);
     }
     if (dot) {
-        lv_obj_set_style_bg_color(dot, uk_c(rgb), 0);
-        lv_obj_set_style_shadow_color(dot, uk_c(rgb), 0);
-        lv_obj_set_style_shadow_width(dot, UK_GLOW_W, 0);
-        lv_obj_set_style_shadow_opa(dot, 0, 0);
+        uk_style_color(dot, LV_STYLE_BG_COLOR, uk_c(rgb), 0);
+        uk_style_color(dot, LV_STYLE_SHADOW_COLOR, uk_c(rgb), 0);
+        uk_style_num(dot, LV_STYLE_SHADOW_WIDTH, UK_GLOW_W, 0);
+        uk_style_num(dot, LV_STYLE_SHADOW_OPA, 0, 0);
     }
 }
 
@@ -1058,7 +1058,7 @@ static void signal_set(int8_t rssi)
     for (int i = 0; i < 4; i++) {
         /* 信号强度不是"健康状态"：用文本色点亮，不借用状态绿 */
         if (s_ui.h_bars[i])
-            lv_obj_set_style_bg_color(s_ui.h_bars[i], uk_c(i < lit ? UK_T1 : UK_SURF_S3), 0);
+            uk_style_color(s_ui.h_bars[i], LV_STYLE_BG_COLOR, uk_c(i < lit ? UK_T1 : UK_SURF_S3), 0);
     }
 }
 
@@ -1230,12 +1230,12 @@ static int chart_sample_count(lv_obj_t *chart)
 static void dot_glow(lv_obj_t *o, uint32_t hex, lv_opa_t opa)
 {
     if (!o) return;
-    lv_obj_set_style_shadow_color(o, uk_c(hex), 0);
-    lv_obj_set_style_shadow_width(o, UK_GLOW_W, 0);
-    lv_obj_set_style_shadow_offset_x(o, 0, 0);
-    lv_obj_set_style_shadow_offset_y(o, 0, 0);
-    lv_obj_set_style_shadow_spread(o, 2, 0);
-    lv_obj_set_style_shadow_opa(o, opa, 0);
+    uk_style_color(o, LV_STYLE_SHADOW_COLOR, uk_c(hex), 0);
+    uk_style_num(o, LV_STYLE_SHADOW_WIDTH, UK_GLOW_W, 0);
+    uk_style_num(o, LV_STYLE_SHADOW_OFFSET_X, 0, 0);
+    uk_style_num(o, LV_STYLE_SHADOW_OFFSET_Y, 0, 0);
+    uk_style_num(o, LV_STYLE_SHADOW_SPREAD, 2, 0);
+    uk_style_num(o, LV_STYLE_SHADOW_OPA, opa, 0);
 }
 
 /* "12.2 MB/s" → 数值与单位拆开：uk_kpi 的 val/unit 是两个 label，
@@ -1290,19 +1290,17 @@ static lv_obj_t *overview_card(lv_obj_t *parent, const char *title, const char *
    而 96 的小环再细就只剩一圈虚线。环径与笔画必须一起算。 */
 static int32_t ring_stroke(int32_t diameter) { return LV_MAX(6, diameter * 7 / 100); }
 
-/* 读数随环内径自适应：44 放不下就退 32；数值遮罩同步换宽，
-   单位仍与数字同一基线——字号变了，读数还是一个整体。 */
+/* 数字本身居于圆心；百分号放在下方开口，不参与数字的居中计算。 */
 static void ring_reading_fit(overview_resource_t *r, int32_t ring, int32_t stroke)
 {
     if (!r->value) return;
     const int32_t inner = ring - 2 * (stroke + UK_S1);
     if (r->num_mask && r->fitted_inner == inner) return;
-    lv_point_t big, unit;
+    lv_point_t big;
     char maximum[16];
     snprintf(maximum, sizeof maximum, "%ld", (long)(lv_arc_get_max_value(r->gauge) / UK_METER_SCALE));
     lv_text_get_size(&big, maximum, UK_FONT_NUM_44, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-    lv_text_get_size(&unit, "%", UK_TYPE_UNIT, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-    const bool wide = big.x + UK_S1 + unit.x <= inner;
+    const bool wide = big.x <= inner;
     const lv_font_t *font = wide ? UK_FONT_NUM_44 : UK_FONT_NUM_32;
     if (lv_obj_get_style_text_font(r->value, 0) != font) lv_obj_set_style_text_font(r->value, font, 0);
     lv_point_t size;
@@ -1312,6 +1310,12 @@ static void ring_reading_fit(overview_resource_t *r, int32_t ring, int32_t strok
     uk_number_settle(r->value);
     lv_obj_set_width(r->value, r->num_mask);
     lv_obj_set_height(r->value, lv_font_get_line_height(font));
+    lv_font_glyph_dsc_t glyph;
+    int32_t y = 0;
+    if (lv_font_get_glyph_dsc(font, &glyph, '0', 0))
+        y = font->base_line + glyph.ofs_y + ((int32_t)glyph.box_h - font->line_height) / 2;
+    lv_obj_align(r->value, LV_ALIGN_CENTER, 0, y);
+    lv_obj_align(r->unit, LV_ALIGN_BOTTOM_MID, 0, -stroke / 2);
 }
 
 static lv_obj_t *overview_resource_create(lv_obj_t *parent, lv_obj_t *history_parent, int index,
@@ -1366,19 +1370,14 @@ static lv_obj_t *overview_resource_create(lv_obj_t *parent, lv_obj_t *history_pa
     /* 粗笔画配圆头：平头在 10px 宽时会显得像被裁掉。 */
     lv_obj_set_style_arc_rounded(r->gauge, true, LV_PART_MAIN);
     lv_obj_set_style_arc_rounded(r->gauge, true, LV_PART_INDICATOR);
-    /* 读数是一个整体："37%" 同一基线，而不是大数字下面挂一个 % 脚注。 */
-    lv_obj_t *reading = uk_row_box(r->gauge, 0);
-    lv_obj_set_size(reading, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-    lv_obj_set_style_pad_column(reading, UK_S1, 0);
-    lv_obj_set_flex_align(reading, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
-    lv_obj_align(reading, LV_ALIGN_CENTER, 0, 0);
-    r->value = uk_label(reading, number, UK_T1, "--");
+    r->value = uk_label(r->gauge, number, UK_T1, "--");
     /* A fixed measured mask lets narrower digits animate without cropping
        outgoing glyphs or shifting the instrument's visual centre. */
     lv_obj_set_width(r->value,value_size.x);
-    lv_obj_set_style_text_align(r->value,LV_TEXT_ALIGN_RIGHT,0);
-    r->unit = uk_label(reading, UK_TYPE_UNIT, UK_T3, "%");
-    lv_obj_set_style_pad_bottom(r->unit, UK_UNIT_BASELINE, 0);
+    lv_obj_set_style_text_align(r->value,LV_TEXT_ALIGN_CENTER,0);
+    lv_obj_align(r->value, LV_ALIGN_CENTER, 0, 0);
+    r->unit = uk_label(r->gauge, UK_TYPE_UNIT, UK_T3, "%");
+    lv_obj_align(r->unit, LV_ALIGN_BOTTOM_MID, 0, -stroke / 2);
     r->meta = uk_label(body, UK_FONT_CJK_12, UK_T3, "等待数据");
     lv_obj_set_width(r->meta, LV_PCT(100));
     lv_label_set_long_mode(r->meta, LV_LABEL_LONG_MODE_WRAP);
@@ -1392,6 +1391,7 @@ static lv_obj_t *overview_resource_create(lv_obj_t *parent, lv_obj_t *history_pa
     lv_obj_set_style_text_color(uk_card_note(r->chart_card), uk_c(identity), 0);
     body = uk_card_body(r->chart_card);
     r->chart = uk_trend_create(body, UI_HIST, 1);
+    uk_trend_enable_flow(r->chart);
     uk_trend_set_range(r->chart, 0, 100);
     lv_chart_set_series_color(r->chart, uk_trend_series(r->chart, 0), uk_c(identity));
     lv_obj_set_style_line_opa(r->chart, LV_OPA_COVER, LV_PART_ITEMS);
@@ -1771,6 +1771,7 @@ static void build_p0(lv_obj_t *page)
     lv_label_set_long_mode(s_ui.overview_note, LV_LABEL_LONG_MODE_WRAP);
 
     s_ui.overview_temp_history = uk_trend_create(body, UI_HIST, 1);
+    uk_trend_enable_flow(s_ui.overview_temp_history);
     lv_chart_set_series_color(s_ui.overview_temp_history,
             uk_trend_series(s_ui.overview_temp_history, 0), uk_c(UK_S_TEMP));
     lv_obj_set_style_min_height(s_ui.overview_temp_history, UK_S4, 0);
@@ -1880,6 +1881,7 @@ static void build_p2(lv_obj_t *page)
     /* 吞吐趋势：标题与量程随数据窗口变（在刷新里改），图区吃掉卡内剩余高度 */
     lv_obj_t *tcard = NULL;
     s_ui.tr_net = trend_card(page, "网络吞吐 · 最近 3 分钟", 2, &tcard, &s_ui.net_axis);
+    uk_trend_enable_flow(s_ui.tr_net);
     s_ui.net_title = uk_card_title(tcard);
     /* Y 刻度：LVGL 5.x 没有轴标签 API；用“38px 标签列 + 图表”两栏，不再贴图对齐。
        “量程 0 - X MB/s”仍由卡头 note 承载单位。 */
@@ -1996,7 +1998,7 @@ static void network_layout(void)
     cols = ((int32_t)count + lines - 1) / lines;
     int32_t card_width = (width - (cols - 1) * gap) / cols;
     for (unsigned i = 0; i < count; i++) {
-        lv_obj_set_flex_grow(s_ui.kpi2[i]->box, 0);
+        uk_style_num(s_ui.kpi2[i]->box, LV_STYLE_FLEX_GROW, 0, 0);
         lv_obj_set_width(s_ui.kpi2[i]->box, card_width);
     }
     lv_obj_update_layout(row);
@@ -2178,6 +2180,7 @@ static void build_p4(lv_obj_t *page)
     /* 趋势图已有轴标签；这行 12px 说明在 476px 页高里挤掉了设备卡。 */
     lv_obj_add_flag(s_ui.temp_history_note, LV_OBJ_FLAG_HIDDEN);
     s_ui.temp_history = uk_trend_create(history_body, UI_HIST, 1);
+    uk_trend_enable_flow(s_ui.temp_history);
     lv_obj_set_flex_grow(s_ui.temp_history, 0);
     lv_obj_set_height(s_ui.temp_history, lv_display_get_vertical_resolution(NULL) / 6);
     lv_chart_set_series_color(s_ui.temp_history, uk_trend_series(s_ui.temp_history, 0), uk_c(UK_S_TEMP));
@@ -2259,8 +2262,8 @@ static void btn_label(lv_obj_t *b, const lv_font_t *f, uint32_t txt_rgb, const c
     if (!b) return;
     lv_obj_t *l = lv_obj_get_child(b, 0);
     if (!l) return;
-    if (f) lv_obj_set_style_text_font(l, f, 0);
-    if (txt_rgb) lv_obj_set_style_text_color(l, uk_c(txt_rgb), 0);
+    if (f) uk_style_font(l, f, 0);
+    if (txt_rgb) uk_style_color(l, LV_STYLE_TEXT_COLOR, uk_c(txt_rgb), 0);
     if (txt) set_txt(l, "%s", txt);
 }
 
@@ -2289,19 +2292,19 @@ static void btn_skin(lv_obj_t *b, int kind)
     uint32_t bg = (kind == BTN_PRIMARY)   ? UK_BLUE
                 : (kind == BTN_DANGER)    ? UK_DANGER
                 : (kind == BTN_SECONDARY) ? UK_SURF_S2 : UK_SURF_S1;
-    lv_obj_set_style_bg_color(b, uk_c(bg), 0);
-    lv_obj_set_style_bg_opa(b, ghost ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(b, UK_RADIUS_SM, 0);
-    lv_obj_set_style_border_color(b, lv_color_white(), 0);
-    lv_obj_set_style_border_width(b, ghost ? 0 : 1, 0);
+    uk_style_color(b, LV_STYLE_BG_COLOR, uk_c(bg), 0);
+    uk_style_num(b, LV_STYLE_BG_OPA, ghost ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
+    uk_style_num(b, LV_STYLE_RADIUS, UK_RADIUS_SM, 0);
+    uk_style_color(b, LV_STYLE_BORDER_COLOR, lv_color_white(), 0);
+    uk_style_num(b, LV_STYLE_BORDER_WIDTH, ghost ? 0 : 1, 0);
     /* 主操作给一点白色高光边，屏幕暗处也立得住（沿用老 btn_style 的三档） */
-    lv_obj_set_style_border_opa(b, ghost ? LV_OPA_TRANSP
+    uk_style_num(b, LV_STYLE_BORDER_OPA, ghost ? LV_OPA_TRANSP
                                 : (kind == BTN_PRIMARY || kind == BTN_DANGER) ? 45
                                 : (kind == BTN_SECONDARY) ? UK_EDGE_CTRL : 36, 0);
-    lv_obj_set_style_bg_color(b, uk_c(kind == BTN_PRIMARY || kind == BTN_DANGER ? bg : UK_SURF_S3), LV_STATE_PRESSED);
-    lv_obj_set_style_bg_opa(b, LV_OPA_COVER, LV_STATE_PRESSED);
-    lv_obj_set_style_border_opa(b, LV_OPA_COVER, LV_STATE_PRESSED);
-    lv_obj_set_style_translate_y(b, 1, LV_STATE_PRESSED);
+    uk_style_color(b, LV_STYLE_BG_COLOR, uk_c(kind == BTN_PRIMARY || kind == BTN_DANGER ? bg : UK_SURF_S3), LV_STATE_PRESSED);
+    uk_style_num(b, LV_STYLE_BG_OPA, LV_OPA_COVER, LV_STATE_PRESSED);
+    uk_style_num(b, LV_STYLE_BORDER_OPA, LV_OPA_COVER, LV_STATE_PRESSED);
+    uk_style_num(b, LV_STYLE_TRANSLATE_Y, 1, LV_STATE_PRESSED);
 }
 
 /* w > 0：定宽；w == 0：在行里平分宽度。 */
@@ -2395,11 +2398,11 @@ static void alert_row_fill(lv_obj_t *row, const fnos_alert_t *a, bool online)
     lv_obj_t *msg = lv_obj_get_child(row, 1);
     lv_obj_t *tag = lv_obj_get_child(row, 2);
     nav_icon_set_kind(icon, g == 0 ? 5 : g == 1 ? ICON_WARN : ICON_INFO);
-    lv_obj_set_style_line_color(icon, uk_c(online ? col : UK_T3), 0);
+    uk_style_color(icon, LV_STYLE_LINE_COLOR, uk_c(online ? col : UK_T3), 0);
     alert_text_cn(msg, a->m, online ? "" : "上次采集：");
-    lv_obj_set_style_text_color(msg, uk_c(online ? (g == 0 ? UK_T1 : UK_T2) : UK_T3), 0);
+    uk_style_color(msg, LV_STYLE_TEXT_COLOR, uk_c(online ? (g == 0 ? UK_T1 : UK_T2) : UK_T3), 0);
     set_txt(tag, "%s", g == 0 ? "严重" : g == 1 ? "警告" : "提示");
-    lv_obj_set_style_text_color(tag, uk_c(online ? col : UK_T3), 0);
+    uk_style_color(tag, LV_STYLE_TEXT_COLOR, uk_c(online ? col : UK_T3), 0);
 }
 
 static void build_p5(lv_obj_t *page)
@@ -2791,8 +2794,7 @@ static void wifi_render_input(void)
     bool manual = s_wifi_manual;
     if (s_ui.wifi_ssid_lbl) {
         set_txt(s_ui.wifi_ssid_lbl, "%s", s_wifi_ssid[0] ? s_wifi_ssid : "（点这里输入网络名）");
-        lv_obj_set_style_text_color(s_ui.wifi_ssid_lbl,
-                                    uk_c(s_wifi_ssid[0] ? UK_T1 : UK_T3), 0);
+        uk_style_color(s_ui.wifi_ssid_lbl, LV_STYLE_TEXT_COLOR, uk_c(s_wifi_ssid[0] ? UK_T1 : UK_T3), 0);
         field_focus(s_ui.wifi_ssid_box, manual && s_wifi_field == 0);
     }
     if (s_ui.wifi_pw_lbl) {
@@ -2808,8 +2810,7 @@ static void wifi_render_input(void)
             mask[n] = 0;
             set_txt(s_ui.wifi_pw_lbl, "%s", mask);
         }
-        lv_obj_set_style_text_color(s_ui.wifi_pw_lbl,
-                                    uk_c(s_wifi_pw_n ? UK_T1 : UK_T3), 0);
+        uk_style_color(s_ui.wifi_pw_lbl, LV_STYLE_TEXT_COLOR, uk_c(s_wifi_pw_n ? UK_T1 : UK_T3), 0);
         field_focus(s_ui.wifi_pw_box, !manual || s_wifi_field == 1);
     }
     if (s_ui.wifi_eye_lbl) lv_label_set_text_static(s_ui.wifi_eye_lbl, s_wifi_reveal ? "隐藏" : "显示");
@@ -2848,9 +2849,9 @@ static lv_obj_t *wifi_field_box(lv_obj_t *parent, int32_t grow, lv_obj_t **out_l
 /* 正在编辑的那一行描蓝边：整块是白边的时候看不出"键盘往哪儿打字" */
 static void field_focus(lv_obj_t *box, bool on)
 {
-    lv_obj_set_style_border_color(box, uk_c(on ? UK_BLUE : UK_LINE), 0);
-    lv_obj_set_style_border_opa(box, on ? LV_OPA_COVER : UK_EDGE_CTRL, 0);
-    lv_obj_set_style_border_width(box, on ? 2 : 1, 0);
+    uk_style_color(box, LV_STYLE_BORDER_COLOR, uk_c(on ? UK_BLUE : UK_LINE), 0);
+    uk_style_num(box, LV_STYLE_BORDER_OPA, on ? LV_OPA_COVER : UK_EDGE_CTRL, 0);
+    uk_style_num(box, LV_STYLE_BORDER_WIDTH, on ? 2 : 1, 0);
 }
 
 static void wifi_set_stage(int st)
@@ -3075,7 +3076,7 @@ static void wifi_fill_list(void)
             uk_row_t *r = uk_row_create(s_ui.wifi_ap_pool, true, false);
             if (!r) { n = i; break; }
             /* 右侧说明是"3 格 · -54 dBm · 加密"，不是数字，得换 CJK 字体的 16px */
-            lv_obj_set_style_text_font(r->val, UK_FONT_CJK_16, 0);
+            uk_style_font(r->val, UK_FONT_CJK_16, 0);
             /* 点的是整行：行本身必须留着 CLICKABLE，行里的字必须清掉
                （LVGL 9 命中测试会停在可点的子对象上，事件就传不到行了） */
             not_clickable(r->name1); not_clickable(r->name2);
@@ -3101,11 +3102,11 @@ static void wifi_fill_list(void)
                  a->secure ? "加密" : "开放");
         /* 颜色之外还有"格数 + dBm"两种说法，色弱也读得出（版面合同第 9 条） */
         uk_row_set(s_ui.wifi_ap_row[i], a->ssid, NULL, meta, NULL, -1, col);
-        lv_obj_set_style_text_color(s_ui.wifi_ap_row[i]->val, uk_c(col), 0);
+        uk_style_color(s_ui.wifi_ap_row[i]->val, LV_STYLE_TEXT_COLOR, uk_c(col), 0);
         /* 从输密码页退回来时，让用户一眼看到刚才点的是哪一条 */
         bool sel = (s_wifi_sel == i);
-        lv_obj_set_style_bg_color(s_ui.wifi_ap_row[i]->row, uk_c(UK_S2), 0);
-        lv_obj_set_style_bg_opa(s_ui.wifi_ap_row[i]->row, sel ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+        uk_style_color(s_ui.wifi_ap_row[i]->row, LV_STYLE_BG_COLOR, uk_c(UK_S2), 0);
+        uk_style_num(s_ui.wifi_ap_row[i]->row, LV_STYLE_BG_OPA, sel ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
     }
     pool_layout(&s_wifi_ap_n, &s_wifi_ap_w, &s_wifi_ap_h, n, s_ui.wifi_ap_pool, 860, false, NULL);
 
@@ -3146,8 +3147,7 @@ static void wifi_refresh(void)
         else if (ssid[0])                 snprintf(b, sizeof b, "连接中 · %s", ssid);
         else                              snprintf(b, sizeof b, "连接中…");
         set_txt(s_ui.wifi_btn_lbl, "%s", b);
-        lv_obj_set_style_text_color(s_ui.wifi_btn_lbl,
-                                    uk_c(ns == FNOS_NET_UNCONFIGURED || ns == FNOS_NET_FAILED
+        uk_style_color(s_ui.wifi_btn_lbl, LV_STYLE_TEXT_COLOR, uk_c(ns == FNOS_NET_UNCONFIGURED || ns == FNOS_NET_FAILED
                                         ? UK_WARN : ns == FNOS_NET_ONLINE ? UK_T1 : UK_T2), 0);
     }
 
@@ -3166,8 +3166,7 @@ static void wifi_refresh(void)
         btn_label(s_ui.wifi_done, UK_FONT_CJK_16, UK_ON_PRIMARY, on ? "完成" : "修改密码");
         if (s_ui.wifi_link_big) {
             set_txt(s_ui.wifi_link_big, "%s", on ? "连接成功" : bad ? "没连上" : "正在连接…");
-            lv_obj_set_style_text_color(s_ui.wifi_link_big,
-                                        uk_c(on ? UK_OK : bad ? UK_WARN : UK_T1), 0);
+            uk_style_color(s_ui.wifi_link_big, LV_STYLE_TEXT_COLOR, uk_c(on ? UK_OK : bad ? UK_WARN : UK_T1), 0);
         }
         if (s_ui.wifi_link_sub) {
             char b[220];
@@ -3425,7 +3424,7 @@ static void pair_layout(bool code, bool fingerprint)
                              0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
             if (size.x > available) font = UK_FONT_NUM_20;
         }
-        for (int i = 0; i < PAIR_FP_LINES; i++) lv_obj_set_style_text_font(s_ui.pair_fp[i], font, 0);
+        for (int i = 0; i < PAIR_FP_LINES; i++) uk_style_font(s_ui.pair_fp[i], font, 0);
     }
     lv_obj_update_layout(s_ui.pair_card);
 }
@@ -3480,10 +3479,10 @@ static void pair_refresh(void)
         if (i < shown_len) {
             char d[2] = { shown[i], 0 };
             set_txt(s_ui.pair_slot[i], "%s", d);
-            lv_obj_set_style_text_color(s_ui.pair_slot[i], uk_c(UK_T1), 0);
+            uk_style_color(s_ui.pair_slot[i], LV_STYLE_TEXT_COLOR, uk_c(UK_T1), 0);
         } else {
             set_txt(s_ui.pair_slot[i], "%s", "-");
-            lv_obj_set_style_text_color(s_ui.pair_slot[i], uk_c(UK_T4), 0);
+            uk_style_color(s_ui.pair_slot[i], LV_STYLE_TEXT_COLOR, uk_c(UK_T4), 0);
         }
     }
 
@@ -3597,9 +3596,9 @@ static void pair_refresh(void)
     if (s_ui.pair_code_sub) {
         if (right_hint[0]) {
             set_txt(s_ui.pair_code_sub, "%s", right_hint);
-            lv_obj_set_style_text_color(s_ui.pair_code_sub, uk_c(UK_WARN), 0);
+            uk_style_color(s_ui.pair_code_sub, LV_STYLE_TEXT_COLOR, uk_c(UK_WARN), 0);
         } else {
-            lv_obj_set_style_text_color(s_ui.pair_code_sub, uk_c(UK_T3), 0);
+            uk_style_color(s_ui.pair_code_sub, LV_STYLE_TEXT_COLOR, uk_c(UK_T3), 0);
         }
     }
     if (show_ok) lv_obj_remove_flag(s_ui.pair_ok, LV_OBJ_FLAG_HIDDEN);
@@ -4045,17 +4044,17 @@ static void temp_blk_fill(int i)
     }
     if (strcmp(lv_label_get_text(b->name), g->name)) s_p4_n = -1;
     set_txt(b->name, "%s", g->name);
-    lv_obj_set_style_text_color(b->name, uk_c(on ? UK_T1 : UK_T3), 0);
+    uk_style_color(b->name, LV_STYLE_TEXT_COLOR, uk_c(on ? UK_T1 : UK_T3), 0);
     (on ? set_num : set_txt)(b->vmax, "%.1f", g->max_c);
-    lv_obj_set_style_text_color(b->vmax, uk_c(color), 0);
-    lv_obj_set_style_bg_color(b->led, uk_c(color), 0);
+    uk_style_color(b->vmax, LV_STYLE_TEXT_COLOR, uk_c(color), 0);
+    uk_style_color(b->led, LV_STYLE_BG_COLOR, uk_c(color), 0);
     dot_glow(b->led, color, on ? UK_GLOW_OPA : 0);
 
     /* Equal lengths mean equal temperatures; full scale is the high reference. */
     if (b->bar) {
         lv_bar_set_range(b->bar, 0, (int32_t)UK_TEMP_DANGER * UK_METER_SCALE);
         uk_meter_set(b->bar, (int32_t)lroundf(fminf(UK_TEMP_DANGER, fmaxf(0, g->max_c)) * UK_METER_SCALE), on);
-        lv_obj_set_style_bg_color(b->bar, uk_c(on ? UK_S_TEMP : UK_OFF), LV_PART_INDICATOR);
+        uk_style_color(b->bar, LV_STYLE_BG_COLOR, uk_c(on ? UK_S_TEMP : UK_OFF), LV_PART_INDICATOR);
     }
 
     int count = b->collapsed || g->inline_ch ? 0 : g->count;
@@ -4070,7 +4069,7 @@ static void temp_blk_fill(int i)
         temp_ch_t *ch = &b->channels[k];
         set_txt(ch->name, "%s", t->ch[0] ? t->ch : "温度");
         (on ? set_num : set_txt)(ch->val, "%.1f", t->c);
-        lv_obj_set_style_text_color(ch->val, uk_c(on ? uk_temp_color(t->c) : UK_T3), 0);
+        uk_style_color(ch->val, LV_STYLE_TEXT_COLOR, uk_c(on ? uk_temp_color(t->c) : UK_T3), 0);
         show(ch->line, true);
     }
     for (int k = count; k < b->made; k++) show(b->channels[k].line, false);
@@ -4084,7 +4083,7 @@ static void temp_blk_fill(int i)
         show(b->more, true);
         lv_obj_move_to_index(b->more, -1);
     } else show(b->more, false);
-    lv_obj_set_style_text_color(b->more, uk_c(UK_T3), 0);
+    uk_style_color(b->more, LV_STYLE_TEXT_COLOR, uk_c(UK_T3), 0);
     temp_grid_relayout(b);
 }
 
@@ -4408,28 +4407,6 @@ static const char *docker_module_note(const fnos_status_t *st)
     return mod_status_cn(state); /* Includes stale/partial and future status words. */
 }
 
-/* Compare local values, not computed styles: keep explicit overrides even when
- * the inherited/theme value happens to match. LVGL setters invalidate on repeats. */
-static void overview_style_num(lv_obj_t *obj, lv_style_prop_t prop, int32_t value,
-                               lv_style_selector_t selector)
-{
-    lv_style_value_t current;
-    if (lv_obj_get_local_style_prop(obj, prop, &current, selector) == LV_STYLE_RES_FOUND &&
-        current.num == value) return;
-    lv_style_value_t next = { .num = value };
-    lv_obj_set_local_style_prop(obj, prop, next, selector);
-}
-
-static void overview_style_color(lv_obj_t *obj, lv_style_prop_t prop, lv_color_t value,
-                                 lv_style_selector_t selector)
-{
-    lv_style_value_t current;
-    if (lv_obj_get_local_style_prop(obj, prop, &current, selector) == LV_STYLE_RES_FOUND &&
-        lv_color_eq(current.color, value)) return;
-    lv_style_value_t next = { .color = value };
-    lv_obj_set_local_style_prop(obj, prop, next, selector);
-}
-
 static void overview_layout(void)
 {
     if (s_ui.overview_volumes) {
@@ -4443,7 +4420,7 @@ static void overview_layout(void)
         lv_obj_update_layout(s_ui.overview_volumes);
         int32_t readable = uk_list_readable_min(s_ui.overview_volumes,
                                                 uk_list_promise(s_ui.overview_volumes));
-        if (readable > 0) overview_style_num(s_ui.overview_volumes, LV_STYLE_MIN_HEIGHT, readable, 0);
+        if (readable > 0) uk_style_num(s_ui.overview_volumes, LV_STYLE_MIN_HEIGHT, readable, 0);
     }
     /* Layered rows, not three equal bands: the instruments own the top of the
      * page (a hero row), the history and comparison rows keep only the height
@@ -4460,14 +4437,14 @@ static void overview_layout(void)
     for (unsigned r = 0; r < sizeof s_ui.overview_rows / sizeof s_ui.overview_rows[0]; r++) {
         lv_obj_t *row = s_ui.overview_rows[r];
         if (!row) continue;
-        overview_style_num(row, LV_STYLE_FLEX_GROW, 0, 0);
+        uk_style_num(row, LV_STYLE_FLEX_GROW, 0, 0);
         lv_obj_update_layout(row);
         for (uint32_t i = 0; i < lv_obj_get_child_count(row); i++) {
             lv_obj_t *card = lv_obj_get_child(row, i);
             lv_obj_set_width(card, 0);
-            overview_style_num(card, LV_STYLE_MIN_HEIGHT, 0, 0);
+            uk_style_num(card, LV_STYLE_MIN_HEIGHT, 0, 0);
         }
-        overview_style_num(row, LV_STYLE_MIN_HEIGHT, heights[r], 0);
+        uk_style_num(row, LV_STYLE_MIN_HEIGHT, heights[r], 0);
         lv_obj_set_height(row, heights[r]);
     }
     /* Ring = hero row minus card chrome: pads, title, meta line and their gaps. */
@@ -4478,8 +4455,8 @@ static void overview_layout(void)
         lv_obj_set_height(rr->metric, ring);
         lv_obj_set_size(rr->gauge, ring, ring);
         const int32_t stroke = ring_stroke(ring);
-        overview_style_num(rr->gauge, LV_STYLE_ARC_WIDTH, stroke, LV_PART_MAIN);
-        overview_style_num(rr->gauge, LV_STYLE_ARC_WIDTH, stroke, LV_PART_INDICATOR);
+        uk_style_num(rr->gauge, LV_STYLE_ARC_WIDTH, stroke, LV_PART_MAIN);
+        uk_style_num(rr->gauge, LV_STYLE_ARC_WIDTH, stroke, LV_PART_INDICATOR);
         ring_reading_fit(rr, ring, stroke);
     }
     /* 状态瓦片两行铺满卡体：卡体 = hero - 48（实测卡头与边距），瓦片 = (卡体 - 缝) / 2。
@@ -4512,9 +4489,9 @@ static void overview_refresh(const fnos_status_t *st)
         else set_txt(uk_card_note(r->chart_card), "%s", live ? "等待采样" : readable ? "旧历史" : "不可用");
         uk_meter_set(r->gauge, readable ? (int32_t)lroundf(fminf(100, fmaxf(0, pct)) * UK_METER_SCALE) : 0, live);
         const uint32_t usage_color = live ? uk_pct_color(pct) : UK_OFF;
-        overview_style_color(r->gauge, LV_STYLE_ARC_COLOR, uk_c(usage_color), LV_PART_INDICATOR);
-        overview_style_color(r->gauge, LV_STYLE_BG_COLOR, uk_c(live ? UK_T1 : UK_OFF), LV_PART_KNOB);
-        overview_style_num(r->gauge, LV_STYLE_BG_OPA, readable ? LV_OPA_COVER : LV_OPA_TRANSP, LV_PART_KNOB);
+        uk_style_color(r->gauge, LV_STYLE_ARC_COLOR, uk_c(usage_color), LV_PART_INDICATOR);
+        uk_style_color(r->gauge, LV_STYLE_BG_COLOR, uk_c(live ? UK_T1 : UK_OFF), LV_PART_KNOB);
+        uk_style_num(r->gauge, LV_STYLE_BG_OPA, readable ? LV_OPA_COVER : LV_OPA_TRANSP, LV_PART_KNOB);
         /* History keeps its metric identity; only the current gauge encodes load. */
         lv_chart_series_t *series = uk_trend_series(r->chart, 0);
         lv_color_t history_color = uk_c(i == 0 ? UK_S_CPU : UK_S_MEM);
@@ -4522,10 +4499,10 @@ static void overview_refresh(const fnos_status_t *st)
             lv_chart_set_series_color(r->chart, series, history_color);
         show(r->meta, true);
         if (r->context) show(r->context, !live || !chart_sample_count(r->chart));
-        overview_style_color(r->value, LV_STYLE_TEXT_COLOR, uk_c(live ? UK_T1 : UK_T3), 0);
+        uk_style_color(r->value, LV_STYLE_TEXT_COLOR, uk_c(live ? UK_T1 : UK_T3), 0);
 
         show(r->chart, readable);
-        overview_style_num(r->chart, LV_STYLE_OPA, live ? LV_OPA_COVER : LV_OPA_40, 0);
+        uk_style_num(r->chart, LV_STYLE_OPA, live ? LV_OPA_COVER : LV_OPA_40, 0);
         if (r->context) {
             if (!readable) (live ? set_num : set_txt)(r->context, "无有效读数");
             else if (!chart_sample_count(r->chart)) (live ? set_num : set_txt)(r->context, "等待历史采样");
@@ -4546,7 +4523,7 @@ static void overview_refresh(const fnos_status_t *st)
         set_num(s_ui.overview_clock, "--:--");
         set_txt(s_ui.overview_clock_lab, "运行时长");
     }
-    overview_style_color(s_ui.overview_clock, LV_STYLE_TEXT_COLOR, uk_c(system_live ? UK_T1 : UK_T3), 0);
+    uk_style_color(s_ui.overview_clock, LV_STYLE_TEXT_COLOR, uk_c(system_live ? UK_T1 : UK_T3), 0);
 
     bool net_readable = overview_readable(st, "net");
     bool net_live = net_readable && overview_live(st, "net");
@@ -4558,7 +4535,7 @@ static void overview_refresh(const fnos_status_t *st)
         rate_split(b, &v, &unit);
         uk_number_set_reading(s_ui.overview_rate[i], s_ui.overview_unit[i],
                               net_readable ? v : "--", net_readable ? unit : "", net_live);
-        overview_style_color(s_ui.overview_rate[i], LV_STYLE_TEXT_COLOR, uk_c(net_live ? UK_T1 : UK_T3), 0);
+        uk_style_color(s_ui.overview_rate[i], LV_STYLE_TEXT_COLOR, uk_c(net_live ? UK_T1 : UK_T3), 0);
     }
     if (!net_readable) {
         const char *state = overview_module_state(st, "net");
@@ -4572,7 +4549,7 @@ static void overview_refresh(const fnos_status_t *st)
     const bool docker_readable = overview_readable(st, "docker");
     const bool docker_live = docker_readable && overview_live(st, "docker");
     (docker_live ? set_num : set_txt)(s_ui.overview_services, docker_readable ? "%d/%d" : "--", running, st->ndocker);
-    overview_style_color(s_ui.overview_services, LV_STYLE_TEXT_COLOR, uk_c(docker_live ? UK_T1 : UK_T3), 0);
+    uk_style_color(s_ui.overview_services, LV_STYLE_TEXT_COLOR, uk_c(docker_live ? UK_T1 : UK_T3), 0);
     const char *docker_note = docker_module_note(st);
     if (!docker_note[0])
         docker_note = !st->ndocker ? "未发现" : running == st->ndocker ? "" : "有停止";
@@ -4590,7 +4567,7 @@ static void overview_refresh(const fnos_status_t *st)
     const bool raid_ok = raid_readable && healthy_raid == st->nraid;
     (raid_live ? set_num : set_txt)(s_ui.overview_raid_val, raid_readable ? "%d/%d" : "--",
                                     healthy_raid, st->nraid);
-    overview_style_color(s_ui.overview_raid_val, LV_STYLE_TEXT_COLOR,
+    uk_style_color(s_ui.overview_raid_val, LV_STYLE_TEXT_COLOR,
                          uk_c(!raid_readable ? UK_T3 : raid_live ? (raid_ok ? UK_T1 : UK_DANGER) : UK_T3), 0);
     set_txt(s_ui.overview_raid_lab, "阵列%s", !raid_readable ? "" : !raid_live ? " · 旧值"
             : raid_ok ? "" : " · 有降级");
@@ -4600,7 +4577,7 @@ static void overview_refresh(const fnos_status_t *st)
     const bool disk_readable = overview_readable(st, "disks");
     const bool disk_live = disk_readable && overview_live(st, "disks");
     (disk_live ? set_num : set_txt)(s_ui.overview_disks_val, disk_readable ? "%d" : "--", st->ndisks);
-    overview_style_color(s_ui.overview_disks_val, LV_STYLE_TEXT_COLOR,
+    uk_style_color(s_ui.overview_disks_val, LV_STYLE_TEXT_COLOR,
                          uk_c(!disk_readable ? UK_T3 : !disk_live ? UK_T3 : bad_disks ? UK_DANGER : UK_T1), 0);
     /* 数值是磁盘总数，异常数量写进标签——否则「磁盘 4 + SMART 异常」会被读成 4 块坏盘。 */
     if (!disk_readable)      set_txt(s_ui.overview_disk_lab, "磁盘");
@@ -4614,7 +4591,7 @@ static void overview_refresh(const fnos_status_t *st)
     else snprintf(b, sizeof b, "--");
     rate_split(b, &capacity_value, &capacity_unit);
     uk_number_set_reading(s_ui.capacity, s_ui.capacity_unit, capacity_value, capacity_unit, storage_live);
-    overview_style_color(s_ui.capacity, LV_STYLE_TEXT_COLOR, uk_c(storage_live ? UK_T1 : UK_T3), 0);
+    uk_style_color(s_ui.capacity, LV_STYLE_TEXT_COLOR, uk_c(storage_live ? UK_T1 : UK_T3), 0);
     if (storage) (storage_live ? set_num : set_txt)(s_ui.capacity_detail, "/ %s", fmt_cap(c1, sizeof c1, total));
     else set_txt(s_ui.capacity_detail, "%s", st->ever_ok ? "没有可用容量数据" : "等待存储数据");
     module_note(s_ui.overview_capacity_card, st, "vols");
@@ -4622,7 +4599,7 @@ static void overview_refresh(const fnos_status_t *st)
             fmt_cap(b, sizeof b, free_gb), st->nvols);
     show(s_ui.capacity_bar, storage);
     uk_meter_set(s_ui.capacity_bar, (total > 0 ? gauge_value(used / total * 100) : 0) * UK_METER_SCALE, storage_live);
-    overview_style_color(s_ui.capacity_bar, LV_STYLE_BG_COLOR, uk_c(storage_live ? uk_pct_color(used / total * 100) : UK_OFF), LV_PART_INDICATOR);
+    uk_style_color(s_ui.capacity_bar, LV_STYLE_BG_COLOR, uk_c(storage_live ? uk_pct_color(used / total * 100) : UK_OFF), LV_PART_INDICATOR);
     int count = storage ? st->nvols : 0;
     if (count > s_ui.overview_volume_capacity) {
         overview_volume_t *grown = uk_realloc(s_ui.overview_volume, (size_t)count * sizeof *grown);
@@ -4678,8 +4655,8 @@ static void overview_refresh(const fnos_status_t *st)
         (storage_live ? set_num : set_txt)(row->value, vol->total_gb > 0 ? "%.0f%%" : "--", vol->pct);
         show(row->bar, vol->total_gb > 0);
         uk_meter_set(row->bar, gauge_value(vol->pct) * UK_METER_SCALE, storage_live);
-        overview_style_color(row->bar, LV_STYLE_BG_COLOR, uk_c(storage_live ? uk_pct_color(vol->pct) : UK_OFF), LV_PART_INDICATOR);
-        overview_style_color(row->value, LV_STYLE_TEXT_COLOR, uk_c(storage_live ? UK_T1 : UK_T3), 0);
+        uk_style_color(row->bar, LV_STYLE_BG_COLOR, uk_c(storage_live ? uk_pct_color(vol->pct) : UK_OFF), LV_PART_INDICATOR);
+        uk_style_color(row->value, LV_STYLE_TEXT_COLOR, uk_c(storage_live ? UK_T1 : UK_T3), 0);
         not_clickable(row->box);
     }
     if (used_flags) lv_free(used_flags);
@@ -4776,14 +4753,14 @@ static void alert_health_sync(const fnos_status_t *st, int running)
        卡体是可滚动列 —— 空态盒子不能靠 flex_grow 撑高（余量分不到时会被算成
        0 高，字全跑到卡外），得像系统页告警卡那样给它一个真实高度。 */
     if (s_ui.alert_page_empty) {
-        lv_obj_set_flex_grow(s_ui.alert_page_empty, 0);
+        uk_style_num(s_ui.alert_page_empty, LV_STYLE_FLEX_GROW, 0, 0);
         lv_obj_set_height(s_ui.alert_page_empty, lv_font_get_line_height(UK_FONT_CJK_16));
         /* 没有条目可看时把内容放到卡片的垂直中线：卡片本来就吃满页高，
            单行「此等级暂无事件」贴顶会留下 ~300px 空白，读起来像没画完。
            有条目时回到 START —— 清单必须从顶部开始，居中会把首条推出滚动区。 */
         lv_obj_t *body = lv_obj_get_parent(s_ui.alert_page_empty);
         const bool empty_only = !lv_obj_has_flag(s_ui.alert_page_empty, LV_OBJ_FLAG_HIDDEN);
-        if (body) lv_obj_set_style_flex_main_place(body, empty_only ? LV_FLEX_ALIGN_CENTER : LV_FLEX_ALIGN_START, 0);
+        if (body) uk_style_num(body, LV_STYLE_FLEX_MAIN_PLACE, empty_only ? LV_FLEX_ALIGN_CENTER : LV_FLEX_ALIGN_START, 0);
     }
     show(s_ui.alert_health, on);
     if (!on) return;
@@ -4853,8 +4830,8 @@ static void alert_health_sync(const fnos_status_t *st, int running)
     txt[0] = v0; txt[1] = v1; txt[2] = v2; txt[3] = v3;
     for (int i = 0; i < 4; i++) {
         set_txt(s_ui.alert_health_val[i], "%s", txt[i]);
-        lv_obj_set_style_text_color(s_ui.alert_health_val[i], uk_c(warn[i] ? UK_WARN : UK_T1), 0);
-        lv_obj_set_style_bg_color(s_ui.alert_health_dot[i], uk_c(warn[i] ? UK_WARN : UK_OK), 0);
+        uk_style_color(s_ui.alert_health_val[i], LV_STYLE_TEXT_COLOR, uk_c(warn[i] ? UK_WARN : UK_T1), 0);
+        uk_style_color(s_ui.alert_health_dot[i], LV_STYLE_BG_COLOR, uk_c(warn[i] ? UK_WARN : UK_OK), 0);
     }
 }
 
@@ -4923,13 +4900,13 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
             else snprintf(b, sizeof b, "-");
             rate_split(b, &value, &unit);
             uk_number_set_reading(s_ui.storage_value[i], s_ui.storage_unit[i], value, unit, live);
-            lv_obj_set_style_text_color(s_ui.storage_value[i], uk_c(live ? UK_T1 : UK_T3), 0);
+            uk_style_color(s_ui.storage_value[i], LV_STYLE_TEXT_COLOR, uk_c(live ? UK_T1 : UK_T3), 0);
         }
         /* P1 的容量条与上面的三栏数字同源：一眼看出"还剩多少"。 */
         if (s_ui.storage_bar) {
             int32_t pct = (readable && st->nvols && total > 0) ? gauge_value(used / total * 100.0 + 0.5) : 0;
             uk_meter_set(s_ui.storage_bar, LV_MAX(0,pct) * UK_METER_SCALE, live);
-            lv_obj_set_style_bg_color(s_ui.storage_bar, uk_c(live && total > 0 ? uk_pct_color(used / total * 100) : UK_OFF), LV_PART_INDICATOR);
+            uk_style_color(s_ui.storage_bar, LV_STYLE_BG_COLOR, uk_c(live && total > 0 ? uk_pct_color(used / total * 100) : UK_OFF), LV_PART_INDICATOR);
         }
     }
     if (page == 0) {
@@ -4946,8 +4923,8 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
             set_txt(s_ui.home_temp_unit, "");
             set_txt(s_ui.home_temp_name, "%s", "离线 · 显示上次快照");
         }
-        lv_obj_set_style_bg_color(s_ui.home_temp_dot, uk_c(UK_T3), 0);
-        lv_obj_set_style_text_color(s_ui.home_temp_value, uk_c(UK_T3), 0);
+        uk_style_color(s_ui.home_temp_dot, LV_STYLE_BG_COLOR, uk_c(UK_T3), 0);
+        uk_style_color(s_ui.home_temp_value, LV_STYLE_TEXT_COLOR, uk_c(UK_T3), 0);
         show(s_ui.overview_note, true);   /* 「离线/等待首采」必须露出来，不能被正常态收口规则吞掉 */
         home_temp_note = true;
         home_temp_long = true;
@@ -4976,13 +4953,13 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
             (old_temp ? set_txt : set_num)(s_ui.home_temp_value, "%.1f", hottest);
             set_txt(s_ui.home_temp_unit, "°C");
             set_txt(s_ui.home_temp_name, "%s", sensor);
-            lv_obj_set_style_text_color(s_ui.home_temp_value, uk_c(old_temp ? UK_T3 : UK_T1), 0);
-            lv_obj_set_style_bg_color(s_ui.home_temp_dot, uk_c(old_temp ? UK_T3 : uk_temp_color(hottest)), 0);
+            uk_style_color(s_ui.home_temp_value, LV_STYLE_TEXT_COLOR, uk_c(old_temp ? UK_T3 : UK_T1), 0);
+            uk_style_color(s_ui.home_temp_dot, LV_STYLE_BG_COLOR, uk_c(old_temp ? UK_T3 : uk_temp_color(hottest)), 0);
         } else {
             set_num(s_ui.home_temp_value, "--");
             set_txt(s_ui.home_temp_unit, "");
             set_txt(s_ui.home_temp_name, "%s", "温度不可用");
-            lv_obj_set_style_bg_color(s_ui.home_temp_dot, uk_c(UK_T3), 0);
+            uk_style_color(s_ui.home_temp_dot, LV_STYLE_BG_COLOR, uk_c(UK_T3), 0);
         }
     }
     /* 短说明（高温/旧值）与传感器名共存一行；长说明（离线原因、温度不可用 + 运行时长）
@@ -5028,8 +5005,8 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
             uk_anim_settle(row->row);
         }
         show(row->name2, false);
-        lv_obj_set_style_text_color(row->val, uk_c(vols_live ? UK_T1 : UK_T3), 0);
-        lv_obj_set_style_bg_color(row->bar, uk_c(vols_live ? uk_pct_color(v->pct) : UK_OFF), LV_PART_INDICATOR);
+        uk_style_color(row->val, LV_STYLE_TEXT_COLOR, uk_c(vols_live ? UK_T1 : UK_T3), 0);
+        uk_style_color(row->bar, LV_STYLE_BG_COLOR, uk_c(vols_live ? uk_pct_color(v->pct) : UK_OFF), LV_PART_INDICATOR);
     }
     pool_layout(&s_p1_vol_n, &s_p1_vol_w, &s_p1_vol_h, nvol, s_ui.vol_pool, UK_ENTITY_MIN_WIDTH, false, NULL);
 
@@ -5074,11 +5051,11 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
         /* All four status cells share one line height: a lone NUM_20 sync
            percentage made that row 2px taller, which the list floor then
            charged to every promised row (p1 audit 112 vs 116). */
-        lv_obj_set_style_text_font(row->val, UK_FONT_CJK_16, 0);
-        lv_obj_set_style_text_color(row->val, uk_c(col), 0);
+        uk_style_font(row->val, UK_FONT_CJK_16, 0);
+        uk_style_color(row->val, LV_STYLE_TEXT_COLOR, uk_c(col), 0);
         /* RAID rows otherwise land on 51 or 52 depending on the status text
            themselves; pin the item height so the list floor is deterministic. */
-        lv_obj_set_style_min_height(row->row, 52, 0);
+        uk_style_num(row->row, LV_STYLE_MIN_HEIGHT, 52, 0);
     }
     pool_layout(&s_p1_raid_n, &s_p1_raid_w, &s_p1_raid_h, nraid, s_ui.raid_pool, UK_ENTITY_MIN_WIDTH, false, NULL);
 
@@ -5103,14 +5080,14 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
                 read_ms,write_ms,smart_note(d->smart),(long long)(st->source_ts-d->smart_ts),
                 overview_live(st,"disks") ? "" : " · 旧值");
         }
-        lv_obj_set_style_text_color(row->name2,uk_c(!strcmp(d->smart,"failed") && overview_live(st,"disks") ? UK_DANGER : UK_T3),0);
+        uk_style_color(row->name2, LV_STYLE_TEXT_COLOR, uk_c(!strcmp(d->smart,"failed") && overview_live(st,"disks") ? UK_DANGER : UK_T3), 0);
         /* Full diagnostics remain in name2 for entity_open_cb. */
         show(row->name2, false);
-        lv_obj_set_style_text_font(row->val, UK_FONT_CJK_16, 0);
+        uk_style_font(row->val, UK_FONT_CJK_16, 0);
         set_txt(row->val, "%s↓ %s  ↑ %s", overview_live(st,"disks") ? "" : "旧值 · ",
                 fmt_rate(c1,sizeof c1,d->rd_kbs), fmt_rate(c2,sizeof c2,d->wr_kbs));
         if (!strcmp(d->smart,"failed")) set_txt(row->val, "%sSMART 异常", overview_live(st,"disks") ? "" : "旧值 · ");
-        lv_obj_set_style_text_color(row->val, uk_c(!overview_live(st,"disks") ? UK_T3 :
+        uk_style_color(row->val, LV_STYLE_TEXT_COLOR, uk_c(!overview_live(st,"disks") ? UK_T3 :
                 !strcmp(d->smart,"failed") ? UK_DANGER : UK_T1), 0);
     }
     pool_layout(&s_p1_disk_n, &s_p1_disk_w, &s_p1_disk_h, ndisk, s_ui.disk_pool, UK_ENTITY_MIN_WIDTH, false, NULL);
@@ -5153,7 +5130,7 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
                 uk_number_set_reading(k->val, k->unit, net_readable ? v : "--", net_readable ? u : "", false);
                 uk_anim_settle(k->box);
             }
-            lv_obj_set_style_text_color(k->val, uk_c(net_live ? UK_T1 : UK_T3), 0);
+            uk_style_color(k->val, LV_STYLE_TEXT_COLOR, uk_c(net_live ? UK_T1 : UK_T3), 0);
         }
 
         snprintf(nb, sizeof nb, "%d ms", st->http_ms);
@@ -5218,7 +5195,7 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
         /* Reset on identity/link changes; retain the presented rate on ordinary refresh. */
         if (strcmp(lv_label_get_text(row->name1),b))
             uk_row_set(row,b,"","","",-1,led);
-        else if (row->led) lv_obj_set_style_bg_color(row->led,uk_c(led),0);
+        else if (row->led) uk_style_color(row->led, LV_STYLE_BG_COLOR, uk_c(led), 0);
         (net_live ? set_num : set_txt)(row->name2, "%s下行 %s · 上行 %s", net_live ? "" : "上次 · ", fmt_rate(c1,sizeof c1,net->rx_kbs),
                                                   fmt_rate(c2,sizeof c2,net->tx_kbs));
         if (net->physical && net->speed_mbps>0 && !strcmp(net->state,"up"))
@@ -5227,7 +5204,7 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
                     net->rx_kbs*1024.0*8/(net->speed_mbps*1000000.0)*100,
                     net->tx_kbs*1024.0*8/(net->speed_mbps*1000000.0)*100);
         show(lv_obj_get_parent(row->name2),true);
-        lv_obj_set_style_text_color(row->name2,uk_c(net_live ? UK_T2 : UK_T3),0);
+        uk_style_color(row->name2, LV_STYLE_TEXT_COLOR, uk_c(net_live ? UK_T2 : UK_T3), 0);
     }
     show(s_ui.net_card, nnets>0 || !net_readable);
     uk_pool_relayout(s_ui.net_pool, UK_ENTITY_MIN_WIDTH, false, NULL);
@@ -5332,12 +5309,12 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
         if (d->metrics_ts>0 && st->source_ts>=d->metrics_ts)
             set_txt(r->name2,"%s%s\nCPU %s · 内存 %s\n重启 %s · %lld 秒前",prefix,d->up ? "运行中" : d->s,
                 cpu,mem,restarts,(long long)(st->source_ts-d->metrics_ts));
-        lv_obj_set_style_text_color(r->name2, uk_c(dock_live ? UK_T2 : UK_T3), 0);
+        uk_style_color(r->name2, LV_STYLE_TEXT_COLOR, uk_c(dock_live ? UK_T2 : UK_T3), 0);
         show(r->name2, false);
-        lv_obj_set_style_text_font(r->val, UK_FONT_CJK_16, 0);
+        uk_style_font(r->val, UK_FONT_CJK_16, 0);
         set_txt(r->val, "%s%s", prefix, d->up ? "运行中" : "已停止");
-        lv_obj_set_style_text_color(r->val, uk_c(dock_live ? UK_T2 : UK_T3), 0);
-        lv_obj_set_style_bg_color(r->led, uk_c(!dock_live ? UK_OFF : d->up ? UK_OK : UK_WARN), 0);
+        uk_style_color(r->val, LV_STYLE_TEXT_COLOR, uk_c(dock_live ? UK_T2 : UK_T3), 0);
+        uk_style_color(r->led, LV_STYLE_BG_COLOR, uk_c(!dock_live ? UK_OFF : d->up ? UK_OK : UK_WARN), 0);
     }
     pool_layout(&s_p3_dock_n, &s_p3_dock_w, &s_p3_dock_h, ndock,
                 s_ui.dock_pool, UK_ENTITY_MIN_WIDTH, false, NULL);
@@ -5376,8 +5353,8 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
         /* 原来这里再 set_txt(name2, 与 sub 同文) 覆盖一遍：文本一样，却把
            uk_row_set 里刚起的数字过渡清掉，副行永远是静态的。删掉即可。 */
         uint32_t tc = temps_live ? uk_temp_color(g->max_c) : UK_T3;
-        lv_obj_set_style_text_color(r->val, uk_c(tc), 0);
-        if (r->bar) lv_obj_set_style_bg_color(r->bar, uk_c(tc), LV_PART_INDICATOR);
+        uk_style_color(r->val, LV_STYLE_TEXT_COLOR, uk_c(tc), 0);
+        if (r->bar) uk_style_color(r->bar, LV_STYLE_BG_COLOR, uk_c(tc), LV_PART_INDICATOR);
     }
     pool_layout(&s_p3_temp_n, &s_p3_temp_w, &s_p3_temp_h, ndev,
                 s_ui.p3_temp_pool, UK_ENTITY_MIN_WIDTH, false, NULL);
@@ -5417,11 +5394,18 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
     s_ui.temp_blk_made = nblk;
 
     for (int i = 0; i < nblk; i++) { s_ui.temp_blk[i].collapsed = s_tgrp[i].collapsed; temp_blk_fill(i); }
-    /* 设备块文案/通道行变化会改内容高；n/w/h 缓存不变也必须重排，否则块按旧高
-       101px 摆位，最后一行"展开 N 路"会掉出块外 17px。 */
-    s_p4_n = -1;
+    /* Wrapped text and channel expansion can change height at the same count.
+       Reuse the inventory geometry check; unconditional relayout resets and
+       re-stretches row gaps every tick, repainting the entire temperature pool. */
+    static inventory_layout_cache_t temp_layout;
+    lv_obj_t *cards[] = {s_ui.temp_card}, *pools[] = {s_ui.temp_pool};
+    lv_obj_update_layout(s_ui.temp_pool);
+    if (!temp_layout.ready || temp_layout.shape !=
+            inventory_shape(s_ui.temp_pool, cards, pools, &nblk, 1)) s_p4_n = -1;
     pool_layout(&s_p4_n, &s_p4_w, &s_p4_h, nblk,
                 s_ui.temp_pool, UK_ENTITY_MIN_WIDTH, false, NULL);
+    temp_layout.shape = inventory_shape(s_ui.temp_pool, cards, pools, &nblk, 1);
+    temp_layout.ready = true;
     if (s_ui.temp_empty_all) {
         bool none = st->ever_ok && (!temps_readable || st->ntemps == 0);
         if (none) lv_obj_remove_flag(s_ui.temp_empty_all, LV_OBJ_FLAG_HIDDEN);
@@ -5443,21 +5427,21 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
         set_txt(s_ui.temp_history_note,"%d-%d°C%s",floor,ceiling,
                 overview_live(st,"temps") ? "" : " · 旧历史");
     else set_txt(s_ui.temp_history_note,"最高温历史 · 等待有效采样");
-    lv_obj_set_style_text_color(s_ui.temp_hero, uk_c(temps_live ? UK_T1 : UK_T3), 0);
+    uk_style_color(s_ui.temp_hero, LV_STYLE_TEXT_COLOR, uk_c(temps_live ? UK_T1 : UK_T3), 0);
     if (!temps_readable) {
         set_txt(s_ui.temp_hero, "--");
         set_txt(s_ui.temp_hero_unit, "");
         const char *state = overview_module_state(st, "temps");
         set_txt(s_ui.temp_note, "%s", st->ever_ok && state ? mod_status_cn(state) : "等待数据");
         set_txt(s_ui.temp_note2, "");
-        lv_obj_set_style_bg_color(s_ui.temp_hero_dot, uk_c(UK_T3), 0);
+        uk_style_color(s_ui.temp_hero_dot, LV_STYLE_BG_COLOR, uk_c(UK_T3), 0);
         dot_glow(s_ui.temp_hero_dot, UK_T3, 0);
     } else if (st->ntemps == 0) {
         set_num(s_ui.temp_hero, "--");
         set_txt(s_ui.temp_hero_unit, "°C");
         set_txt(s_ui.temp_note, "采集端没有上报温度通道");
         set_txt(s_ui.temp_note2, "看「设置」页的采集段一行：temps 可能是 denied / missing");
-        lv_obj_set_style_bg_color(s_ui.temp_hero_dot, uk_c(UK_T3), 0);
+        uk_style_color(s_ui.temp_hero_dot, LV_STYLE_BG_COLOR, uk_c(UK_T3), 0);
         dot_glow(s_ui.temp_hero_dot, UK_T3, 0);
     } else {
         int danger = 0, warn = 0;
@@ -5477,7 +5461,7 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
         const uint32_t hc = temps_live ? uk_temp_color(h->c) : UK_T3;
         (temps_live ? set_num : set_txt)(s_ui.temp_hero, "%.1f", h->c);
         set_txt(s_ui.temp_hero_unit, "°C");
-        lv_obj_set_style_bg_color(s_ui.temp_hero_dot, uk_c(hc), 0);
+        uk_style_color(s_ui.temp_hero_dot, LV_STYLE_BG_COLOR, uk_c(hc), 0);
         dot_glow(s_ui.temp_hero_dot, hc, temps_live ? UK_GLOW_OPA : 0);
         if (h->ch[0]) set_txt(s_ui.temp_note, "%s最热 %s · %s", temps_live ? "" : "旧值 · ", hn, h->ch);
         else          set_txt(s_ui.temp_note, "%s最热 %s", temps_live ? "" : "旧值 · ", hn);
@@ -5583,7 +5567,7 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
             (int32_t)LV_MIN((int64_t)INT32_MAX - 1, LV_MAX((int64_t)UK_TEMP_DANGER, (int64_t)peak + UK_S1)));
         bool available = overview_readable(st, "temps");
         show(s_ui.overview_temp_history, available && !home_temp_note);
-        lv_obj_set_style_opa(s_ui.overview_temp_history, overview_live(st, "temps") ? LV_OPA_COVER : LV_OPA_40, 0);
+        uk_style_num(s_ui.overview_temp_history, LV_STYLE_OPA, overview_live(st, "temps") ? LV_OPA_COVER : LV_OPA_40, 0);
     }
     if (page == 0) overview_layout(); /* Measure after every visibility/value update. */
 }

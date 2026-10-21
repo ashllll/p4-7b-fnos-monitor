@@ -35,6 +35,12 @@ void uk_test_alloc_fail_after(int successful_allocations);
 bool uk_test_alloc_was_triggered(void);
 #endif
 
+/* Update explicit local styles only when changed. Preserve theme/state overrides.
+   Use for telemetry refreshes, not to restart an LVGL style transition. */
+void uk_style_num(lv_obj_t *obj, lv_style_prop_t prop, int32_t value, lv_style_selector_t selector);
+void uk_style_color(lv_obj_t *obj, lv_style_prop_t prop, lv_color_t value, lv_style_selector_t selector);
+void uk_style_font(lv_obj_t *obj, const lv_font_t *font, lv_style_selector_t selector);
+
 /* ── 间距阶梯（唯一来源：4/8/12/16/24/32，不许出现阶梯外的值） ───────── */
 #define UK_S1 4
 #define UK_S2 8
@@ -203,6 +209,8 @@ void uk_kpi_set(uk_kpi_t *k, const char *val, const char *unit, const char *sub,
 /* Native line segments on a continuously advancing time axis. Displayed values
    use a trailing mean; raw history stays separate for peaks/counts. */
 lv_obj_t *uk_trend_create(lv_obj_t *parent, int32_t points, int32_t series);
+/* Enable before the first push: two-pass mean + d3 curveBasis; raw data unchanged. */
+void uk_trend_enable_flow(lv_obj_t *chart);
 lv_chart_series_t *uk_trend_series(lv_obj_t *chart, int32_t idx); /* Display/colour */
 lv_chart_series_t *uk_trend_raw_series(lv_obj_t *chart, int32_t idx); /* Read-only statistics */
 void uk_trend_set_range(lv_obj_t *chart, int32_t ymin, int32_t ymax);

@@ -158,7 +158,10 @@ PREVIEW_REFRESH_WORK=1 PREVIEW_PARTIAL=1 tools/preview/build/preview /tmp/fnos-r
 
 它检查六页连续刷新不重复改导航样式、存储清单不反复伸缩；同时以数量不变的长卷名和
 长容器名验证换行、重排、缩回与完整字符串保留，并覆盖长文本分配失败提示和下一拍恢复。
-局部绘制模式还统计实际 flush 像素，要求首页四次稳定刷新总量小于一整帧，防止重复设置样式造成整行重绘。
+局部绘制模式还统计实际 flush 像素，要求六页各自四次稳定刷新总量小于一整帧，防止重复设置样式造成整页重绘。
+同一预算覆盖温度展开、设置与诊断、磁盘详情、配对、Wi-Fi 扫描及口令输入；
+进入弹层前先切到它所属的页面，并断言实际内容可见。测量口径和对照见
+[全界面刷新性能记录](../../docs/ui-performance-2026-10-20.md)。
 全帧模式每次必然刷全屏，不能用于这项比较。数字回归保留真实发布节拍，验证 100↔9 的遮罩、
 最大运行时长、旧值标识和跨天时标签与读数同步发布；网络图检查零刻度与图表底边对齐。
 同一棵 UI 树在 1024×600 横屏中切换“卷 / 全部”筛选并恢复，检查清单列宽随可用区域重新测量。
@@ -190,6 +193,12 @@ python3 tools/preview/motion_view.py /tmp/fnos-data-motion
 3. macOS 上 `git/make/cc` 需要 `DEVELOPER_DIR=/Library/Developer/CommandLineTools`（`run.sh` 已默认导出）。
 
 ## 实测开销
+
+网络流水曲线：`PREVIEW_CHART_MAP=1 tools/preview/build/preview /tmp/fnos-flow-check` 验证圆滑峰顶像素、双向序列身份与移动游标，并输出直线／样条的主机绘制均值。`PREVIEW_DATA_MOTION=stream` 提供真实 LVGL 连续帧；用既有 `ppm2png.py`、`motion_view.py` 生成播放器。算法选型与证据见[网络动效记录](../../docs/network-flow-motion-2026-10-21.md)。
+
+所有产品趋势统一启用 flow，`CONFIG_FNOS_UI_FLOW_SMOOTH_SAMPLES=9` 表示每次平均点数；双重平均等效默认 17 点三角核。上述坐标门还检查短周期起伏衰减、原始值、双向独立、单调阶跃跟随和缺失重置；默认配置的八点周期夹具峰谷差须从 800 降到不超过 12。普通底层模式保留三点平均用于既有合同与对照。平滑后的趋势约延迟八个样本，不能用它替代实时数字或原始峰值，详见[全曲线平滑记录](../../docs/all-trend-flow-motion-2026-10-21.md)。
+
+数字跳变与圆心回归：`PREVIEW_RING_CENTRE=1 tools/preview/build/preview /tmp/fnos-ring-centre` 检查实际字形中心，覆盖 0、1、9、10、11、37、99、100。`PREVIEW_NUMBERS=1 PREVIEW_NUMBER_PACING=1 tools/preview/build/preview /tmp/fnos-number-pacing` 同时检查变位退场坐标与主要渐变至少 200 ms；此速度门针对当前舒缓配置，完整 `run.sh` 已包含。输出应为 600 ms 总时长、252 ms 的 10%→90% 渐变。
 
 构建时间和产物大小取决于主机与依赖缓存，以当前输出为准。完整状态预览包含六页、126 张状态图与 5 张刷新回归图；`16-usage-*` 覆盖低占用、提醒和接近上限的首页/存储页，检查共享阈值、固定历史身份色和过期降灰；`17-overview-*` 覆盖长运行时长及旧值。最新审查及绘制量对照见[2026-10-20 审查](../../docs/ui-review-2026-10-20.md)。历史图片、FPK 和设备证据的边界见[项目 README](../../README.md#最近迭代与版本边界)。
 

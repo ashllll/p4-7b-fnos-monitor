@@ -70,6 +70,7 @@ CALLBACK_TARGETS = ["ui_tick", "pair_btn_cb", "pair_pad_cb", "pair_ok_cb",
                     "pair_cancel_cb", "pair_forget_cb", "diagnostics_cb",
                     "temp_toggle_cb", "wifi_result_cb", "wifi_connect_cb",
                     "number_event", "number_step", "number_destroy",
+                    "trend_curve_task", "trend_cursors",
                     "diag_timer_cb", "motion_read_tick"]
 
 
