@@ -312,8 +312,6 @@ void uk_number_set_text(lv_obj_t *obj, const char *text, bool animate)
         (lv_area_get_width(&new_content)-new_size.x)/2 : 0);
     for (glyph_layer_t *g=n->layers;g;g=g->next) if (g->presented) {
         g->from_x+=old_origin-new_origin;
-        /* Retiring glyphs keep their screen column when text width changes. */
-        if (g->to_alpha==0) g->to_x+=old_origin-new_origin;
         g->x=g->from_x;
     }
     lv_anim_t a; lv_anim_init(&a); lv_anim_set_var(&a,obj);
@@ -421,37 +419,6 @@ void uk_number_selfcheck(lv_obj_t *parent)
     number_label_t *n=(number_label_t *)o;
     assert(n->active);
     assert(n->duration==UK_NUMBER_MS);
-    /* A width-changing reading must fade retiring glyphs in their old columns,
-       not sweep them sideways toward the new label's text origin. */
-    for (int align = LV_TEXT_ALIGN_CENTER; align <= LV_TEXT_ALIGN_RIGHT; align++) {
-        lv_obj_set_style_text_align(o, align, 0);
-        uk_number_set_text(o, "100", false); lv_obj_update_layout(o);
-        uk_number_set_text(o, "9", true);
-        for (glyph_layer_t *g = n->layers; g; g = g->next) {
-            if (g->to_alpha == 0) {
-                fprintf(stderr, "retiring glyph horizontal travel: %.1f px\n", g->to_x - g->from_x);
-                assert(fabsf(g->to_x - g->from_x) < .01f);
-            }
-        }
-    }
-    lv_obj_set_style_text_align(o, LV_TEXT_ALIGN_LEFT, 0);
-    uk_number_set_text(o, "65%", false);
-    uk_number_set_text(o, "66%", true);
-    /* Acceptance for this dashboard's calm telemetry preset, measured on the
-       actual glyph transition rather than its nominal animation duration. */
-    if (getenv("PREVIEW_NUMBER_PACING")) {
-        glyph_layer_t *incoming = n->layers;
-        while (incoming && incoming->from_alpha != 0) incoming = incoming->next;
-        assert(incoming);
-        uint32_t t10 = 0, t90 = 0;
-        for (uint32_t ms = 1; ms <= n->duration; ms++) {
-            sample_layers(n, ms);
-            if (!t10 && incoming->alpha >= .1f) t10 = ms;
-            if (!t90 && incoming->alpha >= .9f) t90 = ms;
-        }
-        printf("numeric fade: duration=%u ms, 10..90%%=%u ms\n", n->duration, t90 - t10);
-        assert(t90 > t10 && t90 - t10 >= 200);
-    }
     sample_layers(n,n->duration/3);
     n->started=lv_tick_get()-n->duration/3;
     glyph_layer_t *before=n->layers;

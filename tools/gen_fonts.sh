@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 生成 LVGL 字体（Chakra Petch 仪表数字 + Inter 标签 + Noto Sans SC 设备名称）。
+# 生成 LVGL 字体（Inter SemiBold 仪表数字 + Inter 标签 + Noto Sans SC 设备名称）。
 #
 # 为什么要有这个脚本：界面标签是中文 + 拉丁数字混排，字体必须覆盖代码里真正用到的字形，
 # 而且要在换字号/换字体时能一键复现。运行时设备名使用可配置字符区间，
@@ -114,23 +114,18 @@ for CH in $'—' $'–' $'−' $'－'; do
 done
 echo "中文字形数: $(printf '%s' "$CJK" | python3 -c 'import sys;print(len(sys.stdin.read().strip()))')"
 
-# 仪表数字使用 Chakra Petch Bold；辅助标签保持 Inter / Noto Sans SC。
-# Angular display digits for the reference device theme (SIL OFL 1.1).
-# Fetch the upstream font; keep the licence alongside the embedded subsets.
-if [ ! -s ChakraPetch-Bold.ttf ]; then
-  curl --fail --location --silent --show-error \
-    https://raw.githubusercontent.com/google/fonts/main/ofl/chakrapetch/ChakraPetch-Bold.ttf \
-    -o ChakraPetch-Bold.ttf
-fi
+# 数字统一用 Inter SemiBold（michka 的 .metric-big 就是 Inter 700 + 等宽数字）：
+# 窄体 Chakra Petch 与本项目要复刻的版式是两套语言，读数一眼就能看出不是同一个界面。
+# Inter 随 tools/fonts/Inter-SemiBold.ttf 入库（SIL OFL 1.1），不再联网取字体。
 for size in 64 96; do
-  $LV --font ChakraPetch-Bold.ttf --size "$size" --bpp 4 --format lvgl --no-compress \
+  $LV --font Inter-SemiBold.ttf --size "$size" --bpp 4 --format lvgl --no-compress \
     -r 0x20-0x3A --lv-include lvgl.h -o "$OUT/ui_font_display_$size.c"
 done
 
-echo "== 数值（Chakra Petch Bold） =="
-$LV --font ChakraPetch-Bold.ttf --size 44 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
+echo "== 数值（Inter SemiBold） =="
+$LV --font Inter-SemiBold.ttf --size 44 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
     -r 0x20-0x7E -r 0xB0 -r 0xB7 -r 0x2014 -r 0x2026 -r 0x2190-0x2193 -r 0x2264-0x2265 --lv-include lvgl.h -o "$OUT/ui_font_num_44.c"
-$LV --font ChakraPetch-Bold.ttf --size 32 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
+$LV --font Inter-SemiBold.ttf --size 32 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
     -r 0x20-0x7E -r 0xB0 -r 0xB7 -r 0x2014 -r 0x2026 -r 0x2190-0x2193 -r 0x2264-0x2265 --lv-include lvgl.h -o "$OUT/ui_font_num_32.c"
 $LV --font Inter-Medium.ttf --size 20 --bpp 4 --format lvgl --no-compress --force-fast-kern-format \
     -r 0x20-0x7E -r 0xB0 -r 0xB7 -r 0x2014 -r 0x2026 -r 0x2190-0x2193 -r 0x2264-0x2265 --lv-include lvgl.h -o "$OUT/ui_font_num_20.c"
@@ -155,12 +150,23 @@ for spec in "20:Medium:ui_font_cjk_20" "16:Medium:ui_font_cjk_16" "12:Regular:ui
       -r "$CJK_RANGES" --symbols "$CJK" --lv-include lvgl.h -o "$OUT/$name.c"
 done
 
-# Normalize generated whitespace without changing any font tables.
+# Normalize generated whitespace without changing any font tables,
+# and pin the numeral line heights to the 4px layout grid.
+# Inter's natural line height is 4-6px taller than the Chakra Petch faces this layout was
+# tuned against (num_32 34->39, num_44 48->52, display_96 92->98), which pushes card content
+# past its parent. Digits have no descenders, so a tighter line height cannot clip them.
 python3 - "$OUT" <<'PYFONT'
 from pathlib import Path
-import sys
+import re, sys
+LINE_HEIGHT = {'ui_font_num_20': 24, 'ui_font_num_32': 34, 'ui_font_num_44': 48,
+               'ui_font_display_64': 61, 'ui_font_display_96': 92}
 for path in Path(sys.argv[1]).glob('ui_font_*.c'):
-    path.write_bytes(path.read_bytes().rstrip() + b'\n')
+    text = path.read_bytes().decode('utf-8')
+    want = LINE_HEIGHT.get(path.stem)
+    if want:
+        text, n = re.subn(r'\.line_height = \d+,', f'.line_height = {want},', text, count=1)
+        assert n == 1, path
+    path.write_bytes(text.rstrip().encode('utf-8') + b'\n')
 PYFONT
 
 # 2) 清理上一代产物（只保留本次生成的；EXPECT 之外的 ui_font_*.c 一律删）

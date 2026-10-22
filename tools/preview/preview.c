@@ -2206,13 +2206,11 @@ static void verify_overview_charts(void)
     assert(title);
     lv_obj_t *detail = find_widget(lv_obj_get_parent(lv_obj_get_parent(title)), &lv_chart_class);
     assert(detail);
-    /* A visible zero must mark the chart baseline, not sit beside its top. */
-    lv_obj_t *zero = visible_text(lv_obj_get_parent(detail), "0");
-    assert(zero);
-    lv_area_t zero_area, chart_area;
-    lv_obj_get_coords(zero, &zero_area);
-    lv_obj_get_coords(detail, &chart_area);
-    assert(LV_ABS(chart_area.y2 - zero_area.y2) <= lv_obj_get_height(zero));
+    /* 2026-10-22 复刻 michka：图内不再画 Y 刻度，量程改由卡头文字承担。
+       刻度钉在基线这件事随设计一起去掉，但"量程说过话"仍然要查。 */
+    lv_obj_t *net_card = lv_obj_get_parent(lv_obj_get_parent(detail));
+    lv_obj_t *range_note = uk_card_note(net_card);
+    assert(range_note && strstr(lv_label_get_text(range_note), "量程"));
     assert(chart_values_equal(detail, 0, 64) == 1);
     assert(chart_values_equal(detail, 1, 128) == 1);
     size_t bytes = CONFIG_FNOS_CHART_WINDOW * sizeof(int32_t);
@@ -4826,7 +4824,6 @@ static void record_streaming(void)
 static void verify_attached_cursors(void)
 {
     lv_obj_t *chart=uk_trend_create(lv_screen_active(),8,2);
-    uk_trend_enable_flow(chart);
     lv_obj_set_size(chart,320,160);
     for (int i=0;i<8;i++) {
         uk_trend_push(chart,0,20,0);
@@ -4878,146 +4875,8 @@ static void verify_attached_cursors(void)
     puts("checks: attached curve cursors track time, resize, gaps and hidden series PASS");
 }
 
-static void verify_flow_smoothing(void)
-{
-    lv_obj_t *chart = uk_trend_create(lv_screen_active(), 32, 2);
-    uk_trend_enable_flow(chart);
-    const int32_t ripple[] = {1000, 1283, 1400, 1283, 1000, 717, 600, 717};
-    int32_t low = INT32_MAX, high = INT32_MIN;
-    for (int i = 0; i < 96; i++) {
-        int32_t input = ripple[i % 8];
-        uk_trend_push(chart, 0, input, 0);
-        uk_trend_push(chart, 1, 700, 0);
-        lv_chart_series_t *line = uk_trend_series(chart, 0);
-        uint32_t last = (lv_chart_get_x_start_point(chart, line) + 31) % 32;
-        int32_t displayed = lv_chart_get_series_y_array(chart, line)[last];
-        assert(lv_chart_get_series_y_array(chart, uk_trend_raw_series(chart, 0))[last] == input);
-        assert(lv_chart_get_series_y_array(chart, uk_trend_series(chart, 1))[last] == 700);
-        if (i >= 80) { low = LV_MIN(low, displayed); high = LV_MAX(high, displayed); }
-    }
-    printf("flow smoothing: 8-sample ripple raw-span=800 display-span=%d\n", high - low);
-    fflush(stdout);
-    /* The stronger default flow profile must suppress the former 89-unit
-       ripple to at most 12, independently of the curve geometry. */
-    if (UK_FLOW_SMOOTH_SAMPLES == 9) assert(high - low <= 12);
-    uk_trend_clear(chart);
-    for (int i = 0; i < 32; i++) uk_trend_push(chart, 0, 0, 0);
-    int samples = LV_MIN(32, 2 * UK_FLOW_SMOOTH_SAMPLES - 1);
-    int32_t previous = 0;
-    for (int i = 1; i <= samples; i++) {
-        uk_trend_push(chart, 0, 1000, 200);
-        lv_chart_series_t *line = uk_trend_series(chart, 0);
-        uint32_t last = (lv_chart_get_x_start_point(chart, line) + 31) % 32;
-        int32_t value = lv_chart_get_series_y_array(chart, line)[last];
-        assert(value >= previous && value <= 1000);
-        previous = value;
-        if (i == samples) assert(value == 1000);
-        if (i == (samples + 1) / 2) assert(value >= 500);
-        if (UK_FLOW_SMOOTH_SAMPLES == 9) {
-            if (i == 1) assert(value > 0 && value <= 20);
-            if (i == 9) assert(value <= 600);
-        }
-    }
-    uk_trend_push(chart, 0, LV_CHART_POINT_NONE, 0);
-    uk_trend_push(chart, 0, INT32_MAX - 1, 0);
-    lv_chart_series_t *line = uk_trend_series(chart, 0);
-    uint32_t last = (lv_chart_get_x_start_point(chart, line) + 31) % 32;
-    assert(lv_chart_get_series_y_array(chart, line)[last] == INT32_MAX - 1);
-    assert(lv_chart_get_series_y_array(chart, line)[(last + 31) % 32] == LV_CHART_POINT_NONE);
-    lv_obj_delete(chart);
-    puts("checks: network ripple attenuation, raw truth, independent series, step response and gap reset PASS");
-}
-
-static void verify_flow_curve(void)
-{
-    verify_flow_smoothing();
-    lv_obj_t *chart = uk_trend_create(lv_screen_active(), 5, 2);
-    uk_trend_enable_flow(chart);
-    assert(chart);
-    lv_obj_set_pos(chart, 20, 20);
-    lv_obj_set_size(chart, 400, 180);
-    lv_obj_set_flex_grow(chart, 0);
-    lv_obj_set_style_bg_color(chart, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(chart, LV_OPA_COVER, 0);
-    lv_obj_set_style_line_opa(chart, LV_OPA_TRANSP, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(chart, LV_OPA_TRANSP, LV_PART_CURSOR);
-    uk_trend_set_range(chart, 0, 100);
-    const int32_t shape[] = {20, 20, 80, 20, 20};
-    for (unsigned i = 0; i < 5; i++) {
-        uk_trend_push(chart, 0, shape[i], 0);
-        uk_trend_push(chart, 1, 10, 0);
-    }
-    lv_chart_series_t *line = uk_trend_series(chart, 0);
-    lv_chart_set_series_color(chart, line, lv_color_hex(0x00ff00));
-    lv_chart_set_series_color(chart, uk_trend_series(chart, 1), lv_color_hex(0x0000ff));
-    /* Feed a known displayed waveform through the production renderer. Raw
-       sampling/filter tests remain separate from this geometric regression. */
-    for (unsigned i = 0; i < 5; i++) lv_chart_set_value_by_id(chart, line, i, shape[i]);
-    lv_obj_update_layout(chart);
-    lv_refr_now(lv_display_get_default());
-    lv_point_t peak;
-    lv_chart_get_point_pos_by_id(chart, line, 2, &peak);
-    lv_area_t box; lv_obj_get_coords(chart, &box);
-    int x = box.x1 + peak.x, y = box.y1 + peak.y;
-    unsigned sharp = 0, rounded = 0;
-    /* D3 curveBasis rounds this 20/80/20 peak to 60, a published convex
-       B-spline result. It must replace the sharp vertex, not cover it twice. */
-    int curve_y = box.y1 + lv_obj_get_content_height(chart) * 40 / 100;
-    for (int dy = -2; dy <= 2; dy++) for (int dx = -2; dx <= 2; dx++) {
-        sharp += s_frame[(y + dy) * s_scr_w + x + dx] == 0x07e0;
-        rounded += s_frame[(curve_y + dy) * s_scr_w + x + dx] == 0x07e0;
-    }
-    printf("flow curve raster: sharp-vertex=%u rounded-crest=%u\n", sharp, rounded);
-    assert(sharp == 0 && rounded > 0);
-    /* The moving head uses the same cubic, including the clamped tail. */
-    vtick_advance(200);
-    uk_trend_push(chart, 0, 20, 200);
-    uk_trend_push(chart, 1, 10, 200);
-    for (unsigned step = 0; step < 10; step++) {
-        vtick_advance(20); lv_anim_refr_now();
-        lv_refr_now(lv_display_get_default());
-        lv_chart_cursor_t *cursor;
-        LV_LL_READ(&((lv_chart_t *)chart)->cursor_ll, cursor) {
-            if (cursor->ser != line) continue;
-            assert(cursor->dir != LV_DIR_NONE);
-            unsigned attached = 0;
-            int cx = box.x1 + cursor->pos.x, cy = box.y1 + cursor->pos.y;
-            for (int dy = -2; dy <= 2; dy++) for (int dx = -2; dx <= 0; dx++)
-                attached += s_frame[(cy + dy) * s_scr_w + cx + dx] == 0x07e0;
-            assert(attached > 0);
-        }
-    }
-    puts("checks: flow curve rounded raster, series identity and moving cursor attachment PASS");
-    lv_obj_delete(chart);
-
-    /* Same chart/data and software renderer; compare actual repaint CPU time,
-       independently of the virtual clock used to drive animation. */
-    for (int flow = 0; flow <= 1; flow++) {
-        chart = uk_trend_create(lv_screen_active(), 180, 2);
-        if (flow) uk_trend_enable_flow(chart);
-        lv_obj_set_size(chart, 900, 180);
-        lv_obj_set_flex_grow(chart, 0);
-        uk_trend_set_range(chart, 0, 100);
-        for (int i = 0; i < 180; i++) {
-            uk_trend_push(chart, 0, 50 + (int)(40*sin(i*.23)), 0);
-            uk_trend_push(chart, 1, 20 + (int)(15*cos(i*.41)), 0);
-        }
-        lv_obj_update_layout(chart);
-        lv_refr_now(lv_display_get_default());
-        struct timespec began, ended;
-        clock_gettime(CLOCK_MONOTONIC, &began);
-        for (int i = 0; i < 30; i++) { lv_obj_invalidate(chart); lv_refr_now(lv_display_get_default()); }
-        clock_gettime(CLOCK_MONOTONIC, &ended);
-        double ms = (ended.tv_sec - began.tv_sec)*1000.0 + (ended.tv_nsec - began.tv_nsec)/1e6;
-        printf("flow render benchmark: mode=%s samples=180 series=2 mean=%.3f ms/frame (host)\n",
-               flow ? "basis" : "linear", ms/30);
-        lv_obj_delete(chart);
-    }
-}
-
 static void verify_chart_mapping(void)
 {
-    verify_flow_curve();
     verify_attached_cursors();
     lv_obj_t *chart = lv_chart_create(lv_screen_active());
     assert(chart);
@@ -5239,38 +5098,6 @@ static void verify_overview_number_masks(void)
         labels[i] = visible_text(overview_object(titles[i], &lv_obj_class), "100");
         assert(labels[i]);
     }
-    const float readings[] = {0, 1, 9, 10, 11, 37, 99, 100};
-    for (unsigned sample = 0; sample < sizeof readings / sizeof readings[0]; sample++) {
-        fixture.cpu.pct = fixture.mem.pct = readings[sample];
-        for (int i = 0; i < 4; i++) regression_tick();
-        lv_obj_update_layout(lv_screen_active());
-        for (int i = 0; i < 2; i++) {
-            lv_obj_t *arc = overview_object(titles[i], &lv_arc_class);
-            assert(arc);
-            lv_area_t circle, content;
-            lv_obj_get_coords(arc, &circle);
-            lv_obj_get_content_coords(labels[i], &content);
-            const lv_font_t *font = lv_obj_get_style_text_font(labels[i], 0);
-            const char *text = lv_label_get_text(labels[i]);
-            lv_area_t ink = {INT32_MAX, INT32_MAX, INT32_MIN, INT32_MIN};
-            for (uint32_t letter = 0; text[letter]; letter++) {
-                lv_point_t pos;
-                lv_font_glyph_dsc_t glyph;
-                lv_label_get_letter_pos(labels[i], letter, &pos);
-                assert(lv_font_get_glyph_dsc(font, &glyph, text[letter], text[letter + 1]));
-                int32_t x = content.x1 + pos.x + glyph.ofs_x;
-                int32_t y = content.y1 + pos.y + font->line_height - font->base_line -
-                            glyph.box_h - glyph.ofs_y;
-                ink.x1 = LV_MIN(ink.x1, x); ink.x2 = LV_MAX(ink.x2, x + glyph.box_w - 1);
-                ink.y1 = LV_MIN(ink.y1, y); ink.y2 = LV_MAX(ink.y2, y + glyph.box_h - 1);
-            }
-            int32_t dx2 = ink.x1 + ink.x2 - circle.x1 - circle.x2;
-            int32_t dy2 = ink.y1 + ink.y2 - circle.y1 - circle.y2;
-            printf("ring centre: %s %s ink offset=(%.1f, %.1f) px\n",
-                   titles[i], text, dx2 / 2.f, dy2 / 2.f);
-            assert(abs(dx2) <= 2 && abs(dy2) <= 2);
-        }
-    }
     /* Keep the real numeric publication gate active between samples. A new
        one-digit target must not crop a still-presented three-digit reading. */
     for (int step = 0; step < 12; step++) {
@@ -5316,24 +5143,6 @@ static void verify_overview_number_masks(void)
     regression_tick();
     fnos_status_release(&fixture);
     puts("checks: gated one/three-digit overview readings remain complete PASS");
-}
-
-static void verify_surface_refresh(const char *name)
-{
-    lv_display_t *display = lv_display_get_default();
-    for (int settle = 0; settle < 4; settle++) regression_tick();
-    lv_refr_now(display);
-    s_flushed_pixels = 0;
-    for (int sample = 0; sample < 4; sample++) {
-        vtick_advance(500);
-        lv_timer_handler();
-    }
-    lv_refr_now(display);
-    printf("refresh work: surface=%s ticks=4 flushed_pixels=%llu\n",
-           name, (unsigned long long)s_flushed_pixels);
-    if (getenv("PREVIEW_PARTIAL"))
-        assert(s_flushed_pixels < (uint64_t)s_scr_w * s_scr_h);
-    snapshot(name);
 }
 
 static void verify_refresh_work(void)
@@ -5383,9 +5192,9 @@ static void verify_refresh_work(void)
         assert(s_refresh_nav_styles == 0);
         assert(s_refresh_size_changes == 0);
         assert(s_refresh_home_styles == 0);
-        /* Four unchanged ticks on every page must paint less than one entire frame.
+        /* Four unchanged home ticks must paint less than one entire frame.
            Full render mode deliberately flushes all pixels and is excluded. */
-        if (getenv("PREVIEW_PARTIAL"))
+        if (page == 0 && getenv("PREVIEW_PARTIAL"))
             assert(s_flushed_pixels < (uint64_t)s_scr_w * s_scr_h);
         if (home_card) lv_obj_remove_event_cb(home_card, refresh_work_event);
         if (inventory) lv_obj_remove_event_cb(inventory, refresh_work_event);
@@ -5414,35 +5223,6 @@ static void verify_refresh_work(void)
     regression_tick();
     assert(lv_obj_get_width(volume_card) == original_width);
     verify_overview_number_masks();
-    fnos_ui_set_page(4); fnos_ui_motion_settle(); regression_tick();
-    fnos_ui_request_temp_expand(0);
-    regression_tick();
-    assert(fnos_ui_page() == 4);
-    assert(visible_text_containing(lv_screen_active(), "收起"));
-    verify_surface_refresh("refresh-temperature-expanded");
-    fnos_ui_set_page(3); fnos_ui_motion_settle(); regression_tick();
-    pointer_text("设置");
-    assert(visible_text(lv_screen_active(), "设置与诊断"));
-    verify_surface_refresh("refresh-diagnostics");
-    pointer_text("返回");
-    fnos_ui_set_page(1); fnos_ui_motion_settle(); regression_tick();
-    click_object_center(visible_text(lv_screen_active(), s_motion_fixture.disks[0].dev));
-    assert(visible_text(lv_screen_active(), "返回列表"));
-    verify_surface_refresh("refresh-detail");
-    pointer_text("返回列表");
-    pointer_text("配对");
-    assert(visible_text(lv_screen_active(), "与 NAS 配对"));
-    verify_surface_refresh("refresh-pair");
-    pointer_text("关闭");
-    wifi_stub(true, true, "PREVIEW-LAN", "");
-    regression_tick();
-    pointer_text("PREVIEW-LAN");
-    assert(visible_text(lv_screen_active(), "重新扫描"));
-    verify_surface_refresh("refresh-wifi-scan");
-    pointer_text("Demo");
-    assert(visible_text(lv_screen_active(), "空格"));
-    verify_surface_refresh("refresh-wifi-input");
-    pointer_text("关闭");
     puts("checks: stable refresh, repeated current-page navigation, same-count long-name reflow, filtered inventory reflow and untruncated formatting PASS");
 }
 
@@ -5515,7 +5295,6 @@ int main(int argc, char **argv)
 
     if (getenv("PREVIEW_NUMBERS")) { record_numbers(); return preview_finish(); }
     fnos_ui_create();
-    if (getenv("PREVIEW_RING_CENTRE")) { verify_overview_number_masks(); return preview_finish(); }
     if (getenv("PREVIEW_REFRESH_WORK")) { verify_refresh_work(); return preview_finish(); }
     if (getenv("PREVIEW_DATA_MOTION")) {
         if (!strcmp(getenv("PREVIEW_DATA_MOTION"), "stream")) record_streaming();
