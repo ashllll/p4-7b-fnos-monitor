@@ -214,7 +214,9 @@ void uk_trend_set_range(lv_obj_t *chart, int32_t ymin, int32_t ymax);
    Pass zero for backfill/unknown cadence (establish the window immediately). */
 void uk_trend_push(lv_obj_t *chart, int32_t series_idx, int32_t v, uint32_t interval_ms);
 void uk_trend_clear(lv_obj_t *chart);  /* Reset both rings and presentation time. */
-void uk_trend_settle(lv_obj_t *chart); /* Snap a history batch/hidden view to newest. */
+void uk_trend_settle(lv_obj_t *chart);
+/** 历史曲线启用平滑与流动：只改绘制几何，不动采样数据。 */
+void uk_trend_enable_flow(lv_obj_t *chart); /* Snap a history batch/hidden view to newest. */
 
 /* 数字键盘：原生 lv_buttonmatrix，回调收到按钮文字。 */
 lv_obj_t *uk_numpad_create(lv_obj_t *parent, void (*cb)(const char *key, void *user), void *user);
