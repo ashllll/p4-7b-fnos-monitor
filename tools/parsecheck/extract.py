@@ -29,7 +29,7 @@ FUNCS = [
     # fnos_data.c：薄壳 + 历史回填
     "parse_status", "history_row_values", "history_alloc", "history_reset", "parse_history", "commit_status", "fnos_data_hist_seq", "fnos_data_hist_read_ex", "fnos_data_hist_read",
     # fnos_snapshot.c：字符串 arena + 字段解析
-    "snapshot_malloc", "owned_alloc", "owned_text",
+    "snapshot_malloc", "owned_alloc",
     "fnos_status_create", "fnos_status_release", "fnos_status_copy", "fnos_status_text",
     # 类型化数值钳制（M03）：number 之后新加的这五个必须一起抠，否则
     # fnos_status_parse 里调 clampd()/inum()/… 时这里会缺定义，报出来的

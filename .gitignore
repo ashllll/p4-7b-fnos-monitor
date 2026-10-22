@@ -44,3 +44,6 @@ docs/evidence/2026-10-07-temp-page-lvgl-native.png
 docs/evidence/2026-10-07-ui-lvgl-p*.png
 docs/evidence/2026-10-07-ui-temp-grouped-p*.png
 *.release-check
+
+# 本机代理经验卡（不进公共仓库）
+procedures/

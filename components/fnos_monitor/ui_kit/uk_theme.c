@@ -127,7 +127,28 @@ static const uk_pal_t P_PHOSPHOR = {
     .radius = 4, .radius_sm = 3, .flat_rows = false,
 };
 
+/* michka（michka.org 1.6.0）默认 slate sensor-panel 皮肤，逐值抄自上游
+   src/Monitor/wwwroot/css/app.css 的 THEME 段与 .board .box 规则：
+   黑底、中性灰气泡、白方块帽的居中大写卡头、粗胶囊条、平涂填充。
+   rgba 边框/轨道按气泡色合成为实色（LVGL 只有不透明度，合成值更好对）。 */
+static const uk_pal_t P_MICHKA = {
+    .bg = 0x050506, .s0 = 0x0A0A0C, .s1 = 0x2C2C30, .surf_t = 0x252528,
+    .s2 = 0x252528, .s3 = 0x434347, .off = 0x6E7079, .line = 0x434347,
+    .t1 = 0xE9EBF2, .t2 = 0xD5D8E4, .t3 = 0xB4B6C0, .t4 = 0x9A9CA6,
+    .blue = 0x6F8CFF, .blue_txt = 0x8FA6FF,
+    .ok = 0x36E07A, .warn = 0xFF9F43, .danger = 0xFF6B6B,  /* 上游 #ff5470：灰气泡上 4.47:1 且触发本项目反紫审计，取暖红等价 */
+    .s_cpu = 0x36E07A, .s_mem = 0x6F8CFF, .s_temp = 0x36C5FF,
+    .s_down = 0x36C5FF, .s_up = 0xFF9F43, .s_zfs = 0xFFD24A,  /* 上游 ZFS 紫 #a06bff 触反紫审计，用同色板黄 */
+    .rail_n = 0x050506, .rail_day = 0x0A0A0C, .nav = 0x0A0A0C, .nav_sel = 0x2C2C30,
+    .resource_primary = 0x2C2C30, .resource_secondary = 0x252528,
+    .summary = 0x2C2C30, .on_summary = 0xE9EBF2, .summary_light = false,
+    .on_primary = 0x141416, .on_danger = 0x141416,
+    .usage_low = 0x36E07A, .usage_warn = 0xFF9F43, .usage_high = 0xFF6B6B,
+    .radius = 16, .radius_sm = 10, .flat_rows = true,
+};
+
 static const struct { const char *name; const uk_pal_t *p; } PRESETS[] = {
+    { "michka", &P_MICHKA },
     { "cuktech", &P_CUKTECH },
     { "unifi", &P_UNIFI },
     { "cuktech-console", &P_CUKTECH_CONSOLE },

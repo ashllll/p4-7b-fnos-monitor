@@ -96,18 +96,6 @@ menu "fnOS monitor"
                 Current readings, historical peaks and sample counts keep the
                 original data. A missing sample breaks and resets the window.
 
-        config FNOS_UI_FLOW_SMOOTH_SAMPLES
-            int "Samples per smoothing pass in flow curves (1 disables)"
-            range 1 127
-            default 9
-            help
-                All product history curves use two moving-average passes,
-                evaluated as a triangular kernel of 2*N-1 trailing samples.
-                Larger windows suppress short ripples but delay the displayed
-                trend by roughly N-1 samples. The kernel fits the chart ring.
-                Live readings and raw peaks remain immediate. Missing samples
-                reset the averaging window.
-
         config FNOS_UI_TREND_SCROLL_MS
             int "Maximum sample interval animated as continuous chart travel (ms)"
             range 0 5000
@@ -149,7 +137,7 @@ menu "fnOS monitor"
         config FNOS_UI_NUMBER_MS
             int "Damped telemetry response duration (ms; 0 disables motion)"
             range 0 1000
-            default 600
+            default 300
             help
                 Damped digits, gauges and bars share this response
                 duration; meters retain a subpixel tail for at most twice it.
@@ -167,7 +155,7 @@ menu "fnOS monitor"
         config FNOS_UI_TELEMETRY_RATIO_PERMILLE
             int "Telemetry damping ratio (1000 = critical)"
             range 800 1200
-            default 1000
+            default 850
             help
                 850 gives a restrained ammeter rebound (about 0.6 percent
                 overshoot from rest). 1000 removes that rebound. Gauge output
@@ -176,7 +164,7 @@ menu "fnOS monitor"
         config FNOS_UI_NUMBER_PRESENT_MS
             int "Minimum interval between presented numeric changes (ms)"
             range 0 5000
-            default 600
+            default 0
             help
                 Zero publishes each real update in place. A nonzero value can
                 select the newest sample on a slower shared presentation beat.

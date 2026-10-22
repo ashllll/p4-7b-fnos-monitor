@@ -35,12 +35,6 @@ void uk_test_alloc_fail_after(int successful_allocations);
 bool uk_test_alloc_was_triggered(void);
 #endif
 
-/* Update explicit local styles only when changed. Preserve theme/state overrides.
-   Use for telemetry refreshes, not to restart an LVGL style transition. */
-void uk_style_num(lv_obj_t *obj, lv_style_prop_t prop, int32_t value, lv_style_selector_t selector);
-void uk_style_color(lv_obj_t *obj, lv_style_prop_t prop, lv_color_t value, lv_style_selector_t selector);
-void uk_style_font(lv_obj_t *obj, const lv_font_t *font, lv_style_selector_t selector);
-
 /* ── 间距阶梯（唯一来源：4/8/12/16/24/32，不许出现阶梯外的值） ───────── */
 #define UK_S1 4
 #define UK_S2 8
@@ -50,13 +44,17 @@ void uk_style_font(lv_obj_t *obj, const lv_font_t *font, lv_style_selector_t sel
 #define UK_S6 32
 
 /* One density across overview, inventory, detail and setup surfaces. */
-#define UK_CARD_PAD UK_S2
+/* michka 的卡内距是 padding:10px 12px —— 横向比 UK_S2(8) 松一档，纵向略松。
+   横向取 12（UK_S3），纵向取 10：卡里的字不贴边，又不至于把卡片撑高。 */
+#define UK_CARD_PAD   UK_S3
+#define UK_CARD_PAD_V 10
 #define UK_CONTENT_GAP UK_S1
 #define UK_ROW_PAD_H UK_S2
 #define UK_ROW_PAD_V UK_S1
 
 /* Distinct cards breathe more than their internal text; compact displays use one step less. */
-#define UK_CARD_GAP (lv_display_get_vertical_resolution(NULL) < UK_SCR_H ? UK_S2 : UK_S3)
+/* michka 的卡间距是 8（--f-gap），不是 12：他们的卡更"挨着"，整体像一块板。 */
+#define UK_CARD_GAP UK_S2
 #define UK_ITEM_GAP (lv_display_get_vertical_resolution(NULL) < UK_SCR_H ? UK_S1 : UK_S2)
 
 /* 12 栅格：一行之内的宽度份额。格子声明自己占几列，列距 = 卡片间距。
@@ -209,8 +207,6 @@ void uk_kpi_set(uk_kpi_t *k, const char *val, const char *unit, const char *sub,
 /* Native line segments on a continuously advancing time axis. Displayed values
    use a trailing mean; raw history stays separate for peaks/counts. */
 lv_obj_t *uk_trend_create(lv_obj_t *parent, int32_t points, int32_t series);
-/* Enable before the first push: two-pass mean + d3 curveBasis; raw data unchanged. */
-void uk_trend_enable_flow(lv_obj_t *chart);
 lv_chart_series_t *uk_trend_series(lv_obj_t *chart, int32_t idx); /* Display/colour */
 lv_chart_series_t *uk_trend_raw_series(lv_obj_t *chart, int32_t idx); /* Read-only statistics */
 void uk_trend_set_range(lv_obj_t *chart, int32_t ymin, int32_t ymax);

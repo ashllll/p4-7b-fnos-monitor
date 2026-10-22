@@ -148,16 +148,16 @@ static bool parse_status(const char *js, fnos_status_t *st)
 static bool history_row_values(const cJSON *row, fnos_sample_t *out, int64_t *ts)
 {
     if (!cJSON_IsArray(row)) return false;
-    const cJSON *t=row->child;
-    const cJSON *v=t ? t->next : NULL;
     float *fields[] = { &out->cpu, &out->mem, &out->rx_kbs, &out->tx_kbs };
-    for (size_t i=0; i<sizeof fields / sizeof fields[0]; i++) {
+    for (int i=0; i<4; i++) {
+        const cJSON *v=cJSON_GetArrayItem(row,i+1);
         if (!cJSON_IsNumber(v) || !isfinite(v->valuedouble) || fabs(v->valuedouble)>FLT_MAX) return false;
         *fields[i]=(float)v->valuedouble;
-        v=v->next;
     }
-    out->temp_max=cJSON_IsNumber(v) && isfinite(v->valuedouble) &&
-        fabs(v->valuedouble)<=FLT_MAX ? (float)v->valuedouble : NAN;
+    const cJSON *temperature=cJSON_GetArrayItem(row,5);
+    out->temp_max=cJSON_IsNumber(temperature) && isfinite(temperature->valuedouble) &&
+        fabs(temperature->valuedouble)<=FLT_MAX ? (float)temperature->valuedouble : NAN;
+    const cJSON *t=cJSON_GetArrayItem(row,0);
     *ts = cJSON_IsNumber(t) && isfinite(t->valuedouble) && t->valuedouble>1e9 &&
           t->valuedouble<4e9 && floor(t->valuedouble)==t->valuedouble ? (int64_t)t->valuedouble : 0;
     out->interval_ms = 0; /* Epoch-second backfill cannot supply a live cadence. */

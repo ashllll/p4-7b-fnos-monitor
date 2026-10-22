@@ -1,0 +1,132 @@
+{
+  "rendered_on": "2026-10-22",
+  "ui_source_commit": "d923fb0",
+  "ui_source_state": "working tree on top of d923fb0 (michka slate skin, Inter numerals, header clock, density pass, tick removal, uniform pool rows)",
+  "fixture_path": "tools/preview/preview.c",
+  "fixture_sha256": "1ac258f56826ecace63b76668e380e7fcba0fc2ef15f90527cd9e8695c24e467",
+  "renderer": "native LVGL 9.5, RGB565, synthetic host fixtures",
+  "width": 1024,
+  "height": 600,
+  "data": "synthetic fixture values, generic device/service/network names, fixed fake certificate fingerprint",
+  "palette": "michka",
+  "render_command": "KK_PALETTE=michka bash tools/preview/run.sh out/michka-18",
+  "ui_source_sha256": {
+    "components/fnos_monitor/fnos_ui.c": "8ca0e72710c3df8c31cbf7b5313f292ee468aeb35aab06111ba162ea19e9c518",
+    "components/fnos_monitor/ui_kit/uk.c": "a20bae139c1d4503c49a6809b8b1cb28d8449fbb9964adfa44652a7f00ff11b9",
+    "components/fnos_monitor/ui_kit/uk_theme.c": "fad2e277aeafb1a4f865fe41d94f7255f892f3995867d34b6aac2e98d61c13f1",
+    "components/fnos_monitor/ui_kit/uk_theme.h": "df8b77f324b719dcda2cba96d526bc763957b9b806d536422705117ee3eaa730",
+    "components/fnos_monitor/ui_kit/uk.h": "bd328232c9cb301b34bbad8bc797115c311c0275cd57564d41f200fea906e2d9",
+    "tools/preview/preview.c": "1ac258f56826ecace63b76668e380e7fcba0fc2ef15f90527cd9e8695c24e467",
+    "tools/preview/run.sh": "298ba8c817ea5950b403ec90aa11ee7699669eee7ebd0e51b2d1604cacc819af",
+    "tools/preview/palette_check.py": "a485b6946b4893ccf709c1c2e809cd806fedb0342e886115dbe9d7b50f72507b",
+    "sdkconfig.defaults": "3179d1a3392f556161614955eccecd72c986d4787daa56cfc1884aade398e498",
+    "tools/gen_fonts.sh": "aced7d3a5b3c05d2e05b2b748775c1021e3b25bf1e0446c915665de02200104b"
+  },
+  "images": [
+    {
+      "file": "alerts.png",
+      "title": "告警",
+      "source_frame": "04-healthy-p5.png",
+      "sha256": "9eaf08fdb9f3654f467b1ada4eb777519c9bdd3a749cd3cbf578dc70ac846f31",
+      "bytes": 17994
+    },
+    {
+      "file": "container-detail.png",
+      "title": "容器详情",
+      "source_frame": "13-container-detail.png",
+      "sha256": "6e586ba877445660c163985b858329ec9f6e32a724b244558240efca5919fea9",
+      "bytes": 22097
+    },
+    {
+      "file": "diagnostics.png",
+      "title": "设置与诊断",
+      "source_frame": "06-diagnostics.png",
+      "sha256": "0282abe09104c82351a918e3684af1fab6d3d311729631f03d905ad2b28fa0e7",
+      "bytes": 19750
+    },
+    {
+      "file": "health-summary.png",
+      "title": "无告警体检摘要",
+      "source_frame": "06-alerts-health.png",
+      "sha256": "9eaf08fdb9f3654f467b1ada4eb777519c9bdd3a749cd3cbf578dc70ac846f31",
+      "bytes": 17994
+    },
+    {
+      "file": "network.png",
+      "title": "网络",
+      "source_frame": "04-healthy-p2.png",
+      "sha256": "a3d197902ab88f4eab0ddee2a2703ed452a21121d904eb13ea520a2b2531151b",
+      "bytes": 29663
+    },
+    {
+      "file": "night.png",
+      "title": "夜间总览",
+      "source_frame": "08-night-p0.png",
+      "sha256": "f3e042e14e4005f77b79651952724ccd9950dcaac6cc3f5bd6e1f7d14f70918e",
+      "bytes": 31702
+    },
+    {
+      "file": "overview.png",
+      "title": "总览",
+      "source_frame": "02-live-p0.png",
+      "sha256": "861539521d54dd0ab925855a37d9679bfa137ec5c9fac914c75c4af75e9e86db",
+      "bytes": 31981
+    },
+    {
+      "file": "pairing-certificate.png",
+      "title": "配对证书确认",
+      "source_frame": "07-pair-confirm.png",
+      "sha256": "cdf1e3b7af9d6cd08dcd7f93890ea8a6a58a37fa538f95c87de9e8c06adf3013",
+      "bytes": 31477
+    },
+    {
+      "file": "pairing.png",
+      "title": "配对啊",
+      "source_frame": "07-pair-code.png",
+      "sha256": "313a843c5abfaf87c32d4bb958337f2318b1a77061cdbff661b15e208aa56618",
+      "bytes": 24097
+    },
+    {
+      "file": "storage.png",
+      "title": "存储",
+      "source_frame": "04-healthy-p1.png",
+      "sha256": "f1b457ca0ec977f3f58352e82f365b1830063ed75f978545f4bb51fe4f17a5f1",
+      "bytes": 27483
+    },
+    {
+      "file": "system.png",
+      "title": "系统",
+      "source_frame": "04-healthy-p3.png",
+      "sha256": "bd9e2a58d7cfd349194ef1d3380499ee5a89322f729be4b603349b1ef02fd4f8",
+      "bytes": 26735
+    },
+    {
+      "file": "temperature.png",
+      "title": "温度",
+      "source_frame": "04-healthy-p4.png",
+      "sha256": "441b87b16235952e460f85ff0045c69a8af300a18fa099b8a9e191f4185de9f0",
+      "bytes": 19961
+    },
+    {
+      "file": "volume-detail.png",
+      "title": "存储卷详情",
+      "source_frame": "13-volume-detail.png",
+      "sha256": "1b7949ae651a434778f244cbb32f1c07f8945257b24a0b8e042b24f7a01e2149",
+      "bytes": 23352
+    },
+    {
+      "file": "wifi-keyboard.png",
+      "title": "Wi-Fi 输入与屏上键盘",
+      "source_frame": "10-wifi-input-limits.png",
+      "sha256": "f94b9c34f30e252ece153919546a00e300d5de4cc947148f91b9f7a41e6fd4fc",
+      "bytes": 22190
+    },
+    {
+      "file": "wifi-scan.png",
+      "title": "Wi-Fi 扫描",
+      "source_frame": "10-wifi-scan.png",
+      "sha256": "6c35117b4dbd5d58a806a8e725ef74b340dcd56b1e1b2c6ee19035259eba849c",
+      "bytes": 19094
+    }
+  ]
+}

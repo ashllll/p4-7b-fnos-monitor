@@ -13,8 +13,6 @@
 | [0003](0003-module-freshness-and-reading-presence.md) | 读数存在性、模块新鲜度和统计新鲜度分别判断 |
 | [0004](0004-identity-and-status-colors.md) | 指标身份色与当前状态色分离，默认 ULTRA 主题统一 |
 | [0005](0005-library-springs-and-attached-cursors.md) | 复用开源阻尼求解器，圆环、条形和曲线游标直接附着图形 |
-| [0006](0006-network-flow-curve.md) | 网络吞吐显示复用 D3 B 样条，保留原始统计与匀速时间轴 |
-| [0007](0007-all-trend-flow-smoothing.md) | 所有遥测趋势统一样条与双重移动平均，进一步压低短周期波动 |
 
 当前设计合同见 [全界面 CUKTECH 仪表语言](../ui-cuktech-2026-10-14.md)，参数与取舍见 [电流表式动效](../ui-ammeter-motion-2026-10-14.md)，最新缺陷回归及最终烧录证据见 [并行缺陷复核](../ui-post-motion-audit-2026-10-14.md)。历史文档中的窄屏、字体及阶段产物记录不替代这些当前约定。
 

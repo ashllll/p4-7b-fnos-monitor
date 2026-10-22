@@ -72,7 +72,7 @@
 #define UK_RADIUS_SM     (g_uk_pal.radius_sm)
 #define UK_FLAT_ROWS     (g_uk_pal.flat_rows)
 #define UK_BAR_H         8          /* 阈值条高                       */
-#define UK_BAR_H_HERO    12          /* 主容量条高                     */
+#define UK_BAR_H_HERO    10          /* 主容量条高（michka 磁盘轨 9，取栅格 10） */
 /* Continuous telemetry shares one damped response; native animation styles
    retain the duration for callers that inspect it. */
 #define UK_BAR_ANIM_MS   UK_NUMBER_MS
@@ -89,10 +89,6 @@
 #define CONFIG_FNOS_UI_TREND_SMOOTH_SAMPLES 3
 #endif
 #define UK_TREND_SMOOTH_SAMPLES CONFIG_FNOS_UI_TREND_SMOOTH_SAMPLES
-#ifndef CONFIG_FNOS_UI_FLOW_SMOOTH_SAMPLES
-#define CONFIG_FNOS_UI_FLOW_SMOOTH_SAMPLES 9
-#endif
-#define UK_FLOW_SMOOTH_SAMPLES CONFIG_FNOS_UI_FLOW_SMOOTH_SAMPLES
 #ifndef CONFIG_FNOS_UI_TREND_SCROLL_MS
 #define CONFIG_FNOS_UI_TREND_SCROLL_MS 2000
 #endif
@@ -112,10 +108,10 @@
 #define UK_MOTION_MIN_MS 80
 #define UK_MOTION_DAMPING 10.0f /* critical damping: residual below one logical pixel */
 #ifndef CONFIG_FNOS_UI_NUMBER_MS
-#define CONFIG_FNOS_UI_NUMBER_MS 600
+#define CONFIG_FNOS_UI_NUMBER_MS 300
 #endif
 #ifndef CONFIG_FNOS_UI_NUMBER_PRESENT_MS
-#define CONFIG_FNOS_UI_NUMBER_PRESENT_MS 600
+#define CONFIG_FNOS_UI_NUMBER_PRESENT_MS 0
 #endif
 #ifndef CONFIG_FNOS_UI_NUMBER_STAGGER_MS
 #define CONFIG_FNOS_UI_NUMBER_STAGGER_MS 0
@@ -139,7 +135,7 @@
 #endif
 #define UK_TELEMETRY_DAMPING CONFIG_FNOS_UI_TELEMETRY_DAMPING
 #ifndef CONFIG_FNOS_UI_TELEMETRY_RATIO_PERMILLE
-#define CONFIG_FNOS_UI_TELEMETRY_RATIO_PERMILLE 1000
+#define CONFIG_FNOS_UI_TELEMETRY_RATIO_PERMILLE 850
 #endif
 #define UK_TELEMETRY_RATIO (CONFIG_FNOS_UI_TELEMETRY_RATIO_PERMILLE / 1000.f)
 #define UK_NUMBER_BUDGET_BYTES CONFIG_FNOS_UI_NUMBER_BUDGET_BYTES

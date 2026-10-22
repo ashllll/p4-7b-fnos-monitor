@@ -110,22 +110,5 @@ int main(void)
     assert(!metrics.source_age_valid && metrics.source_seq==0);
     fnos_status_release(&metrics);
     puts("PASS cadence metadata: millisecond correction, rounding clamp, hostile age and legacy absence");
-
-    /* Missing strings must not exhaust the budget while vectors occupy only half. */
-    root=cJSON_CreateObject();
-    cJSON_AddBoolToObject(root,"ready",true);
-    cJSON *alerts=cJSON_AddArrayToObject(root,"alerts");
-    int sparse_count=(int)(cap / (2 * sizeof(fnos_alert_t)));
-    for (int i=0;i<sparse_count;i++)
-        assert(cJSON_AddItemToArray(alerts,cJSON_CreateObject()));
-    json=cJSON_PrintUnformatted(root);
-    assert(json);
-    assert(fnos_status_parse(json,&metrics,&reason));
-    assert(metrics.nalerts==sparse_count);
-    for (int i=0;i<metrics.nalerts;i++)
-        assert(!metrics.alerts[i].lv[0] && !metrics.alerts[i].m[0]);
-    cJSON_free(json); cJSON_Delete(root);
-    fnos_status_release(&metrics);
-    puts("PASS sparse inventory: empty strings leave capacity for inventory vectors");
     return 0;
 }

@@ -48,18 +48,6 @@ static void *owned_alloc(fnos_status_t *s, size_t count, size_t size)
     return data;
 }
 
-static bool owned_text(fnos_status_t *s, const char **field, const char *value)
-{
-    /* JSON strings are already formatted; empty values need no owned block. */
-    if (!value[0]) { *field = ""; return true; }
-    size_t n = strlen(value) + 1;
-    char *text = owned_alloc(s, n, 1);
-    if (!text) return false;
-    memcpy(text, value, n);
-    *field = text;
-    return true;
-}
-
 void fnos_status_release(fnos_status_t *s)
 {
     if (!s) return;
@@ -176,7 +164,7 @@ bool fnos_status_parse(const char *json, fnos_status_t *out, const char **reason
     fnos_status_t s = {0};
     if (reason) *reason = "data capacity";
     if (!fnos_status_create(&s,&counts)) goto fail;
-#define TEXT(field, object, key) do { if (!owned_text(&s, &(field), string(object,key))) goto fail; } while (0)
+#define TEXT(field, object, key) do { if (!fnos_status_text(&s, &(field), "%s", string(object,key))) goto fail; } while (0)
     TEXT(s.host,root,"host"); s.uptime_s=unum(root,"uptime_s");
     s.source_ts=lnum(root,"ts"); s.proto=inum(root,"proto");
     s.source_seq=lnum(root,"seq");
@@ -244,7 +232,7 @@ bool fnos_status_parse(const char *json, fnos_status_t *out, const char **reason
     const cJSON *modules = s.nmods ? item(root,"modules") : NULL;
     i=0; cJSON_ArrayForEach(v,modules) {
         fnos_mod_t *r=&s.mods[i++];
-        if (!owned_text(&s,&r->name,v->string ? v->string : "")) goto fail;
+        if (!fnos_status_text(&s,&r->name,"%s",v->string ? v->string : "")) goto fail;
         const cJSON *state=item(v,"status");
         if (cJSON_IsString(state)) TEXT(r->status,v,"status");
         else if (!fnos_status_text(&s,&r->status,cJSON_IsNumber(state) ? "#%.0f" : "unknown",
