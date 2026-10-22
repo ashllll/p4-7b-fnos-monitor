@@ -1,0 +1,251 @@
+{
+  "rendered_on": "2026-10-21",
+  "source_commit": "885264e5a521620a5e99d9db5b8fac3ce0500985",
+  "firmware_source_baseline": "d453caca76eb9bfc2b7731b0d725dc20d4a7f1ad",
+  "renderer": "Native LVGL 9.5, RGB565, synthetic host fixtures",
+  "width": 1024,
+  "height": 600,
+  "palette": "cuktech-console",
+  "data": "Anonymous host fixtures; no live NAS requests or personal configuration",
+  "render_command": "env -u KK_PALETTE bash tools/preview/run.sh out-readme-current-20261021",
+  "ui_config": {
+    "CONFIG_FNOS_UI_REFRESH_MS": "100",
+    "CONFIG_FNOS_STATUS_MAX_BYTES": "262144",
+    "CONFIG_FNOS_SNAPSHOT_MAX_BYTES": "1048576",
+    "CONFIG_FNOS_CHART_WINDOW": "180",
+    "CONFIG_FNOS_UI_TREND_SMOOTH_SAMPLES": "3",
+    "CONFIG_FNOS_UI_FLOW_SMOOTH_SAMPLES": "9",
+    "CONFIG_FNOS_UI_TREND_SCROLL_MS": "2000",
+    "CONFIG_FNOS_UI_TREND_FPS": "60",
+    "CONFIG_FNOS_UI_TEXT_SCRATCH_BYTES": "256",
+    "CONFIG_FNOS_UI_NUMBER_BUDGET_BYTES": "131072",
+    "CONFIG_FNOS_UI_NUMBER_MS": "600",
+    "CONFIG_FNOS_UI_TELEMETRY_DAMPING": "8",
+    "CONFIG_FNOS_UI_TELEMETRY_RATIO_PERMILLE": "1000",
+    "CONFIG_FNOS_UI_NUMBER_PRESENT_MS": "600",
+    "CONFIG_FNOS_UI_NUMBER_STAGGER_MS": "0",
+    "CONFIG_FNOS_UI_NUMBER_MAX_STAGGER_MS": "0",
+    "CONFIG_FNOS_UI_NUMBER_TRAVEL_PCT": "4",
+    "CONFIG_FNOS_UI_NUMBER_BLUR_PCT": "0",
+    "CONFIG_FNOS_UI_USAGE_WARM": "80",
+    "CONFIG_FNOS_UI_USAGE_HIGH": "90",
+    "CONFIG_FNOS_UI_TEMP_WARM": "75",
+    "CONFIG_FNOS_UI_TEMP_HIGH": "80",
+    "CONFIG_FNOS_UI_LIST_MIN_WIDTH": "260"
+  },
+  "source_sha256": {
+    "components/fnos_monitor/CMakeLists.txt": "e0210dd5eaf89c18ed3fd8273eb45c6c0b73da27fd657f10b9f2ca5b95349d0f",
+    "components/fnos_monitor/Kconfig": "d9507770f53409bc914ad3265e840a2c6b0c22efa7df627cd8912f4be7f65554",
+    "components/fnos_monitor/cmake/fnos_chart_math.cmake": "a996dcc637797bffa856b6a309aaf42ae85d83fea042a38e63a2e2fefea66e27",
+    "components/fnos_monitor/fnos_chart_math.c": "802d0a2b1a6f0321c4544ff4ac829757ea493729912bc1a4f5a871a6c2f5d5f3",
+    "components/fnos_monitor/fnos_config.example.h": "f974dc9cd7df83f38a4017741ef2f123b3c1a718415c93424bbc7df2106e74ff",
+    "components/fnos_monitor/fnos_data.c": "9034fca36a94b8ae6c1e0622c5e4a26c1b0e2e680f4f79baab99e6a8823ecc8e",
+    "components/fnos_monitor/fnos_data.h": "550e50e792408adbe5c3bc4621fc0938431afda440eb3d55e7708f07f2230808",
+    "components/fnos_monitor/fnos_fonts.h": "474da3d233d0b7d71eea4eb082043f8bb59478af74104c3c3ca8416bc6d2db91",
+    "components/fnos_monitor/fnos_net.c": "c564dbbc9312d216a19a8334a72a617af02617f0fa32eb5a29e70f3d4b840630",
+    "components/fnos_monitor/fnos_net.h": "392a6060addfa3b5b49a355805369d6792e10926607d7bf6a372dbe44e27f578",
+    "components/fnos_monitor/fnos_pair.c": "ffbfa0c0e783c42b5b7955dc1e6775fbcd1a55475f116380e4840a3a42eac3b8",
+    "components/fnos_monitor/fnos_pair.h": "235826ca4773d402cdd82d7c70dfa8060cd05f7d0ad94ca7db3a2a56a332223c",
+    "components/fnos_monitor/fnos_perf.c": "3c8fff282b3fbc1ff41ebcf64e6339f5df30fb2900dce8400214b9953c94bd4f",
+    "components/fnos_monitor/fnos_perf.h": "df85f3dcedd973b2d44fb5abc43fac427bfbdecc338af06103b3edc8951d1caf",
+    "components/fnos_monitor/fnos_perf_display.c": "1293f0d8bc29d5adcd1d751af88ba193ba7aa408d1a50a0ce377fc5376a1a270",
+    "components/fnos_monitor/fnos_snapshot.c": "079e645c779aa1fa261cd9656c51fd43bd78cae4f8a750822937918a32363e0b",
+    "components/fnos_monitor/fnos_ui.c": "9a10f981e8eb01f78fcfc23a2367c8a70eb6d691b1275ccec4748d59e6275623",
+    "components/fnos_monitor/fnos_ui.h": "9e4e87ddd091de29b57254e0dcb45dfcb18087ddad2d51293c06f0479c18760a",
+    "components/fnos_monitor/fnos_wifi_cli.c": "489f612f126b07c7744f7fdb55acd3e383ed14d1eb30bd6b805aabd237429a7c",
+    "components/fnos_monitor/fnos_wifi_store.c": "df6a86881fa32f328131a6b97195e36874aac24c44a6074e55634e7d8c0305d2",
+    "components/fnos_monitor/fnos_wifi_store.h": "8948dbdcb2bfc9f6aed5acb429460d8074a4e62bbc4d7f6003bd4020de6c3916",
+    "components/fnos_monitor/fonts/ui_font_cjk_12.c": "2be29836a21e5d4e1002037681ff5b7db8a54fb2c4cabe2d51cbd2371390dfa9",
+    "components/fnos_monitor/fonts/ui_font_cjk_16.c": "2a3eb458dec582047028d5c3823158787461fd3099f0b00c84ab216c63b03401",
+    "components/fnos_monitor/fonts/ui_font_cjk_20.c": "21375d6f8f7053ad28b364399dcffa07826b6e6e64dfc06fac823263297e7219",
+    "components/fnos_monitor/fonts/ui_font_display_64.c": "ec594d76d18779bd70ef30f19082134fc99c044eb7465831f7c1065b55d64599",
+    "components/fnos_monitor/fonts/ui_font_display_96.c": "d9f03ac919e1e3a51769e634cb41d19a26080dda07e673a95058bf97a450c502",
+    "components/fnos_monitor/fonts/ui_font_num_20.c": "a3d642336476da5b6579bb773cd4e92fce7dc13663222eec2e16184b786ba32d",
+    "components/fnos_monitor/fonts/ui_font_num_32.c": "51924938639cdd4682d46ccc12b0a89dfb602f041731763d933583f901ac5d7c",
+    "components/fnos_monitor/fonts/ui_font_num_44.c": "ea1174aebd6a554a22ed67302a881a18b317fbd1fcf2fc8eb034736d93730e41",
+    "components/fnos_monitor/fonts/ui_font_txt_12.c": "985250b7cf4bf7f9841a43828b19fa66866d1641c68b4ef80d622a64491bef16",
+    "components/fnos_monitor/fonts/ui_font_txt_15.c": "1358132e752abdcf90d1bec66355575bfc6a612bd310e342c5b28a93695b94b8",
+    "components/fnos_monitor/ui_kit/third_party/d3_basis.h": "9af955bfbc815f29344b7143ee437315b31b0b8e451ce334b319b7b297c80cdd",
+    "components/fnos_monitor/ui_kit/third_party/damped_spring.h": "6e1a845810d644680e3d51eacc90db179187cbf994a58e26e755a86d7f6b9d49",
+    "components/fnos_monitor/ui_kit/uk.c": "a1d10dd8a419baea1cef82be64b9cf4ff77ecfb241c05ad737ce07f8883e2547",
+    "components/fnos_monitor/ui_kit/uk.h": "8a66112455347242fbf5b3cee51ba8d1ad7e500788bd9559efc39d8237166034",
+    "components/fnos_monitor/ui_kit/uk_meter.c": "4f2f50975ebd3d24391e45054f240a77477ae234586b45735b5c7fae1bacddc3",
+    "components/fnos_monitor/ui_kit/uk_number.c": "7e081b8afc31d4adbbec9702f0fabc30e9b1d7de61b365d859456bfb1ab86d83",
+    "components/fnos_monitor/ui_kit/uk_spring.c": "b29d22d914bde230d1337b9fbb718328901b42d766ba4b94f554321257246721",
+    "components/fnos_monitor/ui_kit/uk_spring.h": "7861dc7663e456af70dbb5f9e180782ec8283698454b8d5069a4927075b56bd3",
+    "components/fnos_monitor/ui_kit/uk_theme.c": "1aba6dd597c89774267f62d34fcf758deded15af5a67f1a2520e0032d3153139",
+    "components/fnos_monitor/ui_kit/uk_theme.h": "a2bb26d0fdbd69e3d4460655fa2958bc3d68863462fa57767ac14c27b9878e40",
+    "dependencies.lock": "dad262ccad50e0a08aa78de44f88fe1983b2bc88e5d3cea65b4407b58031cc9d",
+    "sdkconfig.defaults": "1235e112cd0020762ae331bb1151296eff6b8a27b2ad290eb6384bdae9c77b38",
+    "tools/preview/CMakeLists.txt": "41779ed533e0a8f5a42b458c4ee63ad8523d5b77e07dfb5ac20c3c295b9a480a",
+    "tools/preview/hardware_fixtures.py": "1348476c47a8b428bb2016fe769ff546f0ac7b0976e6e47d644ba17bd9d9eb27",
+    "tools/preview/lv_conf.h": "0ab58a1b2484f924482d06ca6dde80ecfbd6213b2f50347b05ea1dfd43b6ae07",
+    "tools/preview/motion_view.py": "99d4858ee1f3925cba352f3d00cccd2e86f36a1aa15d28f3a7de366953df98bc",
+    "tools/preview/pair_msgs.py": "7d8ba2527aeb8190d2d870f53f2474cbc4131853186407563578e928c5c851f3",
+    "tools/preview/palette_check.py": "a485b6946b4893ccf709c1c2e809cd806fedb0342e886115dbe9d7b50f72507b",
+    "tools/preview/palettes.sh": "4b07c742a7bfc368ea3d5581f430caff8134ec5485fd8a0926d129a1b5d8eb6e",
+    "tools/preview/ppm2png.py": "0eb35133f92319602336c1772970342cfd5afe85d24cff86eb0234982729b637",
+    "tools/preview/preview.c": "3e7d56ff4cc291537b656d5f68b1372cc72f2bb0558c7db05547adbfe5710c1f",
+    "tools/preview/render_diagnose.sh": "bb51de03f4b4a057beb7b917c43900178c2ad1aa30c84f5d8004aa9eee9441d5",
+    "tools/preview/run.sh": "a89f3d9d38dad7a3b7337ab9c49acffb629d73c5ee871dc9d1ce2faf5ab5353c",
+    "tools/preview/snapshot_check.c": "5a621484964efc8562564b256fc0d324f6fa4ae135c00c4ecc33a228b2d9e4c0",
+    "tools/preview/stub/esp_heap_caps.h": "fbd4c82e56342142637a12a4735128bbfc45bf9cde6fb2b57e784ff65e691e5e",
+    "tools/preview/stub/esp_log.h": "207eabb1b76644f140baf7f43a78e2aac975af9af612f5ba81f64b21c598607a",
+    "tools/preview/stub/esp_timer.h": "2b43f87778015e68d98ba427f8416933902bd1287b39f582ce180e9a0a33e122",
+    "tools/preview/stub/fnos_config.h": "a2b11c8952533a85fbf07952ebcaeb21e0b0139bee62517808b705f27747cfe0",
+    "tools/preview/stub/sdkconfig.h": "618ae60ad0a44627a3d65d3039ae4a0309e8b406493c6493d9db0b220047abae",
+    "tools/preview/test_ppm2png.py": "13ce5b794943c750cc44d5169f0d2ce093b0e35ff2517848369ead0b272207b2",
+    "tools/preview/test_release_asserts.sh": "0f54950b99982124fc3ebc489ecec60d88eb8e84338090da1ff47c9d0a7f04ae",
+    "tools/preview/test_render_diagnosis.sh": "1bbaea3865ce9d72e38f5807fe04ad18b0129c2d68de00317f3b0b9346614d51",
+    "tools/preview/test_run_guard.sh": "3c52775448d120a2c89f68d14ad0089f4ae703de399d4f7126e3a4fd1678a7eb"
+  },
+  "images": [
+    {
+      "file": "overview.png",
+      "title": "总览",
+      "source_frame": "04-healthy-p0.png",
+      "sha256": "b92ab7d6cce08d7261c7bf87a0a0e35e7611e640db1e665fe7ad1089413e779c",
+      "bytes": 30268
+    },
+    {
+      "file": "storage.png",
+      "title": "存储",
+      "source_frame": "04-healthy-p1.png",
+      "sha256": "21d1bf6f2f7b9cc324ef17634cc9d9bebc74344e6cb25f3d9437e7fbb35527cf",
+      "bytes": 26873
+    },
+    {
+      "file": "network.png",
+      "title": "网络",
+      "source_frame": "04-healthy-p2.png",
+      "sha256": "456e596c5bbe28549f191ae463faf3090f3759a2747667a135d943d015d4cebf",
+      "bytes": 23603
+    },
+    {
+      "file": "system.png",
+      "title": "系统",
+      "source_frame": "04-healthy-p3.png",
+      "sha256": "75e3541ded9e06ebb88e480694e6ee59ee0e85eefe8386189e1f123fdf201342",
+      "bytes": 26237
+    },
+    {
+      "file": "temperature.png",
+      "title": "温度",
+      "source_frame": "04-healthy-p4.png",
+      "sha256": "93061155ee35a2f0a25b4b082e121fa8625fb5dc7f9d567de9a9e38e6ebecffa",
+      "bytes": 20117
+    },
+    {
+      "file": "alerts.png",
+      "title": "告警",
+      "source_frame": "02-live-p5.png",
+      "sha256": "ba5ff1296feab4b873db12a172f4b9a8ca7f7738d0660c9e44239a649e63c2c5",
+      "bytes": 16681
+    },
+    {
+      "file": "wifi-scan.png",
+      "title": "Wi-Fi 扫描",
+      "source_frame": "10-wifi-scan.png",
+      "sha256": "df8612cc81fb7bfba4c0cf494f930b21abd3a8a9ad6487b1ae1f575411c0741b",
+      "bytes": 18304
+    },
+    {
+      "file": "wifi-keyboard.png",
+      "title": "Wi-Fi 键盘",
+      "source_frame": "10-wifi-pass.png",
+      "sha256": "f02eb742d776727f1b0404915176eecd242fcd08b82cf402ddecfd048a8b83ae",
+      "bytes": 20347
+    },
+    {
+      "file": "pairing.png",
+      "title": "配对码",
+      "source_frame": "07-pair-code.png",
+      "sha256": "4a23760f1d776f5147f01b98a9ab8fb1ffaacfa1ccba218dbceaed0f68a744e6",
+      "bytes": 22622
+    },
+    {
+      "file": "pairing-certificate.png",
+      "title": "证书核对",
+      "source_frame": "07-pair-confirm.png",
+      "sha256": "112c320255e9314a12961ad5cd0b5caeb30987d771a5327165fff2f05fe346b2",
+      "bytes": 27765
+    },
+    {
+      "file": "volume-detail.png",
+      "title": "卷详情",
+      "source_frame": "13-volume-detail.png",
+      "sha256": "29f6cffc8b20a9225a3589372c316e5c7f69aca698387e02a5298e4d751dec99",
+      "bytes": 22644
+    },
+    {
+      "file": "container-detail.png",
+      "title": "容器详情",
+      "source_frame": "13-container-detail.png",
+      "sha256": "255707997a7547fa49d921d6eefe7b773374ec97f68b0f21c569c5a6136cfb5c",
+      "bytes": 21360
+    },
+    {
+      "file": "diagnostics.png",
+      "title": "设置与诊断",
+      "source_frame": "06-diagnostics.png",
+      "sha256": "66f60894efe8cc38ef9cb225ef9efd8c528efadde134838d5d95e7b48d242203",
+      "bytes": 20326
+    },
+    {
+      "file": "night.png",
+      "title": "夜间总览",
+      "source_frame": "08-night-p0.png",
+      "sha256": "cc88c99f3219f5556978adfc062cb6ec89eafd1040d28ff84947949fc1df0880",
+      "bytes": 29859
+    },
+    {
+      "file": "health-summary.png",
+      "title": "无告警体检",
+      "source_frame": "06-alerts-health.png",
+      "sha256": "225d34e2abca7d750946ca4372cec8174d539d21f580d25cc31d4cad3db26067",
+      "bytes": 18755
+    },
+    {
+      "file": "usage-low.png",
+      "title": "低占用 · 总览",
+      "source_frame": "16-usage-low.png",
+      "sha256": "17ade766c867bf24ca8269d28eed6502de193fdc3c82dc8b8ce43f484b8e05ce",
+      "bytes": 29059
+    },
+    {
+      "file": "usage-low-storage.png",
+      "title": "低占用 · 存储",
+      "source_frame": "16-usage-low-storage.png",
+      "sha256": "5e0da9cb576b23eb00a5748405425c4f0f3c8211d0ecc0a501f7323ea33e2708",
+      "bytes": 22671
+    },
+    {
+      "file": "usage-warn.png",
+      "title": "提醒阈值 · 总览",
+      "source_frame": "16-usage-warn.png",
+      "sha256": "aa634c8247c42a32747346c1f940e3b385cf5139e9ae4c89d623c4d2e3865929",
+      "bytes": 29174
+    },
+    {
+      "file": "usage-warn-storage.png",
+      "title": "提醒阈值 · 存储",
+      "source_frame": "16-usage-warn-storage.png",
+      "sha256": "52e0fb204ff06b8b03955324a001585c7513094eb471b0def66972c397a4a4d2",
+      "bytes": 22823
+    },
+    {
+      "file": "usage-high.png",
+      "title": "接近上限 · 总览",
+      "source_frame": "16-usage-high.png",
+      "sha256": "706aab8276855628b05c8c61b6b9a45621a25679d329cda9450cf375573648be",
+      "bytes": 28676
+    },
+    {
+      "file": "usage-high-storage.png",
+      "title": "接近上限 · 存储",
+      "source_frame": "16-usage-high-storage.png",
+      "sha256": "0c17dd62e84dc69a9a54a7238dabeb0074f73ca55af75bc938698b0414d21820",
+      "bytes": 22278
+    }
+  ]
+}

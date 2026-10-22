@@ -13,6 +13,7 @@
 #include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>     /* localtime_r：顶栏时钟（SNTP 校时后才有真实时间） */
 
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -34,6 +35,7 @@
 #include "fnos_perf.h"         /* 台架：只上报 ui_tick 耗时，关配置时是空函数 */
 #include "fnos_wifi_store.h"   /* 开机"有没有凭据"要问存储本身，别问网络层的标志 */
 #include "ui_kit/uk.h"   /* 新自适应层：LVGL 原生 flex，几何不写死 */
+#include "ui_kit/uk_spring.h"
 
 static const char *TAG = "fnos_ui";
 
@@ -51,7 +53,8 @@ static bool motion_reduced(void);   /* 定义在页面控制段，诊断页开�
 typedef struct {
     lv_obj_t *card, *value, *unit, *meta, *gauge, *chart_card, *chart, *context;
     lv_obj_t *metric;   /* 环外框：overview_layout() 按行高给它定尺寸 */
-    lv_coord_t num_mask[3];   /* 1/2/3 位数字的读数遮罩宽，按环内径与字号实测 */
+    lv_coord_t num_mask;     /* Stable mask measured from the instrument range */
+    int32_t fitted_inner;
 } overview_resource_t;
 typedef struct {
     lv_obj_t *box, *name, *value, *bar;
@@ -102,7 +105,6 @@ enum { WIFI_ST_SCAN = 0, WIFI_ST_PASS, WIFI_ST_LINK };
 
 static struct {
     lv_obj_t *screen, *viewport;
-    lv_obj_t *history_span[5], *history_end[5];
     lv_obj_t *scope_bar[FNOS_UI_PAGE_COUNT], *scope_note[FNOS_UI_PAGE_COUNT];
     lv_obj_t *scope_btn[FNOS_UI_PAGE_COUNT][4];
     lv_obj_t *detail_mask, *detail_card, *detail_name, *detail_meta, *detail_value, *detail_context;
@@ -120,12 +122,11 @@ static struct {
     lv_obj_t *nav_icon[FNOS_UI_PAGE_COUNT];
     lv_obj_t *nav_mark[FNOS_UI_PAGE_COUNT];
     /* 顶栏 */
-    lv_obj_t *h_host, *h_ep, *h_chip, *h_bars[4];
+    lv_obj_t *h_date, *h_clock, *h_fresh, *h_chip, *h_bars[4];
     lv_obj_t *overview_note;
     lv_obj_t *capacity, *capacity_unit, *capacity_detail, *capacity_free, *storage_note;
     lv_obj_t *capacity_bar;             /* hero 条（8 高） */
     lv_obj_t *net_axis, *net_note, *system_note, *system_note2;
-    lv_obj_t *net_ylab[3];              /* 网络图 Y 刻度：顶/中/底 */
     lv_obj_t *p3_note, *p3_cols;    /* 系统页正文：三张覆盖层（诊断/配对/配网）显示时要收起来 */
     lv_obj_t *vol_empty, *raid_empty, *disk_empty, *dock_empty, *temp_empty;
     lv_obj_t *dock_empty_label;
@@ -809,7 +810,6 @@ enum {
     ICON_CLOCK = FNOS_UI_PAGE_COUNT, ICON_BOX, ICON_SERVER, ICON_CPU, ICON_MEM,
     ICON_TREND, ICON_RING, ICON_LAYERS, ICON_DOWN, ICON_UP, ICON_WARN, ICON_INFO,
 };
-#define CARD_ICON_SIZE 20
 #define ROW_ICON_SIZE  14
 
 static void nav_icon_draw(lv_event_t *e)
@@ -892,26 +892,6 @@ static void nav_icon_set_kind(lv_obj_t *box, int kind)
 static lv_obj_t *nav_icon_create(lv_obj_t *parent, int kind)
 {
     return nav_icon_sized(parent, kind, UK_NAV_ICON_SIZE);
-}
-
-/* 卡片标题前的一枚图标：先认出"这是哪一路"，再读标题。
-   插在标题 label 之前、头行左缘，头行高度不变（18 < 标题行高），
-   所以所有卡都不用为图标重新分配高度。 */
-static void card_head_icon(lv_obj_t *card, int kind, uint32_t color)
-{
-    lv_obj_t *head = lv_obj_get_child(card, 0);
-    if (!head) return;
-    /* 图标不进头行：头行的子对象顺序是 uk_card_title()/uk_card_note() 的契约，
-       插进去会让"写 note"变成"清标题"。改成卡上的浮动子对象贴左上角，
-       只给头行让出左侧内边距。 */
-    lv_obj_t *icon = nav_icon_sized(card, kind, CARD_ICON_SIZE);
-    lv_obj_set_style_line_color(icon, uk_c(color), 0);
-    lv_obj_add_flag(icon, LV_OBJ_FLAG_IGNORE_LAYOUT);
-    /* 对齐是相对卡的内容区（= 原来的文字左缘），不是相对卡边：
-       图标要站在标题原来的位置上，而不是再往里缩一层。 */
-    lv_obj_align(icon, LV_ALIGN_TOP_LEFT, 2, 2);
-    /* 图标 + 8px 呼吸 + 标题：图标是"这一路是什么"，标题是名字，两者不能贴在一起。 */
-    lv_obj_set_style_pad_left(head, CARD_ICON_SIZE + UK_S2, 0);
 }
 
 /* [图标 + 小字] 一组：状态卡里的硬件事实行。返回文字 label。 */
@@ -1087,12 +1067,18 @@ static void build_header(lv_obj_t *h)
     /* Controls take their text width; the host column uses the actual remaining width. */
     lv_obj_t *hostcol = uk_col(h, 1);
     lv_obj_set_style_min_width(hostcol, 0, 0);
-    s_ui.h_host = uk_label(hostcol, UK_FONT_CJK_16, UK_T1, "fnOS");
-    lv_obj_set_width(s_ui.h_host, LV_PCT(100));
-    lv_obj_set_height(s_ui.h_host, lv_font_get_line_height(UK_FONT_CJK_16));
-    s_ui.h_ep = uk_label(hostcol, UK_FONT_CJK_12, UK_T3, "等待采集");
-    lv_obj_set_width(s_ui.h_ep, LV_PCT(100));
-    lv_obj_set_height(s_ui.h_ep, lv_font_get_line_height(UK_FONT_CJK_12));
+    /* 日期 17 + 时间 24 正好放进 44 的顶栏；栏内默认 4px 行距会把它顶出去 1px，
+       这里收成 0（michka 的钟面本来就是紧排的）。 */
+    lv_obj_set_style_pad_row(hostcol, 0, 0);
+    /* michka 顶栏：一行小字（主机 + 日期），下面一行大号时间。时间是这块屏的锚点，
+       人的第一眼就落在这里，所以字号给到 NUM_20（等宽数字，分钟跳动时不会左右抖）。 */
+    s_ui.h_date = uk_label(hostcol, UK_FONT_CJK_12, UK_T4, "fnOS");
+    lv_obj_set_width(s_ui.h_date, LV_PCT(100));
+    lv_obj_set_height(s_ui.h_date, lv_font_get_line_height(UK_FONT_CJK_12));
+    s_ui.h_clock = uk_label(hostcol, UK_FONT_NUM_20, UK_T1, "--:--");
+    lv_obj_set_width(s_ui.h_clock, LV_PCT(100));
+    lv_obj_set_height(s_ui.h_clock, lv_font_get_line_height(UK_FONT_NUM_20));
+    lv_obj_set_style_text_letter_space(s_ui.h_clock, 1, 0);
     not_clickable(hostcol);
 
     /* Measure actionable labels with the same body font used by the buttons. */
@@ -1133,6 +1119,9 @@ static void build_header(lv_obj_t *h)
     lv_obj_add_event_cb(s_ui.diagnostics_button, diagnostics_cb, LV_EVENT_CLICKED, NULL);
 
     build_signal_bars(h);
+    /* 数据新鲜度只在"不新鲜"时才占地方：新鲜由状态胶囊的"在线"表达，
+       常驻一行"200ms 更新"是噪音（michka 顶栏也不放这种东西）。 */
+    s_ui.h_fresh = uk_label(h, UK_FONT_CJK_12, UK_T3, "");
     s_ui.h_chip = chip_create(h, "等待数据", UK_T3);
 
 }
@@ -1245,30 +1234,19 @@ static void rate_split(char *b, const char **val, const char **unit)
     else    { *val = b; *unit = ""; }
 }
 
-/* Text time axis shares the data layer's window, including old/absent history. */
-static void history_axis(lv_obj_t *body, int index)
-{
-    lv_obj_t *axis = uk_row_box(body, 0);
-    s_ui.history_span[index] = uk_label(axis, UK_FONT_CJK_12, UK_T3, "等待历史采样");
-    lv_obj_set_flex_grow(s_ui.history_span[index], 1);
-    lv_label_set_long_mode(s_ui.history_span[index], LV_LABEL_LONG_MODE_WRAP);
-    s_ui.history_end[index] = uk_label(axis, UK_FONT_CJK_12, UK_T3, "最新采样");
-}
-
 /* Trend bodies fill remaining height. The overview row also fills the cross axis;
    the network page leaves its card height to column flex growth. */
 static lv_obj_t *trend_card(lv_obj_t *page, const char *title, int32_t series,
                             lv_obj_t **out_card, lv_obj_t **out_note)
 {
     lv_obj_t *card = ui_card(page, title, NULL);
-    card_head_icon(card, ICON_TREND, UK_T2);
     lv_obj_set_flex_grow(card, 1);
     lv_obj_set_style_min_height(card, 140, 0);
     lv_obj_set_flex_grow(uk_card_body(card), 1);
     if (out_card) *out_card = card;
     if (out_note) *out_note = uk_card_note(card);
+    /* 复刻 michka：趋势卡就是一条线，没有文字时间轴、没有 Y 刻度。 */
     lv_obj_t *chart = uk_trend_create(uk_card_body(card), UI_HIST, series);
-    history_axis(uk_card_body(card), 2);
     return chart;
 }
 
@@ -1294,22 +1272,22 @@ static void ring_reading_fit(overview_resource_t *r, int32_t ring, int32_t strok
 {
     if (!r->value) return;
     const int32_t inner = ring - 2 * (stroke + UK_S1);
-    lv_point_t big, small, unit;
-    lv_text_get_size(&big, "100", UK_FONT_NUM_44, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-    lv_text_get_size(&small, "100", UK_FONT_NUM_32, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    if (r->num_mask && r->fitted_inner == inner) return;
+    lv_point_t big, unit;
+    char maximum[16];
+    snprintf(maximum, sizeof maximum, "%ld", (long)(lv_arc_get_max_value(r->gauge) / UK_METER_SCALE));
+    lv_text_get_size(&big, maximum, UK_FONT_NUM_44, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
     lv_text_get_size(&unit, "%", UK_TYPE_UNIT, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
     const bool wide = big.x + UK_S1 + unit.x <= inner;
     const lv_font_t *font = wide ? UK_FONT_NUM_44 : UK_FONT_NUM_32;
     if (lv_obj_get_style_text_font(r->value, 0) != font) lv_obj_set_style_text_font(r->value, font, 0);
-    /* 遮罩按位数各量一份：常态两位就按两位收，别为三位数常驻一段空隙。 */
-    static const char *const forms[3] = { "8", "88", "888" };
-    for (unsigned d = 0; d < 3; d++) {
-        lv_point_t sz;
-        lv_text_get_size(&sz, forms[d], font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-        r->num_mask[d] = (lv_coord_t)sz.x;
-    }
-    /* 宽度不在这里落：刷新时才知道是几位数；布局若先按两位写死，
-       正在显示的 "100" 会被挤成两行（本机实测）。 */
+    lv_point_t size;
+    lv_text_get_size(&size, maximum, font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    r->num_mask = size.x;
+    r->fitted_inner = inner;
+    uk_number_settle(r->value);
+    lv_obj_set_width(r->value, r->num_mask);
+    lv_obj_set_height(r->value, lv_font_get_line_height(font));
 }
 
 static lv_obj_t *overview_resource_create(lv_obj_t *parent, lv_obj_t *history_parent, int index,
@@ -1320,7 +1298,6 @@ static lv_obj_t *overview_resource_create(lv_obj_t *parent, lv_obj_t *history_pa
     overview_resource_t *r = &s_ui.overview_resource[index];
     lv_obj_t *card = overview_card(parent, title, NULL);
     r->card = card;
-    card_head_icon(card, index == 0 ? ICON_CPU : ICON_MEM, identity);
     set_txt(uk_card_note(card), "详情 →");
     lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_bg_color(card, uk_c(UK_SURF_S2), LV_STATE_PRESSED);
@@ -1339,9 +1316,11 @@ static lv_obj_t *overview_resource_create(lv_obj_t *parent, lv_obj_t *history_pa
        The unit rides on the same line, so it is part of the inner width. */
     const int32_t inner = value_size.x + UK_S1 + unit_size.x;
     /* 直径与笔画互相依赖：先用最小笔画估一次，再用它算出的笔画重算一圈。 */
-    int32_t diameter = LV_MAX(inner, value_size.y) + 2 * (ring_stroke(inner) + UK_S2);
+    /* 环与卡边之间只留 UK_S1：卡内距已经松到 michka 的 10/12，
+       再在里面留 8px 的"呼吸"就等于双重内距，卡片会顶出容器。 */
+    int32_t diameter = LV_MAX(inner, value_size.y) + 2 * (ring_stroke(inner) + UK_S1);
     const int32_t stroke = ring_stroke(diameter);
-    diameter = LV_MAX(inner, value_size.y) + 2 * (stroke + UK_S2);
+    diameter = LV_MAX(inner, value_size.y) + 2 * (stroke + UK_S1);
     lv_obj_set_height(metric, diameter);
     lv_obj_set_flex_align(metric, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     r->gauge = lv_arc_create(metric);
@@ -1351,6 +1330,11 @@ static lv_obj_t *overview_resource_create(lv_obj_t *parent, lv_obj_t *history_pa
     lv_arc_set_range(r->gauge, 0, 100 * UK_METER_SCALE);
     lv_arc_set_value(r->gauge, 0);
     lv_obj_remove_style(r->gauge, NULL, LV_PART_KNOB);
+    /* Native knob stays attached to the ring's rendered endpoint. */
+    lv_obj_set_style_bg_color(r->gauge, uk_c(UK_T1), LV_PART_KNOB);
+    lv_obj_set_style_bg_opa(r->gauge, LV_OPA_TRANSP, LV_PART_KNOB);
+    lv_obj_set_style_radius(r->gauge, LV_RADIUS_CIRCLE, LV_PART_KNOB);
+    lv_obj_set_style_pad_all(r->gauge, -1, LV_PART_KNOB);
     lv_obj_remove_flag(r->gauge, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_arc_width(r->gauge, stroke, LV_PART_MAIN);
     lv_obj_set_style_arc_width(r->gauge, stroke, LV_PART_INDICATOR);
@@ -1369,7 +1353,7 @@ static lv_obj_t *overview_resource_create(lv_obj_t *parent, lv_obj_t *history_pa
     /* A fixed measured mask lets narrower digits animate without cropping
        outgoing glyphs or shifting the instrument's visual centre. */
     lv_obj_set_width(r->value,value_size.x);
-    lv_obj_set_style_text_align(r->value,LV_TEXT_ALIGN_CENTER,0);
+    lv_obj_set_style_text_align(r->value,LV_TEXT_ALIGN_RIGHT,0);
     r->unit = uk_label(reading, UK_TYPE_UNIT, UK_T3, "%");
     lv_obj_set_style_pad_bottom(r->unit, UK_UNIT_BASELINE, 0);
     r->meta = uk_label(body, UK_FONT_CJK_12, UK_T3, "等待数据");
@@ -1378,13 +1362,13 @@ static lv_obj_t *overview_resource_create(lv_obj_t *parent, lv_obj_t *history_pa
 
     /* Current usage is only the arc and percentage; sampled history has its own card. */
     r->chart_card = overview_card(history_parent, index == 0 ? "CPU趋势" : "内存趋势", "");
-    card_head_icon(r->chart_card, ICON_TREND, identity);
     /* The current gauge encodes load; the history line keeps the metric
        identity. A same-color dot in the header is the legend that ties them. */
     set_txt(uk_card_note(r->chart_card), "●");
     lv_obj_set_style_text_color(uk_card_note(r->chart_card), uk_c(identity), 0);
     body = uk_card_body(r->chart_card);
     r->chart = uk_trend_create(body, UI_HIST, 1);
+    uk_trend_enable_flow(r->chart);
     uk_trend_set_range(r->chart, 0, 100);
     lv_chart_set_series_color(r->chart, uk_trend_series(r->chart, 0), uk_c(identity));
     lv_obj_set_style_line_opa(r->chart, LV_OPA_COVER, LV_PART_ITEMS);
@@ -1572,6 +1556,18 @@ static void entity_detail_build(lv_obj_t *parent)
     show(mask, false);
 }
 
+/* Reserve the common decimal carry without imposing a maximum on real data.
+   Larger readings still grow; ordinary updates keep the adjacent unit fixed. */
+static void reading_reserve(lv_obj_t *value)
+{
+    lv_point_t size;
+    lv_text_get_size(&size, "100.0", lv_obj_get_style_text_font(value, 0),
+                     lv_obj_get_style_text_letter_space(value, 0), 0,
+                     LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    lv_obj_set_style_min_width(value, size.x, 0);
+    lv_obj_set_style_text_align(value, LV_TEXT_ALIGN_RIGHT, 0);
+}
+
 static void build_p0(lv_obj_t *page)
 {
     ui_page(page);
@@ -1595,7 +1591,6 @@ static void build_p0(lv_obj_t *page)
     lv_obj_add_flag(status, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_bg_color(status, uk_c(UK_SURF_S2), LV_STATE_PRESSED);
     lv_obj_add_event_cb(status, page_jump_cb, LV_EVENT_CLICKED, (void *)(intptr_t)3);
-    card_head_icon(status, ICON_SERVER, UK_T3);
     lv_obj_t *status_body = uk_card_body(status);
     /* 2×2 状态瓦片：图标 + 大读数。状态词并进标签（"容器 · 未启用"），
        不再用第三行小字解释——四块瓦片把这张卡排成一块状态矩阵。 */
@@ -1636,7 +1631,6 @@ static void build_p0(lv_obj_t *page)
 
     lv_obj_t *network = overview_card(objects, "网络吞吐",
                                       NULL);
-    card_head_icon(network, 2 /* 网络页图标 */, UK_S_DOWN);
     uk_card_flex(network, 1);
     lv_obj_set_width(network, 0);
     /* 两列「数值 + 单位」要各自站得下，网络卡在这一排拿两格宽度。 */
@@ -1652,7 +1646,7 @@ static void build_p0(lv_obj_t *page)
         lv_obj_set_style_pad_column(vr, UK_S1, 0);
         lv_obj_set_flex_align(vr, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
         s_ui.overview_rate[i] = uk_label(vr, UK_TYPE_METRIC, i == 0 ? UK_S_DOWN : UK_S_UP, "--");
-        lv_obj_set_style_min_width(s_ui.overview_rate[i], 0, 0);
+        reading_reserve(s_ui.overview_rate[i]);
         s_ui.overview_unit[i] = uk_label(vr, UK_FONT_CJK_12, UK_T3, "");
         lv_obj_set_style_pad_bottom(s_ui.overview_unit[i], UK_S1, 0);
     }
@@ -1660,7 +1654,6 @@ static void build_p0(lv_obj_t *page)
     lv_obj_set_width(s_ui.overview_net_context, LV_PCT(100));
 
     lv_obj_t *storage = overview_card(objects, "存储容量", NULL);
-    card_head_icon(storage, 1 /* 存储页图标 */, UK_T2);
     s_ui.overview_capacity_card = storage;
     uk_card_flex(storage, 1);
     lv_obj_set_width(storage, 0);
@@ -1678,7 +1671,6 @@ static void build_p0(lv_obj_t *page)
     s_ui.capacity_free = uk_label(body, UK_FONT_CJK_12, UK_T3, "等待容量数据");
     lv_obj_set_width(s_ui.capacity_free, LV_PCT(100));
     lv_obj_t *volume_card = overview_card(objects, "卷占用", NULL);
-    card_head_icon(volume_card, ICON_RING, UK_T2);
     lv_obj_set_width(volume_card, 0);
     body = uk_card_body(volume_card);
     /* Compact volume comparisons; full identities and capacity are on Storage.
@@ -1708,7 +1700,6 @@ static void build_p0(lv_obj_t *page)
     /* 最热温度磁贴：首页要能一眼看到"有没有一路在发烫"。
        大字是温度本身，副行是传感器名，脚注沿用原来那行"最高 … · 容器状态"。 */
     lv_obj_t *temp = overview_card(objects, "最热温度", "传感器历史");
-    card_head_icon(temp, 4 /* 温度页图标 */, UK_T2);
     lv_obj_set_width(temp, 0);
     s_ui.home_temp_card = temp;
 
@@ -1728,7 +1719,7 @@ static void build_p0(lv_obj_t *page)
     lv_obj_set_style_pad_column(tv, UK_S1, 0);
     lv_obj_set_flex_align(tv, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
     s_ui.home_temp_value = uk_label(tv, UK_TYPE_METRIC, UK_T1, "--");
-    lv_obj_set_style_min_width(s_ui.home_temp_value, 0, 0);
+    reading_reserve(s_ui.home_temp_value);
     s_ui.home_temp_unit = uk_label(tv, UK_FONT_CJK_12, UK_T3, "°C");
     lv_obj_set_style_pad_bottom(s_ui.home_temp_unit, UK_S1 + 2, 0);
     /* Dot + identity share the line below the reading: "74.2 °C" stays one
@@ -1752,6 +1743,7 @@ static void build_p0(lv_obj_t *page)
     lv_label_set_long_mode(s_ui.overview_note, LV_LABEL_LONG_MODE_WRAP);
 
     s_ui.overview_temp_history = uk_trend_create(body, UI_HIST, 1);
+    uk_trend_enable_flow(s_ui.overview_temp_history);
     lv_chart_set_series_color(s_ui.overview_temp_history,
             uk_trend_series(s_ui.overview_temp_history, 0), uk_c(UK_S_TEMP));
     lv_obj_set_style_min_height(s_ui.overview_temp_history, UK_S4, 0);
@@ -1789,7 +1781,7 @@ static void build_p1(lv_obj_t *page)
         lv_obj_set_style_pad_column(reading, UK_S1, 0);
         lv_obj_set_flex_align(reading, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
         s_ui.storage_value[i] = uk_label(reading, UK_TYPE_METRIC, UK_T1, "-");
-        lv_obj_set_style_min_width(s_ui.storage_value[i], 0, 0);
+        reading_reserve(s_ui.storage_value[i]);
         lv_label_set_long_mode(s_ui.storage_value[i], LV_LABEL_LONG_MODE_WRAP);
         s_ui.storage_unit[i] = uk_label(reading, UK_TYPE_CAPTION, UK_T3, "");
         lv_obj_set_style_pad_bottom(s_ui.storage_unit[i], UK_S1, 0);
@@ -1809,7 +1801,6 @@ static void build_p1(lv_obj_t *page)
     lv_obj_set_style_pad_row(main_row, UK_CARD_GAP, 0);
     lv_obj_set_style_pad_column(main_row, UK_CARD_GAP, 0);
     s_ui.vol_card = ui_card(main_row, "存储卷", NULL);
-    card_head_icon(s_ui.vol_card, ICON_RING, UK_T2);
     uk_card_flex(s_ui.vol_card, 2);
     {
         lv_obj_t *body = uk_card_body(s_ui.vol_card);
@@ -1821,7 +1812,6 @@ static void build_p1(lv_obj_t *page)
     }
 
     s_ui.raid_card = ui_card(main_row, "阵列健康", NULL);
-    card_head_icon(s_ui.raid_card, ICON_LAYERS, UK_T2);
     uk_card_flex(s_ui.raid_card, 1);
     {
         lv_obj_t *body = uk_card_body(s_ui.raid_card);
@@ -1834,7 +1824,6 @@ static void build_p1(lv_obj_t *page)
 
     /* 磁盘活动与卷/阵列并排；卡内每块盘仍按两行（名称 + 读/写）排。 */
     s_ui.disk_card = ui_card(main_row, "磁盘活动", NULL);
-    card_head_icon(s_ui.disk_card, 1 /* 存储页图标 */, UK_T2);
     uk_card_flex(s_ui.disk_card, 2);
     /* 过滤到“磁盘”时本卡独占一行；留够卡头+2 条盘的高度，卡体不再被压到 96。 */
     lv_obj_set_style_min_height(s_ui.disk_card, 148, 0);
@@ -1861,25 +1850,11 @@ static void build_p2(lv_obj_t *page)
     /* 吞吐趋势：标题与量程随数据窗口变（在刷新里改），图区吃掉卡内剩余高度 */
     lv_obj_t *tcard = NULL;
     s_ui.tr_net = trend_card(page, "网络吞吐 · 最近 3 分钟", 2, &tcard, &s_ui.net_axis);
+    uk_trend_enable_flow(s_ui.tr_net);
     s_ui.net_title = uk_card_title(tcard);
-    /* Y 刻度：LVGL 5.x 没有轴标签 API；用“38px 标签列 + 图表”两栏，不再贴图对齐。
-       “量程 0 - X MB/s”仍由卡头 note 承载单位。 */
-    lv_obj_t *yrow = uk_row_box(uk_card_body(tcard), 1);
-    lv_obj_t *ygut = uk_col(yrow, 0);
-    lv_obj_set_width(ygut, 38);
-    lv_obj_set_style_pad_right(ygut, UK_S1, 0);
-    lv_obj_set_flex_align(ygut, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
-    for (int i = 2; i >= 0; i--) {
-        s_ui.net_ylab[i] = uk_label(ygut, UK_FONT_CJK_12, UK_T3, "-");
-        lv_obj_set_width(s_ui.net_ylab[i], LV_PCT(100));
-        lv_obj_set_style_text_align(s_ui.net_ylab[i], LV_TEXT_ALIGN_RIGHT, 0);
-    }
-    lv_obj_set_parent(s_ui.tr_net, yrow);
-    /* The chart is created at 100% width; without this it keeps the full row and
-       the 38px scale gutter collapses to nothing (the scale was invisible). */
-    lv_obj_set_width(s_ui.tr_net, 0);
+    /* 没有刻度列：图表自己吃满卡宽（michka 的趋势卡只有线和端点读数）。 */
+    lv_obj_set_width(s_ui.tr_net, LV_PCT(100));
     lv_obj_set_flex_grow(s_ui.tr_net, 1);
-    lv_obj_move_to_index(yrow, 0);   /* 图表行放在历史轴之前，横轴标尺回到底部 */
     /* 图表优先：这一页的主问题是"链路现在什么状态"，图先给，KPI 条在它下面。 */
     lv_obj_set_flex_grow(tcard, 2);
     lv_chart_series_t *se_tx = uk_trend_series(s_ui.tr_net, 0);
@@ -1930,7 +1905,6 @@ static void build_p2(lv_obj_t *page)
     lv_obj_move_to_index(krow, lv_display_get_horizontal_resolution(NULL) < UK_ENTITY_MIN_WIDTH ? 2 : 1);
     s_ui.net_note = NULL;
     s_ui.net_card = ui_card(page, "网口与接口", NULL);
-    card_head_icon(s_ui.net_card, 2 /* 网络页图标 */, UK_T2);
     /* 卡片按内容定高：几个网口就多高（余量全给上面的趋势图，装不下时页级滚动）。
        以前这里吃满余量 —— 只有一个网口时卡下半截是空的。 */
     uk_card_flex(s_ui.net_card, 0);
@@ -2038,7 +2012,6 @@ static void build_p3(lv_obj_t *page)
     /* 容器服务：一行一个容器（名字左、状态右），不带进度条也不带状态点 ——
        运行中的绿灯已经在状态文字的颜色里了。 */
     s_ui.dock_card = ui_card(s_ui.p3_cols, "容器服务", NULL);
-    card_head_icon(s_ui.dock_card, ICON_BOX, UK_T2);
     uk_card_flex(s_ui.dock_card, 1);
     {
         lv_obj_t *body = uk_card_body(s_ui.dock_card);
@@ -2051,7 +2024,6 @@ static void build_p3(lv_obj_t *page)
 
     /* Device identity, hottest channel, and configured visual reference colors. */
     s_ui.p3_temp_card = ui_card(s_ui.p3_cols, "硬件温度", NULL);
-    card_head_icon(s_ui.p3_temp_card, 4 /* 温度页图标 */, UK_T2);
     uk_card_flex(s_ui.p3_temp_card, 1);
     {
         lv_obj_t *body = uk_card_body(s_ui.p3_temp_card);
@@ -2147,22 +2119,19 @@ static void build_p4(lv_obj_t *page)
     lv_obj_set_width(s_ui.temp_note2, LV_PCT(100));
 
     lv_obj_t *history_card = ui_card(page, "温度趋势", NULL);
-    card_head_icon(history_card, ICON_TREND, UK_T2);
     uk_card_flex(history_card, 0);
     lv_obj_t *history_body = uk_card_body(history_card);
     s_ui.temp_history_note = uk_label(history_body, UK_FONT_CJK_12, UK_T3, "最高温历史 · 等待采集");
     lv_obj_set_width(s_ui.temp_history_note, LV_PCT(100));
     lv_label_set_long_mode(s_ui.temp_history_note, LV_LABEL_LONG_MODE_WRAP);
-    /* 趋势图已有轴标签；这行 12px 说明在 476px 页高里挤掉了设备卡。 */
     lv_obj_add_flag(s_ui.temp_history_note, LV_OBJ_FLAG_HIDDEN);
     s_ui.temp_history = uk_trend_create(history_body, UI_HIST, 1);
+    uk_trend_enable_flow(s_ui.temp_history);
     lv_obj_set_flex_grow(s_ui.temp_history, 0);
     lv_obj_set_height(s_ui.temp_history, lv_display_get_vertical_resolution(NULL) / 6);
     lv_chart_set_series_color(s_ui.temp_history, uk_trend_series(s_ui.temp_history, 0), uk_c(UK_S_TEMP));
     uk_trend_set_range(s_ui.temp_history, 0, 100);
-    history_axis(history_body, 3);
     s_ui.temp_card = ui_card(page, "设备温度", NULL);
-    card_head_icon(s_ui.temp_card, 4 /* 温度页图标 */, UK_T2);
     /* 卡片吃满页高余量，设备清单在池内滚动：页根不再靠滚动露出整张卡。 */
     uk_card_flex(s_ui.temp_card, 1);
     lv_obj_t *body = uk_card_body(s_ui.temp_card);
@@ -4438,7 +4407,7 @@ static void overview_layout(void)
     for (unsigned r = 0; r < sizeof s_ui.overview_rows / sizeof s_ui.overview_rows[0]; r++) {
         lv_obj_t *row = s_ui.overview_rows[r];
         if (!row) continue;
-        lv_obj_set_flex_grow(row, 0);
+        overview_style_num(row, LV_STYLE_FLEX_GROW, 0, 0);
         lv_obj_update_layout(row);
         for (uint32_t i = 0; i < lv_obj_get_child_count(row); i++) {
             lv_obj_t *card = lv_obj_get_child(row, i);
@@ -4456,8 +4425,8 @@ static void overview_layout(void)
         lv_obj_set_height(rr->metric, ring);
         lv_obj_set_size(rr->gauge, ring, ring);
         const int32_t stroke = ring_stroke(ring);
-        lv_obj_set_style_arc_width(rr->gauge, stroke, LV_PART_MAIN);
-        lv_obj_set_style_arc_width(rr->gauge, stroke, LV_PART_INDICATOR);
+        overview_style_num(rr->gauge, LV_STYLE_ARC_WIDTH, stroke, LV_PART_MAIN);
+        overview_style_num(rr->gauge, LV_STYLE_ARC_WIDTH, stroke, LV_PART_INDICATOR);
         ring_reading_fit(rr, ring, stroke);
     }
     /* 状态瓦片两行铺满卡体：卡体 = hero - 48（实测卡头与边距），瓦片 = (卡体 - 缝) / 2。
@@ -4479,11 +4448,6 @@ static void overview_refresh(const fnos_status_t *st)
         bool readable = overview_readable(st, modules[i]);
         bool live = readable && overview_live(st, modules[i]);
         float pct = i == 0 ? st->cpu.pct : st->mem.pct;
-        /* 遮罩跟着位数走：37 与 % 之间不该常驻为 100 预留的空隙；
-           同位数切换时遮罩不变，数字过渡照旧。 */
-        const int digits = !readable ? 2 : pct >= 99.5f ? 3 : pct >= 9.5f ? 2 : 1;
-        if (r->num_mask[digits - 1] && lv_obj_get_style_width(r->value, 0) != r->num_mask[digits - 1])
-            lv_obj_set_width(r->value, r->num_mask[digits - 1]);
         (live ? set_num : set_txt)(r->value, readable ? "%.0f" : "--", pct);
         set_txt(r->unit, "%s", readable ? "%" : "");
         if (!readable) (live ? set_num : set_txt)(r->meta, "%s", st->ever_ok && state ? mod_status_cn(state) : "等待数据");
@@ -4496,6 +4460,8 @@ static void overview_refresh(const fnos_status_t *st)
         uk_meter_set(r->gauge, readable ? (int32_t)lroundf(fminf(100, fmaxf(0, pct)) * UK_METER_SCALE) : 0, live);
         const uint32_t usage_color = live ? uk_pct_color(pct) : UK_OFF;
         overview_style_color(r->gauge, LV_STYLE_ARC_COLOR, uk_c(usage_color), LV_PART_INDICATOR);
+        overview_style_color(r->gauge, LV_STYLE_BG_COLOR, uk_c(live ? UK_T1 : UK_OFF), LV_PART_KNOB);
+        overview_style_num(r->gauge, LV_STYLE_BG_OPA, readable ? LV_OPA_COVER : LV_OPA_TRANSP, LV_PART_KNOB);
         /* History keeps its metric identity; only the current gauge encodes load. */
         lv_chart_series_t *series = uk_trend_series(r->chart, 0);
         lv_color_t history_color = uk_c(i == 0 ? UK_S_CPU : UK_S_MEM);
@@ -4516,10 +4482,13 @@ static void overview_refresh(const fnos_status_t *st)
 
     const bool system_live = overview_live(st, "cpu");
     if (overview_readable(st, "cpu")) {
-        const uint32_t hours = st->uptime_s / 3600u;
-        (system_live ? set_num : set_txt)(s_ui.overview_clock, "%02u:%02u", (unsigned)hours,
-                (unsigned)(st->uptime_s / 60u % 60u));
-        set_txt(s_ui.overview_clock_lab, "运行 %s", fmt_uptime(b, sizeof b, st->uptime_s));
+        const uint32_t days = st->uptime_s / 86400u;
+        snprintf(b, sizeof b, "%02u:%02u", (unsigned)(st->uptime_s / 3600u % 24u),
+                 (unsigned)(st->uptime_s / 60u % 60u));
+        if (days) snprintf(c1, sizeof c1, "运行 %u 天%s", (unsigned)days, system_live ? "" : " · 旧值");
+        else snprintf(c1, sizeof c1, "运行时长%s", system_live ? "" : " · 旧值");
+        /* Day count and clock publish together, including midnight rollover. */
+        uk_number_set_reading(s_ui.overview_clock, s_ui.overview_clock_lab, b, c1, system_live);
     } else {
         set_num(s_ui.overview_clock, "--:--");
         set_txt(s_ui.overview_clock_lab, "运行时长");
@@ -4551,9 +4520,10 @@ static void overview_refresh(const fnos_status_t *st)
     const bool docker_live = docker_readable && overview_live(st, "docker");
     (docker_live ? set_num : set_txt)(s_ui.overview_services, docker_readable ? "%d/%d" : "--", running, st->ndocker);
     overview_style_color(s_ui.overview_services, LV_STYLE_TEXT_COLOR, uk_c(docker_live ? UK_T1 : UK_T3), 0);
-    set_txt(s_ui.overview_service_lab, "容器%s",
-            !docker_readable ? " · 未启用" : !docker_live ? " · 旧值"
-            : !st->ndocker ? " · 未发现" : running == st->ndocker ? "" : " · 有停止");
+    const char *docker_note = docker_module_note(st);
+    if (!docker_note[0])
+        docker_note = !st->ndocker ? "未发现" : running == st->ndocker ? "" : "有停止";
+    set_txt(s_ui.overview_service_lab, "容器%s%s", docker_note[0] ? " · " : "", docker_note);
 
     double used = 0, total = 0, free_gb = 0;
     int healthy_raid = 0;
@@ -4680,11 +4650,21 @@ static void overview_refresh(const fnos_status_t *st)
 static void header_refresh(void)
 {
     const fnos_status_t *st = &s_st;
-    char age[32], period[16];
-    if (!st->ever_ok) set_txt(s_ui.h_ep, "%s · 等待采集端", NAV_TXT[s_page]);
-    else if (!st->online) set_txt(s_ui.h_ep, "%s · 保留旧数据 · %s", NAV_TXT[s_page], fmt_age(age, sizeof age, data_age_ms(st)));
-    else set_txt(s_ui.h_ep, "%s · %s 更新", NAV_TXT[s_page],
-                 fmt_period(period, sizeof period, fnos_ui_refresh_period_ms()));
+    char age[32];
+
+    time_t now = time(NULL);
+    struct tm tm_now;
+    localtime_r(&now, &tm_now);
+    bool clock_ok = tm_now.tm_year >= 120;   /* 2020 之前 = SNTP 还没校时，别把 1970 当成时间 */
+    set_txt(s_ui.h_clock, clock_ok ? "%02d:%02d" : "--:--", tm_now.tm_hour, tm_now.tm_min);
+    if (clock_ok) set_txt(s_ui.h_date, "%s · %02d/%02d", st->host[0] ? st->host : "fnos",
+                          tm_now.tm_mon + 1, tm_now.tm_mday);
+    else set_txt(s_ui.h_date, "%s", st->host[0] ? st->host : "fnos");
+
+    if (!st->ever_ok) set_txt(s_ui.h_fresh, "等待采集端");
+    else if (!st->online) set_txt(s_ui.h_fresh, "保留旧数据 · %s", fmt_age(age, sizeof age, data_age_ms(st)));
+    else set_txt(s_ui.h_fresh, "");
+    show(s_ui.h_fresh, !st->ever_ok || !st->online);
 }
 
 static void inventory_notice(void)
@@ -4867,7 +4847,6 @@ static const char *smart_note(const char *state)
 static void refresh_shell(const fnos_status_t *st)
 {
     /* 顶栏：主机 / 端点 / 状态胶囊 / 信号 */
-    set_txt(s_ui.h_host, "%s", st->host[0] ? st->host : "fnos");
     header_refresh();
     if (!st->ever_ok)      chip_set_glow(s_ui.h_chip, "等待数据", UK_T4);
     else if (st->online)   chip_set_glow(s_ui.h_chip, "在线", UK_OK);
@@ -5151,28 +5130,6 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
                                          st->net.rx_kbs, st->net.tx_kbs, 20);
         uk_trend_set_range(s_ui.tr_net, 0, ymax);
         set_num(s_ui.net_axis, "量程 0 - %s", fmt_rate(b, sizeof b, ymax));
-        /* 左侧 Y 刻度：顶/中/底，数值与卡头量程同源，单位只在 note 里出现一次。 */
-        char *ysp = strchr(b, ' ');
-        if (ysp) *ysp = '\0';
-        set_txt(s_ui.net_ylab[2], "%s", b);
-        fmt_rate(b, sizeof b, ymax / 2);
-        ysp = strchr(b, ' ');
-        if (ysp) *ysp = '\0';
-        set_txt(s_ui.net_ylab[1], "%s", b);
-        set_txt(s_ui.net_ylab[0], "0");
-        /* 刻度槽跟着最宽刻度走：四位数值不该被固定槽宽裁掉。 */
-        lv_obj_t *gut = lv_obj_get_parent(s_ui.net_ylab[0]);
-        if (gut) {
-            int32_t widest = 0;
-            for (int i = 0; i < 3; i++) {
-                lv_point_t s;
-                lv_text_get_size(&s, lv_label_get_text(s_ui.net_ylab[i]), UK_FONT_CJK_12,
-                                 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-                if (s.x > widest) widest = s.x;
-            }
-            const int32_t want = LV_CLAMP(30, widest + UK_S1, 64);
-            if (lv_obj_get_style_width(gut, 0) != want) lv_obj_set_width(gut, want);
-        }
         (net_live ? set_num : set_txt)(s_ui.tr_tx_lbl, "%s · 峰 %s",
                 net_readable ? fmt_rate(c1, sizeof c1, st->net.tx_kbs) : "--", fmt_rate(c2, sizeof c2, peak_tx));
         (net_live ? set_num : set_txt)(s_ui.tr_rx_lbl, "%s · 峰 %s",
@@ -5268,9 +5225,6 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
             set_num(s_ui.tr_tx_lbl, "等待数据");
             set_num(s_ui.tr_rx_lbl, "等待数据");
             set_num(s_ui.net_axis, "无数据");
-            set_txt(s_ui.net_ylab[2], "-");
-            set_txt(s_ui.net_ylab[1], "-");
-            set_txt(s_ui.net_ylab[0], "-");
             /* 从没采到过数据：把图清空，不留上一轮的残影 */
             uk_trend_clear(s_ui.tr_net);
         }
@@ -5543,10 +5497,6 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
     for (unsigned i = 0; i < sizeof history_pages / sizeof history_pages[0]; i++) {
         if (!(page == history_pages[i])) continue;
         bool available = overview_readable(st, history_modules[i]) && chart_sample_count(history_charts[i]);
-        set_txt(s_ui.history_span[i], "%s%s", i == 4 ? "传感器 · " : "",
-                available ? hist_span_text(b, sizeof b, st) : "等待历史采样");
-        set_txt(s_ui.history_end[i], "%s",
-                !available ? "--" : overview_live(st, history_modules[i]) ? "现在" : "旧值");
     }
     if (page == 1) set_txt(s_ui.scope_note[1], "%d 卷 · %d 阵列 · %d 磁盘 · 点按详情", st->nvols, st->nraid, st->ndisks);
     if (page == 3) set_txt(s_ui.scope_note[3], "%d 容器 · %d 路温度 · 点按详情", st->ndocker, st->ntemps);
@@ -6024,8 +5974,7 @@ static struct {
     uint32_t last_tick;
     int32_t velocity;
     uint32_t duration;
-    float phase_velocity;
-    int32_t spring_b;       /* lroundf(phase_velocity + UK_MOTION_DAMPING * displacement) */
+    float start_velocity;   /* pixels/ms, preserved by the shared spring solver */
     int32_t painted;        /* 已画出的偏移：没变就不必再失效一次视口 */
     lv_indev_t *pointer;
 } s_motion;
@@ -6155,42 +6104,16 @@ static void motion_paint(void)
     refresh_soon();
 }
 
-/* exp(-k·i/64) 的 Q16 定点表（k = UK_MOTION_DAMPING）。手势动画每帧都要算一次
-   expf + 两次 lroundf，在 PSRAM 上这些 libm 调用抵得上几毫秒；把归一化时间
-   量化到 1/64 后查表 + 整数乘除，走的是同一条闭式临界阻尼曲线。 */
-static const uint32_t s_motion_exp_q16[65] = {
-    65536, 56056, 47947, 41011, 35079, 30005, 25664, 21952,
-    18776, 16060, 13737, 11750, 10050, 8596, 7353, 6289,
-    5380, 4601, 3936, 3366, 2879, 2463, 2107, 1802,
-    1541, 1318, 1128, 964, 825, 706, 604, 516,
-    442, 378, 323, 276, 236, 202, 173, 148,
-    127, 108, 93, 79, 68, 58, 50, 42,
-    36, 31, 27, 23, 19, 17, 14, 12,
-    10, 9, 8, 6, 6, 5, 4, 3,
-    3,
-};
-
-static int32_t motion_div_round(int64_t num, int64_t den)
-{
-    return (int32_t)((num >= 0 ? num + den / 2 : num - den / 2) / den);
-}
-
 static void motion_exec(void *unused, int32_t value)
 {
     (void)unused;
-    /* Closed-form critical damping remains stable with dropped frames and
-       preserves the current velocity when a tap reverses an in-flight page.
-       t = value/1024 量化成 t64/64：(d + b·t)·e^(-k·t) 全部用整数算，
-       缩放常数 64(t) × 65536(decay) = 2^22。 */
-    int32_t t64 = value >> 4;
-    if (t64 < 0) t64 = 0; else if (t64 > 64) t64 = 64;   /* 表边界：LVGL 只给 0..1024 */
-    int32_t d = s_motion.start - s_motion.end;
-    int64_t num = (int64_t)d * 64 + (int64_t)s_motion.spring_b * t64;
-    uint32_t decay = s_motion_exp_q16[t64];
-    int32_t offset = s_motion.end + (int32_t)((num * decay) >> 22);
-    int64_t dv = (int64_t)s_motion.spring_b * 64 - (int64_t)UK_MOTION_DAMPING * num;
-    s_motion.velocity = motion_div_round(dv * (int64_t)decay * 1000,
-                                        (int64_t)4194304 * (int64_t)s_motion.duration);
+    float velocity;
+    uk_spring_response_t response = uk_spring_response_for(
+        (float)LV_CLAMP(0, value, 1024) * s_motion.duration / 1024.f,
+        s_motion.duration, UK_MOTION_DAMPING, 1.f);
+    int32_t offset = (int32_t)lroundf(uk_spring_value(s_motion.start,
+        s_motion.start_velocity, s_motion.end, response, &velocity));
+    s_motion.velocity = (int32_t)lroundf(velocity * 1000.f);
     if (value == 1024) { offset = s_motion.end; s_motion.velocity = 0; }
     if (offset == s_motion.offset) return;
     s_motion.offset = offset;
@@ -6250,13 +6173,12 @@ static void motion_snap(bool commit)
     s_motion.duration = remaining * UK_MOTION_MS / s_motion.width;
     if (s_motion.duration < UK_MOTION_MIN_MS) s_motion.duration = UK_MOTION_MIN_MS;
     if (s_motion.duration > UK_MOTION_MS) s_motion.duration = UK_MOTION_MS;
-    s_motion.phase_velocity = s_motion.velocity * s_motion.duration / 1000.0f;
-    /* A very fast release must not overshoot the selected page. Reversals keep
-       their away-from-target velocity, so interruption has no sudden stop. */
+    s_motion.start_velocity = s_motion.velocity / 1000.f;
+    /* Bound release energy to avoid overshooting the selected page. */
     float d = s_motion.start - s_motion.end;
-    if (d * s_motion.phase_velocity < 0 && fabsf(s_motion.phase_velocity) > UK_MOTION_DAMPING * fabsf(d))
-        s_motion.phase_velocity = -UK_MOTION_DAMPING * d;
-    s_motion.spring_b = (int32_t)lroundf(s_motion.phase_velocity + UK_MOTION_DAMPING * d);
+    float max_speed = UK_MOTION_DAMPING * fabsf(d) / s_motion.duration;
+    if (d * s_motion.start_velocity < 0 && fabsf(s_motion.start_velocity) > max_speed)
+        s_motion.start_velocity = -copysignf(max_speed, d);
     s_motion.active = true;
     lv_anim_t a;
     lv_anim_init(&a);
@@ -6356,10 +6278,12 @@ static void motion_release(void)
     int32_t travel = -s_motion.offset * s_motion.direction;
     bool distance = travel * 100 >= s_motion.width * UK_SWIPE_COMMIT_PCT;
     if (lv_tick_elaps(s_motion.last_tick) > UK_MOTION_MS / 2) s_motion.velocity = 0;
-    bool flick = travel * 100 >= s_motion.width * UK_SWIPE_LOCK_PCT * 2 &&
-                 abs(s_motion.velocity) * 100 >= s_motion.width * UK_SWIPE_FLICK_PCT &&
-                 s_motion.velocity * s_motion.direction < 0;
-    motion_snap(distance || flick);
+    /* An interrupted transition can already be beyond the distance threshold.
+       A deliberate reverse flick must follow this gesture, not that old offset. */
+    bool flick = abs(s_motion.last.x - s_motion.press.x) * 100 >=
+                     s_motion.width * UK_SWIPE_LOCK_PCT * 2 &&
+                 abs(s_motion.velocity) * 100 >= s_motion.width * UK_SWIPE_FLICK_PCT;
+    motion_snap(flick ? s_motion.velocity * s_motion.direction < 0 : distance);
 }
 
 static void motion_pointer_cb(lv_event_t *e)

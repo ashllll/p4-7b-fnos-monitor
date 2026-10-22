@@ -1,5 +1,50 @@
 #include "uk.h"
 #include "uk_spring.h"
+#include "src/widgets/bar/lv_bar_private.h"
+
+/* Draw on LVGL's actual indicator geometry, including padding and animation.
+   No child object or independent position can drift away from the bar. */
+static void meter_cursor_draw(lv_event_t *e)
+{
+    lv_obj_t *obj = lv_event_get_current_target(e);
+    const lv_bar_t *bar = (const lv_bar_t *)obj;
+    lv_area_t track;
+    lv_obj_get_content_coords(obj, &track);
+    lv_area_t cursor = bar->indic_area;
+    bool horizontal = lv_area_get_width(&track) >= lv_area_get_height(&track);
+    int32_t thickness = LV_MAX(2, (horizontal ? lv_area_get_height(&track) :
+                                  lv_area_get_width(&track)) / 3);
+    bool reversed = bar->val_reversed ^
+        (horizontal && lv_obj_get_style_base_dir(obj, LV_PART_MAIN) == LV_BASE_DIR_RTL);
+    if (horizontal) {
+        int32_t x = reversed ? cursor.x1 : cursor.x2;
+        cursor.x1 = LV_CLAMP(track.x1, x - thickness / 2, track.x2 - thickness + 1);
+        cursor.x2 = cursor.x1 + thickness - 1;
+        cursor.y1 = track.y1;
+        cursor.y2 = track.y2;
+    } else {
+        int32_t y = reversed ? cursor.y2 : cursor.y1;
+        cursor.y1 = LV_CLAMP(track.y1, y - thickness / 2, track.y2 - thickness + 1);
+        cursor.y2 = cursor.y1 + thickness - 1;
+        cursor.x1 = track.x1;
+        cursor.x2 = track.x2;
+    }
+    lv_draw_rect_dsc_t dsc;
+    lv_draw_rect_dsc_init(&dsc);
+    lv_color_t fill = lv_obj_get_style_bg_color(obj, LV_PART_INDICATOR);
+    dsc.bg_color = lv_color_eq(fill, uk_c(UK_OFF)) ? uk_c(UK_OFF) : uk_c(UK_T1);
+    dsc.bg_opa = lv_obj_get_style_bg_opa(obj, LV_PART_INDICATOR);
+    dsc.radius = thickness / 2;
+    lv_draw_rect(lv_event_get_layer(e), &dsc, &cursor);
+}
+
+static void meter_cursor_attach(lv_obj_t *obj)
+{
+    if (!lv_obj_check_type(obj, &lv_bar_class)) return;
+    for (uint32_t i = 0; i < lv_obj_get_event_count(obj); i++)
+        if (lv_event_dsc_get_cb(lv_obj_get_event_dsc(obj, i)) == meter_cursor_draw) return;
+    lv_obj_add_event_cb(obj, meter_cursor_draw, LV_EVENT_DRAW_MAIN_END, NULL);
+}
 
 typedef struct {
     lv_obj_t *obj;
@@ -10,26 +55,6 @@ typedef struct {
 } meter_t;
 static bool motion_enabled = true;
 static void meter_step(void *var, int32_t elapsed);
-
-float uk_spring_decay(float normalized_time)
-{
-    /* One exponential initializes a shared 2 KiB table. Every visible meter
-       and glyph reuses it; linear interpolation keeps subpixel precision. */
-    enum { STEPS=256, END=2*STEPS };
-    static float table[END+1];
-    static bool ready;
-    if (!ready) {
-        const float step=expf(-(float)UK_TELEMETRY_DAMPING/STEPS);
-        table[0]=1;
-        for (int i=1;i<=END;i++) table[i]=table[i-1]*step;
-        ready=true;
-    }
-    if (normalized_time<=0) return 1;
-    if (normalized_time>=2) return expf(-UK_TELEMETRY_DAMPING*normalized_time);
-    float index=normalized_time*STEPS;
-    int i=(int)index;
-    return table[i]+(table[i+1]-table[i])*(index-i);
-}
 
 static void meter_write(meter_t *m, int32_t value)
 {
@@ -77,7 +102,8 @@ static void meter_sample(meter_t *m, uint32_t elapsed)
 static void meter_step(void *var, int32_t elapsed)
 {
     meter_t *m = var;
-    if (!motion_enabled || !lv_obj_is_visible(m->obj) || (uint32_t)elapsed >= 2*UK_NUMBER_MS) {
+    if (!motion_enabled || uk_motion_reduced() || !lv_obj_is_visible(m->obj) ||
+        (uint32_t)elapsed >= 2*UK_NUMBER_MS) {
         meter_snap(m);
         return;
     }
@@ -95,12 +121,14 @@ void uk_meter_settle(lv_obj_t *obj)
 void uk_meter_set(lv_obj_t *obj, int32_t value, bool animate)
 {
     if (!obj) return;
+    meter_cursor_attach(obj);
     const bool arc = lv_obj_check_type(obj, &lv_arc_class);
     const int32_t lo = arc ? lv_arc_get_min_value(obj) : lv_bar_get_min_value(obj);
     const int32_t hi = arc ? lv_arc_get_max_value(obj) : lv_bar_get_max_value(obj);
     value = LV_CLAMP(lo, value, hi);
     meter_t *m = meter_find(obj);
-    bool enabled = animate && motion_enabled && !UK_NUMBER_REDUCED && UK_NUMBER_MS > 0 && lv_obj_is_visible(obj);
+    bool enabled = animate && motion_enabled && !UK_NUMBER_REDUCED &&
+        !uk_motion_reduced() && UK_NUMBER_MS > 0 && lv_obj_is_visible(obj);
     if (!m && enabled) {
         m = uk_alloc(sizeof *m);
         if (m) {
@@ -132,8 +160,10 @@ void uk_meter_set(lv_obj_t *obj, int32_t value, bool animate)
 int32_t uk_anim_path_damped(const lv_anim_t *a)
 {
     uk_spring_response_t r=a->act_time>=a->duration ? (uk_spring_response_t){0} :
-        uk_spring_response(a->act_time < 0 ? 0 : (uint32_t)a->act_time, a->duration);
-    return a->start_value + (int32_t)lroundf((a->end_value-a->start_value)*(1-r.displacement));
+        uk_spring_response_for(a->act_time < 0 ? 0 : (uint32_t)a->act_time,
+                               a->duration, UK_TELEMETRY_DAMPING, 1.f);
+    float velocity;
+    return (int32_t)lroundf(uk_spring_value(a->start_value, 0, a->end_value, r, &velocity));
 }
 #ifdef FNOS_UI_TESTING
 #include <assert.h>
@@ -143,13 +173,13 @@ void uk_meter_selfcheck(lv_obj_t *parent)
     motion_enabled=true;
     float v, x=uk_spring_value(0,0,1,uk_spring_response(0,450),&v);
     assert(x==0 && v==0);
-    /* Include every configurable millisecond duration, especially 550/1000ms
-       where lookup interpolation once caused a tiny reverse first step. */
+    /* Critical damping must remain monotone over every supported duration. */
     for (uint32_t duration=1;duration<=1000;duration++) {
         float previous=0;
         for (uint32_t t=0;t<=duration;t++) {
-            x=uk_spring_value(0,0,1,uk_spring_response(t,duration),&v);
-            assert(x>=previous && x<=1 && v>=0);
+            x=uk_spring_value(0,0,1,
+                uk_spring_response_for(t,duration,UK_TELEMETRY_DAMPING,1),&v);
+            assert(x+1e-6f>=previous && x<=1 && v>=0);
             previous=x;
         }
     }
@@ -159,6 +189,27 @@ void uk_meter_selfcheck(lv_obj_t *parent)
     x=uk_spring_value(.3f,.002f,.8f,uk_spring_response(200,450),&v);
     x=uk_spring_value(x,v,.8f,uk_spring_response(400,450),&v);
     assert(fabsf(x-full)<.00001f && fabsf(v-full_v)<.00001f);
+    /* Library branches, reversal energy and dropped frames: partitioning time
+       must not change the result, including either side of critical damping. */
+    const float ratios[] = {.8f, .85f, .999f, 1.f, 1.001f, 1.2f};
+    for (unsigned i=0;i<sizeof ratios/sizeof *ratios;i++) {
+        full=uk_spring_value(.3f,-.002f,.8f,
+            uk_spring_response_for(470,300,8,ratios[i]),&full_v);
+        x=uk_spring_value(.3f,-.002f,.8f,
+            uk_spring_response_for(17,300,8,ratios[i]),&v);
+        x=uk_spring_value(x,v,.8f,
+            uk_spring_response_for(453,300,8,ratios[i]),&v);
+        assert(isfinite(x) && isfinite(v));
+        assert(fabsf(x-full)<.00001f && fabsf(v-full_v)<.00001f);
+    }
+    float peak=0;
+    for (uint32_t t=0;t<=600;t++) {
+        x=uk_spring_value(0,0,1,uk_spring_response_for(t,300,8,.85f),&v);
+        peak=LV_MAX(peak,x);
+    }
+    assert(peak>1.005f && peak<1.007f); /* Restrained ammeter rebound. */
+    x=uk_spring_value(.3f,.002f,0,uk_spring_response_for(1,300,8,.85f),&v);
+    assert(x>.3f && v>0); /* Reversal preserves momentum, not an instant stop. */
     lv_obj_t *bar=lv_bar_create(parent);
     lv_bar_set_range(bar,0,100*UK_METER_SCALE);
     lv_obj_update_layout(parent);
@@ -187,6 +238,11 @@ void uk_meter_selfcheck(lv_obj_t *parent)
     uk_meter_motion_enable(false); meter_step(m,10);
     assert(!m->active && lv_bar_get_value(bar)==4000);
     uk_meter_motion_enable(true);
+    uk_meter_set(bar,9000,true);
+    uk_motion_set_reduced(true);
+    meter_step(m,10);
+    assert(!m->active && lv_bar_get_value(bar)==9000);
+    uk_motion_set_reduced(false);
     uk_meter_set(bar,1000,true); assert(m->active);
     lv_obj_delete(bar); /* In-flight state and callback must be released together. */
     lv_obj_t *arc=lv_arc_create(parent);

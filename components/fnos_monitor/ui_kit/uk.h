@@ -44,13 +44,17 @@ bool uk_test_alloc_was_triggered(void);
 #define UK_S6 32
 
 /* One density across overview, inventory, detail and setup surfaces. */
-#define UK_CARD_PAD UK_S2
+/* michka 的卡内距是 padding:10px 12px —— 横向比 UK_S2(8) 松一档，纵向略松。
+   横向取 12（UK_S3），纵向取 10：卡里的字不贴边，又不至于把卡片撑高。 */
+#define UK_CARD_PAD   UK_S3
+#define UK_CARD_PAD_V 10
 #define UK_CONTENT_GAP UK_S1
 #define UK_ROW_PAD_H UK_S2
 #define UK_ROW_PAD_V UK_S1
 
 /* Distinct cards breathe more than their internal text; compact displays use one step less. */
-#define UK_CARD_GAP (lv_display_get_vertical_resolution(NULL) < UK_SCR_H ? UK_S2 : UK_S3)
+/* michka 的卡间距是 8（--f-gap），不是 12：他们的卡更"挨着"，整体像一块板。 */
+#define UK_CARD_GAP UK_S2
 #define UK_ITEM_GAP (lv_display_get_vertical_resolution(NULL) < UK_SCR_H ? UK_S1 : UK_S2)
 
 /* 12 栅格：一行之内的宽度份额。格子声明自己占几列，列距 = 卡片间距。
@@ -210,7 +214,9 @@ void uk_trend_set_range(lv_obj_t *chart, int32_t ymin, int32_t ymax);
    Pass zero for backfill/unknown cadence (establish the window immediately). */
 void uk_trend_push(lv_obj_t *chart, int32_t series_idx, int32_t v, uint32_t interval_ms);
 void uk_trend_clear(lv_obj_t *chart);  /* Reset both rings and presentation time. */
-void uk_trend_settle(lv_obj_t *chart); /* Snap a history batch/hidden view to newest. */
+void uk_trend_settle(lv_obj_t *chart);
+/** 历史曲线启用平滑与流动：只改绘制几何，不动采样数据。 */
+void uk_trend_enable_flow(lv_obj_t *chart); /* Snap a history batch/hidden view to newest. */
 
 /* 数字键盘：原生 lv_buttonmatrix，回调收到按钮文字。 */
 lv_obj_t *uk_numpad_create(lv_obj_t *parent, void (*cb)(const char *key, void *user), void *user);

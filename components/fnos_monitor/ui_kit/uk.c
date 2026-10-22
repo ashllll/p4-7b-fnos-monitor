@@ -5,7 +5,9 @@
 #include "uk.h"
 #include "src/widgets/chart/lv_chart_private.h"
 #include "src/core/lv_obj_class_private.h"
+#include "third_party/d3_basis.h"
 
+#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -67,6 +69,19 @@ static void style_card_edge(lv_obj_t *o)
     lv_obj_set_style_border_width(o, 1, 0);
     lv_obj_set_style_border_color(o, uk_c(UK_LINE), 0);
     lv_obj_set_style_border_opa(o, LV_OPA_COVER, 0);
+}
+
+/* michka 卡头两侧的白方块帽（CSS ::before/::after，4px）。 */
+static void uk_cap(lv_obj_t *parent)
+{
+    lv_obj_t *c = lv_obj_create(parent);
+    lv_obj_set_size(c, 4, 4);
+    lv_obj_set_style_bg_color(c, uk_c(UK_T3), 0);
+    lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(c, 0, 0);
+    lv_obj_set_style_border_width(c, 0, 0);
+    lv_obj_set_style_pad_all(c, 0, 0);
+    lv_obj_remove_flag(c, LV_OBJ_FLAG_SCROLLABLE);
 }
 
 static lv_obj_t *mk_label_raw(lv_obj_t *parent, const lv_font_t *font, uint32_t hex)
@@ -234,8 +249,13 @@ lv_obj_t *uk_card(lv_obj_t *parent, const char *title, const char *note)
     lv_obj_set_width(c, LV_PCT(100));
     lv_obj_set_height(c, LV_SIZE_CONTENT);
     style_surface(c, UK_SURF_S1, UK_RADIUS);
+    /* michka .box: linear-gradient(180deg, --f-bubble, --f-bubble-2) —— 纯色卡看着是"贴纸"，
+       细微的竖向渐变才让它像一块浮起来的玻璃。 */
+    lv_obj_set_style_bg_grad_color(c, uk_c(UK_SURF_T), 0);
+    lv_obj_set_style_bg_grad_dir(c, LV_GRAD_DIR_VER, 0);
     style_card_edge(c);
-    lv_obj_set_style_pad_all(c, UK_CARD_PAD, 0);
+    lv_obj_set_style_pad_hor(c, UK_CARD_PAD, 0);
+    lv_obj_set_style_pad_ver(c, UK_CARD_PAD_V, 0);
     lv_obj_set_style_pad_row(c, UK_CONTENT_GAP, 0);
     lv_obj_set_flex_flow(c, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(c, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
@@ -248,20 +268,30 @@ lv_obj_t *uk_card(lv_obj_t *parent, const char *title, const char *note)
     lv_obj_set_style_bg_opa(head, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(head, 0, 0);
     lv_obj_set_style_pad_all(head, 0, 0);
-    lv_obj_set_style_pad_column(head, UK_S3, 0);
+    lv_obj_set_style_pad_column(head, UK_S2, 0);
     lv_obj_set_style_pad_bottom(head, UK_S1, 0);
     lv_obj_set_style_border_side(head, LV_BORDER_SIDE_BOTTOM, 0);
-    lv_obj_set_style_border_width(head, 0, 0);
+    lv_obj_set_style_border_width(head, 1, 0);      /* michka：卡头下面一条细线 */
     lv_obj_set_style_border_color(head, uk_c(UK_LINE), 0);
     lv_obj_set_flex_flow(head, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(head, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_flex_align(head, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    lv_obj_t *tl = mk_label_raw(head, UK_TYPE_TITLE, UK_T1);
+    /* michka 的卡头：居中的大字距标签，两侧各一个 4px 白方块帽（CSS ::before/::after）。
+       帽子仍是头行的直接子对象，标题保持"头行第 2 个孩子"的既有结构契约；
+       note 用一个不参与排版的浮动标签钉在右上角，免得把居中算偏。 */
+    uk_cap(head);
+    lv_obj_t *tl = mk_label_raw(head, UK_TYPE_CAPTION, UK_T3);
+    lv_obj_set_style_text_letter_space(tl, 1, 0);
+    lv_obj_set_style_text_align(tl, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(tl, LV_LABEL_LONG_MODE_DOTS);
-    lv_obj_set_flex_grow(tl, 1);
+    lv_obj_set_flex_grow(tl, 0);
     lv_label_set_text(tl, title ? title : "");   /* 不给就空着，别留 LVGL 默认的 "Text" */
+    uk_cap(head);
 
-    lv_obj_t *nt = mk_label_raw(head, UK_TYPE_CAPTION, UK_T3);
+    /* note 留在排版里而不是浮在右上角：浮动标签会和居中的标题压在一起
+       （预览审计按像素查重叠，压了就是错）。michka 本来是"帽·标题·帽"整组居中，
+       这里把右上角说明接在右帽之后，整组仍然居中。 */
+    lv_obj_t *nt = mk_label_raw(head, UK_TYPE_CAPTION, UK_T4);
     lv_obj_set_style_text_align(nt, LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_set_flex_grow(nt, 0);
     lv_label_set_text(nt, note ? note : "");
@@ -287,8 +317,16 @@ lv_obj_t *uk_card(lv_obj_t *parent, const char *title, const char *note)
 }
 
 lv_obj_t *uk_card_body(lv_obj_t *card) { return (lv_obj_t *)lv_obj_get_user_data(card); }
-lv_obj_t *uk_card_title(lv_obj_t *card) { return lv_obj_get_child(card, 0) ? lv_obj_get_child(lv_obj_get_child(card, 0), 0) : NULL; }
-lv_obj_t *uk_card_note(lv_obj_t *card) { lv_obj_t *h = lv_obj_get_child(card, 0); return h ? lv_obj_get_child(h, 1) : NULL; }
+lv_obj_t *uk_card_title(lv_obj_t *card)
+{
+    lv_obj_t *h = lv_obj_get_child(card, 0);
+    return h ? lv_obj_get_child(h, 1) : NULL;   /* 0=左帽 1=标题 2=右帽 3=note */
+}
+lv_obj_t *uk_card_note(lv_obj_t *card)
+{
+    lv_obj_t *h = lv_obj_get_child(card, 0);
+    return h ? lv_obj_get_child(h, 3) : NULL;
+}
 
 void uk_card_flex(lv_obj_t *card, int32_t grow)
 {
@@ -740,6 +778,7 @@ void uk_pool_relayout(lv_obj_t *pool, int32_t min_col_w, bool data_fit, lv_obj_t
         lv_obj_set_style_min_height(it,UK_ROW_MIN,0);
         lv_obj_set_width(it,cw);
         lv_obj_set_height(it,LV_SIZE_CONTENT);
+
     }
     lv_obj_update_layout(pool);
     /* 一屏装得下优先：行数放不下时加列（列越多每行越矮），到宽度上限为止。
@@ -767,6 +806,22 @@ void uk_pool_relayout(lv_obj_t *pool, int32_t min_col_w, bool data_fit, lv_obj_t
         }
     }
     lv_obj_update_layout(pool);
+    /* 池里所有条目统一成一个行高：行高不一致时 uk_viewport_snap 只能退回基准
+       行距，卡底那行就会被切一半。统一之后行距摊得匀，露出来的都是整行。 */
+    {
+        int32_t row_h=0;
+        for (int32_t i=0;i<n;i++) {
+            int32_t ih=lv_obj_get_height(lv_obj_get_child(pool,i));
+            if (ih>row_h) row_h=ih;
+        }
+        if (row_h>0) {
+            for (int32_t i=0;i<n;i++) {
+                if (lv_obj_get_height(lv_obj_get_child(pool,i))!=row_h)
+                    lv_obj_set_height(lv_obj_get_child(pool,i),row_h);
+            }
+            lv_obj_update_layout(pool);
+        }
+    }
     st->cols=cols; st->shown=n;
     if (note) uk_set_text(note,"%d / %d",n,n);
     uk_viewport_snap(pool,base_gap);
@@ -807,7 +862,14 @@ uk_kpi_t *uk_kpi_create(lv_obj_t *parent, const char *label)
        value grow pushed "MB/s" to the far edge of the card, where it read as a
        separate element instead of the number's unit. */
     k->val  = mk_label_raw(vr, UK_TYPE_METRIC, UK_T1);
-    lv_obj_set_style_min_width(k->val, 0, 0);
+    /* A measured minimum preserves the unit anchor across decimal carries;
+       unusually large readings can still expand instead of being truncated. */
+    lv_point_t reading_size;
+    lv_text_get_size(&reading_size, "100.0", UK_TYPE_METRIC,
+                     lv_obj_get_style_text_letter_space(k->val, 0), 0,
+                     LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    lv_obj_set_style_min_width(k->val, reading_size.x, 0);
+    lv_obj_set_style_text_align(k->val, LV_TEXT_ALIGN_RIGHT, 0);
     lv_label_set_long_mode(k->val, LV_LABEL_LONG_MODE_CLIP);
     k->unit = mk_label_raw(vr, UK_TYPE_CAPTION, UK_T3);
     lv_obj_set_style_pad_bottom(k->unit, 4, 0);
@@ -855,10 +917,166 @@ typedef struct {
     lv_chart_t chart;
     int32_t right, from, target;
     uint32_t last_paint, started, duration;
-    bool sampled;
+    bool sampled, flowing;
 } trend_t;
 
 static void trend_step(void *obj, int32_t progress);
+static bool trend_point(lv_obj_t *obj, lv_chart_series_t *s, uint32_t index,
+                        d3_basis_point_t *out)
+{
+    lv_chart_t *chart = (lv_chart_t *)obj;
+    if (index >= chart->point_cnt) return false;
+    uint32_t at = (s->start_point + index) % chart->point_cnt;
+    if (s->y_points[at] == LV_CHART_POINT_NONE) return false;
+    /* P4 has a single-precision FPU; widen subtraction, then use float pixel
+       coordinates rather than software-emulated double divisions per segment. */
+    float dx = (float)((int64_t)chart->xmax[s->x_axis_sec] - chart->xmin[s->x_axis_sec]);
+    float dy = (float)((int64_t)chart->ymax[s->y_axis_sec] - chart->ymin[s->y_axis_sec]);
+    if (dx <= 0 || dy <= 0) return false;
+    lv_area_t content; lv_obj_get_content_coords(obj, &content);
+    out->x = content.x1 - lv_obj_get_scroll_left(obj) +
+        (float)((int64_t)s->x_points[at] - chart->xmin[s->x_axis_sec]) * lv_obj_get_content_width(obj) / dx;
+    out->y = content.y1 - lv_obj_get_scroll_top(obj) +
+        (float)((int64_t)chart->ymax[s->y_axis_sec] - s->y_points[at]) * lv_obj_get_content_height(obj) / dy;
+    return true;
+}
+static bool trend_segment(lv_obj_t *obj, lv_chart_series_t *s, uint32_t index,
+                           d3_basis_segment_t *curve, d3_basis_point_t *a, d3_basis_point_t *b)
+{
+    if (!trend_point(obj, s, index, a) || !trend_point(obj, s, index + 1, b)) return false;
+    d3_basis_point_t previous = *a, next = *b;
+    if (index) trend_point(obj, s, index - 1, &previous);
+    trend_point(obj, s, index + 2, &next);
+    *curve = d3_basis_segment(previous, *a, *b, next);
+    return true;
+}
+static void trend_curve_task(lv_event_t *e)
+{
+    lv_obj_t *obj = lv_event_get_current_target(e);
+    lv_draw_task_t *task = lv_event_get_draw_task(e);
+    lv_draw_line_dsc_t *native = lv_draw_task_get_line_dsc(task);
+    if (!native || native->base.part != LV_PART_ITEMS) return;
+    lv_chart_series_t *series;
+    lv_chart_series_t *selected = NULL;
+    unsigned visible = 0;
+    LV_LL_READ_BACK(&((lv_chart_t *)obj)->series_ll, series) {
+        if (!series->hidden && visible++ == native->base.id1) { selected = series; break; }
+    }
+    if (!selected) return;
+    uint32_t index = native->base.id2;
+    d3_basis_segment_t c;
+    d3_basis_point_t a, b;
+    if (!trend_segment(obj, selected, index, &c, &a, &b)) return;
+    lv_draw_line_dsc_t line = *native;
+    native->opa = LV_OPA_TRANSP;
+    /* Cubic chord-error bound <= 1/4 pixel per axis. Work scales with screen
+       geometry; chunks bound stack use without limiting source samples. */
+    float bend = 0;
+    for (unsigned i = 0; i < 2; i++) {
+        bend = fmaxf(bend, fabsf(c.p[i].x - 2*c.p[i+1].x + c.p[i+2].x));
+        bend = fmaxf(bend, fabsf(c.p[i].y - 2*c.p[i+1].y + c.p[i+2].y));
+    }
+    unsigned steps = (unsigned)fmaxf(1, ceilf(sqrtf(3*bend)));
+    steps = LV_MIN(steps, (unsigned)LV_MAX(1, 2*lv_obj_get_content_width(obj)));
+    enum { CHUNK = 32 };
+    lv_point_precise_t points[CHUNK + 1];
+    /* D3's clamped ends include a short line before/after the cubic. */
+    d3_basis_point_t outside;
+    if (!index || !trend_point(obj, selected, index - 1, &outside)) {
+        line.p1 = (lv_point_precise_t){lroundf(a.x), lroundf(a.y)};
+        line.p2 = (lv_point_precise_t){lroundf(c.p[0].x), lroundf(c.p[0].y)};
+        lv_draw_line(line.base.layer, &line);
+    }
+    for (unsigned start = 0; start < steps;) {
+        unsigned count = LV_MIN(CHUNK, steps - start);
+        for (unsigned j = 0; j <= count; j++) {
+            d3_basis_point_t p = d3_basis_at(c, (float)(start + j)/steps);
+            points[j] = (lv_point_precise_t){lroundf(p.x), lroundf(p.y)};
+        }
+        line.points = points; line.point_cnt = count + 1;
+        lv_draw_line(line.base.layer, &line);
+        start += count;
+    }
+    if (!trend_point(obj, selected, index + 2, &outside)) {
+        line.points = NULL;
+        line.p1 = (lv_point_precise_t){lroundf(c.p[3].x), lroundf(c.p[3].y)};
+        line.p2 = (lv_point_precise_t){lroundf(b.x), lroundf(b.y)};
+        lv_draw_line(line.base.layer, &line);
+    }
+}
+static void trend_cursors(lv_event_t *e)
+{
+    lv_obj_t *obj = lv_event_get_current_target(e);
+    lv_chart_t *chart = (lv_chart_t *)obj;
+    lv_chart_cursor_t *cursor;
+    /* Resolve the visible line head before native LVGL draws its cursors.
+       Only geometry is interpolated; the sampled series remains untouched. */
+    LV_LL_READ(&chart->cursor_ll, cursor) {
+        lv_chart_series_t *s = cursor->ser;
+        cursor->dir = LV_DIR_NONE;
+        if (!s || s->hidden || !chart->point_cnt) continue;
+        uint32_t at = (s->start_point + chart->point_cnt - 1) % chart->point_cnt;
+        if (s->y_points[at] == LV_CHART_POINT_NONE) continue;
+        lv_point_t head;
+        lv_chart_get_point_pos_by_id(obj, s, at, &head);
+        d3_basis_point_t projected;
+        bool flowing = ((trend_t *)obj)->flowing;
+        /* Native point lookup clamps future X to the viewport edge. The curve
+           head needs its true X so clipping resolves the visible cubic. */
+        if (flowing && trend_point(obj, s, chart->point_cnt - 1, &projected))
+            head = (lv_point_t){lroundf(projected.x) - obj->coords.x1,
+                                lroundf(projected.y) - obj->coords.y1};
+        int32_t right = lv_obj_get_style_pad_left(obj, LV_PART_MAIN) +
+                        lv_obj_get_content_width(obj);
+        for (uint32_t i = 1; head.x > right && i < chart->point_cnt; i++) {
+            at = (at + chart->point_cnt - 1) % chart->point_cnt;
+            if (s->y_points[at] == LV_CHART_POINT_NONE) break;
+            lv_point_t previous;
+            lv_chart_get_point_pos_by_id(obj, s, at, &previous);
+            uint32_t index = (at + chart->point_cnt - s->start_point) % chart->point_cnt;
+            if (flowing && trend_point(obj, s, index, &projected))
+                previous = (lv_point_t){lroundf(projected.x) - obj->coords.x1,
+                                        lroundf(projected.y) - obj->coords.y1};
+            if (previous.x <= right && head.x > previous.x) {
+                d3_basis_segment_t curve;
+                d3_basis_point_t a, b;
+                float x = obj->coords.x1 + right;
+                if (flowing && trend_segment(obj, s, index, &curve, &a, &b)) {
+                    if (x < curve.p[0].x && index) {
+                        /* This point belongs to the preceding cubic. */
+                        trend_segment(obj, s, index - 1, &curve, &a, &b);
+                    }
+                    float y;
+                    if (x < curve.p[0].x) {
+                        float width = curve.p[0].x - a.x;
+                        y = width > 0 ? a.y + (curve.p[0].y - a.y) * (x - a.x)/width : a.y;
+                    } else if (x > curve.p[3].x) {
+                        float width = b.x - curve.p[3].x;
+                        y = width > 0 ? curve.p[3].y + (b.y - curve.p[3].y) *
+                            (x - curve.p[3].x)/width : b.y;
+                    } else {
+                        float lo = 0, hi = 1;
+                        for (unsigned k = 0; k < 16; k++) {
+                            float mid = (lo + hi)/2;
+                            if (d3_basis_at(curve, mid).x < x) lo = mid; else hi = mid;
+                        }
+                        y = d3_basis_at(curve, (lo + hi)/2).y;
+                    }
+                    head.y = lroundf(y) - obj->coords.y1;
+                } else head.y = previous.y + (int64_t)(head.y - previous.y) *
+                    (right - previous.x) / (head.x - previous.x);
+                head.x = right;
+                break;
+            }
+            head = previous;
+        }
+        if (head.x > right || head.x < lv_obj_get_style_pad_left(obj, LV_PART_MAIN)) continue;
+        cursor->pos = head;
+        cursor->pos_set = true;
+        cursor->color = s->color;
+        cursor->dir = LV_DIR_RIGHT; /* Point enabled, crosshair hidden by style. */
+    }
+}
 static void trend_destroy(const lv_obj_class_t *cls, lv_obj_t *obj)
 {
     (void)cls;
@@ -953,6 +1171,13 @@ lv_obj_t *uk_trend_create(lv_obj_t *parent, int32_t points, int32_t series)
     lv_obj_set_style_line_width(c, UK_TREND_STROKE, LV_PART_ITEMS);
     lv_obj_set_style_line_rounded(c, true, LV_PART_ITEMS);
     lv_obj_set_style_size(c, 0, 0, LV_PART_INDICATOR);      /* 只要线，不要点 */
+    lv_obj_set_style_size(c, 3 * UK_TREND_STROKE, 3 * UK_TREND_STROKE, LV_PART_CURSOR);
+    lv_obj_set_style_radius(c, LV_RADIUS_CIRCLE, LV_PART_CURSOR);
+    lv_obj_set_style_bg_opa(c, LV_OPA_COVER, LV_PART_CURSOR);
+    lv_obj_set_style_border_width(c, 1, LV_PART_CURSOR);
+    lv_obj_set_style_border_color(c, uk_c(UK_T1), LV_PART_CURSOR);
+    lv_obj_set_style_line_opa(c, LV_OPA_TRANSP, LV_PART_CURSOR);
+    lv_obj_add_event_cb(c, trend_cursors, LV_EVENT_DRAW_MAIN_BEGIN, NULL);
     lv_obj_set_style_bg_opa(c, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_line_color(c, uk_c(UK_LINE), LV_PART_MAIN);
     lv_obj_set_style_line_opa(c, LV_OPA_40, LV_PART_MAIN);
@@ -966,10 +1191,23 @@ lv_obj_t *uk_trend_create(lv_obj_t *parent, int32_t points, int32_t series)
            current/peak/quality calculations; only the second ring is drawn. */
         lv_chart_series_t *raw = lv_chart_add_series(c, uk_c(series_colors[i % 3]), LV_CHART_AXIS_PRIMARY_Y);
         if (raw) lv_chart_hide_series(c, raw, true);
-        lv_chart_add_series(c, uk_c(series_colors[i % 3]), LV_CHART_AXIS_PRIMARY_Y);
+        lv_chart_series_t *line = lv_chart_add_series(c, uk_c(series_colors[i % 3]), LV_CHART_AXIS_PRIMARY_Y);
+        if (line) {
+            lv_chart_cursor_t *cursor = lv_chart_add_cursor(c, line->color, LV_DIR_NONE);
+            if (cursor) lv_chart_set_cursor_point(c, cursor, line, LV_CHART_POINT_NONE);
+        }
     }
     uk_trend_clear(c);
     return c;
+}
+
+void uk_trend_enable_flow(lv_obj_t *chart)
+{
+    if (!chart || !lv_obj_has_class(chart, &trend_class) || ((trend_t *)chart)->flowing) return;
+    ((trend_t *)chart)->flowing = true;
+    lv_obj_add_flag(chart, LV_OBJ_FLAG_SEND_DRAW_TASK_EVENTS);
+    lv_obj_add_event_cb(chart, trend_curve_task, LV_EVENT_DRAW_TASK_ADDED, NULL);
+    lv_obj_invalidate(chart);
 }
 
 /* LVGL 不提供"按索引取序列"，只有 next 遍历 —— 自己走一遍链 */
@@ -1014,11 +1252,16 @@ void uk_trend_push(lv_obj_t *chart, int32_t series_idx, int32_t v, uint32_t inte
         const int32_t *values = lv_chart_get_series_y_array(chart, raw);
         int64_t sum = 0;
         uint32_t count = 0;
-        for (uint32_t i = 0; i < LV_MIN(points, UK_TREND_SMOOTH_SAMPLES); i++) {
+        uint32_t window = t->flowing ? UK_FLOW_SMOOTH_SAMPLES : UK_TREND_SMOOTH_SAMPLES;
+        /* Two moving-average passes equal a triangular FIR. Evaluate against
+           the existing raw ring; no extra state, rounding pass or gap leakage. */
+        window = LV_MIN(points, t->flowing ? 2 * window - 1 : window);
+        for (uint32_t i = 0; i < window; i++) {
             at = (at + points - 1) % points;
             if (values[at] == LV_CHART_POINT_NONE) break;
-            sum += values[at];
-            count++;
+            uint32_t weight = t->flowing ? LV_MIN(i + 1, window - i) : 1;
+            sum += (int64_t)values[at] * weight;
+            count += weight;
         }
         v = (int32_t)(sum / count); /* The current valid sample guarantees count > 0. */
     }

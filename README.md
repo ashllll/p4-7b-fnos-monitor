@@ -8,11 +8,11 @@
 
 [快速开始](#快速开始) · [六页界面](#界面预览) · [硬件要求](#硬件要求) · [设计总览](docs/design-overview-2026-10-14.md) · [文档导航](#文档导航)
 
-![fnOS Monitor 总览：CPU、内存、设备状态、网络、存储容量与最热温度](docs/images/ui-cuktech-ultra-2026-10-14/overview.png)
+![fnOS Monitor 总览：CPU、内存、设备状态、网络、存储容量与最热温度](docs/images/ui-michka-slate-2026-10-22/overview.png)
 
 一个独立屏幕，持续呈现 NAS 的运行状态。日常看仪表、趋势和状态；需要深入时，再进入存储、网络、系统、温度与告警页面。fnOS 配套应用负责采集，开发板负责显示。
 
-> 画面由当前源码通过真实 LVGL 在主机渲染，使用匿名夹具与合成读数；不是个人 NAS 快照或物理屏幕照片。[查看全部 21 张界面与复现说明](docs/images/ui-cuktech-ultra-2026-10-14/README.md)。
+> 画面由当前源码通过真实 LVGL 在主机渲染，使用匿名夹具与合成读数；不是个人 NAS 快照或物理屏幕照片。[查看全部 15 张界面与复现说明](docs/images/ui-michka-slate-2026-10-22/README.md)。
 
 ## 一眼掌握，按需深入
 
@@ -21,7 +21,7 @@
 - **数据状态清楚表达**：实时、旧值、无数据、权限不足与离线分别提示；保留真实零值，缺失不会伪装成健康。
 - **屏幕完成配置**：Wi-Fi、HTTPS 配对与证书指纹核对无需写入 NAS 管理员密码；详情保留打开时的快照。
 
-底部导航直达六页，横向拖动跟随手指；清单纵向滚动。当前默认 `cuktech-console` 使用黑底、白色读数、冰青／蓝色标识与朱红异常提示，夜间模式及显示参数可配置。
+底部导航直达六页，横向拖动跟随手指；清单纵向滚动，且总是停在整行上。当前默认 `michka` 主题复刻 [michka](https://michka.org/) 的 slate sensor-panel 皮肤：近黑画布、灰色气泡卡片、居中的方块帽标题、Inter 数字；夜间模式及显示参数可配置。
 
 ## 硬件要求
 
@@ -108,26 +108,26 @@ export FNOS_SERIAL_PORT='/dev/cu.YOUR_BOARD_PORT'
 
 ### 存储：容量与阵列健康
 
-![存储界面：容量摘要、存储卷与阵列健康](docs/images/ui-cuktech-ultra-2026-10-14/storage.png)
+![存储界面：容量摘要、存储卷与阵列健康](docs/images/ui-michka-slate-2026-10-22/storage.png)
 
 <details>
 <summary><strong>展开网络、系统、温度与告警界面</strong></summary>
 
 ### 网络：收发速率、双线趋势与接口状态
 
-![网络：收发速率、双线趋势与接口状态](docs/images/ui-cuktech-ultra-2026-10-14/network.png)
+![网络：收发速率、双线趋势与接口状态](docs/images/ui-michka-slate-2026-10-22/network.png)
 
 ### 系统：容器、硬件温度与摘要
 
-![系统：容器、硬件温度与摘要](docs/images/ui-cuktech-ultra-2026-10-14/system.png)
+![系统：容器、硬件温度与摘要](docs/images/ui-michka-slate-2026-10-22/system.png)
 
 ### 温度：最高温、趋势与设备通道
 
-![温度：最高温、趋势与设备通道](docs/images/ui-cuktech-ultra-2026-10-14/temperature.png)
+![温度：最高温、趋势与设备通道](docs/images/ui-michka-slate-2026-10-22/temperature.png)
 
 ### 告警：按严重程度筛选事件
 
-![告警：按严重程度筛选事件](docs/images/ui-cuktech-ultra-2026-10-14/alerts.png)
+![告警：按严重程度筛选事件](docs/images/ui-michka-slate-2026-10-22/alerts.png)
 
 </details>
 
@@ -140,22 +140,22 @@ export FNOS_SERIAL_PORT='/dev/cu.YOUR_BOARD_PORT'
 
 | 选择 Wi-Fi | 输入网络口令 |
 | --- | --- |
-| ![Wi-Fi 扫描：通用演示网络与信号状态](docs/images/ui-cuktech-ultra-2026-10-14/wifi-scan.png) | ![Wi-Fi 输入界面与屏上键盘](docs/images/ui-cuktech-ultra-2026-10-14/wifi-keyboard.png) |
+| ![Wi-Fi 扫描：通用演示网络与信号状态](docs/images/ui-michka-slate-2026-10-22/wifi-scan.png) | ![Wi-Fi 输入界面与屏上键盘](docs/images/ui-michka-slate-2026-10-22/wifi-keyboard.png) |
 
 | 输入六位配对码 | 核对 NAS 证书指纹 |
 | --- | --- |
-| ![NAS 配对码输入与三步指引](docs/images/ui-cuktech-ultra-2026-10-14/pairing.png) | ![证书指纹确认界面，使用固定测试指纹](docs/images/ui-cuktech-ultra-2026-10-14/pairing-certificate.png) |
+| ![NAS 配对码输入与三步指引](docs/images/ui-michka-slate-2026-10-22/pairing.png) | ![证书指纹确认界面，使用固定测试指纹](docs/images/ui-michka-slate-2026-10-22/pairing-certificate.png) |
 
 | 存储卷详情 | 容器详情 |
 | --- | --- |
-| ![只读存储卷详情](docs/images/ui-cuktech-ultra-2026-10-14/volume-detail.png) | ![只读容器资源详情](docs/images/ui-cuktech-ultra-2026-10-14/container-detail.png) |
+| ![只读存储卷详情](docs/images/ui-michka-slate-2026-10-22/volume-detail.png) | ![只读容器资源详情](docs/images/ui-michka-slate-2026-10-22/container-detail.png) |
 
 详情保留**打开时的快照**，方便稳定阅读。列表刷新或设备改名不会悄悄更换正在查看的对象。
 
 <details>
 <summary><strong>设置与采集诊断</strong></summary>
 
-![设置与诊断：连接、采集和运行信息](docs/images/ui-cuktech-ultra-2026-10-14/diagnostics.png)
+![设置与诊断：连接、采集和运行信息](docs/images/ui-michka-slate-2026-10-22/diagnostics.png)
 
 连接失败时可查看阶段、最近原因、数据年龄和来源状态；配网、配对入口集中在同一面板。
 
@@ -163,7 +163,7 @@ export FNOS_SERIAL_PORT='/dev/cu.YOUR_BOARD_PORT'
 
 | 体检摘要 | 夜间模式 |
 | --- | --- |
-| ![无告警时的体检摘要](docs/images/ui-cuktech-ultra-2026-10-14/health-summary.png) | ![夜间总览](docs/images/ui-cuktech-ultra-2026-10-14/night.png) |
+| ![无告警时的体检摘要](docs/images/ui-michka-slate-2026-10-22/health-summary.png) | ![夜间总览](docs/images/ui-michka-slate-2026-10-22/night.png) |
 
 无告警事件不等于所有指标都正常；夜间背光需在真实屏幕上体验。
 
@@ -222,7 +222,7 @@ python3 tools/stack_check.py
 python3 tools/test_history_merge.py
 ```
 
-默认预览生成 **111 张 1024×600 状态 PNG + 3 张刷新回归 PNG**，执行字形、格式残留、标签溢出、对象越界、触控重叠与对比度审计，并覆盖不同硬件组合和受控分配失败。数字、仪表及切页动效的独立入口见 [预览说明](tools/preview/README.md)。本页产品图的文件映射与校验值见 [图片清单](docs/images/ui-cuktech-ultra-2026-10-14/manifest.json)。
+默认预览生成 **111 张 1024×600 状态 PNG + 3 张刷新回归 PNG**，执行字形、格式残留、标签溢出、对象越界、触控重叠与对比度审计，并覆盖不同硬件组合和受控分配失败。数字、仪表及切页动效的独立入口见 [预览说明](tools/preview/README.md)。本页产品图的文件映射与校验值见 [图片清单](docs/images/ui-michka-slate-2026-10-22/manifest.json)。
 
 固件构建和主机渲染不代替实机验收。完整物理触控、实屏动画手感、72 小时运行、掉电／旧 NVS 回退、真实内存耗尽恢复和更广泛的硬件／权限矩阵继续开放，详见 [未闭环事项](docs/open-items-2026-10-11.md)。
 
@@ -231,7 +231,7 @@ python3 tools/test_history_merge.py
 
 ### 最近迭代与版本边界
 
-- **当前 ULTRA 默认界面（2026-10-14）**：统一六页与配网／配对／详情，黄色改蓝色，粉红改朱红；历史曲线保持指标身份色，占用率只改变局部弧／条。README 同步 21 张匿名产品与阈值图。默认预览、模板构建、并行审查与开发板烧录通过；30 秒串口观察失败计数为 0。[设计](docs/ui-cuktech-ultra-2026-10-14.md) · [本轮归档与验证](docs/ui-ultra-release-2026-10-14.md)。
+- **当前 michka 石板灰界面（2026-10-22）**：六页共用一套 slate sensor-panel 皮肤——近黑画布、灰色渐变气泡卡片、居中方块帽标题、Inter 数字、顶栏日期与大号时钟；清单统一行高，卡底只停在整行；图表去掉刻度只留卡头量程。README 同步 15 张匿名产品图。[设计与验证](docs/ui-michka-slate-2026-10-22.md) · [历史 ULTRA 记录](docs/ui-ultra-release-2026-10-14.md)。
 
 - **前一阶段界面基线 `7647d9b`**：CUKTECH 六页横屏、连续阻尼与新鲜度修复；模板构建、主机回归、静态检查、烧录哈希与短时串口观察已完成。[完整验证记录](docs/skills-workflow-2026-10-14.md)。
 - **当前仓库安装包 1.2.7**：本页校验值来自当前已跟踪文件及包内 manifest；这次文档与图片更新没有重新部署 NAS，也不把历史实机记录扩展成该文件的新增验收。
@@ -256,8 +256,8 @@ python3 tools/test_history_merge.py
 | --- | --- |
 | 全面理解产品、界面与工程设计 | [设计总览：页面、视觉、动效、数据、架构与验收](docs/design-overview-2026-10-14.md) |
 | 安装与维护 NAS 应用 | [飞牛应用](nas/fpk/README.md) · [可选旧采集器](nas/README.md) |
-| 理解当前界面与动效 | [ULTRA 配色](docs/ui-cuktech-ultra-2026-10-14.md) · [页面合同](docs/ui-cuktech-2026-10-14.md) · [电流表式动效](docs/ui-ammeter-motion-2026-10-14.md) |
-| 复现产品图与主机检查 | [截图来源](docs/images/ui-cuktech-ultra-2026-10-14/README.md) · [预览工具](tools/preview/README.md) |
+| 理解当前界面与动效 | [michka 石板灰](docs/ui-michka-slate-2026-10-22.md) · [ULTRA 配色（历史）](docs/ui-cuktech-ultra-2026-10-14.md) · [页面合同](docs/ui-cuktech-2026-10-14.md) · [电流表式动效](docs/ui-ammeter-motion-2026-10-14.md) |
+| 复现产品图与主机检查 | [截图来源](docs/images/ui-michka-slate-2026-10-22/README.md) · [预览工具](tools/preview/README.md) |
 | 查看最新验证和剩余事项 | [本轮发布归档](docs/ui-ultra-release-2026-10-14.md) · [历史 Skills 全流程](docs/skills-workflow-2026-10-14.md) · [缺陷复核](docs/ui-post-motion-audit-2026-10-14.md) · [未闭环事项](docs/open-items-2026-10-11.md) |
 | 理解源码与架构 | [固件](components/fnos_monitor/) · [共享 UI](components/fnos_monitor/ui_kit/) · [原生 UI 架构](docs/ui-v12-lvgl-native.md) · [ADR](docs/adr/README.md) |
 | 配置显示与资源 | [Kconfig](components/fnos_monitor/Kconfig) · [硬件清单验证](docs/ui-hardware-adaptive-audit-2026-10-08.md) |
