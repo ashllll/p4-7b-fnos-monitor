@@ -1368,6 +1368,7 @@ static lv_obj_t *overview_resource_create(lv_obj_t *parent, lv_obj_t *history_pa
     lv_obj_set_style_text_color(uk_card_note(r->chart_card), uk_c(identity), 0);
     body = uk_card_body(r->chart_card);
     r->chart = uk_trend_create(body, UI_HIST, 1);
+    uk_trend_enable_flow(r->chart);
     uk_trend_set_range(r->chart, 0, 100);
     lv_chart_set_series_color(r->chart, uk_trend_series(r->chart, 0), uk_c(identity));
     lv_obj_set_style_line_opa(r->chart, LV_OPA_COVER, LV_PART_ITEMS);
@@ -1742,6 +1743,7 @@ static void build_p0(lv_obj_t *page)
     lv_label_set_long_mode(s_ui.overview_note, LV_LABEL_LONG_MODE_WRAP);
 
     s_ui.overview_temp_history = uk_trend_create(body, UI_HIST, 1);
+    uk_trend_enable_flow(s_ui.overview_temp_history);
     lv_chart_set_series_color(s_ui.overview_temp_history,
             uk_trend_series(s_ui.overview_temp_history, 0), uk_c(UK_S_TEMP));
     lv_obj_set_style_min_height(s_ui.overview_temp_history, UK_S4, 0);
@@ -1848,6 +1850,7 @@ static void build_p2(lv_obj_t *page)
     /* 吞吐趋势：标题与量程随数据窗口变（在刷新里改），图区吃掉卡内剩余高度 */
     lv_obj_t *tcard = NULL;
     s_ui.tr_net = trend_card(page, "网络吞吐 · 最近 3 分钟", 2, &tcard, &s_ui.net_axis);
+    uk_trend_enable_flow(s_ui.tr_net);
     s_ui.net_title = uk_card_title(tcard);
     /* 没有刻度列：图表自己吃满卡宽（michka 的趋势卡只有线和端点读数）。 */
     lv_obj_set_width(s_ui.tr_net, LV_PCT(100));
@@ -2123,6 +2126,7 @@ static void build_p4(lv_obj_t *page)
     lv_label_set_long_mode(s_ui.temp_history_note, LV_LABEL_LONG_MODE_WRAP);
     lv_obj_add_flag(s_ui.temp_history_note, LV_OBJ_FLAG_HIDDEN);
     s_ui.temp_history = uk_trend_create(history_body, UI_HIST, 1);
+    uk_trend_enable_flow(s_ui.temp_history);
     lv_obj_set_flex_grow(s_ui.temp_history, 0);
     lv_obj_set_height(s_ui.temp_history, lv_display_get_vertical_resolution(NULL) / 6);
     lv_chart_set_series_color(s_ui.temp_history, uk_trend_series(s_ui.temp_history, 0), uk_c(UK_S_TEMP));
