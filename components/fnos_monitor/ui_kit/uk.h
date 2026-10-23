@@ -92,6 +92,8 @@ lv_obj_t *uk_card_title(lv_obj_t *card);
 void uk_card_flex(lv_obj_t *card, int32_t grow);
 
 /* ── 文本 ─────────────────────────────────────────────────────────── */
+/* Call after choosing fonts in a bottom-aligned numeric/unit flex row. */
+void uk_reading_align_baseline(lv_obj_t *value, lv_obj_t *unit);
 /* 常用组合：主文本 / 次文本 / 行标签 / 轴标签 / 数字。 */
 lv_obj_t *uk_label(lv_obj_t *parent, const lv_font_t *font, uint32_t hex, const char *txt);
 /* printf 风格，自动 lv_label_set_text。格式串交给编译器核（审计 M12）：少写参数、

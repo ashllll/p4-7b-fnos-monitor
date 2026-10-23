@@ -228,6 +228,10 @@ void uk_number_set_text(lv_obj_t *obj, const char *text, bool animate)
         same_numeric_structure(old,text) &&
         (!n->active || n->font==font);
     if (!eligible) {
+        /* 值没变就别动图层栈、也别碰 lv_label_set_text：每次刷新都会给几十个
+           数字重播一遍，clear_layers + 文本布局实测把每拍刷新推到 100 ms 量级，
+           而这些调用里绝大多数数字跟上一拍一模一样。 */
+        if (!n->active && !strcmp(old,text)) return;
         clear_layers(obj);
         if (strcmp(old,text)) lv_label_set_text(obj,text);
         return;

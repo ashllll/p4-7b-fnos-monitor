@@ -36,9 +36,9 @@ CONFIG_LV_USE_CLIB_STRING=y
 CONFIG_LV_USE_CLIB_SPRINTF=y
 CONFIG_LV_DEF_REFR_PERIOD=15
 CONFIG_LV_OBJ_STYLE_CACHE=y
-# Continuous short chart segments are faster without inter-worker dispatch.
-# Full-window device A/B evidence is recorded in docs/ui-unifi-v11-2026-10-12.md.
-CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=1
+# Batched curves avoid dispatching one task per segment. Two software workers
+# retain the better native-page drag result measured in docs/ui-fps-2026-10-23.md.
+CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=2
 # 关掉 LVGL 内部日志：每次 lv_refr / indev 都会走 printf 格式化，手势帧上的
 # 固定开销。调试时再本地改回 y。
 CONFIG_LV_USE_LOG=n
@@ -115,7 +115,7 @@ CONFIG_ESP_MAIN_TASK_STACK_SIZE=16384
 CONFIG_FNOS_PALETTE="michka"
 
 # Mechanical meter response; sampling cadence remains independent.
-CONFIG_FNOS_UI_NUMBER_MS=300
+CONFIG_FNOS_UI_NUMBER_MS=600
 CONFIG_FNOS_UI_TELEMETRY_DAMPING=8
 CONFIG_FNOS_UI_TELEMETRY_RATIO_PERMILLE=850
 CONFIG_FNOS_UI_NUMBER_PRESENT_MS=0

@@ -453,6 +453,11 @@ static void http_ring_push(int ms)
     if (s_http_ring_n < HTTP_RING_N) s_http_ring_n++;
 }
 
+/** 连续失败计数：单次轮询超时只说明这一拍没拿到，不代表 NAS 掉线。
+   立刻把 online 打掉会让曲线被切断（可见的"数据断点"）——顶栏也会
+   在"在线/保留旧数据"之间来回跳。连续 3 拍（≈0.6 s）才判离线。 */
+static uint32_t s_consec_fail;
+
 static void commit_status(const fnos_status_t *st, int http_ms, int status_code)
 {
     if (xSemaphoreTake(s_lock, portMAX_DELAY) != pdTRUE) {
@@ -470,6 +475,7 @@ static void commit_status(const fnos_status_t *st, int http_ms, int status_code)
     dst->hist_avg_gap_x10 = hist_avg_gap_x10;
     dst->ever_ok = true;
     s_valid = true;
+    s_consec_fail = 0;
     dst->online = true;
     dst->ok_count = ok + 1;
     dst->fail_count = fail;
@@ -505,7 +511,8 @@ static void note_failure(const char *why, int status_code, int http_ms)
     if (xSemaphoreTake(s_lock, portMAX_DELAY) != pdTRUE) {
         return;
     }
-    s_status.online = false;
+    if (s_consec_fail < UINT32_MAX) s_consec_fail++;
+    if (s_consec_fail >= 3) s_status.online = false;
     s_status.fail_count++;
     s_status.last_status = status_code;
     s_status.http_ms = http_ms;

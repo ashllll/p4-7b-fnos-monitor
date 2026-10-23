@@ -5,6 +5,7 @@
 #include "uk.h"
 #include "src/widgets/chart/lv_chart_private.h"
 #include "src/core/lv_obj_class_private.h"
+#include "src/misc/lv_area_private.h"
 #include "third_party/d3_basis.h"
 
 #include <math.h>
@@ -353,6 +354,13 @@ lv_obj_t *uk_label(lv_obj_t *parent, const lv_font_t *font, uint32_t hex, const 
     return l;
 }
 
+void uk_reading_align_baseline(lv_obj_t *value, lv_obj_t *unit)
+{
+    const lv_font_t *number_font = lv_obj_get_style_text_font(value, 0);
+    const lv_font_t *unit_font = lv_obj_get_style_text_font(unit, 0);
+    lv_obj_set_style_pad_bottom(unit, LV_MAX(0, number_font->base_line - unit_font->base_line), 0);
+}
+
 void uk_set_text(lv_obj_t *label, const char *fmt, ...)
 {
     if (!label) return;
@@ -498,7 +506,7 @@ uk_row_t *uk_row_create(lv_obj_t *parent, bool with_led, bool with_bar)
     r->val  = mk_label_raw(valbox, UK_TYPE_READING, UK_T1);
     lv_label_set_long_mode(r->val, LV_LABEL_LONG_MODE_CLIP);
     r->unit = mk_label_raw(valbox, UK_TYPE_UNIT, UK_T3);
-    lv_obj_set_style_pad_bottom(r->unit, UK_UNIT_BASELINE, 0);   /* 与数字基线对齐 */
+    uk_reading_align_baseline(r->val, r->unit);
 
     if (with_bar) {
         r->bar = lv_bar_create(row);
@@ -872,7 +880,7 @@ uk_kpi_t *uk_kpi_create(lv_obj_t *parent, const char *label)
     lv_obj_set_style_text_align(k->val, LV_TEXT_ALIGN_RIGHT, 0);
     lv_label_set_long_mode(k->val, LV_LABEL_LONG_MODE_CLIP);
     k->unit = mk_label_raw(vr, UK_TYPE_CAPTION, UK_T3);
-    lv_obj_set_style_pad_bottom(k->unit, 4, 0);
+    uk_reading_align_baseline(k->val, k->unit);
 
     k->sub = mk_label_raw(box, UK_TYPE_CAPTION, UK_T3);
     lv_obj_set_width(k->sub, LV_PCT(100));
@@ -921,24 +929,42 @@ typedef struct {
 } trend_t;
 
 static void trend_step(void *obj, int32_t progress);
+typedef struct {
+    float x, y, xscale, yscale;
+    int32_t xmin, ymax;
+} trend_projection_t;
+
+static trend_projection_t trend_projection(lv_obj_t *obj, lv_chart_series_t *s)
+{
+    lv_chart_t *chart = (lv_chart_t *)obj;
+    float dx = (float)((int64_t)chart->xmax[s->x_axis_sec] - chart->xmin[s->x_axis_sec]);
+    float dy = (float)((int64_t)chart->ymax[s->y_axis_sec] - chart->ymin[s->y_axis_sec]);
+    lv_area_t content; lv_obj_get_content_coords(obj, &content);
+    return (trend_projection_t){
+        .x = content.x1 - lv_obj_get_scroll_left(obj),
+        .y = content.y1 - lv_obj_get_scroll_top(obj),
+        .xscale = dx > 0 ? lv_obj_get_content_width(obj) / dx : 0,
+        .yscale = dy > 0 ? lv_obj_get_content_height(obj) / dy : 0,
+        .xmin = chart->xmin[s->x_axis_sec], .ymax = chart->ymax[s->y_axis_sec]
+    };
+}
+
+static bool trend_project(lv_chart_t *chart, lv_chart_series_t *s, uint32_t index,
+                          const trend_projection_t *map, d3_basis_point_t *out)
+{
+    if (index >= chart->point_cnt || map->xscale <= 0 || map->yscale <= 0) return false;
+    uint32_t at = (s->start_point + index) % chart->point_cnt;
+    if (s->y_points[at] == LV_CHART_POINT_NONE) return false;
+    out->x = map->x + (float)((int64_t)s->x_points[at] - map->xmin) * map->xscale;
+    out->y = map->y + (float)((int64_t)map->ymax - s->y_points[at]) * map->yscale;
+    return true;
+}
+
 static bool trend_point(lv_obj_t *obj, lv_chart_series_t *s, uint32_t index,
                         d3_basis_point_t *out)
 {
-    lv_chart_t *chart = (lv_chart_t *)obj;
-    if (index >= chart->point_cnt) return false;
-    uint32_t at = (s->start_point + index) % chart->point_cnt;
-    if (s->y_points[at] == LV_CHART_POINT_NONE) return false;
-    /* P4 has a single-precision FPU; widen subtraction, then use float pixel
-       coordinates rather than software-emulated double divisions per segment. */
-    float dx = (float)((int64_t)chart->xmax[s->x_axis_sec] - chart->xmin[s->x_axis_sec]);
-    float dy = (float)((int64_t)chart->ymax[s->y_axis_sec] - chart->ymin[s->y_axis_sec]);
-    if (dx <= 0 || dy <= 0) return false;
-    lv_area_t content; lv_obj_get_content_coords(obj, &content);
-    out->x = content.x1 - lv_obj_get_scroll_left(obj) +
-        (float)((int64_t)s->x_points[at] - chart->xmin[s->x_axis_sec]) * lv_obj_get_content_width(obj) / dx;
-    out->y = content.y1 - lv_obj_get_scroll_top(obj) +
-        (float)((int64_t)chart->ymax[s->y_axis_sec] - s->y_points[at]) * lv_obj_get_content_height(obj) / dy;
-    return true;
+    trend_projection_t map = trend_projection(obj, s);
+    return trend_project((lv_chart_t *)obj, s, index, &map, out);
 }
 static bool trend_segment(lv_obj_t *obj, lv_chart_series_t *s, uint32_t index,
                            d3_basis_segment_t *curve, d3_basis_point_t *a, d3_basis_point_t *b)
@@ -950,59 +976,99 @@ static bool trend_segment(lv_obj_t *obj, lv_chart_series_t *s, uint32_t index,
     *curve = d3_basis_segment(previous, *a, *b, next);
     return true;
 }
-static void trend_curve_task(lv_event_t *e)
+/* LVGL copies submitted points; batches bound the stack and share draw-task
+   allocation/dispatch across many segments without limiting history length. */
+enum { TREND_DRAW_POINTS = 64 };
+typedef struct {
+    lv_draw_line_dsc_t line;
+    lv_point_precise_t points[TREND_DRAW_POINTS];
+    unsigned count;
+} trend_batch_t;
+
+static void trend_batch_flush(trend_batch_t *batch)
+{
+    if (batch->count > 1) {
+        batch->line.points = batch->points;
+        batch->line.point_cnt = batch->count;
+        lv_draw_line(batch->line.base.layer, &batch->line);
+    }
+    batch->count = 0;
+}
+
+static void trend_batch_point(trend_batch_t *batch, d3_basis_point_t p)
+{
+    lv_point_precise_t point = {lroundf(p.x), lroundf(p.y)};
+    unsigned n = batch->count;
+    if (n && batch->points[n-1].x == point.x && batch->points[n-1].y == point.y) return;
+    if (n == TREND_DRAW_POINTS) {
+        lv_point_precise_t tail = batch->points[n-1];
+        trend_batch_flush(batch);
+        batch->points[batch->count++] = tail;
+    }
+    batch->points[batch->count++] = point;
+}
+
+static void trend_draw_series(lv_obj_t *obj, lv_layer_t *layer, lv_chart_series_t *series)
+{
+    trend_batch_t batch = {0};
+    lv_draw_line_dsc_init(&batch.line);
+    lv_obj_init_draw_line_dsc(obj, LV_PART_ITEMS, &batch.line);
+    batch.line.base.layer = layer;
+    batch.line.color = series->color;
+    if (!batch.line.width || batch.line.opa <= LV_OPA_MIN) return;
+    trend_projection_t map = trend_projection(obj, series);
+    unsigned max_steps = (unsigned)LV_MAX(1, 2*lv_obj_get_content_width(obj));
+    d3_basis_point_t previous = {0}, a = {0}, b = {0}, next = {0};
+    bool have_previous = false;
+    bool have_a = trend_project((lv_chart_t *)obj, series, 0, &map, &a);
+    bool have_b = trend_project((lv_chart_t *)obj, series, 1, &map, &b);
+    for (uint32_t index = 0; index + 1 < ((lv_chart_t *)obj)->point_cnt; index++) {
+        bool have_next = trend_project((lv_chart_t *)obj, series, index + 2, &map, &next);
+        if (have_a && have_b) {
+            d3_basis_segment_t c = d3_basis_segment(have_previous ? previous : a,
+                                                   a, b, have_next ? next : b);
+            if (!have_previous) trend_batch_point(&batch, a);
+            float bend = 0;
+            for (unsigned i = 0; i < 2; i++) {
+                bend = fmaxf(bend, fabsf(c.p[i].x - 2*c.p[i+1].x + c.p[i+2].x));
+                bend = fmaxf(bend, fabsf(c.p[i].y - 2*c.p[i+1].y + c.p[i+2].y));
+            }
+            /* Original 1/4-pixel chord bound, also during page transitions. */
+            unsigned steps = (unsigned)fmaxf(1, ceilf(sqrtf(3*bend)));
+            steps = LV_MIN(steps, max_steps);
+            for (unsigned j = 0; j <= steps; j++)
+                trend_batch_point(&batch, d3_basis_at(c, (float)j/steps));
+            if (!have_next) trend_batch_point(&batch, b);
+        } else trend_batch_flush(&batch); /* Missing samples never bridge. */
+        previous = a; a = b; b = next;
+        have_previous = have_a; have_a = have_b; have_b = have_next;
+    }
+    trend_batch_flush(&batch);
+}
+
+static void trend_event(const lv_obj_class_t *cls, lv_event_t *e)
 {
     lv_obj_t *obj = lv_event_get_current_target(e);
-    lv_draw_task_t *task = lv_event_get_draw_task(e);
-    lv_draw_line_dsc_t *native = lv_draw_task_get_line_dsc(task);
-    if (!native || native->base.part != LV_PART_ITEMS) return;
+    lv_chart_t *chart = (lv_chart_t *)obj;
+    if (lv_event_get_code(e) != LV_EVENT_DRAW_MAIN || !((trend_t *)obj)->flowing) {
+        lv_obj_event_base(cls, e);
+        return;
+    }
+    /* Keep native background, grid and attached cursors, bypass only the
+       per-segment scatter renderer. The public chart remains SCATTER. */
+    lv_chart_type_t type = chart->type;
+    chart->type = LV_CHART_TYPE_NONE;
+    lv_result_t result = lv_obj_event_base(cls, e);
+    chart->type = type;
+    if (result != LV_RESULT_OK) return;
+    lv_layer_t *layer = lv_event_get_layer(e);
+    lv_area_t saved = layer->_clip_area, clip;
+    if (!lv_area_intersect(&clip, &obj->coords, &saved)) return;
+    layer->_clip_area = clip;
     lv_chart_series_t *series;
-    lv_chart_series_t *selected = NULL;
-    unsigned visible = 0;
-    LV_LL_READ_BACK(&((lv_chart_t *)obj)->series_ll, series) {
-        if (!series->hidden && visible++ == native->base.id1) { selected = series; break; }
-    }
-    if (!selected) return;
-    uint32_t index = native->base.id2;
-    d3_basis_segment_t c;
-    d3_basis_point_t a, b;
-    if (!trend_segment(obj, selected, index, &c, &a, &b)) return;
-    lv_draw_line_dsc_t line = *native;
-    native->opa = LV_OPA_TRANSP;
-    /* Cubic chord-error bound <= 1/4 pixel per axis. Work scales with screen
-       geometry; chunks bound stack use without limiting source samples. */
-    float bend = 0;
-    for (unsigned i = 0; i < 2; i++) {
-        bend = fmaxf(bend, fabsf(c.p[i].x - 2*c.p[i+1].x + c.p[i+2].x));
-        bend = fmaxf(bend, fabsf(c.p[i].y - 2*c.p[i+1].y + c.p[i+2].y));
-    }
-    unsigned steps = (unsigned)fmaxf(1, ceilf(sqrtf(3*bend)));
-    steps = LV_MIN(steps, (unsigned)LV_MAX(1, 2*lv_obj_get_content_width(obj)));
-    enum { CHUNK = 32 };
-    lv_point_precise_t points[CHUNK + 1];
-    /* D3's clamped ends include a short line before/after the cubic. */
-    d3_basis_point_t outside;
-    if (!index || !trend_point(obj, selected, index - 1, &outside)) {
-        line.p1 = (lv_point_precise_t){lroundf(a.x), lroundf(a.y)};
-        line.p2 = (lv_point_precise_t){lroundf(c.p[0].x), lroundf(c.p[0].y)};
-        lv_draw_line(line.base.layer, &line);
-    }
-    for (unsigned start = 0; start < steps;) {
-        unsigned count = LV_MIN(CHUNK, steps - start);
-        for (unsigned j = 0; j <= count; j++) {
-            d3_basis_point_t p = d3_basis_at(c, (float)(start + j)/steps);
-            points[j] = (lv_point_precise_t){lroundf(p.x), lroundf(p.y)};
-        }
-        line.points = points; line.point_cnt = count + 1;
-        lv_draw_line(line.base.layer, &line);
-        start += count;
-    }
-    if (!trend_point(obj, selected, index + 2, &outside)) {
-        line.points = NULL;
-        line.p1 = (lv_point_precise_t){lroundf(c.p[3].x), lroundf(c.p[3].y)};
-        line.p2 = (lv_point_precise_t){lroundf(b.x), lroundf(b.y)};
-        lv_draw_line(line.base.layer, &line);
-    }
+    LV_LL_READ_BACK(&chart->series_ll, series)
+        if (!series->hidden) trend_draw_series(obj, layer, series);
+    layer->_clip_area = saved;
 }
 static void trend_cursors(lv_event_t *e)
 {
@@ -1083,7 +1149,7 @@ static void trend_destroy(const lv_obj_class_t *cls, lv_obj_t *obj)
     lv_anim_delete(obj, trend_step);
 }
 static const lv_obj_class_t trend_class = {
-    .base_class = &lv_chart_class, .destructor_cb = trend_destroy,
+    .base_class = &lv_chart_class, .event_cb = trend_event, .destructor_cb = trend_destroy,
     .instance_size = sizeof(trend_t), .name = "uk_streaming_trend"
 };
 
@@ -1205,8 +1271,6 @@ void uk_trend_enable_flow(lv_obj_t *chart)
 {
     if (!chart || !lv_obj_has_class(chart, &trend_class) || ((trend_t *)chart)->flowing) return;
     ((trend_t *)chart)->flowing = true;
-    lv_obj_add_flag(chart, LV_OBJ_FLAG_SEND_DRAW_TASK_EVENTS);
-    lv_obj_add_event_cb(chart, trend_curve_task, LV_EVENT_DRAW_TASK_ADDED, NULL);
     lv_obj_invalidate(chart);
 }
 

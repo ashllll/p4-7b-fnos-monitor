@@ -149,7 +149,7 @@ menu "fnOS monitor"
         config FNOS_UI_NUMBER_MS
             int "Damped telemetry response duration (ms; 0 disables motion)"
             range 0 1000
-            default 300
+            default 600
             help
                 Damped digits, gauges and bars share this response
                 duration; meters retain a subpixel tail for at most twice it.

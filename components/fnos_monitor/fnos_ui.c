@@ -1266,19 +1266,17 @@ static lv_obj_t *overview_card(lv_obj_t *parent, const char *title, const char *
    而 96 的小环再细就只剩一圈虚线。环径与笔画必须一起算。 */
 static int32_t ring_stroke(int32_t diameter) { return LV_MAX(6, diameter * 7 / 100); }
 
-/* 读数随环内径自适应：44 放不下就退 32；数值遮罩同步换宽，
-   单位仍与数字同一基线——字号变了，读数还是一个整体。 */
+/* Keep a stable animation mask, but anchor the visible digits at the arc centre. */
 static void ring_reading_fit(overview_resource_t *r, int32_t ring, int32_t stroke)
 {
     if (!r->value) return;
     const int32_t inner = ring - 2 * (stroke + UK_S1);
     if (r->num_mask && r->fitted_inner == inner) return;
-    lv_point_t big, unit;
+    lv_point_t big;
     char maximum[16];
     snprintf(maximum, sizeof maximum, "%ld", (long)(lv_arc_get_max_value(r->gauge) / UK_METER_SCALE));
     lv_text_get_size(&big, maximum, UK_FONT_NUM_44, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-    lv_text_get_size(&unit, "%", UK_TYPE_UNIT, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-    const bool wide = big.x + UK_S1 + unit.x <= inner;
+    const bool wide = big.x <= inner;
     const lv_font_t *font = wide ? UK_FONT_NUM_44 : UK_FONT_NUM_32;
     if (lv_obj_get_style_text_font(r->value, 0) != font) lv_obj_set_style_text_font(r->value, font, 0);
     lv_point_t size;
@@ -1288,6 +1286,13 @@ static void ring_reading_fit(overview_resource_t *r, int32_t ring, int32_t strok
     uk_number_settle(r->value);
     lv_obj_set_width(r->value, r->num_mask);
     lv_obj_set_height(r->value, lv_font_get_line_height(font));
+    lv_font_glyph_dsc_t digit;
+    if (lv_font_get_glyph_dsc(font, &digit, '0', 0)) {
+        int32_t top = font->line_height - font->base_line - digit.box_h - digit.ofs_y;
+        int32_t offset = (font->line_height - digit.box_h) / 2 - top;
+        lv_obj_align(r->value, LV_ALIGN_CENTER, 0, offset);
+    }
+    lv_obj_align(r->unit, LV_ALIGN_BOTTOM_MID, 0, -stroke);
 }
 
 static lv_obj_t *overview_resource_create(lv_obj_t *parent, lv_obj_t *history_parent, int index,
@@ -1308,13 +1313,11 @@ static lv_obj_t *overview_resource_create(lv_obj_t *parent, lv_obj_t *history_pa
     lv_obj_set_style_pad_row(body, UK_S1, 0);
     lv_obj_t *metric = uk_row_box(body, 0);
     r->metric = metric;
-    lv_point_t value_size, unit_size;
+    lv_point_t value_size;
     lv_text_get_size(&value_size,"100",number,0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
-    lv_text_get_size(&unit_size,"%",UK_TYPE_UNIT,0,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
     /* Size the ring around its widest reading, including both strokes and
-       inner breathing room; font height alone makes three digits hit the arc.
-       The unit rides on the same line, so it is part of the inner width. */
-    const int32_t inner = value_size.x + UK_S1 + unit_size.x;
+       inner breathing room; font height alone makes three digits hit the arc. */
+    const int32_t inner = value_size.x;
     /* 直径与笔画互相依赖：先用最小笔画估一次，再用它算出的笔画重算一圈。 */
     /* 环与卡边之间只留 UK_S1：卡内距已经松到 michka 的 10/12，
        再在里面留 8px 的"呼吸"就等于双重内距，卡片会顶出容器。 */
@@ -1343,19 +1346,19 @@ static lv_obj_t *overview_resource_create(lv_obj_t *parent, lv_obj_t *history_pa
     /* 粗笔画配圆头：平头在 10px 宽时会显得像被裁掉。 */
     lv_obj_set_style_arc_rounded(r->gauge, true, LV_PART_MAIN);
     lv_obj_set_style_arc_rounded(r->gauge, true, LV_PART_INDICATOR);
-    /* 读数是一个整体："37%" 同一基线，而不是大数字下面挂一个 % 脚注。 */
+    /* The unit must not shift the number away from the physical ring centre. */
     lv_obj_t *reading = uk_row_box(r->gauge, 0);
-    lv_obj_set_size(reading, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-    lv_obj_set_style_pad_column(reading, UK_S1, 0);
-    lv_obj_set_flex_align(reading, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
+    lv_obj_set_size(reading, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_layout(reading, LV_LAYOUT_NONE);
     lv_obj_align(reading, LV_ALIGN_CENTER, 0, 0);
     r->value = uk_label(reading, number, UK_T1, "--");
     /* A fixed measured mask lets narrower digits animate without cropping
        outgoing glyphs or shifting the instrument's visual centre. */
     lv_obj_set_width(r->value,value_size.x);
-    lv_obj_set_style_text_align(r->value,LV_TEXT_ALIGN_RIGHT,0);
+    lv_obj_set_style_text_align(r->value,LV_TEXT_ALIGN_CENTER,0);
+    lv_obj_align(r->value, LV_ALIGN_CENTER, 0, 0);
     r->unit = uk_label(reading, UK_TYPE_UNIT, UK_T3, "%");
-    lv_obj_set_style_pad_bottom(r->unit, UK_UNIT_BASELINE, 0);
+    lv_obj_align(r->unit, LV_ALIGN_BOTTOM_MID, 0, -stroke);
     r->meta = uk_label(body, UK_FONT_CJK_12, UK_T3, "等待数据");
     lv_obj_set_width(r->meta, LV_PCT(100));
     lv_label_set_long_mode(r->meta, LV_LABEL_LONG_MODE_WRAP);
@@ -1648,7 +1651,7 @@ static void build_p0(lv_obj_t *page)
         s_ui.overview_rate[i] = uk_label(vr, UK_TYPE_METRIC, i == 0 ? UK_S_DOWN : UK_S_UP, "--");
         reading_reserve(s_ui.overview_rate[i]);
         s_ui.overview_unit[i] = uk_label(vr, UK_FONT_CJK_12, UK_T3, "");
-        lv_obj_set_style_pad_bottom(s_ui.overview_unit[i], UK_S1, 0);
+        uk_reading_align_baseline(s_ui.overview_rate[i], s_ui.overview_unit[i]);
     }
     s_ui.overview_net_context = uk_label(body, UK_FONT_CJK_12, UK_T3, "等待网络数据");
     lv_obj_set_width(s_ui.overview_net_context, LV_PCT(100));
@@ -1662,8 +1665,9 @@ static void build_p0(lv_obj_t *page)
     lv_obj_set_style_pad_column(sr, UK_S1, 0);
     lv_obj_set_flex_align(sr, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
     s_ui.capacity = uk_label(sr, UK_TYPE_METRIC, UK_T1, "--");
+    reading_reserve(s_ui.capacity);
     s_ui.capacity_unit = uk_label(sr, UK_TYPE_CAPTION, UK_T3, "");
-    lv_obj_set_style_pad_bottom(s_ui.capacity_unit, UK_S1, 0);
+    uk_reading_align_baseline(s_ui.capacity, s_ui.capacity_unit);
     s_ui.capacity_detail = uk_label(sr, UK_FONT_CJK_12, UK_T3, "等待存储数据");
     lv_obj_set_flex_grow(s_ui.capacity_detail, 1);
     lv_obj_set_height(s_ui.capacity_detail, lv_font_get_line_height(UK_FONT_CJK_12));
@@ -1721,7 +1725,7 @@ static void build_p0(lv_obj_t *page)
     s_ui.home_temp_value = uk_label(tv, UK_TYPE_METRIC, UK_T1, "--");
     reading_reserve(s_ui.home_temp_value);
     s_ui.home_temp_unit = uk_label(tv, UK_FONT_CJK_12, UK_T3, "°C");
-    lv_obj_set_style_pad_bottom(s_ui.home_temp_unit, UK_S1 + 2, 0);
+    uk_reading_align_baseline(s_ui.home_temp_value, s_ui.home_temp_unit);
     /* Dot + identity share the line below the reading: "74.2 °C" stays one
        atomic reading, and the severity dot marks *which* sensor is hottest. */
     lv_obj_t *name_row = uk_row_box(body, 0);
@@ -1784,7 +1788,7 @@ static void build_p1(lv_obj_t *page)
         reading_reserve(s_ui.storage_value[i]);
         lv_label_set_long_mode(s_ui.storage_value[i], LV_LABEL_LONG_MODE_WRAP);
         s_ui.storage_unit[i] = uk_label(reading, UK_TYPE_CAPTION, UK_T3, "");
-        lv_obj_set_style_pad_bottom(s_ui.storage_unit[i], UK_S1, 0);
+        uk_reading_align_baseline(s_ui.storage_value[i], s_ui.storage_unit[i]);
     }
 
     /* 一条"用了多少"的横条压在三个数字下面：数字要读，横条要一眼看出来。
@@ -2110,7 +2114,7 @@ static void build_p4(lv_obj_t *page)
                      lv_obj_get_style_text_letter_space(s_ui.temp_hero, 0), 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
     lv_obj_set_style_min_width(s_ui.temp_hero, temperature_size.x, 0);
     s_ui.temp_hero_unit = uk_label(srow, UK_FONT_CJK_12, UK_T3, "°C");
-    lv_obj_set_style_pad_bottom(s_ui.temp_hero_unit, UK_S1, 0);
+    uk_reading_align_baseline(s_ui.temp_hero, s_ui.temp_hero_unit);
     s_ui.temp_note = uk_label(srow, UK_FONT_CJK_16, UK_T2, "等待数据");
     lv_obj_set_flex_grow(s_ui.temp_note, 1);
     lv_obj_set_style_min_width(s_ui.temp_note, 0, 0);
@@ -3860,7 +3864,7 @@ static lv_obj_t *temp_value_box(lv_obj_t *parent, lv_obj_t **out_val)
     lv_obj_clear_flag(vbox, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     *out_val = uk_label(vbox, UK_TYPE_READING, UK_T1, "");
     lv_obj_t *u = uk_label(vbox, UK_TYPE_UNIT, UK_T3, "°C");
-    lv_obj_set_style_pad_bottom(u, UK_UNIT_BASELINE, 0);        /* 与数字基线对齐（同 uk_row 的 unit） */
+    uk_reading_align_baseline(*out_val, u);
     return vbox;
 }
 
@@ -4038,7 +4042,7 @@ static void temp_blk_fill(int i)
 /* Section geometry is measured from this frame's card content. When the
    viewport is short, section cards also wrap; no fixture ratios or item caps. */
 typedef struct { uint64_t shape; bool ready; } inventory_layout_cache_t;
-static inventory_layout_cache_t s_storage_layout, s_system_layout;
+static inventory_layout_cache_t s_storage_layout, s_system_layout, s_network_pool_layout;
 
 static uint64_t inventory_shape_mix(uint64_t shape, uint32_t value)
 {
@@ -4085,6 +4089,21 @@ static uint64_t inventory_shape(lv_obj_t *container, lv_obj_t **cards,
         }
     }
     return shape;
+}
+
+/* Reuse resolved row geometry; changed wrapping or topology must still reflow. */
+static void network_pool_layout(void)
+{
+    if (!s_ui.net_pool || !s_ui.net_card || lv_obj_has_flag(s_ui.page[2], LV_OBJ_FLAG_HIDDEN)) return;
+    lv_obj_update_layout(s_ui.net_pool);
+    lv_obj_t *cards[] = {s_ui.net_card}, *pools[] = {s_ui.net_pool};
+    const int counts[] = {s_ui.net_made};
+    uint64_t shape = inventory_shape(s_ui.net_pool, cards, pools, counts, 1);
+    if (s_network_pool_layout.ready && s_network_pool_layout.shape == shape) return;
+    uk_pool_relayout(s_ui.net_pool, UK_ENTITY_MIN_WIDTH, false, NULL);
+    lv_obj_update_layout(s_ui.net_pool);
+    s_network_pool_layout.shape = inventory_shape(s_ui.net_pool, cards, pools, counts, 1);
+    s_network_pool_layout.ready = uk_pool_cols(s_ui.net_pool) > 0;
 }
 
 static void inventory_sections_layout(inventory_layout_cache_t *cache, lv_obj_t *container,
@@ -4561,6 +4580,8 @@ static void overview_refresh(const fnos_status_t *st)
     else snprintf(b, sizeof b, "--");
     rate_split(b, &capacity_value, &capacity_unit);
     uk_number_set_reading(s_ui.capacity, s_ui.capacity_unit, capacity_value, capacity_unit, storage_live);
+    show(s_ui.capacity, storage);
+    show(s_ui.capacity_unit, storage);
     overview_style_color(s_ui.capacity, LV_STYLE_TEXT_COLOR, uk_c(storage_live ? UK_T1 : UK_T3), 0);
     if (storage) (storage_live ? set_num : set_txt)(s_ui.capacity_detail, "/ %s", fmt_cap(c1, sizeof c1, total));
     else set_txt(s_ui.capacity_detail, "%s", st->ever_ok ? "没有可用容量数据" : "等待存储数据");
@@ -5164,7 +5185,7 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
         lv_obj_set_style_text_color(row->name2,uk_c(net_live ? UK_T2 : UK_T3),0);
     }
     show(s_ui.net_card, nnets>0 || !net_readable);
-    uk_pool_relayout(s_ui.net_pool, UK_ENTITY_MIN_WIDTH, false, NULL);
+    network_pool_layout();
     }   /* (page == 2)：网络 */
 
     const char *dock_state = overview_module_state(st, "docker");
@@ -6039,7 +6060,7 @@ static void page_layout(int idx)
         pool_layout(&s_p1_disk_n, &s_p1_disk_w, &s_p1_disk_h, s_ui.disk_made, s_ui.disk_pool, UK_ENTITY_MIN_WIDTH, false, NULL);
     } else if (idx == 2) {
         network_layout();
-        if (s_ui.net_pool) uk_pool_relayout(s_ui.net_pool,UK_ENTITY_MIN_WIDTH,false,NULL);
+        network_pool_layout();
     } else if (idx == 3) {
         system_layout();
         pool_layout(&s_p3_dock_n, &s_p3_dock_w, &s_p3_dock_h, s_ui.dock_made, s_ui.dock_pool, UK_ENTITY_MIN_WIDTH, false, NULL);
@@ -6209,8 +6230,10 @@ static void motion_prepare(int from, int to, int direction)
     s_motion.velocity = 0;
     s_motion.active = true;
     for (int i = 0; i < FNOS_UI_PAGE_COUNT; i++) show(s_ui.page[i], i == from || i == to);
-    refresh_page(to);          /* 滑进来那页的第一帧就必须是新数据 */
-    page_layout(to);
+    /* Keep body formatting out of the first animation frame; motion_finish
+       consumes the pending refresh immediately when the page lands. */
+    s_page_dirty[to] = true;
+    s_refresh_pending = true;
     motion_paint();
 #ifdef CONFIG_FNOS_UI_MOTION_STATS
     s_motion_stats.prepared = esp_timer_get_time() - prepared_at;

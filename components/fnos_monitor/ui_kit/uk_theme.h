@@ -190,7 +190,6 @@
 #define UK_TYPE_METRIC   UK_FONT_NUM_32
 #define UK_TYPE_READING  UK_FONT_NUM_20
 #define UK_TYPE_UNIT     UK_FONT_TXT_12
-#define UK_UNIT_BASELINE 3 /* Optical offset for the generated 20/12 px font pair. */
 
 #include "fnos_fonts.h"   /* LV_FONT_DECLARE(ui_font_*) */
 

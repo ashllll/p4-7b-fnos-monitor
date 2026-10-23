@@ -31,6 +31,15 @@
 static bool s_motion_clock_frozen;
 static int64_t s_motion_clock_us;
 
+/* UI pixel comparisons must not change when a render crosses a wall-clock minute. */
+time_t fnos_preview_time(time_t *out)
+{
+    static time_t captured;
+    if (!captured) captured = time(NULL);
+    if (out) *out = captured;
+    return captured;
+}
+
 int64_t esp_timer_get_time(void)
 {
     if (s_motion_clock_frozen) return s_motion_clock_us;
@@ -1859,8 +1868,9 @@ static void verify_usage_colors(void)
             lv_obj_t *arc = overview_object(titles[j], &lv_arc_class);
             assert(arc && lv_color_eq(lv_obj_get_style_arc_color(arc, LV_PART_INDICATOR), uk_c(colors[i])));
             lv_obj_t *reading = lv_obj_get_child(arc, 0);
+            lv_obj_t *digits = lv_obj_get_child(reading, 0);
             int32_t inner = lv_obj_get_width(arc) - 2 * lv_obj_get_style_arc_width(arc, LV_PART_MAIN);
-            assert(inner >= lv_obj_get_width(reading) + 2 * UK_S2 &&
+            assert(inner >= lv_obj_get_width(digits) + 2 * UK_S2 &&
                    "gauge must reserve room for three digits and inner clearance");
             assert(lv_obj_get_width(arc) == lv_obj_get_height(arc));
             lv_obj_t *chart = overview_object(j == 0 ? "CPU趋势" : "内存趋势", &lv_chart_class);
@@ -4650,9 +4660,20 @@ static unsigned verify_numeric_unit_positions(lv_obj_t *root)
         if (font != UK_FONT_NUM_20 && font != UK_FONT_NUM_32 && font != UK_FONT_NUM_44) continue;
         const char *u = lv_label_get_text(unit);
         if (strcmp(u, "%") && strcmp(u, "°C") && strcmp(u, "KB/s") && strcmp(u, "MB/s") &&
-            strcmp(u, "GB/s") && strcmp(u, "GB") && strcmp(u, "ms")) continue;
+            strcmp(u, "GB/s") && strcmp(u, "GB") && strcmp(u, "TB") && strcmp(u, "ms")) continue;
         char *original = strdup(lv_label_get_text(value)); assert(original);
         lv_obj_update_layout(root);
+        /* Ring units have their own centred line. Inline units share a baseline. */
+        if (!lv_obj_has_class(lv_obj_get_parent(root), &lv_arc_class)) {
+            lv_area_t v, ubox;
+            lv_obj_get_content_coords(value, &v); lv_obj_get_content_coords(unit, &ubox);
+            const lv_font_t *ufont = lv_obj_get_style_text_font(unit, 0);
+            int baseline = v.y1 + font->line_height - font->base_line;
+            int unit_baseline = ubox.y1 + ufont->line_height - ufont->base_line;
+            printf("inline baseline: page=%d value=%s unit=%s delta=%d px\n",
+                   fnos_ui_page(), original, u, unit_baseline-baseline);
+            assert(unit_baseline == baseline);
+        }
         lv_area_t origin, fixed; lv_obj_get_coords(value, &origin); lv_obj_get_coords(unit, &fixed);
         const char *targets[] = { "99", "100", "0", "--", "99.9", "100.0", "-9.9" };
         unsigned target_count = !strcmp(u, "%") ? 4 : sizeof targets / sizeof targets[0];
@@ -4875,9 +4896,71 @@ static void verify_attached_cursors(void)
     puts("checks: attached curve cursors track time, resize, gaps and hidden series PASS");
 }
 
+static unsigned s_trend_line_tasks;
+static int32_t s_trend_gap_x = INT32_MIN;
+static void count_trend_tasks(lv_event_t *e)
+{
+    lv_draw_line_dsc_t *line = lv_draw_task_get_line_dsc(lv_event_get_draw_task(e));
+    if (!line || line->base.part != LV_PART_ITEMS) return;
+    s_trend_line_tasks++;
+    if (line->points && line->point_cnt) {
+        lv_area_t bounds = {LV_COORD_MAX, LV_COORD_MAX, LV_COORD_MIN, LV_COORD_MIN};
+        for (uint32_t i = 0; i < line->point_cnt; i++) {
+            bounds.x1 = LV_MIN(bounds.x1, line->points[i].x);
+            bounds.x2 = LV_MAX(bounds.x2, line->points[i].x);
+            bounds.y1 = LV_MIN(bounds.y1, line->points[i].y);
+            bounds.y2 = LV_MAX(bounds.y2, line->points[i].y);
+        }
+        lv_area_increase(&bounds, line->width, line->width);
+        lv_area_t area;
+        lv_draw_task_get_area(lv_event_get_draw_task(e), &area);
+        assert(area.x1 == bounds.x1 && area.y1 == bounds.y1 &&
+               area.x2 == bounds.x2 && area.y2 == bounds.y2 &&
+               "polyline bounds must add stroke padding once");
+    }
+    if (line->points) for (uint32_t i = 1; i < line->point_cnt; i++) {
+        assert(line->points[i].x >= line->points[i-1].x);
+        if (s_trend_gap_x != INT32_MIN)
+            assert(!(line->points[i-1].x < s_trend_gap_x && line->points[i].x > s_trend_gap_x));
+    }
+}
+
+static void verify_trend_draw_budget(void)
+{
+    lv_obj_t *chart = uk_trend_create(lv_screen_active(), 180, 2);
+    lv_obj_set_size(chart, 960, 240);
+    uk_trend_enable_flow(chart);
+    for (int i = 0; i < 180; i++) {
+        uk_trend_push(chart, 0, 50 + 30 * sinf(i * .12f), 0);
+        uk_trend_push(chart, 1, 40 + 20 * cosf(i * .09f), 0);
+    }
+    lv_obj_update_layout(chart);
+    lv_obj_add_flag(chart, LV_OBJ_FLAG_SEND_DRAW_TASK_EVENTS);
+    lv_obj_add_event_cb(chart, count_trend_tasks, LV_EVENT_DRAW_TASK_ADDED, NULL);
+    s_trend_line_tasks = 0;
+    int64_t started = esp_timer_get_time();
+    lv_refr_now(lv_display_get_default());
+    printf("trend draw: 180 points x 2, tasks=%u render_us=%lld\n",
+           s_trend_line_tasks, (long long)(esp_timer_get_time() - started));
+    /* Keep continuous histories within a small draw-task budget per frame. */
+    assert(s_trend_line_tasks > 0 && s_trend_line_tasks <= 40);
+    lv_chart_hide_series(chart, uk_trend_series(chart, 1), true);
+    lv_chart_series_t *series = uk_trend_series(chart, 0);
+    lv_point_t gap;
+    lv_chart_get_point_pos_by_id(chart, series, 90, &gap);
+    s_trend_gap_x = chart->coords.x1 + gap.x;
+    lv_chart_set_value_by_id(chart, series, 90, LV_CHART_POINT_NONE);
+    s_trend_line_tasks = 0;
+    lv_refr_now(lv_display_get_default());
+    assert(s_trend_line_tasks > 0 && s_trend_line_tasks <= 40);
+    s_trend_gap_x = INT32_MIN;
+    lv_obj_delete(chart);
+}
+
 static void verify_chart_mapping(void)
 {
     verify_attached_cursors();
+    verify_trend_draw_budget();
     lv_obj_t *chart = lv_chart_create(lv_screen_active());
     assert(chart);
     lv_obj_set_size(chart, 400, 400);
@@ -5081,6 +5164,26 @@ static void verify_inventory_rename(const char **field, const char *sample)
     assert(label && lv_obj_get_height(label) == original_height);
 }
 
+static void assert_ring_reading_center(lv_obj_t *gauge, lv_obj_t *value)
+{
+    lv_area_t ring, label, ink = {SCR_MAX_W, SCR_MAX_H, -1, -1};
+    lv_obj_get_coords(gauge, &ring);
+    lv_obj_get_content_coords(value, &label);
+    uint16_t color = lv_color_to_u16(lv_obj_get_style_text_color(value, 0));
+    for (int y = LV_MAX(0, label.y1); y <= LV_MIN(s_scr_h-1, label.y2); y++)
+        for (int x = LV_MAX(0, label.x1); x <= LV_MIN(s_scr_w-1, label.x2); x++) {
+            if (s_frame[y*s_scr_w+x] != color) continue;
+            ink.x1 = LV_MIN(ink.x1, x); ink.x2 = LV_MAX(ink.x2, x);
+            ink.y1 = LV_MIN(ink.y1, y); ink.y2 = LV_MAX(ink.y2, y);
+        }
+    assert(ink.x2 >= ink.x1 && ink.y2 >= ink.y1);
+    int dx2 = ink.x1 + ink.x2 - ring.x1 - ring.x2;
+    int dy2 = ink.y1 + ink.y2 - ring.y1 - ring.y2;
+    printf("ring ink center: value=%s dx=%.1f dy=%.1f px\n",
+           lv_label_get_text(value), dx2/2.f, dy2/2.f);
+    assert(abs(dx2) <= 2 && abs(dy2) <= 2);
+}
+
 static void verify_overview_number_masks(void)
 {
     const fnos_status_t *previous = s_override_status;
@@ -5097,6 +5200,16 @@ static void verify_overview_number_masks(void)
     for (int i = 0; i < 2; i++) {
         labels[i] = visible_text(overview_object(titles[i], &lv_obj_class), "100");
         assert(labels[i]);
+    }
+    const int percentages[] = {0, 9, 37, 99, 100};
+    for (unsigned p = 0; p < sizeof percentages / sizeof percentages[0]; p++) {
+        fixture.cpu.pct = fixture.mem.pct = percentages[p];
+        for (int settle = 0; settle < 4; settle++) regression_tick();
+        lv_refr_now(lv_display_get_default());
+        for (int i = 0; i < 2; i++)
+            assert_ring_reading_center(overview_object(titles[i], &lv_arc_class), labels[i]);
+        char name[48]; snprintf(name, sizeof name, "alignment-ring-%d", percentages[p]);
+        snapshot(name);
     }
     /* Keep the real numeric publication gate active between samples. A new
        one-digit target must not crop a still-presented three-digit reading. */
@@ -5176,6 +5289,15 @@ static void verify_refresh_work(void)
             inventory = lv_obj_get_parent(lv_obj_get_parent(lv_obj_get_parent(title)));
             lv_obj_add_event_cb(inventory, refresh_work_event, LV_EVENT_SIZE_CHANGED, NULL);
         }
+        unsigned network_styles = 0;
+        lv_obj_t *network_row = NULL;
+        if (page == 2) {
+            lv_obj_t *card = overview_object("网口与接口", &lv_obj_class);
+            lv_obj_t *pool = lv_obj_get_child(uk_card_body(card), 0);
+            assert(lv_obj_get_child_count(pool) > 0);
+            network_row = lv_obj_get_child(pool, 0);
+            lv_obj_add_event_cb(network_row, refresh_work_event, LV_EVENT_STYLE_CHANGED, &network_styles);
+        }
         lv_obj_t *home_card = page == 0 ? overview_object("CPU", &lv_obj_class) : NULL;
         if (home_card) lv_obj_add_event_cb(home_card, refresh_work_event, LV_EVENT_STYLE_CHANGED, &s_refresh_home_styles);
         s_refresh_size_changes = s_refresh_nav_styles = s_refresh_home_styles = 0;
@@ -5192,6 +5314,11 @@ static void verify_refresh_work(void)
         assert(s_refresh_nav_styles == 0);
         assert(s_refresh_size_changes == 0);
         assert(s_refresh_home_styles == 0);
+        if (network_row) {
+            printf("refresh work: unchanged network row style changes=%u\n", network_styles);
+            assert(network_styles == 0 && "stable network telemetry must not reset row geometry");
+            lv_obj_remove_event_cb(network_row, refresh_work_event);
+        }
         /* Four unchanged home ticks must paint less than one entire frame.
            Full render mode deliberately flushes all pixels and is excluded. */
         if (page == 0 && getenv("PREVIEW_PARTIAL"))

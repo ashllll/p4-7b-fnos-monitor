@@ -79,6 +79,8 @@ target_compile_options(preview PRIVATE
   -UNDEBUG
 )
 target_compile_definitions(preview PRIVATE FNOS_UI_TESTING=1)
+set_property(SOURCE "${COMP}/fnos_ui.c" APPEND PROPERTY
+             COMPILE_DEFINITIONS "time=fnos_preview_time")
 target_link_libraries(preview PRIVATE lvgl m)
 option(FNOS_PREVIEW_SANITIZE "Check UI ownership and injected allocation failures" OFF)
 if(FNOS_PREVIEW_SANITIZE)
