@@ -165,7 +165,7 @@ class DockerMetrics:
 _metrics = DockerMetrics(_metrics_get)
 
 
-def containers():
+def _reader_frame(command):
     global _reader, _broken
     fd = os.environ.get('NSC_DOCKER_READER_FD')
     if fd:
@@ -175,9 +175,10 @@ def containers():
             if _reader is None:
                 _reader = socket.socket(fileno=int(fd))
             try:
-                deadline = time.monotonic() + 4
-                _reader.settimeout(4)
-                _reader.sendall(b'R')
+                timeout = 13 if command == b'T' else 4
+                deadline = time.monotonic() + timeout
+                _reader.settimeout(timeout)
+                _reader.sendall(command)
                 size = struct.unpack('!I', _receive(_reader, 4, deadline))[0]
                 if not 0 < size <= MAX_FRAME:
                     raise ValueError('container reader frame exceeds byte budget')
@@ -190,6 +191,17 @@ def containers():
                 raise
         if 'errno' in frame:
             raise OSError(frame['errno'], frame.get('error', 'container reader failed'))
+        return frame
+
+
+def controller_temperatures():
+    # Only the inherited root reader can access MPT; no caller-selected paths/commands.
+    return _reader_frame(b'T') or {'rows': [], 'errors': []}
+
+
+def containers():
+    frame = _reader_frame(b'R')
+    if frame is not None:
         return frame
     # Standalone collector / local tests. No arbitrary URLs, methods or command input.
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as raw:

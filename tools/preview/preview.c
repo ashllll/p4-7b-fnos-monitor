@@ -2840,6 +2840,10 @@ static void verify_temperature_colors(void)
     fnos_ui_set_page(4); regression_tick();
     lv_obj_t *name = visible_text(lv_screen_active(), "Temperature device");
     assert(name);
+    lv_obj_t *devices_card = overview_object("设备温度", &lv_obj_class);
+    assert(!visible_text(lv_screen_active(), "温度趋势"));
+    assert(!find_widget(lv_obj_get_parent(devices_card), &lv_chart_class));
+    assert(lv_obj_get_height(devices_card) >= 360);
     click_object_center(name);
     lv_obj_t *block = temperature_device_block(name);
     assert(block && visible_text(block, "Sensor 0"));

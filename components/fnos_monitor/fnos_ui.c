@@ -174,7 +174,6 @@ static struct {
     int        temp_blk_made;
     lv_obj_t *temp_hero, *temp_hero_unit, *temp_hero_dot;   /* 摘要卡：最热温度大字 */
     lv_obj_t *temp_note, *temp_note2, *temp_empty_all;
-    lv_obj_t *temp_history, *temp_history_note;
     lv_obj_t *agent_detail[UI_AGENT_ROWS];
 
     /* 首页（P0）：最热温度磁贴。 */
@@ -2228,13 +2227,9 @@ static void build_p3(lv_obj_t *page)
 /* ── P4: device summaries; every reported channel is available on demand. ── */
 static void build_p4(lv_obj_t *page)
 {
-    /* v13：本页不再算坐标——两张卡都按内容自然高（设备多高卡就多高），分列与行高
-       由自适应池解（屏幕多大就用多少）。卡片按内容定高之后，一屏装不下就是常态，
-       页必须和其它页一样可滚，否则被页边界裁掉的那截连滚都滚不到
-       （设备多时温度卡比整页还高）。以前这里手摆 flex、显式关掉页滚动，
-       是"卡片永远吃满一屏"时代的写法。 */
+    /* Current readings lead; the device inventory uses the remaining height. */
     ui_page(page);
-    scope_bar(page, 4, "热状态 · 最高温历史 · 设备通道", NULL, 0);
+    scope_bar(page, 4, "热状态 · 设备通道", NULL, 0);
     lv_obj_t *note = ui_card(page, NULL, NULL);
     uk_card_flex(note, 0);                       /* 摘要卡不抢空间：内容多高就多高 */
     lv_obj_t *nbody = uk_card_body(note);
@@ -2261,19 +2256,6 @@ static void build_p4(lv_obj_t *page)
     s_ui.temp_note2 = uk_label(nbody, UK_FONT_CJK_12, UK_T3, "");
     lv_obj_set_width(s_ui.temp_note2, LV_PCT(100));
 
-    lv_obj_t *history_card = ui_card(page, "温度趋势", NULL);
-    uk_card_flex(history_card, 0);
-    lv_obj_t *history_body = uk_card_body(history_card);
-    s_ui.temp_history_note = uk_label(history_body, UK_FONT_CJK_12, UK_T3, "最高温历史 · 等待采集");
-    lv_obj_set_width(s_ui.temp_history_note, LV_PCT(100));
-    lv_label_set_long_mode(s_ui.temp_history_note, LV_LABEL_LONG_MODE_WRAP);
-    lv_obj_add_flag(s_ui.temp_history_note, LV_OBJ_FLAG_HIDDEN);
-    s_ui.temp_history = uk_trend_create(history_body, UI_HIST, 1);
-    uk_trend_enable_flow(s_ui.temp_history);
-    lv_obj_set_flex_grow(s_ui.temp_history, 0);
-    lv_obj_set_height(s_ui.temp_history, lv_display_get_vertical_resolution(NULL) / 6);
-    lv_chart_set_series_color(s_ui.temp_history, uk_trend_series(s_ui.temp_history, 0), uk_c(UK_S_TEMP));
-    uk_trend_set_range(s_ui.temp_history, 0, 100);
     s_ui.temp_card = ui_card(page, "设备温度", NULL);
     /* 卡片吃满页高余量，设备清单在池内滚动：页根不再靠滚动露出整张卡。 */
     uk_card_flex(s_ui.temp_card, 1);
@@ -4888,11 +4870,6 @@ static void chart_range_note(lv_obj_t *chart)
         if (chart_sample_count(chart) && overview_readable(&s_st, "net"))
             set_txt(s_ui.net_axis, "量程 0 - %s", fmt_rate(rate, sizeof rate, high));
         else set_txt(s_ui.net_axis, "无数据");
-    } else if (chart == s_ui.temp_history) {
-        if (chart_sample_count(chart))
-            set_txt(s_ui.temp_history_note, "%d-%d°C%s", low, high,
-                    overview_live(&s_st, "temps") ? "" : " · 旧历史");
-        else set_txt(s_ui.temp_history_note, "最高温历史 · 等待有效采样");
     }
 }
 
@@ -5547,15 +5524,6 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
     /* Visual reference counts are separate from collector health alerts. */
     if (page == 4) {
     module_note(s_ui.temp_card,st,"temps");
-    int32_t peak=chart_peak(s_ui.temp_history,0), floor=0;
-    lv_chart_series_t *series=uk_trend_raw_series(s_ui.temp_history,0);
-    if (series) {
-        int32_t *values=lv_chart_get_series_y_array(s_ui.temp_history,series);
-        for (int i=0;values && i<UI_HIST;i++) if (values[i]!=LV_CHART_POINT_NONE) floor=LV_MIN(floor,values[i]);
-    }
-    int32_t ceiling=(int32_t)LV_MIN((int64_t)INT32_MAX-1,LV_MAX((int64_t)UK_TEMP_DANGER,(int64_t)peak+UK_S1));
-    uk_trend_set_range(s_ui.temp_history,floor,ceiling);
-    chart_range_note(s_ui.temp_history);
     lv_obj_set_style_text_color(s_ui.temp_hero, uk_c(temps_live ? UK_T1 : UK_T3), 0);
     if (!temps_readable) {
         set_txt(s_ui.temp_hero, "--");
@@ -5673,9 +5641,9 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
     }
     }   /* (page == 5)：告警页 */
     lv_obj_t *history_charts[] = {s_ui.overview_resource[0].chart, s_ui.overview_resource[1].chart,
-                                   s_ui.tr_net, s_ui.temp_history, s_ui.overview_temp_history};
-    static const int history_pages[] = {0, 0, 2, 4, 0};
-    static const char *const history_modules[] = {"cpu", "mem", "net", "temps", "temps"};
+                                   s_ui.tr_net, s_ui.overview_temp_history};
+    static const int history_pages[] = {0, 0, 2, 0};
+    static const char *const history_modules[] = {"cpu", "mem", "net", "temps"};
     for (unsigned i = 0; i < sizeof history_pages / sizeof history_pages[0]; i++) {
         if (!(page == history_pages[i])) continue;
         bool available = overview_readable(st, history_modules[i]) && chart_sample_count(history_charts[i]);
@@ -5844,7 +5812,6 @@ static void ui_tick(lv_timer_t *t)
         uk_trend_clear(s_ui.overview_resource[0].chart);
         uk_trend_clear(s_ui.overview_resource[1].chart);
         uk_trend_clear(s_ui.tr_net);
-        uk_trend_clear(s_ui.temp_history);
         uk_trend_clear(s_ui.overview_temp_history);
         memset(s_overview_gap, 0, sizeof s_overview_gap);
     }
@@ -5856,7 +5823,6 @@ static void ui_tick(lv_timer_t *t)
     uint64_t batch_ms = 0;
     for (int i = 0; i < n; i++) {
         batch_ms += smp[i].interval_ms;
-        uk_trend_push(s_ui.temp_history,0,history_chart_value(smp[i].temp_max), smp[i].interval_ms);
         uk_trend_push(s_ui.overview_temp_history,0,history_chart_value(smp[i].temp_max), smp[i].interval_ms);
         for (int k = 0; k < 2; k++) if (live[k]) {
             lv_obj_t *chart = s_ui.overview_resource[k].chart;
@@ -5875,7 +5841,6 @@ static void ui_tick(lv_timer_t *t)
         uk_trend_settle(s_ui.overview_resource[0].chart);
         uk_trend_settle(s_ui.overview_resource[1].chart);
         uk_trend_settle(s_ui.tr_net);
-        uk_trend_settle(s_ui.temp_history);
         uk_trend_settle(s_ui.overview_temp_history);
     }
     /* Empty reads also represent lock timeouts: keep backfill mode until a
@@ -5991,7 +5956,6 @@ void fnos_ui_create(void)
        「返回列表」也不会压在最常用的一排导航键上。 */
     entity_detail_build(lv_screen_active());
     lv_obj_add_event_cb(s_ui.tr_net, chart_range_note_cb, LV_EVENT_VALUE_CHANGED, NULL);
-    lv_obj_add_event_cb(s_ui.temp_history, chart_range_note_cb, LV_EVENT_VALUE_CHANGED, NULL);
     scope_sync();
     s_created = true;
     s_page = -1;

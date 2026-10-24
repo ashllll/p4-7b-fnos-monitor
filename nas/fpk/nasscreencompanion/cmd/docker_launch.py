@@ -1,8 +1,8 @@
 #!/usr/bin/python3
-"""Root lifecycle entry: fixed Docker GET child; drop privileges before the web service.
+"""Root lifecycle entry: fixed Docker/MPT reads; drop privileges before the web service.
 
 This file lives in fnOS's root-owned cmd directory, never in writable target.
-The child has no listener and accepts only R on an inherited socketpair.
+The child has no listener and accepts only R/T on an inherited socketpair.
 """
 import argparse
 import errno
@@ -144,10 +144,85 @@ def snapshot(limit=None, metrics=False):
             'total': len(result), 'ts': int(time.time())}
 
 
+def mpt_page7(fd, ioc):
+    """Only MPI CONFIG page-header/read-current of IO Unit page 7; no write payload."""
+    import ctypes
+    import fcntl
+    pointer = struct.calcsize('P')
+    offset = struct.calcsize('@IIII4P5I')
+    abi_size = (offset + 1 + pointer - 1) // pointer * pointer
+    opcode = 0xC0000000 | (abi_size << 16) | (ord('L') << 8) | 20
+    header = bytes((0, 0, 7, 0))
+    data = None
+    for action in (0, 1):
+        reply = ctypes.create_string_buffer(128)
+        size = header[1] * 4 if action else 0
+        if action and not 24 <= size <= 1024:
+            raise ValueError('invalid IO Unit page 7 length')
+        data = ctypes.create_string_buffer(size) if size else None
+        request = bytearray(28)
+        request[0], request[3] = action, 4  # CONFIG, never SCSI/flash/reset commands.
+        request[20:24] = header
+        command = bytearray(struct.pack('@IIII4P5I', ioc, 0, 0, 10,
+                            ctypes.addressof(reply), ctypes.addressof(data) if data else 0,
+                            0, 0, 128, size, 0, 0, 7) + request)
+        fcntl.ioctl(fd, opcode, command, True)
+        result = reply.raw
+        status = struct.unpack_from('<H', result, 14)[0] & 0x7FFF
+        if status:
+            raise OSError(errno.EIO, 'IO Unit page 7 status 0x%04x' % status)
+        if result[3] != 4 or result[22] != 7 or result[23] & 15:
+            raise ValueError('unexpected IO Unit configuration reply')
+        header = result[20:24]
+    if data.raw[2] != 7 or data.raw[3] & 15:
+        raise ValueError('unexpected IO Unit page data')
+    return data.raw
+
+
+def mpt_temperatures():
+    """Enumerate the local driver's hosts; callers supply no device or ioctl arguments."""
+    import glob
+    rows, errors = [], []
+    for host in sorted(glob.glob('/sys/class/scsi_host/host[0-9]*')):
+        try:
+            with open(host + '/proc_name') as source:
+                if source.read().strip() not in ('mpt3sas', 'mpt2sas'):
+                    continue
+            pci = next(p for p in reversed(os.path.realpath(host).split('/'))
+                       if re.fullmatch(r'[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]', p))
+            if glob.glob('/sys/bus/pci/devices/' + pci + '/hwmon/hwmon*/temp*_input'):
+                continue  # The ordinary hwmon collector already owns these channels.
+            with open(host + '/unique_id') as source:
+                ioc = int(source.read().strip())
+            if not 0 <= ioc <= 0xFFFFFFFF:
+                raise ValueError('invalid controller ID')
+            with open(host + '/version_mpi') as source:
+                mpi = source.read().strip()
+            node = '/dev/mpt2ctl' if mpi.startswith(('200.', '2.00', '02.00')) else '/dev/mpt3ctl'
+            fd = os.open(node, os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC)
+            try:
+                page = mpt_page7(fd, ioc)
+            finally:
+                os.close(fd)
+            with open(host + '/board_name') as source:
+                name = source.read().strip() or 'mpt3sas'
+            for channel, at in (('IOC', 16), ('Board', 20)):
+                raw, unit = struct.unpack_from('<HB', page, at)
+                if unit not in (1, 2):
+                    continue  # The firmware explicitly says this sensor is absent.
+                c = (raw - 32) * 5 / 9 if unit == 1 else float(raw)
+                rows.append({'n': pci + ' ' + channel, 'dev': pci,
+                             'dn': 'HBA ' + name, 'ch': channel, 'c': round(c, 1)})
+        except (OSError, ValueError, StopIteration) as exc:
+            errors.append('%s: %s' % (os.path.basename(host), exc))
+    return {'rows': rows, 'errors': errors, 'ts': int(time.time())}
+
+
 def reader(sock, limit, parent_pid):
     def expired(signum, frame):
-        raise TimeoutError('Docker request deadline exceeded')
+        raise TimeoutError('privileged reader deadline exceeded')
     signal.signal(signal.SIGALRM, expired)
+    cached_temperatures, temperature_at = None, 0
     with sock:
         sock.settimeout(2)
         while os.getppid() == parent_pid:
@@ -155,11 +230,17 @@ def reader(sock, limit, parent_pid):
                 command = sock.recv(1)
             except socket.timeout:
                 continue
-            if command != b'R':
+            if command not in (b'R', b'T'):
                 return
             try:
-                signal.setitimer(signal.ITIMER_REAL, 3)
-                frame = snapshot(limit, metrics=True)
+                signal.setitimer(signal.ITIMER_REAL, 12 if command == b'T' else 3)
+                if command == b'T':
+                    if cached_temperatures is None or time.monotonic() - temperature_at >= 5:
+                        cached_temperatures = mpt_temperatures()
+                        temperature_at = time.monotonic()
+                    frame = cached_temperatures
+                else:
+                    frame = snapshot(limit, metrics=True)
             except Exception as exc:
                 code = getattr(exc, 'errno', None)
                 frame = {'errno': code if isinstance(code, int) else errno.EIO,

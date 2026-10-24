@@ -111,12 +111,12 @@ static void overlay_check_nav_opaque(lv_obj_t *object)
         overlay_check_nav_opaque(lv_obj_get_child(object, i));
 }
 
-/* All five product plots use the same real acquisition-to-UI path. */
+/* All four remaining product plots use the real acquisition-to-UI path. */
 static unsigned overlay_visible_charts(lv_obj_t *object, lv_obj_t **charts, unsigned count)
 {
     if (effectively_hidden(object)) return count;
     if (lv_obj_has_class(object, &lv_chart_class)) {
-        assert(count < 5); charts[count++] = object;
+        assert(count < 4); charts[count++] = object;
     }
     for (uint32_t i = 0; i < lv_obj_get_child_count(object); i++)
         count = overlay_visible_charts(lv_obj_get_child(object, i), charts, count);
@@ -126,16 +126,16 @@ static unsigned overlay_visible_charts(lv_obj_t *object, lv_obj_t **charts, unsi
 static void overlay_stream_probe(bool reduced)
 {
     static const int pages[] = {0, 2, 4};
-    static const unsigned expected[] = {3, 1, 1};
+    static const unsigned expected[] = {3, 1, 0};
     unsigned checked = 0;
     s_override_sample.interval_ms = 200;
     s_override_sample.temp_max = 51;
     for (unsigned page = 0; page < 3; page++) {
         fnos_ui_set_page(pages[page]); overlay_wait(800);
-        lv_obj_t *charts[5];
+        lv_obj_t *charts[4];
         unsigned count = overlay_visible_charts(lv_screen_active(), charts, 0);
         assert(count == expected[page]);
-        uint32_t last[5];
+        uint32_t last[4];
         for (unsigned i = 0; i < count; i++) {
             uk_trend_settle(charts[i]);
             lv_chart_series_t *series = uk_trend_series(charts[i], 0);
@@ -149,7 +149,7 @@ static void overlay_stream_probe(bool reduced)
         s_override_sample.temp_max += 1;
         s_seq += 2;
         vtick_advance(500); lv_timer_handler();
-        lv_point_t before[5];
+        lv_point_t before[4];
         for (unsigned i = 0; i < count; i++) {
             lv_chart_series_t *series = uk_trend_series(charts[i], 0);
             uint32_t points = lv_chart_get_point_count(charts[i]);
@@ -174,7 +174,7 @@ static void overlay_stream_probe(bool reduced)
         snprintf(frame, sizeof frame, "runtime-%s-p%d-after", reduced ? "reduced" : "full", pages[page]);
         overlay_frame(frame, false);
     }
-    assert(checked == 5);
+    assert(checked == 4);
 }
 
 static void verify_runtime_reduced_motion(lv_indev_t *pointer)
@@ -199,7 +199,7 @@ static void verify_runtime_reduced_motion(lv_indev_t *pointer)
     fnos_ui_motion_settle(); uk_anim_settle(lv_screen_active());
     s_no_settle = false;
     overlay_record_end();
-    puts("checks: real diagnostic reduced toggle, immediate navigation and five product streams/restore PASS");
+    puts("checks: real diagnostic reduced toggle, immediate navigation and four product streams/restore PASS");
 }
 
 static void verify_overlay_motion(lv_indev_t *pointer)

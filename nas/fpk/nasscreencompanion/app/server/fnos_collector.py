@@ -620,7 +620,10 @@ class Collector:
         if not rp:
             return best, best_kind
         for crp, nm, kind in cand:
-            if rp == crp or rp.startswith(crp + os.sep) or crp.startswith(rp + os.sep):
+            # Only NVMe namespaces may identify a sensor on their controller;
+            # a SAS/SATA child disk must not claim its HBA's temperature.
+            nvme_child = kind == "block" and crp.startswith(os.path.join(rp, "nvme") + os.sep)
+            if rp == crp or rp.startswith(crp + os.sep) or nvme_child:
                 if len(crp) > best_len:
                     best, best_kind, best_len = nm, kind, len(crp)
         return best, best_kind
@@ -764,6 +767,7 @@ class Collector:
         如 "Marvell AQC113 10GbE" / "Samsung SSD 990 PRO 2TB" / "Intel N100"）、c。
         dev 保证是稳定的 id（界面上要能一行一行认住），dn 才是"这是什么设备"。"""
         out = []
+        self._temps_partial = None
         self._cpu_temp = None
         fallback_cpu = None
         cand = self._dev_map()
@@ -802,6 +806,13 @@ class Collector:
                             "dn": dn})
         if self._cpu_temp is None:
             self._cpu_temp = fallback_cpu
+        from docker_api import controller_temperatures
+        try:
+            controllers = controller_temperatures()
+            out.extend(controllers['rows'])
+            self._temps_partial = '; '.join(controllers['errors']) or None
+        except (OSError, ValueError, ConnectionError) as exc:
+            self._temps_partial = str(exc)
         out.sort(key=lambda t: t["c"], reverse=True)
         return self._trim("temps", out)
 
@@ -1131,6 +1142,8 @@ class CompanionCollector(Collector):
                     snap[key] = value
                     ts = self._docker_ts if key == 'docker' else snap['ts']
                     meta[key] = {"status": ST_OK, "ts": ts, "error": None}
+                if key == 'temps' and getattr(self, '_temps_partial', None):
+                    meta[key].update(status='partial' if value else ST_ERROR, error=self._temps_partial)
             except Exception as exc:                   # noqa: BLE001 - 采集段不能互相拖死
                 errors.append(key)
                 detail = "%s: %s" % (type(exc).__name__, exc)

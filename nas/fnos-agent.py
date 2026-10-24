@@ -654,7 +654,10 @@ class Collector:
         if not rp:
             return best, best_kind
         for crp, nm, kind in cand:
-            if rp == crp or rp.startswith(crp + os.sep) or crp.startswith(rp + os.sep):
+            # Only NVMe namespaces may identify a sensor on their controller;
+            # a SAS/SATA child disk must not claim its HBA's temperature.
+            nvme_child = kind == "block" and crp.startswith(os.path.join(rp, "nvme") + os.sep)
+            if rp == crp or rp.startswith(crp + os.sep) or nvme_child:
                 if len(crp) > best_len:
                     best, best_kind, best_len = nm, kind, len(crp)
         return best, best_kind

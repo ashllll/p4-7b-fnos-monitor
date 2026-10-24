@@ -148,6 +148,16 @@ def build_nas_tree(root):
     mkdir(root, "devices/platform/acpitz.0")
     hwmon(root, "platform/acpitz.0", 6, "acpitz", [(1, None, 28000), (2, None, 0)])
 
+    # HBA temperature belongs to the controller, never a downstream SAS disk.
+    hba = "pci0000:00/0000:00:1e.0/0000:09:00.0"
+    disk = hba + "/host7/target7:0:0/7:0:0:0"
+    mkdir(root, "devices", disk, "block/sda")
+    link(root, "../..", "devices", disk, "block/sda", "device")
+    link(root, "../../devices/" + disk + "/block/sda", "class/block", "sda")
+    write(root, "SAS data disk", "devices", disk, "model")
+    hwmon(root, hba, 7, "mpt3sas", [(1, "IOC", 68000), (2, "Board", 48000)])
+    hwmon(root, disk, 8, "drivetemp", [(1, "Drive", 38000)])
+
 
 def build_cap_tree(root):
     """只有一个 60 通道的芯片：验证低温与高温通道都不会因设备数量被省略。"""
@@ -266,14 +276,15 @@ def main():
         io.open(pci_ids, "w", encoding="utf-8").write(
             "1d6a  Aquantia Corp.\n\t0001  AQC113CS\n"
             "8086  Intel Corporation\n\t46d0  CoffeeLake-S GT2 [UHD Graphics 630]\n")
-        # 17 路 = acpitz 1 + 网卡 2 + iGPU 1 + 两块 NVMe 各 3 + coretemp 7
+        # 20 channels include controller IOC/Board and its downstream SAS disk.
         full = {
             "have": [("enp1s0", "PHY"), ("enp1s0", "MAC"),
                      ("coretemp.0", "Package id 0"), ("coretemp.0", "Core 0"), ("coretemp.0", "Core 5"),
                      ("i915", "temp1"),
                      ("nvme0n1", "Composite"), ("nvme0n1", "Sensor 1"), ("nvme0n1", "Sensor 2"),
                      ("nvme1n1", "Composite"), ("nvme1n1", "Sensor 2"),
-                     ("acpitz.0", "temp1")],
+                     ("acpitz.0", "temp1"), ("0000:09:00.0", "IOC"),
+                     ("0000:09:00.0", "Board"), ("sda", "Drive")],
             "absent": [("acpitz.0", "temp2"), ("nvme0n1p1", "Composite"), ("NIC", "PHY")],
             # 人读设备名：磁盘取型号、网卡取"厂商 + 驱动 + 速率"（假树里没有 pci.ids，
             # 所以厂商表兜底到 Marvell，型号名用驱动名 atlantic）、CPU 取 /proc/cpuinfo、
@@ -285,9 +296,12 @@ def main():
                 ("coretemp.0", "Core 3"): "Intel N100",
                 ("i915", "temp1"): "Intel i915",
                 ("acpitz.0", "temp1"): "acpitz",
+                ("0000:09:00.0", "IOC"): "mpt3sas",
+                ("0000:09:00.0", "Board"): "mpt3sas",
+                ("sda", "Drive"): "SAS data disk",
             },
             "first": ("enp1s0", "PHY"),
-            "ntotal": 17,
+            "ntotal": 20,
             "cpu_temp": 34.0,
             "sorted": True,
             "at_most": 48,
