@@ -7,6 +7,8 @@ nas/deploy.local.sh
 
 # 构建产物
 build/
+/build-*/
+/tools/preview/build/
 tools/preview/out/
 tools/preview/out-*/
 tools/preview/lv_kconfig_host.h
@@ -47,3 +49,7 @@ docs/evidence/2026-10-07-ui-temp-grouped-p*.png
 
 # 本机代理经验卡（不进公共仓库）
 procedures/
+
+# Local experiment and release verification data
+/.scratch/
+/.local-artifacts/

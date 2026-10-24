@@ -102,6 +102,28 @@ PREVIEW_SIZE=1024x600 PREVIEW_PAIR_FIRST_ENTRY=1 tools/preview/build/preview /tm
 输出 7 帧并检查输入、握手、指纹确认、完成和失败，以及反复进入配对、切换模块和按钮命中。
 它与完整状态流程分别验证首次布局和经过其他页面后的布局。
 
+### 动效连续性整改回归
+
+`run.sh` 自动覆盖第三目标接续（含最新目标覆盖与拖到端点）、诊断页真实“精简”开关、
+五图持续采样与恢复、四类覆盖层入退场/反向/输入阻挡，以及首次无凭据开机配网。
+`PREVIEW_CHART_MAP=1` 另覆盖量程立即扩大、候选稳定 2000ms 后连续收缩、浮点投影和游标附着。
+网络/温度备注在收缩开始时静态发布目标范围，不随每个动画帧翻滚数字。
+`range` 模式还通过产品网络页的真实采样入口让峰值进窗、离窗，检查备注更新时间；
+`capacity` 模式用于逐个主题复核容量阈值与健康异常组合，八套主题均由一键脚本执行。
+`temperature` 模式验证温度大读数、设备／通道读数、状态点与温度条共用正常／关注／高温色，
+覆盖阈值边界、零和负值、昼夜、旧值降灰和同屏三档；八套主题也由一键脚本执行。
+
+```bash
+PREVIEW_DATA_MOTION=overlays tools/preview/build/preview /tmp/fnos-overlays
+PREVIEW_DATA_MOTION=boot-wifi tools/preview/build/preview /tmp/fnos-boot-wifi
+PREVIEW_DATA_MOTION=reduced tools/preview/build/preview /tmp/fnos-reduced
+PREVIEW_DATA_MOTION=range tools/preview/build/preview /tmp/fnos-range
+PREVIEW_DATA_MOTION=temperature tools/preview/build/preview /tmp/fnos-temperature
+```
+
+覆盖层专用模式保留中间透明度，普通快照仍通过统一落定入口获得稳态。
+输出只含匿名 fixture；主机通过不等同于设备触摸或光学流畅度通过。
+
 ### 三个只读探针（不改布局，只打印）
 
 ```bash

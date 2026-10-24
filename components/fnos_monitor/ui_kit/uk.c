@@ -3,6 +3,7 @@
 // 这里只有"怎么摆"，"摆什么"在 fnos_ui.c。所有几何都由 flex 决定；
 // 唯一手写的尺寸是圆点直径、发丝线高度、条高（这些是"尺寸"不是"位置"）。
 #include "uk.h"
+#include "uk_spring.h"
 #include "src/widgets/chart/lv_chart_private.h"
 #include "src/core/lv_obj_class_private.h"
 #include "src/misc/lv_area_private.h"
@@ -926,26 +927,36 @@ typedef struct {
     int32_t right, from, target;
     uint32_t last_paint, started, duration;
     bool sampled, flowing;
+    float range_value[2], range_velocity[2], range_from[2], range_from_velocity[2];
+    int32_t range_target[2], range_announced[2];
+    uint32_t range_started;
+    bool range_valid, range_live, range_pending, range_active;
 } trend_t;
 
+enum { TREND_RANGE_HOLD_MS = 2000, TREND_RANGE_MS = UK_MOTION_MS };
 static void trend_step(void *obj, int32_t progress);
+static void trend_range_step(void *obj, int32_t elapsed);
 typedef struct {
     float x, y, xscale, yscale;
-    int32_t xmin, ymax;
+    int32_t xmin;
+    float ymax;
 } trend_projection_t;
 
 static trend_projection_t trend_projection(lv_obj_t *obj, lv_chart_series_t *s)
 {
     lv_chart_t *chart = (lv_chart_t *)obj;
     float dx = (float)((int64_t)chart->xmax[s->x_axis_sec] - chart->xmin[s->x_axis_sec]);
-    float dy = (float)((int64_t)chart->ymax[s->y_axis_sec] - chart->ymin[s->y_axis_sec]);
+    trend_t *t = (trend_t *)obj;
+    float ymin = t->range_valid && !s->y_axis_sec ? t->range_value[0] : chart->ymin[s->y_axis_sec];
+    float ymax = t->range_valid && !s->y_axis_sec ? t->range_value[1] : chart->ymax[s->y_axis_sec];
+    float dy = ymax - ymin;
     lv_area_t content; lv_obj_get_content_coords(obj, &content);
     return (trend_projection_t){
         .x = content.x1 - lv_obj_get_scroll_left(obj),
         .y = content.y1 - lv_obj_get_scroll_top(obj),
         .xscale = dx > 0 ? lv_obj_get_content_width(obj) / dx : 0,
         .yscale = dy > 0 ? lv_obj_get_content_height(obj) / dy : 0,
-        .xmin = chart->xmin[s->x_axis_sec], .ymax = chart->ymax[s->y_axis_sec]
+        .xmin = chart->xmin[s->x_axis_sec], .ymax = ymax
     };
 }
 
@@ -956,7 +967,7 @@ static bool trend_project(lv_chart_t *chart, lv_chart_series_t *s, uint32_t inde
     uint32_t at = (s->start_point + index) % chart->point_cnt;
     if (s->y_points[at] == LV_CHART_POINT_NONE) return false;
     out->x = map->x + (float)((int64_t)s->x_points[at] - map->xmin) * map->xscale;
-    out->y = map->y + (float)((int64_t)map->ymax - s->y_points[at]) * map->yscale;
+    out->y = map->y + (map->ymax - s->y_points[at]) * map->yscale;
     return true;
 }
 
@@ -1147,6 +1158,7 @@ static void trend_destroy(const lv_obj_class_t *cls, lv_obj_t *obj)
 {
     (void)cls;
     lv_anim_delete(obj, trend_step);
+    lv_anim_delete(obj, trend_range_step);
 }
 static const lv_obj_class_t trend_class = {
     .base_class = &lv_chart_class, .event_cb = trend_event, .destructor_cb = trend_destroy,
@@ -1169,7 +1181,7 @@ static void trend_step(void *obj, int32_t progress)
 {
     trend_t *t = obj;
     uint32_t now = lv_tick_get();
-    if (!lv_obj_is_visible(obj) || UK_NUMBER_REDUCED) {
+    if (!lv_obj_is_visible(obj) || UK_NUMBER_REDUCED || uk_motion_reduced()) {
         trend_window(obj, t->target);
         t->duration = 0;
         lv_anim_delete(obj, trend_step);
@@ -1184,6 +1196,67 @@ static void trend_step(void *obj, int32_t progress)
     trend_window(obj, t->from + (int32_t)((int64_t)(t->target - t->from) * progress / TREND_PROGRESS));
     if (progress == TREND_PROGRESS) t->duration = 0;
 }
+static void trend_range_announce(lv_obj_t *chart)
+{
+    trend_t *t = (trend_t *)chart;
+    if (t->range_announced[0] == t->range_target[0] &&
+        t->range_announced[1] == t->range_target[1]) return;
+    memcpy(t->range_announced, t->range_target, sizeof t->range_announced);
+    lv_obj_send_event(chart, LV_EVENT_VALUE_CHANGED, NULL);
+}
+
+static void trend_range_snap(lv_obj_t *chart)
+{
+    trend_t *t = (trend_t *)chart;
+    lv_anim_delete(chart, trend_range_step);
+    t->range_pending = t->range_active = false;
+    if (!t->range_valid) return;
+    for (unsigned i = 0; i < 2; i++) {
+        t->range_value[i] = t->range_from[i] = t->range_target[i];
+        t->range_velocity[i] = t->range_from_velocity[i] = 0;
+    }
+    lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, t->range_target[0], t->range_target[1]);
+    trend_range_announce(chart);
+}
+
+static void trend_range_sample(lv_obj_t *chart, uint32_t elapsed)
+{
+    trend_t *t = (trend_t *)chart;
+    if (elapsed < TREND_RANGE_HOLD_MS) return;
+    if (!t->range_active) {
+        t->range_active = true;
+        trend_range_announce(chart);
+    }
+    elapsed -= TREND_RANGE_HOLD_MS;
+    if (elapsed >= TREND_RANGE_MS) { trend_range_snap(chart); return; }
+    uk_spring_response_t response = uk_spring_response_for(elapsed, TREND_RANGE_MS,
+                                                          UK_MOTION_DAMPING, 1.f);
+    for (unsigned i = 0; i < 2; i++) {
+        float value = uk_spring_value(t->range_from[i], t->range_from_velocity[i],
+                                      t->range_target[i], response, &t->range_velocity[i]);
+        t->range_value[i] = i ? fmaxf(t->range_target[i], fminf(t->range_value[i], value)) :
+                               fminf(t->range_target[i], fmaxf(t->range_value[i], value));
+    }
+    /* Native grid/cursor bookkeeping uses outward-rounded bounds; the visible
+       curve and its attached cursor share the continuous floating projection. */
+    int32_t ymin = (int32_t)fmax(INT32_MIN, floor((double)t->range_value[0]));
+    int32_t ymax = (int32_t)fmin(INT32_MAX - 1, ceil((double)t->range_value[1]));
+    lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, ymin, ymax);
+    lv_obj_invalidate(chart);
+}
+
+static int32_t trend_range_clock(const lv_anim_t *a) { return a->act_time; }
+static void trend_range_step(void *obj, int32_t elapsed)
+{
+    (void)elapsed;
+    trend_t *t = obj;
+    if (!lv_obj_is_visible(obj) || !t->range_live || UK_NUMBER_REDUCED || uk_motion_reduced()) {
+        trend_range_snap(obj);
+        return;
+    }
+    trend_range_sample(obj, lv_tick_elaps(t->range_started));
+}
+
 void uk_trend_settle(lv_obj_t *chart)
 {
     if (!chart || !lv_obj_has_class(chart, &trend_class)) return;
@@ -1191,6 +1264,7 @@ void uk_trend_settle(lv_obj_t *chart)
     lv_anim_delete(chart, trend_step);
     trend_window(chart, t->target);
     t->duration = 0;
+    trend_range_snap(chart);
 }
 void uk_trend_clear(lv_obj_t *chart)
 {
@@ -1206,6 +1280,7 @@ void uk_trend_clear(lv_obj_t *chart)
     trend_t *t = (trend_t *)chart;
     t->from = t->target = 0;
     t->sampled = false;
+    t->range_valid = false;
     trend_window(chart, 0);
 }
 static void trend_rebase(lv_obj_t *chart)
@@ -1229,6 +1304,7 @@ lv_obj_t *uk_trend_create(lv_obj_t *parent, int32_t points, int32_t series)
     lv_obj_t *c = lv_obj_class_create_obj(&trend_class, parent);
     if (!c) return NULL;
     lv_obj_class_init_obj(c);
+    ((trend_t *)c)->range_live = true;
     lv_obj_set_width(c, LV_PCT(100));
     lv_obj_set_flex_grow(c, 1);
     lv_obj_set_style_bg_opa(c, LV_OPA_TRANSP, 0);
@@ -1292,9 +1368,67 @@ lv_chart_series_t *uk_trend_raw_series(lv_obj_t *chart, int32_t idx)
     return idx < 0 ? NULL : series_at(chart, 2 * idx);
 }
 
+void uk_trend_get_range(lv_obj_t *chart, int32_t *ymin, int32_t *ymax)
+{
+    trend_t *t = (trend_t *)chart;
+    if (ymin) *ymin = t->range_valid ? t->range_announced[0] : t->chart.ymin[0];
+    if (ymax) *ymax = t->range_valid ? t->range_announced[1] : t->chart.ymax[0];
+}
+
+void uk_trend_range_live(lv_obj_t *chart, bool live)
+{
+    if (!chart) return;
+    trend_t *t = (trend_t *)chart;
+    if (t->range_live == live) return;
+    t->range_live = live;
+    trend_range_snap(chart);
+    t->range_valid = false; /* The first range after a semantic change is immediate. */
+}
+
 void uk_trend_set_range(lv_obj_t *chart, int32_t ymin, int32_t ymax)
 {
-    lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, ymin, ymax);
+    if (!chart || ymin >= ymax) return;
+    trend_t *t = (trend_t *)chart;
+    if (t->range_pending) trend_range_sample(chart, lv_tick_elaps(t->range_started));
+    bool same = t->range_valid && t->range_target[0] == ymin && t->range_target[1] == ymax;
+    t->range_target[0] = ymin; t->range_target[1] = ymax;
+    bool animate = t->flowing && t->range_live && t->sampled &&
+        !UK_NUMBER_REDUCED && !uk_motion_reduced() && lv_obj_is_visible(chart);
+    if (!t->range_valid || !animate) {
+        t->range_valid = true;
+        trend_range_snap(chart);
+        return;
+    }
+    if (same) return;
+    lv_anim_delete(chart, trend_range_step);
+    t->range_pending = t->range_active = false;
+    if (ymin < t->range_value[0] || ymax > t->range_value[1]) {
+        t->range_value[0] = fminf(t->range_value[0], ymin);
+        t->range_value[1] = fmaxf(t->range_value[1], ymax);
+        t->range_velocity[0] = t->range_velocity[1] = 0;
+        lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y,
+            (int32_t)fmax(INT32_MIN, floor((double)t->range_value[0])),
+            (int32_t)fmin(INT32_MAX - 1, ceil((double)t->range_value[1])));
+        trend_range_announce(chart);
+    }
+    if (t->range_value[0] == ymin && t->range_value[1] == ymax) return;
+    for (unsigned i = 0; i < 2; i++) {
+        t->range_from[i] = t->range_value[i];
+        /* Bound inherited velocity so critical damping cannot cross a new target. */
+        float limit = UK_MOTION_DAMPING / TREND_RANGE_MS *
+                      fabsf(t->range_target[i] - t->range_value[i]);
+        t->range_from_velocity[i] = i ? LV_CLAMP(-limit, t->range_velocity[i], 0) :
+                                       LV_CLAMP(0, t->range_velocity[i], limit);
+    }
+    t->range_started = lv_tick_get();
+    t->range_pending = true;
+    lv_anim_t a; lv_anim_init(&a);
+    lv_anim_set_var(&a, chart);
+    lv_anim_set_values(&a, 0, TREND_RANGE_HOLD_MS + TREND_RANGE_MS);
+    lv_anim_set_duration(&a, TREND_RANGE_HOLD_MS + TREND_RANGE_MS);
+    lv_anim_set_exec_cb(&a, trend_range_step);
+    lv_anim_set_path_cb(&a, trend_range_clock);
+    if (!lv_anim_start(&a)) trend_range_snap(chart);
 }
 
 void uk_trend_push(lv_obj_t *chart, int32_t series_idx, int32_t v, uint32_t interval_ms)
@@ -1333,7 +1467,7 @@ void uk_trend_push(lv_obj_t *chart, int32_t series_idx, int32_t v, uint32_t inte
     if (x <= t->target) return; /* Other series share the same time advance. */
     bool animate = t->sampled && continuous && points > 2 &&
         interval_ms > 0 && interval_ms <= UK_TREND_SCROLL_MS && UK_TREND_FPS > 0 &&
-        !UK_NUMBER_REDUCED && lv_obj_is_visible(chart);
+        !UK_NUMBER_REDUCED && !uk_motion_reduced() && lv_obj_is_visible(chart);
     t->sampled = true;
     /* Retarget from elapsed time, even if the last paint was skipped. Otherwise
        each throttled frame adds permanent lag to the live time window. */
@@ -1515,6 +1649,7 @@ void uk_anim_settle(lv_obj_t *root)
     }
     uk_meter_settle(root);
     uk_number_settle(root);
+    uk_trend_settle(root);
     uk_anim_reveal_settle(root);
     uint32_t n = lv_obj_get_child_count(root);
     for (uint32_t i = 0; i < n; i++) uk_anim_settle(lv_obj_get_child(root, i));

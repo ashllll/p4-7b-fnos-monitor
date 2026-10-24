@@ -202,5 +202,5 @@ uint32_t uk_temp_color(float c)
 {
     if (c >= UK_TEMP_DANGER) return UK_DANGER;
     if (c >= UK_TEMP_WARM)   return UK_WARN;
-    return UK_T2;
+    return UK_OK;
 }

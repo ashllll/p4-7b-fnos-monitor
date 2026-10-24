@@ -1887,6 +1887,48 @@ static void verify_usage_colors(void)
         assert(assert_usage_bars(overview_object("存储卷", &lv_obj_class), colors[i]) == 1);
         char frame[64]; snprintf(frame, sizeof frame, "%s-storage", frames[i]); snapshot(frame);
     }
+    /* Actual Alerts tile, including exact shared thresholds and health overrides. */
+    const float capacity[] = {UK_PCT_WARM - 0.25f, UK_PCT_WARM,
+        (UK_PCT_WARM + UK_PCT_FULL) / 2.f, UK_PCT_FULL, 96.f};
+    for (int i = 0; i < 5; i++) {
+        fixture.vols[0].pct = capacity[i];
+        for (int r = 0; r < fixture.nraid; r++) fixture.raid[r].ok = true;
+        fnos_ui_set_page(5); regression_tick();
+        lv_obj_t *reading = visible_text_containing(lv_screen_active(), "最高 ");
+        assert(reading);
+        uint32_t color = uk_pct_color(capacity[i]);
+        assert(lv_color_eq(lv_obj_get_style_text_color(reading, 0),
+            uk_c(color == UK_USAGE_LOW ? UK_T1 : color)));
+        lv_obj_t *tile = lv_obj_get_parent(reading);
+        lv_obj_t *dot = lv_obj_get_child(lv_obj_get_child(tile, 0), 0);
+        assert(lv_color_eq(lv_obj_get_style_bg_color(dot, 0), uk_c(color)));
+        if (fixture.nraid) {
+            fixture.raid[0].ok = false;
+            regression_tick();
+            uint32_t health = color == UK_USAGE_HIGH ? UK_USAGE_HIGH : UK_USAGE_WARN;
+            assert(lv_color_eq(lv_obj_get_style_text_color(reading, 0), uk_c(health)));
+            assert(lv_color_eq(lv_obj_get_style_bg_color(dot, 0), uk_c(health)));
+        }
+    }
+    /* Health concerns remain warnings even when occupancy itself is low. */
+    fixture.nmods = 2;
+    fixture.mods[0].name = "vols"; fixture.mods[1].name = "raid";
+    fixture.mods[0].status = "stale"; fixture.mods[1].status = "ok";
+    for (int r = 0; r < fixture.nraid; r++) fixture.raid[r].ok = true;
+    for (int high = 0; high < 2; high++) {
+        fixture.vols[0].pct = high ? 96 : 20;
+        regression_tick();
+        lv_obj_t *reading = visible_text_containing(lv_screen_active(), "最高 ");
+        assert(reading && lv_color_eq(lv_obj_get_style_text_color(reading, 0),
+                                     uk_c(high ? UK_USAGE_HIGH : UK_USAGE_WARN)));
+    }
+    fixture.nvols = 0; regression_tick();
+    lv_obj_t *missing = visible_text(lv_screen_active(), "未发现卷");
+    assert(missing && lv_color_eq(lv_obj_get_style_text_color(missing, 0), uk_c(UK_USAGE_WARN)));
+    fixture.mods[0].status = "denied"; regression_tick();
+    lv_obj_t *denied = visible_text(lv_screen_active(), "权限不足");
+    assert(denied && lv_color_eq(lv_obj_get_style_text_color(denied, 0), uk_c(UK_USAGE_WARN)));
+    fixture.nmods = 0; fixture.nvols = 1;
     fixture.online = false;
     fnos_ui_set_page(0); regression_tick();
     assert(lv_color_eq(lv_obj_get_style_arc_color(overview_object("CPU", &lv_arc_class), LV_PART_INDICATOR), uk_c(UK_OFF)));
@@ -2765,6 +2807,93 @@ static lv_obj_t *temperature_device_block(lv_obj_t *name)
     return NULL;
 }
 
+/* Temperature severity is shared by the visible readouts, dot and device bar. */
+static unsigned assert_temperature_readings(lv_obj_t *object, const char *text, uint32_t color)
+{
+    if (lv_obj_has_flag(object, LV_OBJ_FLAG_HIDDEN)) return 0;
+    unsigned count = 0;
+    if (lv_obj_has_class(object, &lv_label_class) && !strcmp(lv_label_get_text(object), text)) {
+        assert(lv_color_eq(lv_obj_get_style_text_color(object, 0), uk_c(color)));
+        count++;
+    }
+    for (uint32_t i = 0; i < lv_obj_get_child_count(object); i++)
+        count += assert_temperature_readings(lv_obj_get_child(object, i), text, color);
+    return count;
+}
+
+static void verify_temperature_colors(void)
+{
+    preview_state_t previous = s_state;
+    int previous_page = fnos_ui_page();
+    s_state = ST_HEALTHY;
+    fnos_status_t fixture = {0};
+    if (!fnos_data_get(&fixture)) abort();
+    fixture.nmods = 0;
+    fixture.ntemps = 3;
+    for (int i = 0; i < fixture.ntemps; i++) {
+        assert(fnos_status_text(&fixture, &fixture.temps[i].dev, "temperature-test"));
+        assert(fnos_status_text(&fixture, &fixture.temps[i].dn, "Temperature device"));
+        assert(fnos_status_text(&fixture, &fixture.temps[i].ch, "Sensor %d", i));
+        fixture.temps[i].c = 20;
+    }
+    s_override_status = &fixture;
+    fnos_ui_set_page(4); regression_tick();
+    lv_obj_t *name = visible_text(lv_screen_active(), "Temperature device");
+    assert(name);
+    click_object_center(name);
+    lv_obj_t *block = temperature_device_block(name);
+    assert(block && visible_text(block, "Sensor 0"));
+    const float values[] = {-5, 0, UK_TEMP_WARM - .1f, UK_TEMP_WARM,
+                           (UK_TEMP_WARM + UK_TEMP_DANGER) / 2, UK_TEMP_DANGER, UK_TEMP_DANGER + 5};
+    const uint32_t colors[] = {UK_OK, UK_OK, UK_OK, UK_WARN, UK_WARN, UK_DANGER, UK_DANGER};
+    for (int night = 0; night < 2; night++) {
+        fnos_ui_set_night(night != 0);
+        for (unsigned i = 0; i < sizeof values / sizeof values[0]; i++) {
+            for (int k = 0; k < fixture.ntemps; k++) fixture.temps[k].c = values[i];
+            regression_tick(); regression_tick(); /* Cross the existing 600ms numeric presentation beat. */
+            char value[32]; snprintf(value, sizeof value, "%.1f", values[i]);
+            assert(assert_temperature_readings(lv_screen_active(), value, colors[i]) >= 5);
+            assert(assert_usage_bars(block, colors[i]) == 1);
+            lv_obj_t *dot = lv_obj_get_child(lv_obj_get_parent(lv_obj_get_parent(name)), 0);
+            assert(lv_color_eq(lv_obj_get_style_bg_color(dot, 0), uk_c(colors[i])));
+            char shot[72]; snprintf(shot, sizeof shot, "temperature-%s-%u", night ? "night" : "day", i);
+            snapshot(shot);
+        }
+    }
+    fixture.nmods = 1;
+    fixture.mods[0].name = "temps";
+    fixture.mods[0].status = "stale";
+    regression_tick();
+    char value[32]; snprintf(value, sizeof value, "%.1f", values[6]);
+    assert(assert_temperature_readings(lv_screen_active(), value, UK_T3) >= 5);
+    assert(assert_usage_bars(block, UK_OFF) == 1);
+    snapshot("temperature-stale");
+    fixture.mods[0].status = "ok";
+    const float mixed[] = {UK_TEMP_WARM - 5, (UK_TEMP_WARM + UK_TEMP_DANGER) / 2, UK_TEMP_DANGER + 5};
+    const uint32_t mixed_colors[] = {UK_OK, UK_WARN, UK_DANGER};
+    for (int i = 0; i < fixture.ntemps; i++) {
+        assert(fnos_status_text(&fixture, &fixture.temps[i].dev, "temperature-%d", i));
+        assert(fnos_status_text(&fixture, &fixture.temps[i].dn, "Temperature device %d", i));
+        fixture.temps[i].c = mixed[i];
+    }
+    fnos_ui_set_night(false);
+    regression_tick(); regression_tick();
+    lv_obj_t *devices = overview_object("设备温度", &lv_obj_class);
+    for (int i = 0; i < 3; i++) {
+        char device[64]; snprintf(device, sizeof device, "Temperature device %d", i);
+        lv_obj_t *mixed_name = visible_text_containing(devices, device);
+        assert(mixed_name);
+        lv_obj_t *mixed_block = temperature_device_block(mixed_name);
+        assert(mixed_block && assert_usage_bars(mixed_block, mixed_colors[i]) == 1);
+    }
+    snapshot("temperature-mixed");
+    fnos_ui_set_night(false);
+    s_override_status = NULL; s_state = previous;
+    fnos_ui_set_page(previous_page); regression_tick();
+    fnos_status_release(&fixture);
+    puts("checks: temperature thresholds, hero/device/channel/bar colors, night and stale states PASS");
+}
+
 typedef struct { lv_obj_t *obj; lv_area_t area; } regression_position_t;
 static regression_position_t s_positions[128];
 static int s_position_n;
@@ -2972,6 +3101,7 @@ static void verify_ui_regressions(void)
     /* The diagnostic toggle path already exists. Current navigation selection is the missing path. */
     click_text("设置");
     assert(visible_text(lv_screen_active(), "返回"));
+    regression_tick(); /* The opening fade owns input until the surface has arrived. */
     click_text("系统");
     assert(!visible_text(lv_screen_active(), "返回"));
     assert(visible_text(lv_screen_active(), "容器服务"));
@@ -3546,6 +3676,7 @@ static void verify_wifi(void)
     vtick_advance(500); lv_timer_handler();
     assert(visible_text(lv_screen_active(), "完成"));
     wifi_click("完成");
+    vtick_advance(UK_REVEAL_MS + 20); lv_timer_handler();
     assert(!visible_text(lv_screen_active(), "接入 Wi-Fi"));
 
     /* ── M05：已经在线时改密码 ────────────────────────────────────────────
@@ -4283,6 +4414,52 @@ static void motion_repeat_target(motion_record_t *record, int base, int target,
     puts("checks: paused transition, repeated current target, pointer release PASS");
 }
 
+/* Latest third target waits for the visible pair, without changing its pixels. */
+static void motion_third_target(motion_record_t *record, int base, int target)
+{
+    if (record->swipe || UK_NUMBER_REDUCED || uk_motion_reduced()) return;
+    fnos_ui_set_page(base);
+    motion_wait(record, record->hold, "third-ready", false);
+    fnos_ui_set_page(target);
+    motion_wait(record, 32, "third-before", true);
+    lv_obj_t *incoming = motion_native_page(target);
+    int revealed = motion_visible_width(incoming);
+    assert(revealed > 0 && revealed < s_scr_w);
+    int third = (target + 2) % FNOS_UI_PAGE_COUNT;
+    if (third == base) third = (third + 1) % FNOS_UI_PAGE_COUNT;
+    fnos_ui_set_page(third);
+    assert(fnos_ui_page() == target && "third target must not force the current pair to finish");
+    assert(motion_visible_width(incoming) == revealed);
+    motion_frame(record, "third-queued", false);
+    int latest = (third + 1) % FNOS_UI_PAGE_COUNT;
+    if (latest == base || latest == target) latest = third;
+    fnos_ui_set_page(latest);
+    motion_wait(record, record->hold, "third-continue", true);
+    assert(fnos_ui_page() == latest);
+    assert(!lv_obj_has_flag(motion_native_page(latest), LV_OBJ_FLAG_HIDDEN));
+    motion_frame(record, "third-stable", true);
+    fnos_ui_set_page(base);
+    motion_wait(record, record->hold, "third-restore", false);
+    /* A paused segment can reach its exact endpoint without an animation. */
+    fnos_ui_set_page(target);
+    motion_wait(record, 32, "third-drag-ready", false);
+    fnos_ui_set_page(third);
+    lv_area_t area;
+    lv_obj_get_coords(motion_native_page(base), &area);
+    int width = lv_area_get_width(&area);
+    int x = area.x2 - 1, y = (area.y1 + area.y2) / 2;
+    int travel = motion_visible_width(motion_native_page(target));
+    motion_pointer(record, x, y, true);
+    motion_pointer(record, x - (width - travel), y, true);
+    motion_wait(record, 16, "third-drag-endpoint", false);
+    motion_pointer(record, x - (width - travel), y, false);
+    motion_wait(record, record->hold, "third-drag-continue", true);
+    assert(fnos_ui_page() == third && "zero-distance finish must consume the pending target");
+    fnos_ui_set_page(base);
+    motion_wait(record, record->hold, "third-drag-restore", false);
+    puts("checks: latest third target waits without forcing the visible pair PASS");
+}
+
 static void record_motion(lv_indev_t *pointer)
 {
     const char *sequence = getenv("PREVIEW_MOTION");
@@ -4481,6 +4658,8 @@ static void record_motion(lv_indev_t *pointer)
         motion_response_probe(&record, pages[0], pages[alternate], baseline, alternate_pixels, bytes);
     if (repeat_target)
         motion_repeat_target(&record, pages[0], pages[alternate], alternate_pixels, bytes);
+
+    motion_third_target(&record, pages[0], pages[alternate]);
 
     /* Finish an ordinary return, then interrupt an outgoing transition before
        it settles. Both directions use the same public/native input path. */
@@ -5153,8 +5332,12 @@ static void verify_trend_draw_budget(void)
     lv_obj_delete(chart);
 }
 
+#include "chart_range_regression.h"
+
 static void verify_chart_mapping(void)
 {
+    verify_chart_range_continuity();
+    verify_trend_runtime_reduced();
     verify_attached_cursors();
     verify_trend_draw_budget();
     lv_obj_t *chart = lv_chart_create(lv_screen_active());
@@ -5549,6 +5732,8 @@ static void verify_refresh_work(void)
     puts("checks: stable refresh, repeated current-page navigation, same-count long-name reflow, filtered inventory reflow and untruncated formatting PASS");
 }
 
+#include "overlay_regression.h"
+
 int main(int argc, char **argv)
 {
     if (argc > 1) s_outdir = argv[1];
@@ -5620,7 +5805,13 @@ int main(int argc, char **argv)
     fnos_ui_create();
     if (getenv("PREVIEW_REFRESH_WORK")) { verify_refresh_work(); return preview_finish(); }
     if (getenv("PREVIEW_DATA_MOTION")) {
-        if (!strcmp(getenv("PREVIEW_DATA_MOTION"), "stream")) record_streaming();
+        if (!strcmp(getenv("PREVIEW_DATA_MOTION"), "temperature")) verify_temperature_colors();
+        else if (!strcmp(getenv("PREVIEW_DATA_MOTION"), "range")) verify_product_range_motion();
+        else if (!strcmp(getenv("PREVIEW_DATA_MOTION"), "capacity")) verify_usage_colors();
+        else if (!strcmp(getenv("PREVIEW_DATA_MOTION"), "boot-wifi")) verify_boot_wifi_motion();
+        else if (!strcmp(getenv("PREVIEW_DATA_MOTION"), "overlays")) verify_overlay_motion(touch);
+        else if (!strcmp(getenv("PREVIEW_DATA_MOTION"), "reduced")) verify_runtime_reduced_motion(touch);
+        else if (!strcmp(getenv("PREVIEW_DATA_MOTION"), "stream")) record_streaming();
         else record_data_numbers();
         return preview_finish();
     }
@@ -5683,6 +5874,7 @@ int main(int argc, char **argv)
     verify_overview_charts();
     verify_overview_number_masks();
     verify_usage_colors();
+    verify_temperature_colors();
     verify_module_freshness();
 
     /* ── 夜间模式：一整套独立配色，预览从来没渲染过 ──

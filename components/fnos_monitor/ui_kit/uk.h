@@ -212,7 +212,11 @@ void uk_kpi_set(uk_kpi_t *k, const char *val, const char *unit, const char *sub,
 lv_obj_t *uk_trend_create(lv_obj_t *parent, int32_t points, int32_t series);
 lv_chart_series_t *uk_trend_series(lv_obj_t *chart, int32_t idx); /* Display/colour */
 lv_chart_series_t *uk_trend_raw_series(lv_obj_t *chart, int32_t idx); /* Read-only statistics */
+/* Expand immediately; contract only after a stable 2000 ms target, over 160 ms.
+   Range announcement changes emit LV_EVENT_VALUE_CHANGED for card-head notes. */
 void uk_trend_set_range(lv_obj_t *chart, int32_t ymin, int32_t ymax);
+void uk_trend_get_range(lv_obj_t *chart, int32_t *ymin, int32_t *ymax);
+void uk_trend_range_live(lv_obj_t *chart, bool live); /* Stale/unavailable ranges settle. */
 /* interval_ms comes from the data producer, not the UI's consumption timing.
    Pass zero for backfill/unknown cadence (establish the window immediately). */
 void uk_trend_push(lv_obj_t *chart, int32_t series_idx, int32_t v, uint32_t interval_ms);

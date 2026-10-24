@@ -180,3 +180,24 @@ if ! env $(preview_env_args) PREVIEW_ALLOC_FAIL_AT=0 \
   exit 1
 fi
 echo "hardware inventory allocation failure and retry: PASS"
+
+# Native UI motion contracts: actual inputs, frozen telemetry and stable end frames.
+for mode in overlays boot-wifi reduced range; do
+  env $(preview_env_args) PREVIEW_DATA_MOTION="$mode" ./build/preview "$OUT_REAL/$mode"
+  python3 ppm2png.py "$OUT_REAL/$mode"
+  python3 motion_view.py "$OUT_REAL/$mode"
+done
+env $(preview_env_args) PREVIEW_PARTIAL=1 PREVIEW_MOTION=0,1,0 PREVIEW_MOTION_INPUT=api \
+  PREVIEW_MOTION_FIRST_ENTRY=1 PREVIEW_MOTION_REPEAT_TARGET=1 PREVIEW_MOTION_RESPONSIVENESS=1 \
+  ./build/preview "$OUT_REAL/motion"
+python3 ppm2png.py "$OUT_REAL/motion"
+python3 motion_view.py "$OUT_REAL/motion"
+
+# Capacity severity uses each theme's shared usage tokens, including health overrides.
+mkdir -p "$OUT_REAL/capacity" "$OUT_REAL/temperature"
+for palette in michka cuktech unifi cuktech-console device graphite abyss phosphor; do
+  env $(preview_env_args) KK_PALETTE="$palette" PREVIEW_DATA_MOTION=capacity \
+    ./build/preview "$OUT_REAL/capacity/$palette"
+  env $(preview_env_args) KK_PALETTE="$palette" PREVIEW_DATA_MOTION=temperature \
+    ./build/preview "$OUT_REAL/temperature/$palette"
+done

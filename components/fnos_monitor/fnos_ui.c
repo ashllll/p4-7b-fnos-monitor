@@ -297,6 +297,8 @@ static void motion_init(void);
 static void motion_poll_start(void);
 static lv_timer_t *s_motion_poll;   /* 8ms 手势轮询：只在按下期间跑，空闲即暂停 */
 static bool motion_busy(void);
+static void page_motion_settle(void);
+static void theme_apply(void);
 static bool overview_live(const fnos_status_t *st, const char *module);
 static void pages_warm(void);
 static bool s_refresh_pending;
@@ -643,38 +645,127 @@ static void foot_band_cb(lv_event_t *e) { (void)e; fnos_ui_set_page(5); }
 
 
 
-/* 系统页正文 ↔ 覆盖层（诊断 / 配对 / 配网）互斥。
-   旧实现里这三张是"同槽位、同尺寸的整页卡"，靠后建的盖住先建的；flex 里没有
-   绝对定位的浮层 —— 覆盖层要独占内容区，就只能把正文收起来（三者都隐藏时再放回）。 */
+/* Seven persistent surfaces share the existing LVGL scheduler and damping path. */
+typedef struct { lv_obj_t *obj; bool visible, active; } overlay_fade_t;
+static overlay_fade_t s_overlay_fades[7];
+static lv_obj_t *s_overlay_guard;
+
+static bool overlay_busy(void)
+{
+    for (unsigned i = 0; i < 7; i++)
+        if (s_overlay_fades[i].active) return true;
+    return false;
+}
+
+static void overlay_guard_sync(void)
+{
+    if (!s_overlay_guard) return;
+    bool busy = false;
+    for (unsigned i = 0; i < 7; i++)
+        if (s_overlay_fades[i].active && s_overlay_fades[i].obj != s_ui.detail_mask) busy = true;
+    show(s_overlay_guard, busy);
+    if (busy) {
+        lv_obj_move_to_index(s_overlay_guard, -1);
+        lv_obj_t *target = s_wifi_open ? s_ui.wifi_card : s_pair_open ? s_ui.pair_card :
+                           s_diagnostics ? s_ui.diagnostics : NULL;
+        if (target) lv_obj_move_to_index(target, -1);
+    }
+}
+
+static void overlay_finish(overlay_fade_t *fade)
+{
+    fade->active = false;
+    lv_obj_set_style_opa(fade->obj, fade->visible ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+    show(fade->obj, fade->visible);
+    overlay_guard_sync();
+}
+
+static void overlay_exec(void *var, int32_t value)
+{
+    overlay_fade_t *fade = var;
+    lv_obj_set_style_opa(fade->obj, (lv_opa_t)value, 0);
+}
+
+static void overlay_done(lv_anim_t *anim) { overlay_finish(anim->var); }
+
+static void overlay_deleted(lv_event_t *e)
+{
+    overlay_fade_t *fade = lv_event_get_user_data(e);
+    lv_anim_delete(fade, overlay_exec);
+    memset(fade, 0, sizeof *fade);
+}
+
+static void overlay_target(lv_obj_t *obj, bool visible)
+{
+    if (!obj) return;
+    overlay_fade_t *fade = NULL;
+    for (unsigned i = 0; i < 7; i++) if (s_overlay_fades[i].obj == obj) fade = &s_overlay_fades[i];
+    if (!fade) {
+        for (unsigned i = 0; i < 7; i++) if (!s_overlay_fades[i].obj) { fade = &s_overlay_fades[i]; break; }
+        if (!fade) return;
+        fade->obj = obj;
+        fade->visible = !lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_style_opa(obj, fade->visible ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+        lv_obj_add_event_cb(obj, overlay_deleted, LV_EVENT_DELETE, fade);
+    }
+    if (fade->visible == visible) return;
+    fade->visible = visible;
+    lv_anim_delete(fade, overlay_exec);
+    lv_opa_t from = lv_obj_get_style_opa(obj, 0);
+    lv_opa_t to = visible ? LV_OPA_COVER : LV_OPA_TRANSP;
+    if (motion_reduced() || from == to || !lv_obj_is_visible(lv_obj_get_parent(obj))) {
+        overlay_finish(fade);
+        return;
+    }
+    show(obj, true);
+    fade->active = true;
+    lv_anim_t anim;
+    lv_anim_init(&anim);
+    lv_anim_set_var(&anim, fade);
+    lv_anim_set_values(&anim, from, to);
+    lv_anim_set_duration(&anim, UK_REVEAL_MS);
+    lv_anim_set_path_cb(&anim, uk_anim_path_damped);
+    lv_anim_set_exec_cb(&anim, overlay_exec);
+    lv_anim_set_completed_cb(&anim, overlay_done);
+    if (!lv_anim_start(&anim)) overlay_finish(fade);
+    overlay_guard_sync();
+}
+
+static void overlay_settle(void)
+{
+    for (unsigned i = 0; i < 7; i++) {
+        overlay_fade_t *fade = &s_overlay_fades[i];
+        if (!fade->obj) continue;
+        lv_anim_delete(fade, overlay_exec);
+        overlay_finish(fade);
+    }
+}
+
+/* Floating cards retain their geometry while the old body leaves the flex flow. */
 static void p3_overlay_sync(void)
 {
     if (!s_ui.p3_note) return;
     bool any = s_diagnostics || s_pair_open || s_wifi_open;
-    /* Forms keep the compact header budget so every 44px keyboard row remains
-       visible; normal pages restore the larger clock without rebuilding it. */
     const lv_font_t *clock_font = any ? UK_FONT_NUM_20 : UK_FONT_NUM_32;
     lv_obj_set_style_text_font(s_ui.h_clock, clock_font, 0);
     lv_obj_set_height(s_ui.h_clock, lv_font_get_line_height(clock_font));
     lv_obj_set_style_pad_ver(lv_obj_get_parent(s_ui.h_clock), any ? 0 : UK_S1 + UK_S1 / 2, 0);
     lv_obj_t *body[] = { s_ui.p3_note, s_ui.p3_cols, s_ui.scope_bar[3] };
-    for (unsigned i = 0; i < sizeof body / sizeof body[0]; i++) {
-        if (!body[i]) continue;
-        if (any) lv_obj_add_flag(body[i], LV_OBJ_FLAG_HIDDEN);
-        else     lv_obj_remove_flag(body[i], LV_OBJ_FLAG_HIDDEN);
-    }
+    for (unsigned i = 0; i < sizeof body / sizeof body[0]; i++) overlay_target(body[i], !any);
+    overlay_target(s_ui.diagnostics, s_diagnostics);
+    overlay_target(s_ui.pair_card, s_pair_open);
+    overlay_target(s_ui.wifi_card, s_wifi_open);
 }
 
 static void diagnostics_cb(lv_event_t *e)
 {
-    fnos_ui_motion_settle();
+    page_motion_settle();
     (void)e;
     /* 覆盖层打开时顶栏也是模态的一部分；关闭走覆盖层自己的“返回/关闭”。 */
     if (s_wifi_open || s_pair_open) return;
     pair_show(false);
     if (s_wifi_open) wifi_show(false);
     s_diagnostics = !s_diagnostics;
-    if (s_diagnostics) lv_obj_remove_flag(s_ui.diagnostics, LV_OBJ_FLAG_HIDDEN);
-    else lv_obj_add_flag(s_ui.diagnostics, LV_OBJ_FLAG_HIDDEN);
     set_txt(s_ui.diagnostics_label, "%s", s_diagnostics ? "返回" : "设置");
     p3_overlay_sync();
 }
@@ -684,6 +775,11 @@ static void motion_toggle_cb(lv_event_t *e)
 {
     (void)e;
     uk_motion_set_reduced(!motion_reduced());
+    if (motion_reduced()) {
+        fnos_ui_motion_settle();
+        uk_anim_settle(s_ui.screen);
+    }
+    theme_apply();
     set_txt(s_ui.agent_detail[UI_AGENT_ROWS - 1], "%s", motion_reduced() ? "精简" : "完整");
 }
 
@@ -952,7 +1048,7 @@ static void theme_apply(void)
         if (s_ui.nav_icon[i]) {
             lv_obj_set_style_line_color(s_ui.nav_icon[i], uk_c(on ? UK_BLUE_TXT : UK_T3), 0);
             /* One causal focus response; selection remains immediate and legible. */
-            uk_anim_fade(s_ui.nav_icon[i], on && !UK_NUMBER_REDUCED ? LV_OPA_70 : LV_OPA_COVER,
+            uk_anim_fade(s_ui.nav_icon[i], on && !motion_reduced() ? LV_OPA_70 : LV_OPA_COVER,
                          UK_NAV_FEEDBACK_MS, 0);
         }
         if (s_ui.nav_lbl[i])
@@ -1470,7 +1566,7 @@ static void scope_bar(lv_obj_t *page, int index, const char *context,
 static void entity_close_cb(lv_event_t *e)
 {
     (void)e;
-    show(s_ui.detail_mask, false);
+    overlay_target(s_ui.detail_mask, false);
 }
 
 /* 点暗层关闭；点卡片本身不冒泡到暗层。 */
@@ -1484,7 +1580,7 @@ static void detail_card_stop_cb(lv_event_t *e)
 static void entity_open_cb(lv_event_t *e)
 {
     uk_row_t *row = lv_event_get_user_data(e);
-    fnos_ui_motion_settle();
+    page_motion_settle();
     set_txt(s_ui.detail_name, "%s", ""); set_txt(s_ui.detail_meta, "%s", "");
     set_txt(s_ui.detail_value, "%s", "");
     set_txt(s_ui.detail_name, "%s", lv_label_get_text(row->name1));
@@ -1541,7 +1637,7 @@ static void entity_open_cb(lv_event_t *e)
     bool wide = w >= UK_DETAIL_WIDTH + UK_LIST_MIN_WIDTH;
     lv_obj_set_width(s_ui.detail_card, wide ? UK_DETAIL_WIDTH : LV_PCT(100));
     lv_obj_set_flex_align(s_ui.detail_mask, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-    show(s_ui.detail_mask, true);
+    overlay_target(s_ui.detail_mask, true);
     lv_obj_scroll_to_y(uk_card_body(s_ui.detail_card), 0, LV_ANIM_OFF);
 }
 
@@ -2116,6 +2212,17 @@ static void build_p3(lv_obj_t *page)
 
     pair_build(page);   /* 与诊断同槽位的整页卡，见 pair_show() */
     wifi_build(page);   /* 第三张：板上配网（出厂固件没有凭据时开机自动弹，见 ui_tick） */
+    lv_obj_t *overlays[] = {s_ui.diagnostics, s_ui.pair_card, s_ui.wifi_card};
+    for (unsigned i = 0; i < sizeof overlays / sizeof overlays[0]; i++) {
+        lv_obj_add_flag(overlays[i], LV_OBJ_FLAG_FLOATING);
+        lv_obj_set_size(overlays[i], LV_PCT(100), LV_PCT(100));
+        lv_obj_set_pos(overlays[i], 0, 0);
+    }
+    s_overlay_guard = lv_obj_create(page);
+    lv_obj_remove_style_all(s_overlay_guard);
+    lv_obj_add_flag(s_overlay_guard, LV_OBJ_FLAG_FLOATING | LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(s_overlay_guard, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(s_overlay_guard, LV_PCT(100), LV_PCT(100));
 }
 
 /* ── P4: device summaries; every reported channel is available on demand. ── */
@@ -2611,17 +2718,14 @@ static void pair_build(lv_obj_t *page)
 static void pair_show(bool on)
 {
     if (!on && !s_pair_open) return;
-    if (on) fnos_ui_motion_settle();
+    if (on) page_motion_settle();
     s_pair_open = on;
     if (on) s_pair_forget_armed = false;
     if (!s_ui.pair_card) return;
-    if (on) { lv_obj_remove_flag(s_ui.pair_card, LV_OBJ_FLAG_HIDDEN);
-              lv_obj_scroll_to_y(s_ui.pair_grid, 0, LV_ANIM_OFF); }
-    else    lv_obj_add_flag(s_ui.pair_card, LV_OBJ_FLAG_HIDDEN);
+    if (on) lv_obj_scroll_to_y(s_ui.pair_grid, 0, LV_ANIM_OFF);
     theme_apply();
     if (on && s_diagnostics) {
         s_diagnostics = false;
-        if (s_ui.diagnostics) lv_obj_add_flag(s_ui.diagnostics, LV_OBJ_FLAG_HIDDEN);
         set_txt(s_ui.diagnostics_label, "%s", "设置");
     }
     p3_overlay_sync();
@@ -2993,20 +3097,16 @@ static void wifi_build(lv_obj_t *page)
 static void wifi_show(bool on)
 {
     if (!on) wifi_clear_password();
-    if (on) fnos_ui_motion_settle();
+    if (on) page_motion_settle();
     s_wifi_open = on;
     if (!s_ui.wifi_card) return;
     if (on) {
         s_wifi_dismissed = false;
-        lv_obj_remove_flag(s_ui.wifi_card, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        lv_obj_add_flag(s_ui.wifi_card, LV_OBJ_FLAG_HIDDEN);
     }
     /* 同槽位互斥：配网卡开了就把配对卡与诊断面板收起来，否则三层会叠在一起 */
     if (on && s_pair_open) pair_show(false);
     if (on && s_diagnostics) {
         s_diagnostics = false;
-        if (s_ui.diagnostics) lv_obj_add_flag(s_ui.diagnostics, LV_OBJ_FLAG_HIDDEN);
         set_txt(s_ui.diagnostics_label, "%s", "设置");
     }
     theme_apply();
@@ -4038,7 +4138,7 @@ static void temp_blk_fill(int i)
     if (b->bar) {
         lv_bar_set_range(b->bar, 0, (int32_t)UK_TEMP_DANGER * UK_METER_SCALE);
         uk_meter_set(b->bar, (int32_t)lroundf(fminf(UK_TEMP_DANGER, fmaxf(0, g->max_c)) * UK_METER_SCALE), on);
-        lv_obj_set_style_bg_color(b->bar, uk_c(on ? UK_S_TEMP : UK_OFF), LV_PART_INDICATOR);
+        lv_obj_set_style_bg_color(b->bar, uk_c(on ? color : UK_OFF), LV_PART_INDICATOR);
     }
 
     int count = b->collapsed || g->inline_ch ? 0 : g->count;
@@ -4778,6 +4878,29 @@ static void alert_text_cn(lv_obj_t *label, const char *raw, const char *prefix)
     set_txt(label, "%s%s", prefix, raw);
 }
 
+/* Announce the target only when expansion or actual contraction begins. */
+static void chart_range_note(lv_obj_t *chart)
+{
+    int32_t low, high;
+    uk_trend_get_range(chart, &low, &high);
+    if (chart == s_ui.tr_net) {
+        char rate[64];
+        if (chart_sample_count(chart) && overview_readable(&s_st, "net"))
+            set_txt(s_ui.net_axis, "量程 0 - %s", fmt_rate(rate, sizeof rate, high));
+        else set_txt(s_ui.net_axis, "无数据");
+    } else if (chart == s_ui.temp_history) {
+        if (chart_sample_count(chart))
+            set_txt(s_ui.temp_history_note, "%d-%d°C%s", low, high,
+                    overview_live(&s_st, "temps") ? "" : " · 旧历史");
+        else set_txt(s_ui.temp_history_note, "最高温历史 · 等待有效采样");
+    }
+}
+
+static void chart_range_note_cb(lv_event_t *event)
+{
+    chart_range_note(lv_event_get_target(event));
+}
+
 static void alert_health_sync(const fnos_status_t *st, int running)
 {
     if (!s_ui.alert_health) return;
@@ -4801,6 +4924,7 @@ static void alert_health_sync(const fnos_status_t *st, int running)
     char v0[96], v1[96], v2[64], v3[96], age[32];
     const char *txt[4];
     bool warn[4] = { false, false, false, false };
+    uint32_t capacity_color = UK_USAGE_LOW;
     const char *state;
 
     /* ① 存储容量：卷数 · 占用最高的卷 · 阵列健康数（与首页存储磁贴同一套判据） */
@@ -4819,9 +4943,12 @@ static void alert_health_sync(const fnos_status_t *st, int running)
             snprintf(v0, sizeof v0, "最高 %.0f%%\n阵列不可用", (double)st->vols[worst].pct);
         else
             snprintf(v0, sizeof v0, "最高 %.0f%%\n阵列 %d/%d", (double)st->vols[worst].pct, healthy, st->nraid);
+        capacity_color = uk_pct_color(st->vols[worst].pct);
         warn[0] = !overview_live(st, "raid") || healthy < st->nraid ||
-                  !overview_live(st, "vols") || st->vols[worst].pct >= UK_PCT_WARM;
+                  !overview_live(st, "vols");
     }
+
+    if (capacity_color != UK_USAGE_HIGH && warn[0]) capacity_color = UK_USAGE_WARN;
 
     /* ② 温度：路数 · 最热 · 关注路数（阈值与温度页同一对宏，不另立标准） */
     state = overview_module_state(st, "temps");
@@ -4863,8 +4990,11 @@ static void alert_health_sync(const fnos_status_t *st, int running)
     txt[0] = v0; txt[1] = v1; txt[2] = v2; txt[3] = v3;
     for (int i = 0; i < 4; i++) {
         set_txt(s_ui.alert_health_val[i], "%s", txt[i]);
-        lv_obj_set_style_text_color(s_ui.alert_health_val[i], uk_c(warn[i] ? UK_WARN : UK_T1), 0);
-        lv_obj_set_style_bg_color(s_ui.alert_health_dot[i], uk_c(warn[i] ? UK_WARN : UK_OK), 0);
+        uint32_t value_color = i == 0 ? (capacity_color == UK_USAGE_LOW ? UK_T1 : capacity_color)
+                                     : (warn[i] ? UK_WARN : UK_T1);
+        uint32_t dot_color = i == 0 ? capacity_color : (warn[i] ? UK_WARN : UK_OK);
+        lv_obj_set_style_text_color(s_ui.alert_health_val[i], uk_c(value_color), 0);
+        lv_obj_set_style_bg_color(s_ui.alert_health_dot[i], uk_c(dot_color), 0);
     }
 }
 
@@ -5183,7 +5313,7 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
         int32_t ymax = network_chart_max(peak_tx, peak_rx,
                                          st->net.rx_kbs, st->net.tx_kbs, 20);
         uk_trend_set_range(s_ui.tr_net, 0, ymax);
-        set_num(s_ui.net_axis, "量程 0 - %s", fmt_rate(b, sizeof b, ymax));
+        chart_range_note(s_ui.tr_net);
         (net_live ? set_num : set_txt)(s_ui.tr_tx_lbl, "%s · 峰 %s",
                 net_readable ? fmt_rate(c1, sizeof c1, st->net.tx_kbs) : "--", fmt_rate(c2, sizeof c2, peak_tx));
         (net_live ? set_num : set_txt)(s_ui.tr_rx_lbl, "%s · 峰 %s",
@@ -5278,7 +5408,7 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
             for (int i = 0; i < 4; i++) uk_kpi_set(s_ui.kpi2[i], "-", "", "等待数据", -1);
             set_num(s_ui.tr_tx_lbl, "等待数据");
             set_num(s_ui.tr_rx_lbl, "等待数据");
-            set_num(s_ui.net_axis, "无数据");
+            set_txt(s_ui.net_axis, "无数据");
             /* 从没采到过数据：把图清空，不留上一轮的残影 */
             uk_trend_clear(s_ui.tr_net);
         }
@@ -5425,10 +5555,7 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
     }
     int32_t ceiling=(int32_t)LV_MIN((int64_t)INT32_MAX-1,LV_MAX((int64_t)UK_TEMP_DANGER,(int64_t)peak+UK_S1));
     uk_trend_set_range(s_ui.temp_history,floor,ceiling);
-    if (chart_sample_count(s_ui.temp_history))
-        set_txt(s_ui.temp_history_note,"%d-%d°C%s",floor,ceiling,
-                overview_live(st,"temps") ? "" : " · 旧历史");
-    else set_txt(s_ui.temp_history_note,"最高温历史 · 等待有效采样");
+    chart_range_note(s_ui.temp_history);
     lv_obj_set_style_text_color(s_ui.temp_hero, uk_c(temps_live ? UK_T1 : UK_T3), 0);
     if (!temps_readable) {
         set_txt(s_ui.temp_hero, "--");
@@ -5458,9 +5585,9 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
         /* 摘要是全宽 900px，放得下完整设备名 —— 这里优先 dn（"Marvell AQC113 10GbE"），
            没有才退回 dev（enp1s0）。 */
         const char *hn = h->dn[0] ? h->dn : h->dev;
-        /* 大字沿用桃色卡自带的墨色（夜间由 theme_apply 改成 UK_T2），严重度只由
-           左侧信号点承载：彩色数字压在暖底上对比度不够（01-warming-p4 曾掉到 1.13:1）。 */
+        /* The current hottest reading shares severity with its dot and device bar. */
         const uint32_t hc = temps_live ? uk_temp_color(h->c) : UK_T3;
+        lv_obj_set_style_text_color(s_ui.temp_hero, uk_c(hc), 0);
         (temps_live ? set_num : set_txt)(s_ui.temp_hero, "%.1f", h->c);
         set_txt(s_ui.temp_hero_unit, "°C");
         lv_obj_set_style_bg_color(s_ui.temp_hero_dot, uk_c(hc), 0);
@@ -5552,6 +5679,7 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
     for (unsigned i = 0; i < sizeof history_pages / sizeof history_pages[0]; i++) {
         if (!(page == history_pages[i])) continue;
         bool available = overview_readable(st, history_modules[i]) && chart_sample_count(history_charts[i]);
+        uk_trend_range_live(history_charts[i], available && overview_live(st, history_modules[i]));
     }
     if (page == 1) set_txt(s_ui.scope_note[1], "%d 卷 · %d 阵列 · %d 磁盘 · 点按详情", st->nvols, st->nraid, st->ndisks);
     if (page == 3) set_txt(s_ui.scope_note[3], "%d 容器 · %d 路温度 · 点按详情", st->ndocker, st->ntemps);
@@ -5862,6 +5990,8 @@ void fnos_ui_create(void)
        pad 把面板收进内容区（上让头部、下让导航），所以面板不会半盖底栏、
        「返回列表」也不会压在最常用的一排导航键上。 */
     entity_detail_build(lv_screen_active());
+    lv_obj_add_event_cb(s_ui.tr_net, chart_range_note_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_add_event_cb(s_ui.temp_history, chart_range_note_cb, LV_EVENT_VALUE_CHANGED, NULL);
     scope_sync();
     s_created = true;
     s_page = -1;
@@ -6033,6 +6163,7 @@ static struct {
     int32_t painted;        /* 已画出的偏移：没变就不必再失效一次视口 */
     lv_indev_t *pointer;
 } s_motion;
+static int s_motion_pending = -1;
 
 
 /* 8ms 的手势轮询即使什么都不做，也在每 8ms 唤醒一次 LVGL 任务（空闲时它本该睡到
@@ -6236,13 +6367,35 @@ static void motion_finish(void)
     }
 }
 
-static void motion_done(lv_anim_t *a) { (void)a; motion_finish(); }
+static void motion_complete(void)
+{
+    int pending = s_motion_pending;
+    s_motion_pending = -1;
+    motion_finish();
+    if (pending >= 0 && pending != s_page) fnos_ui_set_page(pending);
+}
 
-void fnos_ui_motion_settle(void)
+static void motion_done(lv_anim_t *a) { (void)a; motion_complete(); }
+
+static void page_motion_settle(void)
 {
     lv_anim_delete(&s_motion, motion_exec);
     s_motion.tracking = s_motion.dragging = false;
-    if (s_created) motion_finish();
+    if (s_created) {
+        if (s_motion_pending >= 0) {
+            int pending = s_motion_pending;
+            s_motion_pending = -1;
+            nav_select(pending);
+            refresh_page(pending);
+        }
+        motion_finish();
+    }
+}
+
+void fnos_ui_motion_settle(void)
+{
+    page_motion_settle();
+    overlay_settle();
 }
 
 static void motion_snap(bool commit)
@@ -6252,13 +6405,13 @@ static void motion_snap(bool commit)
     s_page = commit ? s_motion.to : s_motion.from;
     nav_select(s_page);
     if (motion_reduced()) {
-        motion_finish();
+        page_motion_settle();
         return;
     }
     s_motion.start = s_motion.offset;
     s_motion.end = commit ? -s_motion.direction * s_motion.width : 0;
     int32_t remaining = abs(s_motion.end - s_motion.start);
-    if (!remaining) { motion_finish(); return; }
+    if (!remaining) { motion_complete(); return; }
     s_motion.duration = remaining * UK_MOTION_MS / s_motion.width;
     if (s_motion.duration < UK_MOTION_MIN_MS) s_motion.duration = UK_MOTION_MIN_MS;
     if (s_motion.duration > UK_MOTION_MS) s_motion.duration = UK_MOTION_MS;
@@ -6279,7 +6432,7 @@ static void motion_snap(bool commit)
     lv_anim_set_completed_cb(&a, motion_done);
     if (!lv_anim_start(&a)) {
         ESP_LOGE(TAG, "Page animation allocation failed: completing transition immediately");
-        motion_finish();
+        motion_complete();
     }
 }
 
@@ -6310,8 +6463,8 @@ static void motion_prepare(int from, int to, int direction)
 
 void fnos_ui_set_page(int idx)
 {
-    if (s_ui.detail_mask) show(s_ui.detail_mask, false);
-    if (!s_created) return;
+    if (!s_created || overlay_busy()) return;
+    if (s_ui.detail_mask) overlay_target(s_ui.detail_mask, false);
     /* 配对/配网覆盖层持有用户输入，壳层导航不能把它们收掉：
        旧实现无条件 pair_show(false)/wifi_show(false)，wifi_show(false) 第一行又
        清口令，于是点任何导航都会静默丢掉正在输的 Wi-Fi 密码。诊断面板无输入，
@@ -6321,17 +6474,23 @@ void fnos_ui_set_page(int idx)
     idx = (idx % n + n) % n;
     if (s_diagnostics) {
         s_diagnostics = false;
-        show(s_ui.diagnostics, false);
         set_txt(s_ui.diagnostics_label, "设置");
         p3_overlay_sync();
     }
+    bool paused = s_motion.tracking;
     s_motion.tracking = false;
     s_motion.dragging = false;
+    if (s_motion.active && !motion_reduced() && idx != s_motion.from && idx != s_page) {
+        s_motion_pending = idx;
+        if (paused) motion_snap(s_page == s_motion.to);
+        return;
+    }
+    s_motion_pending = -1;
     if (idx == s_page) {
         /* 点的是当前页：没必要在按下的这一帧同步刷一遍整个应用，交给下一拍
            （≤500ms）或手势收尾那次的 refresh。 */
         s_refresh_pending = true;
-        if (s_motion.active) fnos_ui_motion_settle();
+        if (s_motion.active && (paused || motion_reduced())) fnos_ui_motion_settle();
         return;
     }
     lv_anim_delete(&s_motion, motion_exec);
@@ -6385,7 +6544,7 @@ static void motion_pointer_cb(lv_event_t *e)
     lv_event_code_t code = lv_event_get_code(e);
     if (code == LV_EVENT_PRESSED) {
         s_motion.swallow_click = false;
-        if (s_pair_open || s_wifi_open || s_diagnostics ||
+        if (overlay_busy() || s_pair_open || s_wifi_open || s_diagnostics ||
             (s_ui.detail_mask && !lv_obj_has_flag(s_ui.detail_mask, LV_OBJ_FLAG_HIDDEN))) return;
         lv_point_t point; lv_indev_get_point(indev, &point);
         lv_area_t bounds; lv_obj_get_coords(s_ui.viewport, &bounds);
