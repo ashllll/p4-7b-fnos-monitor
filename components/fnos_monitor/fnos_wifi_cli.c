@@ -21,6 +21,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
+#include "esp_err.h"
+#include "esp_hosted.h"
 
 static const char *TAG = "wifi_cli";
 #define CLI_LINE_MAX 192
@@ -29,6 +31,7 @@ static void usage(void)
 {
     printf("\n串口命令：\n"
            "  wifi show                     看当前状态（不回显口令）\n"
+           "  wifi version                  只读查询联网协处理器固件版本\n"
            "  wifi set <SSID> <口令>        写入并立刻重连（口令里有空格也没关系）\n"
            "  wifi clear                    清掉保存的凭据（退回出厂默认）\n"
            "  page <0-5>                    切页：总览/存储/网络/系统/温度/告警（实机验收用）\n"
@@ -47,6 +50,22 @@ static void cmd_show(void)
     char st[160];
     fnos_net_state_str_r(st, sizeof st);        // 本地缓冲：不跟 UI 抢静态串（审计 M09）
     printf("状态：%s\n", st);
+}
+
+static void cmd_version(void)
+{
+    if (!fnos_net_online()) {
+        printf("Wi-Fi not online; coprocessor firmware query skipped\n");
+        return;
+    }
+    esp_hosted_coprocessor_fwver_t version = {0};
+    esp_err_t err = esp_hosted_get_coprocessor_fwversion(&version);
+    if (err != ESP_OK) {
+        printf("coprocessor firmware query failed: %s\n", esp_err_to_name(err));
+        return;
+    }
+    printf("coprocessor firmware=%u.%u.%u (RPC, read-only)\n",
+           (unsigned)version.major1, (unsigned)version.minor1, (unsigned)version.patch1);
 }
 
 static void cmd_set(char *args)
@@ -152,6 +171,7 @@ static void handle(char *line)
         while (*rest == ' ' || *rest == '\t') rest++;
         if (*rest && strcmp(sub, "set")) { usage(); return; }
         if (!*sub || !strcmp(sub, "show")) { cmd_show(); return; }
+        if (!strcmp(sub, "version"))      { cmd_version(); return; }
         if (!strcmp(sub, "set"))           { cmd_set(rest); return; }
         if (!strcmp(sub, "clear")) {
             if (fnos_wifi_store_clear()) {
@@ -171,25 +191,36 @@ static void handle(char *line)
 
 static void cli_task(void *arg)
 {
+    (void)arg;
     static char line[CLI_LINE_MAX];
+    size_t used = 0;
+    bool discard = false;
     // 起站之后再等一下，免得和开机日志抢串口
     vTaskDelay(pdMS_TO_TICKS(3000));
     printf("\n[串口] 命令可用：wifi set <SSID> <口令> / wifi show / page <0-5> / temp <n> / tls（HTTPS 自检）/ help\n");
     for (;;) {
-        if (!fgets(line, sizeof line, stdin)) { clear_line(line, sizeof line); vTaskDelay(pdMS_TO_TICKS(200)); continue; }
-        size_t len = strlen(line);
-        /* 缓冲区被填满 ⇒ 这行被 fgets 截断。剩下的半条绝不能当第二条命令执行
-           （审计 M07：以前 `wifi set <109 字节以上的 SSID> …` 会被拆成
-           "写一半的 SSID" + "把口令当命令解析"）。丢弃整行并如实报错。 */
-        if (len == sizeof line - 1 && line[len - 1] != '\n') {
-            int c;
-            while ((c = fgetc(stdin)) != EOF && c != '\n') { }
-            clear_line(line, sizeof line);
-            printf("命令太长（上限 %d 字节），整行已忽略\n> ", CLI_LINE_MAX - 1);
-            fflush(stdout);
+        /* USB stdin may return a short fragment before newline. Retain it even
+           across a transient EOF; only a complete line may change device state. */
+        if (!fgets(line + used, sizeof line - used, stdin)) {
+            clearerr(stdin);
+            vTaskDelay(pdMS_TO_TICKS(200));
             continue;
         }
-        handle(line);
+        used += strlen(line + used);
+        if (!used || line[used - 1] != '\n') {
+            if (used == sizeof line - 1) {
+                discard = true;
+                used = 0;
+                clear_line(line, sizeof line);
+            }
+            continue;
+        }
+        /* A discarded overlong line remains discarded through its final
+           fragment, including a tail that looks like another valid command. */
+        if (discard) printf("命令太长（上限 %d 字节），整行已忽略\n", CLI_LINE_MAX - 1);
+        else handle(line);
+        used = 0;
+        discard = false;
         clear_line(line, sizeof line);
         printf("> ");
         fflush(stdout);

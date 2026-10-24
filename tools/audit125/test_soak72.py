@@ -588,6 +588,29 @@ def main():
     check("sanitize_rejects_foreign_keys", all(r is None for r in rejected),
           "应被拒绝的 %d 条里放过了 %d 条" % (len(rejected), sum(1 for r in rejected if r is not None)))
 
+    # Current firmware adds numeric motion-resource counters; legacy records remain valid.
+    motion_rec = json.loads(json.dumps(ok_rec))
+    motion_rec["motion"] = {"bytes": 4096, "peak": 8192, "budget": 0,
+                            "alloc": 1, "mask": 2, "anim": 3}
+    motion_line = "I (123456) main: FNOS_DIAG " + json.dumps(motion_rec)
+    check("parse_current_motion_record", soak72.parse_line(motion_line) == motion_rec)
+    unsafe_motion = json.loads(json.dumps(motion_rec))
+    unsafe_motion["motion"]["token"] = "SECRET-MOTION-TOKEN"
+    bad_motion = json.loads(json.dumps(motion_rec))
+    bad_motion["motion"]["bytes"] = True
+    check("motion_schema_stays_strict",
+          soak72.sanitize(unsafe_motion) is None and soak72.sanitize(bad_motion) is None)
+    chunks = [(motion_line + "\nFNOS_DIAG " + json.dumps(unsafe_motion) + "\n").encode()]
+    code, cap, d, _ = capture_case("capmotion", chunks)
+    with open(os.path.join(d, "metrics.jsonl"), encoding="utf-8") as fh:
+        captured = [json.loads(line)["rec"] for line in fh]
+    check("capture_current_motion_numeric_only",
+          code == 0 and cap["sample_count"] == 1 and captured == [motion_rec])
+    def with_motion(i, el, rec):
+        rec["motion"] = dict(motion_rec["motion"])
+    code, s = run_case("motion_current", build(4.0, mutate=with_motion), hours=4.0)
+    check("analyze_current_motion_records", code == 0 and s["verdict"] == "PASS")
+
     # --- 31. argv 脱敏：产物里不留家目录/串口路径
     argv = soak72.sanitized_argv(["soak72.py", "capture", "--port=/dev/cu.usbmodem1101",
                                   "--input", "/Users/someone/secret/metrics.jsonl",

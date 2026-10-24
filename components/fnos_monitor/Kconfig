@@ -167,7 +167,7 @@ menu "fnOS monitor"
         config FNOS_UI_TELEMETRY_RATIO_PERMILLE
             int "Telemetry damping ratio (1000 = critical)"
             range 800 1200
-            default 850
+            default 1000
             help
                 850 gives a restrained ammeter rebound (about 0.6 percent
                 overshoot from rest). 1000 removes that rebound. Gauge output
@@ -176,10 +176,11 @@ menu "fnOS monitor"
         config FNOS_UI_NUMBER_PRESENT_MS
             int "Minimum interval between presented numeric changes (ms)"
             range 0 5000
-            default 0
+            default 600
             help
-                Zero publishes each real update in place. A nonzero value can
-                select the newest sample on a slower shared presentation beat.
+                Select the newest numeric reading on one shared presentation
+                beat so rapid telemetry does not continually interrupt digits.
+                Sampling, history and alerts remain independent. Zero opts out.
 
         config FNOS_UI_NUMBER_STAGGER_MS
             int "Numeric changed-position stagger (ms)"

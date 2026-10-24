@@ -134,7 +134,7 @@ PREVIEW_MOTION=0,3,0 PREVIEW_MOTION_INPUT=api PREVIEW_MOTION_FIRST_ENTRY=1 \
 
 # 自动输入定时器的响应预算；不手工调用 lv_indev_read
 mkdir -p /tmp/fnos-motion-response
-PREVIEW_MOTION=0,1,0 PREVIEW_MOTION_SCROLL=1 PREVIEW_MOTION_RESPONSIVENESS=1 \
+PREVIEW_MOTION=0,1,0 PREVIEW_MOTION_SCROLL=1 PREVIEW_MOTION_RESPONSIVENESS=1 PREVIEW_PARTIAL=1 \
   tools/preview/build/preview /tmp/fnos-motion-response
 ```
 
@@ -145,6 +145,9 @@ PREVIEW_MOTION=0,1,0 PREVIEW_MOTION_SCROLL=1 PREVIEW_MOTION_RESPONSIVENESS=1 \
 可选同级 `static/` 的健康页 PNG 会显示在播放器下方。
 
 响应探针另写 `response.csv`，覆盖微抖、小横移、慢短划、快速短划和快速重定向。
+当前切页使用 LVGL 原生裁剪揭示，内容保持原位；CSV 的 `incoming_visible_width` 记录目标页可见宽度。
+探针还检查双页坐标保持、小幅跟手只重绘窄条、裁剪内外的原生命中、反向取消和最终像素一致。
+重绘面积断言需加 `PREVIEW_PARTIAL=1`；FULL 模式会按显示配置主动重绘整屏，不能用来验证局部优化。
 默认验收 `PREVIEW_MOTION_RESPONSE_MS=32`、`PREVIEW_MOTION_COMPLETE_MS=180`，两个预算独立于生产动画令牌。
 响应包含自动输入采样及跟手调度；慢短划从首次采样后的识别过程量起。
 输入/动画期间仍检查终帧像素、内容不透明和历史不被伪造。两个预算都设为 0 时仅测量而不执行预算断言。
@@ -169,8 +172,9 @@ PREVIEW_REFRESH_WORK=1 PREVIEW_PARTIAL=1 tools/preview/build/preview /tmp/fnos-r
 
 ### 电流表式动效（1024×600 横屏）
 
-当前参数与边界见 [库阻尼与附着游标](../../docs/ui-ammeter-cursors-2026-10-20.md)，旧版记录见 [电流表式遥测动效](../../docs/ui-ammeter-motion-2026-10-14.md)。
+当前数字呈现节拍及升级配置见[快速跳变修正](../../docs/ui-numeric-motion-2026-10-24.md)；阻尼库与游标见[库阻尼与附着游标](../../docs/ui-ammeter-cursors-2026-10-20.md)，旧版记录见[电流表式遥测动效](../../docs/ui-ammeter-motion-2026-10-14.md)。
 `PREVIEW_NUMBERS=1` 验证第三方求解器的欠阻尼／临界／过阻尼分支、时间步拆分等价性、位置/速度重定向、单位切换立即发布、仪表与数字生命周期；
+同时用 200 ms 间隔的 15 个匿名读数检查快速更新：输出实际换值次数和最短间隔，验证配置的共享呈现节拍、取最新目标及缺失值即时发布。`number-stream-*` 为实际控件渲染帧；主机时钟和换值次数不代表开发板呈现 FPS。
 `PREVIEW_DATA_MOTION=1` 录制全部六页，含仪表尾段与数字/单位锚点检查。仍使用真实 UI 代码和匿名夹具。
 `PREVIEW_CHART_MAP=1`（已进入默认 `run.sh`）还验证曲线游标随最新样本、滚动与尺寸变化保持附着，隐藏、缺失和清空时消失。
 
@@ -231,3 +235,11 @@ node tools/preview/scroll_gap.js tools/preview/out   # 退出码非 0 = 有贴�
 `bash tools/gen_fonts.sh`（改过文案时）→ **`bash tools/preview/run.sh` 看图** → `./idf.sh build` →
 烧录 + 实机取证（`python3 tools/page_shot.py --port "$FNOS_SERIAL_PORT" --page N` + `read_image` 亲眼看图，见 `docs/verification.md`）。
 预览管"好不好看、对不对齐、有没有方块"，实机管"真的能跑、真实数据下版面自适应"。
+
+独立固件构建目录可显式选择对应的公开 UI 配置：
+
+```bash
+FNOS_UI_DEVICE_CONFIG="$PWD/path-to-build/config/sdkconfig.h" bash tools/preview/run.sh out/candidate
+```
+
+该参数同时用于生成主机 LVGL 配置和 CMake 的 UI 参数，避免意外读取旧 `build/` 配置。

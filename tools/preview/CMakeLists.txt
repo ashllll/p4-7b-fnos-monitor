@@ -10,7 +10,7 @@ endif()
 get_filename_component(REPO "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
 set(COMP "${REPO}/components/fnos_monitor")
 # Only export public UI configuration to the preview, never network credentials.
-set(UI_DEVICE_CONFIG "${REPO}/build/config/sdkconfig.h")
+set(UI_DEVICE_CONFIG "${REPO}/build/config/sdkconfig.h" CACHE FILEPATH "Firmware-generated public UI configuration")
 if(NOT EXISTS "${UI_DEVICE_CONFIG}" OR NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/lv_kconfig_host.h")
   message(FATAL_ERROR "Missing device/host LVGL config; build firmware, then run tools/preview/run.sh")
 endif()
@@ -49,6 +49,7 @@ add_executable(preview
   "${COMP}/fnos_snapshot.c"
   "${REPO}/managed_components/espressif__cjson/cJSON/cJSON.c"
   "${COMP}/fnos_ui.c"
+  "${COMP}/assets/michka_host_status/michka_host_status.c"
   "${COMP}/fnos_perf.c"
   "${COMP}/ui_kit/uk.c"
     "${COMP}/ui_kit/uk_number.c"

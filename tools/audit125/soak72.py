@@ -96,6 +96,11 @@ _REC_SCHEMA = {
             "pfree": int, "pmin": int},
     "stk": {"lvgl": int, "poll": int, "pair": int},
 }
+_REC_SCHEMA_WITH_MOTION = {
+    **_REC_SCHEMA,
+    "motion": {"bytes": int, "peak": int, "budget": int,
+               "alloc": int, "mask": int, "anim": int},
+}
 
 
 def _match(value, spec):
@@ -125,6 +130,8 @@ def _match(value, spec):
 
 def sanitize(rec):
     """校验一条诊断记录；不合法（缺字段/类型不对/多出未知键）返回 None。"""
+    if type(rec) is dict and "motion" in rec:
+        return _match(rec, _REC_SCHEMA_WITH_MOTION)
     return _match(rec, _REC_SCHEMA)
 
 

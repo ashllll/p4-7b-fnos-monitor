@@ -15,7 +15,7 @@
 #include "lvgl.h"
 #if CONFIG_LV_USE_PROFILER
 /* 配置结构体只定义在私有头里（公开头里是个不完整类型，栈上开不出来）。 */
-#include "src/misc/lv_profiler_builtin_private.h"
+#include "src/debugging/profiler/lv_profiler_builtin_private.h"
 #endif
 
 #include "fnos_ui.h"

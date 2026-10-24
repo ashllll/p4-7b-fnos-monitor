@@ -72,9 +72,9 @@ def main():
     spec = importlib.util.spec_from_file_location("legacy_inventory_collector", COLLECTOR.parents[4] / "fnos-agent.py")
     legacy = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(legacy)
-    agent = legacy.Collector.__new__(legacy.Collector)
-    agent._docker_cache = (0, [])
-    agent._docker_seen_up = set()
+    # Exercise the production constructor, but keep Docker metric enrichment local.
+    with patch.object(legacy, "_metrics_get", return_value={}):
+        agent = legacy.Collector()
     prefix = "shared-application-worker-prefix-"
     status = "Up with a complete health diagnostic " * 4
     body = json.dumps([{"Names": ["/" + prefix + suffix], "State": "running", "Status": status}

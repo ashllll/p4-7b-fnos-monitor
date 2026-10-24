@@ -23,6 +23,20 @@ PRE = r'''
 #include <errno.h>
 #include <limits.h>
 #include <stdatomic.h>
+#include <setjmp.h>
+#include <stdint.h>
+typedef int esp_err_t;
+#define ESP_OK 0
+typedef struct { uint32_t major1,minor1,patch1; } esp_hosted_coprocessor_fwver_t;
+static unsigned fw_queries;
+static bool online=true;
+static esp_err_t fw_error;
+bool fnos_net_online(void) { return online; }
+const char *esp_err_to_name(esp_err_t error) { (void)error;return "TEST_RPC_FAIL"; }
+esp_err_t esp_hosted_get_coprocessor_fwversion(esp_hosted_coprocessor_fwver_t *version) {
+    assert(!version->major1 && !version->minor1 && !version->patch1);
+    fw_queries++; *version=(esp_hosted_coprocessor_fwver_t){7,8,9}; return fw_error;
+}
 static atomic_uint s_poll_interval_ms=1000;
 #define FNOS_POLL_INTERVAL_MIN_MS 50U
 #define FNOS_POLL_INTERVAL_MAX_MS 60000U
@@ -36,16 +50,46 @@ static void fnos_ui_request_page(int n) { page=n; }
 static void fnos_ui_request_temp_expand(int n) { expand=n; }
 static void fnos_pair_tls_probe_async(void) {}
 static bool fnos_wifi_store_clear(void) { clears++;return true; }
-static bool fnos_perf_cli(const char *x) {(void)x;return false;}
+static int benches;
+static bool fnos_perf_cli(const char *x) {
+    if (!strncmp(x,"bench",5)) {
+        assert(!strcmp(x,"bench swipe 0 450 2")); benches++; return true;
+    }
+    return false;
+}
 static unsigned fnos_ui_refresh_period_ms(void) {
     unsigned period=atomic_load_explicit(&s_poll_interval_ms,memory_order_relaxed);
     return period < 100 ? 100 : period;
 }
+#define CLI_LINE_MAX 192
+#define pdMS_TO_TICKS(x) (x)
+#define vTaskDelay(x) ((void)(x))
+static jmp_buf input_done;
+static const char *chunks[10];
+static unsigned chunk_index, chunk_offset;
+static char *fragment_fgets(char *line, int cap, FILE *stream) {
+    (void)stream;
+    const char *chunk=chunks[chunk_index];
+    if (!chunk) longjmp(input_done,1);
+    if (!*chunk) { chunk_index++; return NULL; }
+    size_t count=strlen(chunk+chunk_offset);
+    if (count >= (size_t)cap) count=cap-1;
+    memcpy(line,chunk+chunk_offset,count); line[count]=0;
+    chunk_offset+=count;
+    if (!chunk[chunk_offset]) {chunk_index++; chunk_offset=0;}
+    return line;
+}
+#define fgets fragment_fgets
 static void handle(char *line);
 static void run(const char *input) { char line[192];snprintf(line,sizeof line,"%s",input); handle(line); }
 '''
 MAIN = r'''
 int main(void) {
+    run("wifi version"); assert(fw_queries==1);
+    fw_error=-1; run("wifi version"); assert(fw_queries==2);
+    online=false; run("wifi version"); assert(fw_queries==2);
+    online=true; fw_error=ESP_OK;
+    run("wifi version extra"); run("wifi versioning"); assert(fw_queries==2);
     const char *bad_poll[]={"poll", "poll 49", "poll 60001", "poll -1", "poll 50 extra", "poll 50x", "polling 50", "poll 999999999999999999999999"};
     for(unsigned i=0;i<sizeof bad_poll/sizeof bad_poll[0];i++) { run(bad_poll[i]);assert(fnos_data_poll_interval_ms()==1000); }
     run("poll 50");assert(fnos_data_poll_interval_ms()==50);
@@ -64,12 +108,18 @@ int main(void) {
     run("anonymous-marker-invalid-command");
     char line[192]; memset(line,'x',sizeof line); clear_line(line,sizeof line);
     for (unsigned i=0;i<sizeof line;i++) assert(line[i]==0);
+    char overflow[192]; memset(overflow,'x',sizeof overflow-1);overflow[sizeof overflow-1]=0;
+    chunks[0]="bench sw";chunks[1]="";chunks[2]="ipe 0 450 2\n";
+    chunks[3]=overflow;chunks[4]="";chunks[5]="wifi clear\n";
+    chunks[6]="page ";chunks[7]="";chunks[8]="4\n";
+    if (!setjmp(input_done)) cli_task(NULL);
+    assert(benches==1 && clears==1 && page==4);
     return 0;
 }
 '''
 data_source=(ROOT/'components/fnos_monitor/fnos_data.c').read_text()
 body = '\n'.join(function(n,data_source) for n in ('fnos_data_poll_interval_ms','fnos_data_set_poll_interval_ms'))+'\n'
-body += '\n'.join(function(n) for n in ('cmd_set','command_is','command_index','clear_line','handle'))
+body += '\n'.join(function(n) for n in ('cmd_version','cmd_set','command_is','command_index','clear_line','handle','cli_task'))
 with tempfile.TemporaryDirectory(prefix='fnos-cli-') as directory:
     c=Path(directory)/'cli.c'; binary=Path(directory)/'cli'
     for negative in (False, True):
@@ -84,4 +134,8 @@ with tempfile.TemporaryDirectory(prefix='fnos-cli-') as directory:
             raise AssertionError('prefix negative control survived' if negative else result.stderr.decode())
         if not negative and b'anonymous-marker-invalid-command' in result.stdout:
             raise AssertionError('unknown command echoed input')
-print('PASS: complete tokens, tabs/open network, numeric bounds/trailing input, no unknown-input echo, whole-line clearing, prefix negative control')
+        if not negative and (result.stdout.count(b'coprocessor firmware=7.8.9')!=1 or
+                             b'coprocessor firmware query failed: TEST_RPC_FAIL' not in result.stdout or
+                             b'coprocessor firmware query skipped' not in result.stdout):
+            raise AssertionError('coprocessor version success/failure/offline result mismatch')
+print('PASS: coprocessor version success/RPC failure/offline/extra-token rejection; complete tokens, tabs/open network, numeric bounds/trailing input, no unknown-input echo, whole-line clearing, fragmented reads/EOF/overflow-tail recovery, prefix negative control')

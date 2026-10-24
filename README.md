@@ -21,7 +21,7 @@
 - **数据状态清楚表达**：实时、旧值、无数据、权限不足与离线分别提示；保留真实零值，缺失不会伪装成健康。
 - **屏幕完成配置**：Wi-Fi、HTTPS 配对与证书指纹核对无需写入 NAS 管理员密码；详情保留打开时的快照。
 
-底部导航直达六页，横向拖动跟随手指；清单纵向滚动，且总是停在整行上。当前默认 `michka` 主题复刻 [michka](https://michka.org/) 的 slate sensor-panel 皮肤：近黑画布、灰色气泡卡片、居中的方块帽标题、Inter 数字；夜间模式及显示参数可配置。
+底部导航直达六页，横向拖动以原生裁剪揭示下一页，内容保持原位、边界跟随手指；清单纵向滚动，且总是停在整行上。当前默认 `michka` 主题复刻 [michka](https://michka.org/) 的 slate sensor-panel 皮肤：近黑画布、灰色气泡卡片、居中的方块帽标题、Inter 数字；夜间模式及显示参数可配置。
 
 ## 硬件要求
 
@@ -30,7 +30,7 @@
 | 开发板 | Waveshare ESP32-P4-WIFI6-Touch-LCD-7B |
 | 屏幕 / 触摸 | 7 英寸，1024×600 MIPI-DSI，EK79007 / GT911 |
 | 无线连接 | 板载 ESP32-C6，通过 ESP-Hosted SDIO |
-| 固件工具链 | ESP-IDF 5.5.3，目标 `esp32p4`，默认 P4 rev3.x |
+| 固件工具链 | ESP-IDF 5.5.5，LVGL 9.6.0 / adapter 0.7.3，目标 `esp32p4`，默认 P4 rev3.x |
 | NAS 端 | fnOS、`python312`；当前配套安装包声明 `platform=x86` |
 | 网络 | 开发板可访问 NAS 的 HTTPS 遥测端口，应用默认 `8798` |
 
@@ -63,7 +63,7 @@
 
 ### 2. 构建开发板固件
 
-先激活 ESP-IDF 环境，使 `IDF_PATH`、Python 和 RISC-V 工具链可用，再执行：
+先激活 ESP-IDF 5.5.5 环境及其配套工具链，使 `IDF_PATH`、Python 和 RISC-V 编译器可用，再执行：
 
 ```bash
 git clone https://github.com/ashllll/p4-7b-fnos-monitor.git
@@ -72,7 +72,7 @@ cp components/fnos_monitor/fnos_config.example.h components/fnos_monitor/fnos_co
 ./idf.sh build
 ```
 
-模板可直接构建。真实参数可保存在被忽略的 `fnos_config.h`，也可通过屏幕配置；无需把个人凭据提交到仓库。已有 `sdkconfig` 不会自动被新默认值覆盖；升级本版时在 menuconfig 的 fnOS monitor 主题项选择 `cuktech-console`，更新设置前先备份；依赖版本见 [dependencies.lock](dependencies.lock)。
+模板可直接构建。真实参数可保存在被忽略的 `fnos_config.h`，也可通过屏幕配置；无需把个人凭据提交到仓库。已有 `sdkconfig` 不会自动被新默认值覆盖；当前 `sdkconfig.defaults` 默认主题为 `michka`。从旧配置升级并切换到当前主题时，在 menuconfig 的 fnOS monitor 主题项选择 `michka`，更新设置前先备份；依赖版本见 [dependencies.lock](dependencies.lock)。
 
 识别开发板串口，替换示例路径后烧录：
 
@@ -83,6 +83,8 @@ export FNOS_SERIAL_PORT='/dev/cu.YOUR_BOARD_PORT'
 ```
 
 `idf.sh` 支持 `FNOS_IDF_ENV=/path/to/activation.sh ./idf.sh build`。源码与配置模板随仓库分发，个人实机固件和 NVS 留在本地。
+
+联网后可在串口输入 `wifi version`，通过官方 RPC 只读查询板上无线协处理器的固件版本。它与 `dependencies.lock` 中的主机 ESP-Hosted 依赖版本分别记录；离线或查询失败会提示原因，不执行协处理器升级。
 
 ### 3. 连 Wi-Fi 并建立设备信任
 
@@ -205,7 +207,7 @@ export FNOS_SERIAL_PORT='/dev/cu.YOUR_BOARD_PORT'
 | `CONFIG_FNOS_SNAPSHOT_MAX_BYTES` | 1048576 B | 单份清单与字符串存储预算 |
 | `CONFIG_FNOS_UI_LIST_MIN_WIDTH` | 260 px | 首选清单宽度，实际列数由空间与文本推导 |
 | `CONFIG_FNOS_UI_REDUCED_MOTION` | 关闭 | 保留跟手，松手直接落定 |
-| `CONFIG_FNOS_PALETTE` | `cuktech-console` | ULTRA 蓝青／朱红版；其余六个历史预置仍可选择 |
+| `CONFIG_FNOS_PALETTE` | `michka` | 当前 slate sensor-panel 主题；历史主题仍可选择 |
 
 预算限制字节资源，不限定设备数量。受控 UI 分配失败有提示与重试；真实 LVGL 内存耗尽恢复仍是开放验收项。[硬件自适应记录](docs/ui-hardware-adaptive-audit-2026-10-08.md)包含清单、名称与滚动验证范围。
 
@@ -222,15 +224,16 @@ python3 tools/stack_check.py
 python3 tools/test_history_merge.py
 ```
 
-默认预览生成 **111 张 1024×600 状态 PNG + 3 张刷新回归 PNG**，执行字形、格式残留、标签溢出、对象越界、触控重叠与对比度审计，并覆盖不同硬件组合和受控分配失败。数字、仪表及切页动效的独立入口见 [预览说明](tools/preview/README.md)。本页产品图的文件映射与校验值见 [图片清单](docs/images/ui-michka-slate-2026-10-22/manifest.json)。
+2026-10-23 的完整预览记录生成 **131 张 1024×600 状态 PNG + 10 张刷新／对齐回归 PNG**，并执行字形、格式残留、标签溢出、对象越界、触控重叠与对比度审计，覆盖不同硬件组合和受控分配失败。这个数量对应 [当日验证记录](docs/ui-validation-2026-10-23.md)，不是未来运行固定不变的样本总数。数字、仪表及切页动效的独立入口见 [预览说明](tools/preview/README.md)。本页产品图的文件映射与校验值见 [图片清单](docs/images/ui-michka-slate-2026-10-22/manifest.json)。
 
-固件构建和主机渲染不代替实机验收。完整物理触控、实屏动画手感、72 小时运行、掉电／旧 NVS 回退、真实内存耗尽恢复和更广泛的硬件／权限矩阵继续开放，详见 [未闭环事项](docs/open-items-2026-10-11.md)。
+固件构建和主机渲染不代替实机验收。[2026-10-24 裁剪揭示对照](docs/ui-drag-lvgl96-2026-10-24.md)中，三页在线拖动 P50 帧间隔从约 38–48 ms 降到约 16.56 ms，接近面板 60 Hz；P95 仍约 28–37 ms，未达到全程锁定 60 FPS。实拍仍受斜拍与局部遮挡限制，完整触控验收仍开放。此前结果见 [2026-10-23 验证记录](docs/ui-validation-2026-10-23.md)。当前实施待办集中见[待办与验收缺口](docs/todo-implementation-2026-10-23.md)；72 小时运行、掉电／旧 NVS 回退、真实内存耗尽恢复和更广泛的硬件／权限矩阵仍开放。
 
 <details>
 <summary><strong>最近迭代与版本边界</strong></summary>
 
 ### 最近迭代与版本边界
 
+- **此前已发布基线 `b64be21`（2026-10-23）**：完成圆环与同行单位对齐、Wi-Fi 恢复及网络清单布局缓存，源码已发布。在线拖动实测仍约 20–26 FPS；手势、整屏实拍、长期运行与故障恢复边界见[验证记录](docs/ui-validation-2026-10-23.md)和[当前待办](docs/todo-implementation-2026-10-23.md)。
 - **当前 michka 石板灰界面（2026-10-22）**：六页共用一套 slate sensor-panel 皮肤——近黑画布、灰色渐变气泡卡片、居中方块帽标题、Inter 数字、顶栏日期与大号时钟；清单统一行高，卡底只停在整行；图表去掉刻度只留卡头量程。README 同步 15 张匿名产品图。[设计与验证](docs/ui-michka-slate-2026-10-22.md) · [历史 ULTRA 记录](docs/ui-ultra-release-2026-10-14.md)。
 
 - **前一阶段界面基线 `7647d9b`**：CUKTECH 六页横屏、连续阻尼与新鲜度修复；模板构建、主机回归、静态检查、烧录哈希与短时串口观察已完成。[完整验证记录](docs/skills-workflow-2026-10-14.md)。
@@ -258,7 +261,7 @@ python3 tools/test_history_merge.py
 | 安装与维护 NAS 应用 | [飞牛应用](nas/fpk/README.md) · [可选旧采集器](nas/README.md) |
 | 理解当前界面与动效 | [michka 石板灰](docs/ui-michka-slate-2026-10-22.md) · [ULTRA 配色（历史）](docs/ui-cuktech-ultra-2026-10-14.md) · [页面合同](docs/ui-cuktech-2026-10-14.md) · [电流表式动效](docs/ui-ammeter-motion-2026-10-14.md) |
 | 复现产品图与主机检查 | [截图来源](docs/images/ui-michka-slate-2026-10-22/README.md) · [预览工具](tools/preview/README.md) |
-| 查看最新验证和剩余事项 | [本轮发布归档](docs/ui-ultra-release-2026-10-14.md) · [历史 Skills 全流程](docs/skills-workflow-2026-10-14.md) · [缺陷复核](docs/ui-post-motion-audit-2026-10-14.md) · [未闭环事项](docs/open-items-2026-10-11.md) |
+| 查看最新验证和剩余事项 | [本轮待办实施验收](docs/ui-todo-validation-2026-10-23.md) · [此前已发布的 UI 验证](docs/ui-validation-2026-10-23.md) · [当前待办](docs/todo-implementation-2026-10-23.md) · [历史审计矩阵](docs/open-items-2026-10-11.md) · [早期发布与缺陷记录](docs/ui-ultra-release-2026-10-14.md) · [历史 Skills 全流程](docs/skills-workflow-2026-10-14.md) |
 | 理解源码与架构 | [固件](components/fnos_monitor/) · [共享 UI](components/fnos_monitor/ui_kit/) · [原生 UI 架构](docs/ui-v12-lvgl-native.md) · [ADR](docs/adr/README.md) |
 | 配置显示与资源 | [Kconfig](components/fnos_monitor/Kconfig) · [硬件清单验证](docs/ui-hardware-adaptive-audit-2026-10-08.md) |
 | 参与工程协作 | [术语表](GLOSSARY.md) · [领域约定](docs/agents/domain.md) · [任务入口](docs/agents/issue-tracker.md) |
@@ -269,3 +272,5 @@ python3 tools/test_history_merge.py
 ## 许可证
 
 项目固件、采集器与飞牛应用采用 [Apache License 2.0](LICENSE)。LVGL / cJSON 为 MIT；Inter、Noto Sans SC、Chakra Petch 字体为 SIL OFL，相关许可保留在 [fonts/](components/fnos_monitor/fonts/)。
+
+主机状态图标由 Michka 图形派生，单独采用 **CC BY-NC 4.0**；来源、署名与修改说明见[图标目录](components/fnos_monitor/assets/michka_host_status/README.md)及其[许可证](components/fnos_monitor/assets/michka_host_status/LICENSE)。包含这些图标的发行物须保留署名并遵守该非商业许可。

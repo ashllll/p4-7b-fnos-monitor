@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="360" viewBox="4.17 3.17 55.65 55.65">
+  <title>Michka offline host status, skull adapted to project danger red</title>
+  <path fill="#ff6b6b" d="M32 6C44 6 53 15 53 27C53 35 49 41 44 44C43 49 42 52 40 54C37 56 27 56 24 54C22 52 21 49 20 44C15 41 11 35 11 27C11 15 20 6 32 6Z"/>
+  <circle cx="23" cy="28" r="6.5" fill="#141414"/>
+  <circle cx="41" cy="28" r="6.5" fill="#141414"/>
+  <path fill="#141414" d="M32 34l-4 8 8 0z"/>
+  <rect x="27" y="46" width="1.7" height="8" fill="#141414"/>
+  <rect x="31.15" y="46" width="1.7" height="8" fill="#141414"/>
+  <rect x="35.3" y="46" width="1.7" height="8" fill="#141414"/>
+</svg>

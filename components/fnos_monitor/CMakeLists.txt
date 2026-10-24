@@ -9,6 +9,7 @@ set(PROJ_SRCS
     "fnos_snapshot.c"
     "fnos_pair.c"
     "fnos_ui.c"
+    "assets/michka_host_status/michka_host_status.c"
     # 触控/渲染台架（串口 `bench`）：CONFIG_FNOS_UI_PERF_BENCH=n 时整个文件退化成空实现。
     # 放在这里而不是 main/，是为了能直接量 ui_tick / motion 这条 LVGL 路径。
     "fnos_perf.c"
@@ -34,7 +35,7 @@ idf_component_register(
     INCLUDE_DIRS
         ${CMAKE_CURRENT_LIST_DIR}
         ${CMAKE_CURRENT_LIST_DIR}/ui_kit
-    PRIV_REQUIRES esp_driver_ppa esp_lcd
+    PRIV_REQUIRES esp_driver_ppa esp_lcd espressif__esp_hosted
     REQUIRES
         esp_wifi
         esp_netif

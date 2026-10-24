@@ -9,6 +9,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 REPO=$(cd ../.. && pwd)
 OUT=${1:-out}
+DEVICE_CONFIG=${FNOS_UI_DEVICE_CONFIG:-$REPO/build/config/sdkconfig.h}
 
 # preview.c 会读的**全部**分支变量（tools/preview/preview.c 里的 getenv("PREVIEW_…")）。
 # 每个验收阶段都要先把它们清干净、再设置本阶段真正要用的那几个（审计 M36）：以前只清 5 个，
@@ -80,13 +81,13 @@ fi
 # macOS 上 git/make/cc 需要显式指定 CommandLineTools
 export DEVELOPER_DIR=${DEVELOPER_DIR:-/Library/Developer/CommandLineTools}
 
-if [ ! -f "$REPO/build/config/sdkconfig.h" ]; then
-  echo "缺少 $REPO/build/config/sdkconfig.h —— 先跑 ./idf.sh build" >&2
+if [ ! -f "$DEVICE_CONFIG" ]; then
+  echo "缺少 $DEVICE_CONFIG —— 先跑 ./idf.sh build" >&2
   exit 1
 fi
 
 # 主机 LVGL 用设备端真实 Kconfig（含 CONFIG_LV_CONF_SKIP=1，于是全靠 CONFIG_LV_*）
-grep -E '^#define CONFIG_LV_' "$REPO/build/config/sdkconfig.h" > lv_kconfig_host.h
+grep -E '^#define CONFIG_LV_' "$DEVICE_CONFIG" > lv_kconfig_host.h
 # 只有三处必须偏离设备：LVGL 9.5 的 lv_conf_kconfig.h 会把 CONFIG_LV_OS_FREERTOS 翻成
 # LV_OS_FREERTOS、把 CONFIG_LV_USE_CUSTOM_MALLOC 翻成 LV_STDLIB_CUSTOM（设备那边由
 # esp_lvgl_port 提供 lv_malloc_core，主机上没有 → 落到 LVGL 的 weak 桩，永远返回 NULL）。
@@ -121,7 +122,7 @@ echo "lv_kconfig_host.h: $(wc -l < lv_kconfig_host.h) lines ($(grep -c '^#define
 # 注意：本脚本开头 `cd "$(dirname "$0")"`，所以这里的路径都相对 tools/preview/
 python3 pair_msgs.py ../../components/fnos_monitor/fnos_pair.c pair_msgs.h || exit 1
 
-cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+cmake -S . -B build -DUI_DEVICE_CONFIG="$DEVICE_CONFIG" -DCMAKE_BUILD_TYPE=RelWithDebInfo \
       -DCMAKE_C_FLAGS_RELWITHDEBINFO="-O1 -g" > /dev/null
 cmake --build build -j8 2>&1 | tail -20
 

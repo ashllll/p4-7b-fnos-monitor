@@ -21,7 +21,7 @@ typedef struct {
     glyph_layer_t *layers;
     const lv_font_t *font;
     uint32_t started, span, duration;
-    bool active;
+    bool active, sync_next;
 } number_label_t;
 static bool motion_enabled = true;
 static bool presentation_gate_enabled = true;
@@ -205,14 +205,9 @@ void uk_number_set_reading(lv_obj_t *value, lv_obj_t *unit, const char *text,
     if (!text) text = "";
     if (!unit_text) unit_text = "";
     bool same_unit = !strcmp(lv_label_get_text(unit), unit_text);
-    /* Holding only the value while updating its unit would fabricate a reading.
-       Initial/missing/offline values still publish immediately. */
-    if (animate && same_unit && same_numeric_structure(lv_label_get_text(value),text) &&
-        motion_enabled && !UK_NUMBER_REDUCED && !uk_motion_reduced() && UK_NUMBER_MS > 0 &&
-        presentation_gate_enabled && UK_NUMBER_PRESENT_MS > 0 && !presentation_batch_open &&
-        lv_obj_is_visible(value) && has_reading(lv_label_get_text(value)) && has_reading(text)) return;
+    /* A changed unit publishes value and unit together, bypassing numeric motion. */
     uk_number_set_text(value, text, animate && same_unit);
-    uk_number_set_text(unit, unit_text, false);
+    if (!same_unit) uk_number_set_text(unit, unit_text, false);
 }
 
 void uk_number_set_text(lv_obj_t *obj, const char *text, bool animate)
@@ -228,6 +223,7 @@ void uk_number_set_text(lv_obj_t *obj, const char *text, bool animate)
         same_numeric_structure(old,text) &&
         (!n->active || n->font==font);
     if (!eligible) {
+        n->sync_next=true; /* Prefill/semantic changes must not hold the first live reading. */
         /* 值没变就别动图层栈、也别碰 lv_label_set_text：每次刷新都会给几十个
            数字重播一遍，clear_layers + 文本布局实测把每拍刷新推到 100 ms 量级，
            而这些调用里绝大多数数字跟上一拍一模一样。 */
@@ -236,9 +232,10 @@ void uk_number_set_text(lv_obj_t *obj, const char *text, bool animate)
         if (strcmp(old,text)) lv_label_set_text(obj,text);
         return;
     }
-    if (!strcmp(old,text)) return; /* Same target never restarts a running transition. */
-    if (presentation_gate_enabled && UK_NUMBER_PRESENT_MS>0 && !presentation_batch_open)
+    if (!strcmp(old,text)) { n->sync_next=false; return; } /* Same target never restarts motion. */
+    if (!n->sync_next && presentation_gate_enabled && UK_NUMBER_PRESENT_MS>0 && !presentation_batch_open)
         return; /* Keep this batch still; the next shared beat takes the latest target. */
+    n->sync_next=false;
     n->font=font;
     lv_obj_update_layout(obj);
     lv_point_t old_size,new_size;
@@ -544,6 +541,12 @@ void uk_number_selfcheck(lv_obj_t *parent)
         presentation_batch_open=false;
         uk_number_set_reading(q,unit,"--","",false);
         assert(!strcmp(lv_label_get_text(q),"--") && !strcmp(lv_label_get_text(unit),"") && !qn->active);
+        /* A synchronous prefill/stale reading must not hold the first live value. */
+        uk_number_set_reading(q,unit,"20","KB/s",false);
+        uk_number_set_reading(q,unit,"21","KB/s",true);
+        assert(!strcmp(lv_label_get_text(q),"21"));
+        uk_number_set_reading(q,unit,"22","KB/s",true);
+        assert(!strcmp(lv_label_get_text(q),"21")); /* Following samples obey the beat. */
         lv_obj_delete(unit);
         lv_obj_delete(q); lv_obj_delete(q2);
         presentation_batch_open=saved_batch_open;

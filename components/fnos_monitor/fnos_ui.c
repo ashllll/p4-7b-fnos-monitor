@@ -36,6 +36,7 @@
 #include "fnos_wifi_store.h"   /* 开机"有没有凭据"要问存储本身，别问网络层的标志 */
 #include "ui_kit/uk.h"   /* 新自适应层：LVGL 原生 flex，几何不写死 */
 #include "ui_kit/uk_spring.h"
+#include "assets/michka_host_status/michka_host_status.h"
 
 static const char *TAG = "fnos_ui";
 
@@ -353,22 +354,20 @@ static void set_num(lv_obj_t *label, const char *fmt, ...)
 
 
 
-/* 顶栏状态点的颜色 + 同色光晕：光晕让"在线/离线"在余光里也能被看见，
-   但文字仍是主编码（发光只是冗余，不承担唯一含义）。chip 的第 0 个子对象就是状态点。 */
-static void chip_set_glow(lv_obj_t *chip, const char *txt, uint32_t rgb)
+/* Text remains the primary state encoding. An unknown host has no status glyph. */
+static void chip_set_glow(lv_obj_t *chip, const char *txt, uint32_t rgb,
+                          const lv_image_dsc_t *glyph)
 {
     if (!chip) return;
-    lv_obj_t *dot = lv_obj_get_child(chip, 0);   /* 第 0 个是状态点 */
+    lv_obj_t *image = lv_obj_get_child(chip, 0);
     lv_obj_t *lbl = lv_obj_get_child(chip, 1);   /* 第 1 个是文字 */
     if (lbl) {
         set_txt(lbl, "%s", txt);
         lv_obj_set_style_text_color(lbl, uk_c(rgb), 0);
     }
-    if (dot) {
-        lv_obj_set_style_bg_color(dot, uk_c(rgb), 0);
-        lv_obj_set_style_shadow_color(dot, uk_c(rgb), 0);
-        lv_obj_set_style_shadow_width(dot, UK_GLOW_W, 0);
-        lv_obj_set_style_shadow_opa(dot, 0, 0);
+    if (image) {
+        if (glyph && lv_image_get_src(image) != glyph) lv_image_set_src(image, glyph);
+        lv_obj_set_style_image_opa(image, glyph ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
     }
 }
 
@@ -379,10 +378,18 @@ static lv_obj_t *mk_page(lv_obj_t *content)
 {
     /* 一页就是内容区的全部：宽高都跟父容器走（外壳底栏出现后，内容区高度变小，
        页面必须跟着缩，不能再钉死成设计尺寸）。 */
-    lv_obj_t *p = lv_obj_create(content);
+    /* Native parent clipping keeps rendering and input on the same boundary.
+       Permanent parents avoid reparenting allocations on the gesture path. */
+    lv_obj_t *clip = lv_obj_create(content);
+    lv_obj_remove_style_all(clip);
+    lv_obj_add_flag(clip, LV_OBJ_FLAG_IGNORE_LAYOUT);
+    lv_obj_set_size(clip, LV_PCT(100), LV_PCT(100));
+    lv_obj_remove_flag(clip, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_t *p = lv_obj_create(clip);
     lv_obj_set_size(p, LV_PCT(100), LV_PCT(100));
     lv_obj_set_style_bg_color(p, uk_c(UK_BG), 0);
     lv_obj_set_style_bg_opa(p, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(p, 0, 0); /* The page is a solid scene; cards own their rounded edges. */
     lv_obj_set_style_border_width(p, 0, 0);
     lv_obj_set_style_pad_all(p, 0, 0);
     lv_obj_remove_flag(p, LV_OBJ_FLAG_SCROLLABLE);
@@ -643,6 +650,12 @@ static void p3_overlay_sync(void)
 {
     if (!s_ui.p3_note) return;
     bool any = s_diagnostics || s_pair_open || s_wifi_open;
+    /* Forms keep the compact header budget so every 44px keyboard row remains
+       visible; normal pages restore the larger clock without rebuilding it. */
+    const lv_font_t *clock_font = any ? UK_FONT_NUM_20 : UK_FONT_NUM_32;
+    lv_obj_set_style_text_font(s_ui.h_clock, clock_font, 0);
+    lv_obj_set_height(s_ui.h_clock, lv_font_get_line_height(clock_font));
+    lv_obj_set_style_pad_ver(lv_obj_get_parent(s_ui.h_clock), any ? 0 : UK_S1 + UK_S1 / 2, 0);
     lv_obj_t *body[] = { s_ui.p3_note, s_ui.p3_cols, s_ui.scope_bar[3] };
     for (unsigned i = 0; i < sizeof body / sizeof body[0]; i++) {
         if (!body[i]) continue;
@@ -1040,8 +1053,8 @@ static void signal_set(int8_t rssi)
     }
 }
 
-/* 状态胶囊：左边一个会发光的状态点 + 右边一句话。chip 的第 0 个子对象是状态点。 */
-static lv_obj_t *chip_create(lv_obj_t *parent, const char *txt, uint32_t rgb)
+/* Slate host-status glyph and a readable state label. */
+static lv_obj_t *chip_create(lv_obj_t *parent, const char *txt)
 {
     lv_obj_t *c = lv_obj_create(parent);
     lv_obj_set_height(c, 32);
@@ -1051,11 +1064,15 @@ static lv_obj_t *chip_create(lv_obj_t *parent, const char *txt, uint32_t rgb)
     lv_obj_set_style_radius(c, UK_RADIUS_SM, 0);
     lv_obj_set_style_border_width(c, 0, 0);
     lv_obj_set_style_pad_hor(c, UK_S3, 0);
+    lv_obj_set_style_pad_ver(c, 0, 0);
     lv_obj_set_style_pad_column(c, UK_S2, 0);
     lv_obj_set_flex_flow(c, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(c, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_remove_flag(c, LV_OBJ_FLAG_SCROLLABLE);
-    uk_dot(c, rgb, UK_DOT);
+    lv_obj_t *image = lv_image_create(c);
+    lv_image_set_src(image, &michka_host_status_online);
+    lv_obj_set_style_image_opa(image, LV_OPA_TRANSP, 0);
+    not_clickable(image);
     lv_obj_t *lbl = uk_label(c, UK_FONT_CJK_12, UK_T3, txt);
     not_clickable(lbl);
     not_clickable(c);
@@ -1067,17 +1084,25 @@ static void build_header(lv_obj_t *h)
     /* Controls take their text width; the host column uses the actual remaining width. */
     lv_obj_t *hostcol = uk_col(h, 1);
     lv_obj_set_style_min_width(hostcol, 0, 0);
-    /* 日期 17 + 时间 24 正好放进 44 的顶栏；栏内默认 4px 行距会把它顶出去 1px，
-       这里收成 0（michka 的钟面本来就是紧排的）。 */
+    /* Native Slate clock bubble; content height follows the selected fonts.
+       Keep the host column flexible so long names never displace device controls. */
     lv_obj_set_style_pad_row(hostcol, 0, 0);
-    /* michka 顶栏：一行小字（主机 + 日期），下面一行大号时间。时间是这块屏的锚点，
-       人的第一眼就落在这里，所以字号给到 NUM_20（等宽数字，分钟跳动时不会左右抖）。 */
+    lv_obj_set_style_pad_hor(hostcol, UK_S3, 0);
+    lv_obj_set_style_pad_ver(hostcol, UK_S1 + UK_S1 / 2, 0);
+    lv_obj_set_style_bg_color(hostcol, uk_c(UK_SURF_S1), 0);
+    lv_obj_set_style_bg_grad_color(hostcol, uk_c(UK_SURF_T), 0);
+    lv_obj_set_style_bg_grad_dir(hostcol, LV_GRAD_DIR_VER, 0);
+    lv_obj_set_style_bg_opa(hostcol, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(hostcol, UK_RADIUS_SM + UK_S1, 0);
+    lv_obj_set_style_border_width(hostcol, 1, 0);
+    lv_obj_set_style_border_color(hostcol, uk_c(UK_T1), 0);
+    lv_obj_set_style_border_opa(hostcol, 28, 0);
     s_ui.h_date = uk_label(hostcol, UK_FONT_CJK_12, UK_T4, "fnOS");
     lv_obj_set_width(s_ui.h_date, LV_PCT(100));
     lv_obj_set_height(s_ui.h_date, lv_font_get_line_height(UK_FONT_CJK_12));
-    s_ui.h_clock = uk_label(hostcol, UK_FONT_NUM_20, UK_T1, "--:--");
+    s_ui.h_clock = uk_label(hostcol, UK_FONT_NUM_32, UK_T1, "--:--");
     lv_obj_set_width(s_ui.h_clock, LV_PCT(100));
-    lv_obj_set_height(s_ui.h_clock, lv_font_get_line_height(UK_FONT_NUM_20));
+    lv_obj_set_height(s_ui.h_clock, lv_font_get_line_height(UK_FONT_NUM_32));
     lv_obj_set_style_text_letter_space(s_ui.h_clock, 1, 0);
     not_clickable(hostcol);
 
@@ -1122,7 +1147,7 @@ static void build_header(lv_obj_t *h)
     /* 数据新鲜度只在"不新鲜"时才占地方：新鲜由状态胶囊的"在线"表达，
        常驻一行"200ms 更新"是噪音（michka 顶栏也不放这种东西）。 */
     s_ui.h_fresh = uk_label(h, UK_FONT_CJK_12, UK_T3, "");
-    s_ui.h_chip = chip_create(h, "等待数据", UK_T3);
+    s_ui.h_chip = chip_create(h, "等待数据");
 
 }
 
@@ -1502,6 +1527,16 @@ static void entity_open_cb(lv_event_t *e)
         set_txt(s_ui.detail_meta, "%s", "界面内存不足 · 返回列表后重试");
         set_txt(s_ui.detail_value, "%s", "");
     }
+    /* Keep the modal hit mask full-screen, but fit its card to the resolved
+       workspace, including clock height, navigation and event footer. */
+    lv_obj_update_layout(s_ui.screen);
+    lv_area_t workspace, screen;
+    lv_obj_get_content_coords(s_ui.viewport, &workspace);
+    lv_obj_get_coords(s_ui.screen, &screen);
+    lv_obj_set_style_pad_top(s_ui.detail_mask, workspace.y1 - screen.y1, 0);
+    lv_obj_set_style_pad_bottom(s_ui.detail_mask, screen.y2 - workspace.y2, 0);
+    lv_obj_set_style_pad_left(s_ui.detail_mask, workspace.x1 - screen.x1, 0);
+    lv_obj_set_style_pad_right(s_ui.detail_mask, screen.x2 - workspace.x2, 0);
     int32_t w = lv_obj_get_content_width(s_ui.detail_mask);
     bool wide = w >= UK_DETAIL_WIDTH + UK_LIST_MIN_WIDTH;
     lv_obj_set_width(s_ui.detail_card, wide ? UK_DETAIL_WIDTH : LV_PCT(100));
@@ -1517,10 +1552,7 @@ static void entity_detail_build(lv_obj_t *parent)
     lv_obj_add_flag(mask, LV_OBJ_FLAG_FLOATING);
     lv_obj_set_size(mask, LV_PCT(100), LV_PCT(100));
     lv_obj_set_style_pad_all(mask, UK_S2, 0);
-    /* 蒙层铺满全屏（模态 + 点击外部关闭），但面板只占内容区：上让出头部、下让出导航。
-       否则侧栏会半盖 dock，底部的「返回列表」就压在最常用的一排按钮上。 */
-    lv_obj_set_style_pad_top(mask, UK_HEAD_H + UK_S2, 0);
-    lv_obj_set_style_pad_bottom(mask, UK_DOCK_H, 0);
+    /* Card padding is resolved from the current workspace when opened. */
     lv_obj_set_style_border_width(mask, 0, 0);
     lv_obj_set_style_radius(mask, 0, 0);
     lv_obj_set_style_bg_color(mask, uk_c(UK_S0), 0);
@@ -4869,9 +4901,9 @@ static void refresh_shell(const fnos_status_t *st)
 {
     /* 顶栏：主机 / 端点 / 状态胶囊 / 信号 */
     header_refresh();
-    if (!st->ever_ok)      chip_set_glow(s_ui.h_chip, "等待数据", UK_T4);
-    else if (st->online)   chip_set_glow(s_ui.h_chip, "在线", UK_OK);
-    else                   chip_set_glow(s_ui.h_chip, "离线", UK_WARN);
+    if (!st->ever_ok)      chip_set_glow(s_ui.h_chip, "等待数据", UK_T4, NULL);
+    else if (st->online)   chip_set_glow(s_ui.h_chip, "在线", UK_OK, &michka_host_status_online);
+    else                   chip_set_glow(s_ui.h_chip, "离线", UK_WARN, &michka_host_status_offline);
     signal_set(fnos_net_rssi());
 }
 
@@ -5985,8 +6017,8 @@ void fnos_ui_dump_card_map(void)
     fnos_ui_dump_card_map_fp(stdout);
 }
 
-/* Page translation is confined to an opaque viewport. Invalidate it on every
-   frame, including completion, so partial-buffer displays repaint exposed pixels. */
+/* A native clip reveals stationary page content. Only the traversed edge needs
+   repainting; completion still repaints the full viewport with current data. */
 static struct {
     int from, to, direction;
     int32_t offset, start, end, width, press_offset;
@@ -6082,11 +6114,14 @@ static void pages_warm(void)
     for (int idx = 1; idx < FNOS_UI_PAGE_COUNT; idx++) {
         int count[3] = {0};
         if (idx == 1) {
-            count[0] = s_ui.vol_made; count[1] = s_ui.raid_made; count[2] = s_ui.disk_made;
+            count[0] = overview_readable(&s_st, "vols") ? s_st.nvols : 0;
+            count[1] = overview_readable(&s_st, "raid") ? s_st.nraid : 0;
+            count[2] = overview_readable(&s_st, "disks") ? s_st.ndisks : 0;
         } else if (idx == 3) {
-            count[0] = s_ui.dock_made; count[1] = s_ui.p3_temp_made; count[2] = s_st.nalerts;
+            count[0] = s_st.ever_ok ? s_st.ndocker : 0;
+            count[1] = s_st.ntemps; count[2] = s_st.nalerts;
         } else if (idx == 4) {
-            count[0] = s_ui.temp_blk_made; count[1] = s_st.ntemps;
+            count[0] = s_st.ntemps;
         } else continue;
         if (prepared[idx].ready && prepared[idx].width == width && prepared[idx].height == height &&
             !memcmp(prepared[idx].count, count, sizeof count)) continue;
@@ -6115,14 +6150,39 @@ static void refresh_soon(void)
 
 static void motion_paint(void)
 {
-    /* 偏移没变就没有新像素可画：拖动时手指停住（或采样周期快过帧周期）会走到
-       这里，省掉一次全视口失效。 */
-    if (s_motion.offset == s_motion.painted) return;
-    s_motion.painted = s_motion.offset;
-    lv_obj_set_style_translate_x(s_ui.page[s_motion.from], s_motion.offset, 0);
-    lv_obj_set_style_translate_x(s_ui.page[s_motion.to], s_motion.offset + s_motion.direction * s_motion.width, 0);
-    lv_obj_invalidate(s_ui.viewport);
-    refresh_soon();
+    int32_t travel = LV_CLAMP(0, -s_motion.offset * s_motion.direction, s_motion.width);
+    if (travel == s_motion.painted) return;
+    int32_t previous = s_motion.painted == INT32_MIN ? 0 : s_motion.painted;
+    int32_t left = s_motion.direction > 0 ? s_motion.width - travel : 0;
+    lv_obj_t *from = s_ui.page[s_motion.from], *to = s_ui.page[s_motion.to];
+    lv_obj_t *from_clip = lv_obj_get_parent(from), *to_clip = lv_obj_get_parent(to);
+    lv_display_t *display = lv_obj_get_display(s_ui.viewport);
+    /* Setters defer layout, so resolve it before balancing this counter. This
+       preserves pending invalidations and avoids a later full-page repaint. */
+    lv_display_enable_invalidation(display, false);
+    lv_obj_set_size(from_clip, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_pos(from_clip, 0, 0);
+    lv_obj_set_pos(from, 0, 0);
+    int32_t height = lv_obj_get_content_height(s_ui.viewport);
+    lv_obj_set_size(from, s_motion.width, height);
+    lv_obj_set_size(to, s_motion.width, height);
+    lv_obj_set_size(to_clip, travel, height);
+    lv_obj_set_pos(to_clip, left, 0);
+    lv_obj_set_pos(to, -left, 0);
+    lv_obj_move_to_index(to_clip, -1);
+    lv_obj_update_layout(s_ui.viewport);
+    lv_display_enable_invalidation(display, true);
+    s_motion.painted = travel;
+
+    if (previous != travel) {
+        lv_area_t area;
+        lv_obj_get_content_coords(s_ui.viewport, &area);
+        int32_t lo = LV_MIN(previous, travel), hi = LV_MAX(previous, travel);
+        area.x2 = area.x1 + (s_motion.direction > 0 ? s_motion.width - lo : hi) - 1;
+        area.x1 += s_motion.direction > 0 ? s_motion.width - hi : lo;
+        lv_obj_invalidate_area(s_ui.viewport, &area);
+        refresh_soon();
+    }
 }
 
 static void motion_exec(void *unused, int32_t value)
@@ -6159,6 +6219,12 @@ static void motion_finish(void)
     for (int i = 0; i < FNOS_UI_PAGE_COUNT; i++) {
         show(s_ui.page[i], i == s_page);
         lv_obj_set_style_translate_x(s_ui.page[i], 0, 0);
+        lv_obj_set_size(s_ui.page[i], LV_PCT(100), LV_PCT(100));
+        lv_obj_set_pos(s_ui.page[i], 0, 0);
+        lv_obj_t *clip = lv_obj_get_parent(s_ui.page[i]);
+        lv_obj_move_to_index(clip, i);
+        lv_obj_set_size(clip, LV_PCT(100), LV_PCT(100));
+        lv_obj_set_pos(clip, 0, 0);
     }
     lv_obj_invalidate(s_ui.viewport);
     refresh_soon();
@@ -6230,9 +6296,9 @@ static void motion_prepare(int from, int to, int direction)
     s_motion.velocity = 0;
     s_motion.active = true;
     for (int i = 0; i < FNOS_UI_PAGE_COUNT; i++) show(s_ui.page[i], i == from || i == to);
-    /* Keep body formatting out of the first animation frame; motion_finish
-       consumes the pending refresh immediately when the page lands. */
-    s_page_dirty[to] = true;
+    /* Idle warming creates inventory rows before touch. Refresh only this
+       target before revealing it; an old empty/offline page must not flash. */
+    page_layout(to);
     s_refresh_pending = true;
     motion_paint();
 #ifdef CONFIG_FNOS_UI_MOTION_STATS
@@ -6278,6 +6344,8 @@ void fnos_ui_set_page(int idx)
         refresh_page(s_motion.to);     /* 反向收起：新目标页同样要先有新数据 */
         s_motion.offset += s_motion.direction * s_motion.width;
         s_motion.direction = -s_motion.direction;
+        s_motion.painted = INT32_MIN;
+        motion_paint();
         motion_snap(true);
     } else {
         int from = s_page;

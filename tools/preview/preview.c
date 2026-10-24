@@ -2499,6 +2499,11 @@ static void verify_unifi_views(void)
     lv_area_t da;
     lv_obj_t *detail_head = visible_text(lv_screen_active(), "实体详情");
     lv_obj_get_coords(lv_obj_get_parent(lv_obj_get_parent(detail_head)), &da);
+    lv_obj_t *host = visible_text_containing(lv_screen_active(), fixture.host);
+    assert(host);
+    lv_area_t header;
+    lv_obj_get_coords(lv_obj_get_parent(lv_obj_get_parent(host)), &header);
+    assert(da.y1 > header.y2 && "entity details must start below the actual header");
     s_touch_point.x = da.x2 - UK_S4; s_touch_point.y = (da.y1 + da.y2) / 2;
     s_touch_down = true; vtick_advance(40); lv_timer_handler();
     for (int k = 0; k < 8; k++) {
@@ -3988,12 +3993,88 @@ static int motion_min_content_opa(lv_obj_t *root)
     return minimum;
 }
 
+/* Keep stable handles: a native clip parent can change traversal order while
+   a transition is active, without changing public navigation identity. */
+static lv_obj_t *s_motion_pages[FNOS_UI_PAGE_COUNT];
+
 static lv_obj_t *motion_native_page(int index)
 {
-    int seen = 0;
-    lv_obj_t *page = motion_page_by_index(lv_screen_active(), index, &seen);
-    assert(page);
-    return page;
+    assert(index >= 0 && index < FNOS_UI_PAGE_COUNT && s_motion_pages[index]);
+    return s_motion_pages[index];
+}
+
+static int motion_visible_width(lv_obj_t *page)
+{
+    lv_area_t area;
+    return effectively_hidden(page) || !visible_click_area(page, &area) ? 0 : lv_area_get_width(&area);
+}
+
+static void motion_reveal_probe(motion_record_t *record, int base, int target)
+{
+    assert(target == (base + 1) % FNOS_UI_PAGE_COUNT);
+    assert(lv_display_get_render_mode(lv_display_get_default()) == LV_DISPLAY_RENDER_MODE_PARTIAL &&
+           "reveal repaint probe requires PREVIEW_PARTIAL=1");
+    lv_obj_t *outgoing = motion_native_page(base), *incoming = motion_native_page(target);
+    lv_area_t original;
+    lv_obj_get_coords(outgoing, &original);
+    int width = lv_area_get_width(&original);
+    int x = original.x1 + width * 3 / 4;
+    int y = (original.y1 + original.y2) / 2;
+    motion_pointer(record, x, y, true);
+    motion_pointer(record, x - width / 4, y, true);
+    motion_wait(record, record->step, "reveal-ready", false);
+    motion_frame(record, "reveal-quarter", false);
+    lv_area_t a, b;
+    lv_obj_get_coords(outgoing, &a);
+    lv_obj_get_coords(incoming, &b);
+    assert(!memcmp(&a, &original, sizeof a) && !memcmp(&b, &original, sizeof b) &&
+           "reveal must keep both pages' content stationary under the moving boundary");
+    lv_point_t hit_points[] = {
+        { original.x1 + width / 4, y }, { original.x1 + width * 7 / 8, y },
+    };
+    for (size_t i = 0; i < 2; i++) {
+        lv_obj_t *hit = lv_indev_search_obj(lv_screen_active(), &hit_points[i]);
+        bool incoming_hit = false;
+        for (lv_obj_t *p = hit; p; p = lv_obj_get_parent(p))
+            if (p == incoming) incoming_hit = true;
+        assert(incoming_hit == (i == 1) &&
+               "native hit testing must follow the revealed region");
+    }
+    size_t bytes = (size_t)s_scr_w * s_scr_h * sizeof *s_frame;
+    uint16_t *before = malloc(bytes);
+    assert(before);
+    memcpy(before, s_frame, bytes);
+    uint64_t flushed = s_flushed_pixels;
+    motion_pointer(record, x - width / 4 - width / 100, y, true);
+    motion_wait(record, record->step, "reveal-step", false);
+    motion_frame(record, "reveal-step", false);
+    uint64_t pixels = s_flushed_pixels - flushed;
+    uint64_t viewport_pixels = (uint64_t)width * lv_area_get_height(&original);
+    printf("reveal: small-step flushed=%llu viewport=%llu pixels\n",
+           (unsigned long long)pixels, (unsigned long long)viewport_pixels);
+    assert(pixels && pixels < viewport_pixels / 4 &&
+           "a small reveal step must repaint a strip, not the full viewport");
+    lv_area_t visible;
+    assert(visible_click_area(incoming, &visible));
+    int changed = 0;
+    for (int yy = original.y1; yy <= original.y2; yy++)
+        for (int xx = original.x1; xx <= original.x2; xx++) {
+            size_t at = (size_t)yy * s_scr_w + xx;
+            if (s_frame[at] != before[at]) {
+                changed++;
+                assert(xx >= visible.x1 && xx <= visible.x1 + width / 50 &&
+                       "stationary content outside the advanced edge must not change");
+            }
+        }
+    assert(changed);
+    free(before);
+    motion_pointer(record, x, y, true); /* reverse the same gesture */
+    motion_wait(record, record->step, "reveal-reverse", false);
+    motion_pointer(record, x, y, false);
+    motion_wait(record, record->hold, "reveal-cancel", false);
+    motion_frame(record, "reveal-cancel", true);
+    assert(fnos_ui_page() == base);
+    puts("checks: stationary native content, strip repaint, reverse/cancel PASS");
 }
 
 static void motion_probe_log(FILE *csv, motion_record_t *record, const char *name,
@@ -4004,7 +4085,7 @@ static void motion_probe_log(FILE *csv, motion_record_t *record, const char *nam
     fprintf(csv, "%s,%u,%d,%d,%d,%d,%d,%d\n", name, elapsed,
             (int)s_touch_point.x, (int)observed.x,
             lv_indev_get_state(record->pointer) == LV_INDEV_STATE_PRESSED,
-            (int)lv_obj_get_style_translate_x(outgoing, 0),
+            motion_visible_width(incoming),
             motion_min_content_opa(incoming), fnos_ui_page());
 }
 
@@ -4028,7 +4109,7 @@ static void motion_response_probe(motion_record_t *record, int base, int target,
     snprintf(path, sizeof path, "%s/response.csv", s_outdir);
     FILE *csv = fopen(path, "w");
     assert(csv);
-    fputs("case,time_ms,requested_x,observed_x,pressed,outgoing_x,min_content_opa,page\n", csv);
+    fputs("case,time_ms,requested_x,observed_x,pressed,incoming_visible_width,min_content_opa,page\n", csv);
     lv_obj_t *outgoing = motion_native_page(base), *incoming = motion_native_page(target);
     lv_obj_t *viewport = lv_obj_get_parent(outgoing);
     lv_area_t area;
@@ -4049,7 +4130,7 @@ static void motion_response_probe(motion_record_t *record, int base, int target,
     for (unsigned t = 1; t <= record->hold; t++) {
         vtick_advance(1); lv_timer_handler();
         motion_probe_log(csv, record, "api", t, outgoing, incoming);
-        if (first_move < 0 && lv_obj_get_style_translate_x(outgoing, 0) != 0) {
+        if (first_move < 0 && motion_visible_width(incoming) > 0) {
             first_move = (int)t;
             motion_frame(record, "response-api-first", false);
         }
@@ -4105,7 +4186,7 @@ static void motion_response_probe(motion_record_t *record, int base, int target,
             motion_probe_log(csv, record, cases[i].name, t + 1, outgoing, incoming);
             lv_indev_get_point(record->pointer, &observed);
             if (first_sample < 0 && observed.x != x) first_sample = (int)t + 1;
-            if (lv_obj_get_style_translate_x(outgoing, 0) != 0) {
+            if (motion_visible_width(incoming) > 0) {
                 moved = true;
                 if (first_follow < 0) {
                     first_follow = (int)t + 1;
@@ -4243,12 +4324,26 @@ static void record_motion(lv_indev_t *pointer)
     record.timeline = fopen(path, "w");
     assert(record.timeline);
     fputs("file,time_ms,page,phase\n", record.timeline);
+    for (int i = 0; i < FNOS_UI_PAGE_COUNT; i++) {
+        int seen = 0;
+        s_motion_pages[i] = motion_page_by_index(lv_screen_active(), i, &seen);
+        assert(s_motion_pages[i]);
+    }
     bool previous_no_settle = s_no_settle;
     s_no_settle = true;
+    /* Exercise the real startup ordering: hidden pages can be laid out before
+       the first NAS snapshot arrives. They must not reveal that old empty state. */
+    static const fnos_status_t boot_empty;
+    const fnos_status_t *online_fixture = s_override_status;
+    if (first_entry) s_override_status = &boot_empty;
     fnos_ui_set_page(pages[0]);
     /* Pre-roll uses real timers; neither initial animation nor chart loading is
        completed by forcing object styles to their destination. */
     motion_wait(&record, record.warmup, "warmup", false);
+    if (first_entry) {
+        s_override_status = online_fixture;
+        motion_wait(&record, record.warmup, "first-online", false);
+    }
     record.start = vtick_get();
     motion_frame(&record, "ready", true);
 
@@ -4258,6 +4353,10 @@ static void record_motion(lv_indev_t *pointer)
     assert(baseline && terminal && (!(repeat_target || response_probe) || alternate_pixels));
     memcpy(baseline, s_frame, bytes);
     int64_t sequence_before = s_seq;
+    if (response_probe) {
+        motion_reveal_probe(&record, pages[0], pages[alternate]);
+        assert(!memcmp(baseline, s_frame, bytes));
+    }
 
     if (record.swipe) {
         /* A jitter on an action is a legitimate tap. Resolve a chart's current
@@ -4311,8 +4410,7 @@ static void record_motion(lv_indev_t *pointer)
         size_t entry_count = 0;
         motion_size_t *entry_sizes = NULL;
         if (first_entry && i == 1) {
-            int seen = 0;
-            entry_page = motion_page_by_index(lv_screen_active(), pages[i], &seen);
+            entry_page = motion_native_page(pages[i]);
             assert(entry_page && !effectively_hidden(entry_page));
             /* The first motion frame has already run native layout, but no UI
                timer tick has yet been advanced after the API navigation. */
@@ -4371,7 +4469,18 @@ static void record_motion(lv_indev_t *pointer)
     motion_wait(&record, record.hold, "rapid-ready", false);
     motion_target(&record, pages[alternate], "rapid-out");
     motion_wait(&record, record.rapid, "rapid-out", true);
+    memcpy(terminal, s_frame, bytes);
     motion_target(&record, pages[0], "rapid-back");
+    if (!record.swipe) {
+        lv_area_t content;
+        lv_obj_get_coords(motion_native_page(pages[0]), &content);
+        for (int y = content.y1; y <= content.y2; y++)
+            assert(!memcmp(terminal + y * s_scr_w + content.x1,
+                           s_frame + y * s_scr_w + content.x1,
+                           (size_t)lv_area_get_width(&content) * sizeof *s_frame) &&
+                   "an API reversal must preserve the current revealed pixels");
+        puts("checks: API reversal preserves current content pixels PASS");
+    }
     if (response_probe) {
         int complete = -1;
         lv_obj_t *returned = motion_native_page(pages[0]);
@@ -4609,6 +4718,58 @@ static void number_frame(FILE *timeline, const char *name, int page, const char 
     fprintf(timeline,"%s.ppm,%u,%d,%s\n",name,vtick_get(),page,phase);
 }
 
+/* Rapid real samples must not override the configured readable presentation beat. */
+static void record_number_stream(FILE *timeline)
+{
+    lv_obj_t *value=uk_number_label_create(lv_screen_active());
+    lv_obj_t *unit=lv_label_create(lv_screen_active());
+    assert(value && unit);
+    lv_obj_set_style_text_font(value,UK_FONT_NUM_44,0);
+    lv_obj_set_style_text_color(value,uk_c(UK_T1),0);
+    lv_obj_set_style_text_color(unit,uk_c(UK_T1),0);
+    lv_obj_set_width(value,240);
+    uk_number_set_reading(value,unit,"50","KB/s",false);
+    lv_obj_update_layout(lv_screen_active());
+    vtick_advance(UK_NUMBER_PRESENT_MS+1); lv_timer_handler();
+    unsigned changes=0, min_gap=UINT_MAX, last_change=0;
+    bool gated=!UK_NUMBER_REDUCED && UK_NUMBER_MS && UK_NUMBER_PRESENT_MS;
+    unsigned visible_period=gated ? ((UK_NUMBER_PRESENT_MS+199)/200)*200 : 200;
+    char latest[24]="50", previous[24]="50";
+    s_no_settle=true;
+    for (unsigned elapsed=0;elapsed<3000;elapsed+=25) {
+        if (elapsed%200==0) {
+            snprintf(latest,sizeof latest,"%u",10+(elapsed/200*37)%89);
+            uk_number_refresh_begin();
+            uk_number_set_reading(value,unit,latest,"KB/s",true);
+            const char *shown=lv_label_get_text(value);
+            assert(!strcmp(shown,elapsed%visible_period==0 ? latest : previous));
+            if (strcmp(previous,shown)) {
+                if (changes) min_gap=LV_MIN(min_gap,elapsed-last_change);
+                changes++; last_change=elapsed;
+                snprintf(previous,sizeof previous,"%s",shown);
+            }
+            assert(!strcmp(lv_label_get_text(unit),"KB/s"));
+        }
+        if (elapsed<=1200 && elapsed%100==0) {
+            char name[64]; snprintf(name,sizeof name,"number-stream-%04u",elapsed);
+            number_frame(timeline,name,0,"rapid-stream");
+        }
+        vtick_advance(25); lv_timer_handler();
+    }
+    assert(changes==(3000+visible_period-1)/visible_period);
+    if (gated && changes>1) assert(min_gap>=UK_NUMBER_PRESENT_MS);
+    printf("numeric stream: samples=15 changes=%u min_gap_ms=%u presentation_ms=%u\n",
+           changes,min_gap,UK_NUMBER_PRESENT_MS);
+    vtick_advance(UK_NUMBER_PRESENT_MS+1); lv_timer_handler();
+    uk_number_refresh_begin();
+    uk_number_set_reading(value,unit,latest,"KB/s",true);
+    assert(!strcmp(lv_label_get_text(value),latest)); /* Latest target, no backlog replay. */
+    uk_number_set_reading(value,unit,"--","",false);
+    assert(!strcmp(lv_label_get_text(value),"--") && !*lv_label_get_text(unit));
+    s_no_settle=false;
+    lv_obj_delete(value); lv_obj_delete(unit);
+}
+
 /* Render the actual numeric widget with a deterministic LVGL clock. */
 static void record_numbers(void)
 {
@@ -4641,6 +4802,8 @@ static void record_numbers(void)
         uk_number_set_text(labels[i],"--",false);
     }
     number_frame(timeline,"number-unavailable",0,"unavailable");
+    for (unsigned i=0;i<sizeof labels/sizeof labels[0];i++) lv_obj_delete(labels[i]);
+    record_number_stream(timeline);
     evidence_close(timeline, "numeric motion.csv");
     puts(UK_NUMBER_MS == 0 || UK_NUMBER_REDUCED ?
          "checks: in-place numeric replacements, stable origin, zero, missing and no glyph motion PASS" :

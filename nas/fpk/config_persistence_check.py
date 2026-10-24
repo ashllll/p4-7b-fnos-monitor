@@ -93,9 +93,11 @@ with mock.patch("builtins.open", side_effect=fixture_open):
                     if (isinstance(node, ast.FunctionDef) and node.name in ("load_config", "_config_bool", "_validate_startup_config"))
                     or (isinstance(node, ast.ClassDef) and node.name == "ConfigError")
                     or (isinstance(node, ast.Assign) and any(
-                        isinstance(target, ast.Name) and target.id == "DEFAULT_CONFIG"
+                        isinstance(target, ast.Name) and target.id in (
+                            "DEFAULT_CONFIG", "INTERVAL_MIN_S", "INTERVAL_MAX_S")
                         for target in node.targets))]
-        self.assertEqual(len(selected), 5, "expected production loader, validators, error and defaults")
+        self.assertEqual(len(selected), 7,
+                         "expected production loader, validators, error, defaults and interval bounds")
         self.loader_namespace = {"json": json, "os": os, "copy": copy, "cfg_path": lambda: str(self.config),
                                  "log": mock.Mock()}
         exec(compile(ast.Module(body=selected, type_ignores=[]), str(server), "exec"),

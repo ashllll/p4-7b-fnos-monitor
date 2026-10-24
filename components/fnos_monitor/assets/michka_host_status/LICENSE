@@ -1,0 +1,19 @@
+Michka-derived host-status artwork
+
+Copyright (c) 2025–2026 michka.org
+Authors: Michael Dalla Riva / Patrick Duquesnoy
+
+The Michka-derived SVG paths and their raster derivatives in this directory
+are licensed under the Creative Commons Attribution-NonCommercial 4.0
+International License (CC BY-NC 4.0):
+
+https://creativecommons.org/licenses/by-nc/4.0/
+
+The full upstream license notice is available at:
+https://github.com/michaeldallariva/michka/blob/3213285d6c22e786c0d4349ee3c0813cc98ab16d/LICENSE
+
+The derivative changes include static fills for the upstream CSS masks, an
+offline skull body color adapted to the project's #ff6b6b danger token while
+preserving the original #141414 face details, and 18x18 rasterization.
+Changes are documented in README.md. This directory-level notice does not
+change the license of the surrounding firmware project.

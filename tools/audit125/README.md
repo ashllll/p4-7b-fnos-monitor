@@ -47,8 +47,8 @@ Windows PowerShell 同上，用 `python` 代替 `python3`；没有 `cc`/`c++` �
 `CONFIG_SLAVE_IDF_TARGET_*` 一族符号，`esp_hosted` 直接报 `#error "Unknown Slave Target"`：
 
 ```bash
-FNOS_IDF_ENV=/Users/<USER>/code/esp/use-esp-idf-5.5.3.sh ./idf.sh build          # 默认版
-FNOS_IDF_ENV=/Users/<USER>/code/esp/use-esp-idf-5.5.3.sh ./idf.sh \
+FNOS_IDF_ENV=/Users/<USER>/code/esp/use-esp-idf-5.5.5.sh ./idf.sh build          # 默认版
+FNOS_IDF_ENV=/Users/<USER>/code/esp/use-esp-idf-5.5.5.sh ./idf.sh \
     -B build_diag -D SDKCONFIG=$PWD/build_diag/sdkconfig build                 # 诊断版
 # 诊断版的 sdkconfig 是主 sdkconfig 的副本 + CONFIG_FNOS_SOAK_DIAG=y，不要手改主 sdkconfig
 python3 tools/stack_check.py --elf build_diag/fnos_monitor.elf
