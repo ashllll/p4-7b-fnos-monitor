@@ -12,7 +12,7 @@
 
 一个独立屏幕，持续呈现 NAS 的运行状态。日常看仪表、趋势和状态；需要深入时，再进入存储、网络、系统、温度与告警页面。fnOS 配套应用负责采集，开发板负责显示。
 
-> 画面由当前源码通过真实 LVGL 在主机渲染，使用匿名夹具与合成读数；不是个人 NAS 快照或物理屏幕照片。[查看全部 15 张界面与复现说明](docs/images/ui-michka-slate-2026-10-22/README.md)。
+> 画面由石板灰界面阶段源码通过真实 LVGL 在主机渲染，使用匿名夹具与合成读数；不是个人 NAS 快照或物理屏幕照片。[查看全部 15 张界面与复现说明](docs/images/ui-michka-slate-2026-10-22/README.md)。后续温度页已移除趋势卡，当前布局见[温度页记录](docs/ui-temperature-compact-2026-10-24.md)。
 
 ## 一眼掌握，按需深入
 
@@ -49,14 +49,14 @@
 ### 1. 在 fnOS 安装配套应用
 
 1. 在应用中心安装依赖 `python312`。
-2. 下载 [飞牛监控 1.2.7 安装包](nas/fpk/nasscreencompanion.fpk)，通过「应用中心 → 手动安装」安装。
+2. 下载 [飞牛监控 1.2.8 安装包](nas/fpk/nasscreencompanion.fpk)，通过「应用中心 → 手动安装」安装。
 3. 保持默认 HTTPS 与配对令牌，确认遥测端口（默认 `8798`）。需要容器状态时启用容器采集。
 4. 从飞牛桌面打开「飞牛监控」，在「能力矩阵」检查当前设备能采集哪些数据。
 
-仓库当前安装包为 **104796 字节**，SHA-256：
+仓库当前安装包为 **107466 字节**，SHA-256：
 
 ```text
-6feefe9dcbcfc9f4a902b3474188df1978d2693b2fd9ade2d22c84b366395f9d
+fe611d0c055628f921f604c1bc3d29780f5c15824f3be31bdb2bb34d9ef49ecc
 ```
 
 该哈希用于核对当前下载文件；历史实机升级与性能记录有各自的产物基线，见[版本与验证边界](#最近迭代与版本边界)。安装、升级、TLS、权限与端口排障见 [飞牛应用说明](nas/fpk/README.md)。
@@ -123,9 +123,11 @@ export FNOS_SERIAL_PORT='/dev/cu.YOUR_BOARD_PORT'
 
 ![系统：容器、硬件温度与摘要](docs/images/ui-michka-slate-2026-10-22/system.png)
 
-### 温度：最高温、趋势与设备通道
+### 温度：最高温与设备通道
 
-![温度：最高温、趋势与设备通道](docs/images/ui-michka-slate-2026-10-22/temperature.png)
+![历史温度页样例，包含当前已移除的趋势卡](docs/images/ui-michka-slate-2026-10-22/temperature.png)
+
+上图保留原阶段样例；当前温度页仅保留全宽摘要与设备通道清单，见[布局与验证](docs/ui-temperature-compact-2026-10-24.md)。
 
 ### 告警：按严重程度筛选事件
 
@@ -188,11 +190,11 @@ export FNOS_SERIAL_PORT='/dev/cu.YOUR_BOARD_PORT'
 | CPU、负载、内存 | `/proc/stat`、`/proc/loadavg`、`/proc/meminfo` |
 | 网络接口与速率 | `/proc/net/dev`、默认路由；各接口独立计算 |
 | 存储、阵列、磁盘 IO | `/proc/mounts`、`statvfs`、`/proc/mdstat`、`/proc/diskstats` |
-| 硬件温度 | `/sys/class/hwmon/*/temp*_input`；依驱动和实际可读通道 |
+| 硬件温度 | `/sys/class/hwmon/*/temp*_input`；FPK 另对无 hwmon 的 MPT 控制器使用固定只读 IO Unit page 7 请求，依驱动和可读通道 |
 | 容器与资源 | 显式启用后，由受限辅助进程查询固定 Docker GET |
 | 可选 SMART | `smartctl -j -H -n standby,3`；依工具、设备、权限与启用选项 |
 
-管理服务以普通包用户运行；生命周期脚本与独立 Docker 辅助进程使用各自所需权限。磁盘和网口清单可能包含逻辑／虚拟设备，条目数量不能直接当成物理数量。字段语义见 [遥测说明](docs/ui-telemetry-2026-10-12.md)。
+管理服务以普通包用户运行；生命周期脚本与独立 Docker／MPT 只读辅助进程使用各自所需权限。磁盘和网口清单可能包含逻辑／虚拟设备，条目数量不能直接当成物理数量。字段语义见 [遥测说明](docs/ui-telemetry-2026-10-12.md)。
 
 ## 硬件自适应与资源边界
 
@@ -237,7 +239,7 @@ python3 tools/test_history_merge.py
 - **当前 michka 石板灰界面（2026-10-22）**：六页共用一套 slate sensor-panel 皮肤——近黑画布、灰色渐变气泡卡片、居中方块帽标题、Inter 数字、顶栏日期与大号时钟；清单统一行高，卡底只停在整行；图表去掉刻度只留卡头量程。README 同步 15 张匿名产品图。[设计与验证](docs/ui-michka-slate-2026-10-22.md) · [历史 ULTRA 记录](docs/ui-ultra-release-2026-10-14.md)。
 
 - **前一阶段界面基线 `7647d9b`**：CUKTECH 六页横屏、连续阻尼与新鲜度修复；模板构建、主机回归、静态检查、烧录哈希与短时串口观察已完成。[完整验证记录](docs/skills-workflow-2026-10-14.md)。
-- **当前仓库安装包 1.2.7**：本页校验值来自当前已跟踪文件及包内 manifest；这次文档与图片更新没有重新部署 NAS，也不把历史实机记录扩展成该文件的新增验收。
+- **当前仓库安装包 1.2.8**：温度归属与 MPT 控制器温度采集已修复，包内 manifest 和本页校验值与已跟踪文件一致；部署及保留配置的验证见[控制器温度记录](docs/nas-hba-temperature-2026-10-24.md)。本次规划文档发布没有再次部署 NAS 或烧录固件。
 - **历史 NAS 与设备证据**：[FPK 性能和 1.2.7 阶段记录](docs/fpk-performance-2026-10-12.md)、[1.2.4 发布记录](docs/release-1.2.4.md)、[架构重构](docs/architecture-refactor-2026-10-13.md)、[触控调度](docs/perf-touch-2026-10-12.md)和[交互优化](docs/perf-system-motion-2026-10-12.md)保留各自的源码、产物和验收范围。
 
 </details>
@@ -255,6 +257,8 @@ python3 tools/test_history_merge.py
 
 ## 文档导航
 
+- **michka 迁移规划（完整客户端未交付）**：[文档入口](docs/michka/README.md) · [PRD](docs/michka/PRD.md) · [架构](docs/michka/ARCHITECTURE.md) · [验收](docs/michka/ACCEPTANCE.md) · [上游协议继承](docs/michka/LICENSING.md)
+
 | 想做什么 | 文档 |
 | --- | --- |
 | 全面理解产品、界面与工程设计 | [设计总览：页面、视觉、动效、数据、架构与验收](docs/design-overview-2026-10-14.md) |
@@ -271,6 +275,8 @@ python3 tools/test_history_merge.py
 
 ## 许可证
 
-项目固件、采集器与飞牛应用采用 [Apache License 2.0](LICENSE)。LVGL / cJSON 为 MIT；Inter、Noto Sans SC、Chakra Petch 字体为 SIL OFL，相关许可保留在 [fonts/](components/fnos_monitor/fonts/)。
+项目自有固件、采集器与飞牛应用采用 [Apache License 2.0](LICENSE)。[Damped Springs](components/fnos_monitor/ui_kit/third_party/README.md) 保留 Ryan Juckett 的 zlib-style 许可；LVGL / cJSON 为 MIT；Inter、Noto Sans SC、Chakra Petch 字体为 SIL OFL，相关许可保留在 [fonts/](components/fnos_monitor/fonts/)。
+
+**michka 迁移部分继承上游 CC BY-NC 4.0（署名—非商业性使用）**：michka 原始材料及其衍生修改保留上游许可、作者与修改记录，不适用本项目自有代码的 Apache-2.0 声明。现有独立代码和第三方依赖仍保留各自许可；本轮没有替换根许可证。适用范围、署名模板和发行要求见 [许可政策](docs/michka/LICENSING.md) 与 [ADR-0011](docs/adr/0011-michka-upstream-license-inheritance.md)。
 
 主机状态图标由 Michka 图形派生，单独采用 **CC BY-NC 4.0**；来源、署名与修改说明见[图标目录](components/fnos_monitor/assets/michka_host_status/README.md)及其[许可证](components/fnos_monitor/assets/michka_host_status/LICENSE)。包含这些图标的发行物须保留署名并遵守该非商业许可。
