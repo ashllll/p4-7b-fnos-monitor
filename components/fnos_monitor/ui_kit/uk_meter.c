@@ -51,7 +51,7 @@ typedef struct {
     float value, velocity, from, from_velocity;
     int32_t target;
     uint32_t started;
-    bool arc, active;
+    bool arc, active, sync_next;
 } meter_t;
 static bool motion_enabled = true;
 static void meter_step(void *var, int32_t elapsed);
@@ -135,7 +135,7 @@ void uk_meter_set(lv_obj_t *obj, int32_t value, bool animate)
             *m = (meter_t){.obj=obj, .value=value, .target=value, .arc=arc};
             if (!lv_obj_add_event_cb(obj, meter_event, LV_EVENT_DELETE, m)) { lv_free(m); m=NULL; }
             /* First valid/visible reading is immediate; don't sweep from fake zero. */
-            enabled = false;
+            if (m) { meter_snap(m); return; }
         }
     }
     if (!m) {
@@ -143,8 +143,12 @@ void uk_meter_set(lv_obj_t *obj, int32_t value, bool animate)
         else lv_bar_set_value(obj, value, LV_ANIM_OFF);
         return;
     }
-    if (!enabled) { m->target=value; meter_snap(m); return; }
-    if (m->target == value) return; /* Repeated samples never restart the tail. */
+    if (!enabled) { m->sync_next=true; m->target=value; meter_snap(m); return; }
+    if (m->target == value) { m->sync_next=false; return; }
+    /* Keep the gauge and its number on one beat; closed batches keep moving
+       toward the last presented target, never replay skipped source samples. */
+    if (!m->sync_next && !uk_number_presentation_open()) return;
+    m->sync_next=false;
     if (m->active) meter_sample(m, lv_tick_elaps(m->started));
     lv_anim_delete(m, meter_step);
     m->from=m->value; m->from_velocity=m->velocity;

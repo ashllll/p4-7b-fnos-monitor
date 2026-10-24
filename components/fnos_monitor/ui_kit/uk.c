@@ -560,7 +560,7 @@ void uk_row_set(uk_row_t *r, const char *l1, const char *l2,
         if (pct < 0) lv_obj_add_flag(r->bar, LV_OBJ_FLAG_HIDDEN);
         else {
             lv_obj_remove_flag(r->bar, LV_OBJ_FLAG_HIDDEN);
-            uk_bar_set(r->bar, pct);
+            uk_meter_set(r->bar, LV_CLAMP(0, pct, 100) * UK_METER_SCALE, same_reading);
             lv_obj_set_style_bg_color(r->bar, uk_c(uk_pct_color(pct)), LV_PART_INDICATOR);
         }
     }

@@ -128,6 +128,10 @@ void uk_number_refresh_begin(void)
     }
 #endif
 }
+bool uk_number_presentation_open(void)
+{
+    return !presentation_gate_enabled || UK_NUMBER_PRESENT_MS==0 || presentation_batch_open;
+}
 lv_obj_t *uk_number_label_create(lv_obj_t *parent)
 {
     lv_obj_t *obj=lv_obj_class_create_obj(&number_class,parent);
@@ -218,12 +222,13 @@ void uk_number_set_text(lv_obj_t *obj, const char *text, bool animate)
     number_label_t *n=(number_label_t *)obj;
     const char *old=lv_label_get_text(obj);
     const lv_font_t *font=lv_obj_get_style_text_font(obj,0);
-    bool eligible=animate && motion_enabled && !UK_NUMBER_REDUCED && !uk_motion_reduced() && motion_period_ms>0 &&
-        lv_obj_is_visible(obj) && has_reading(old) && has_reading(text) &&
+    bool enabled=animate && motion_enabled && !UK_NUMBER_REDUCED && !uk_motion_reduced() && motion_period_ms>0 &&
+        lv_obj_is_visible(obj);
+    bool eligible=enabled && has_reading(old) && has_reading(text) &&
         same_numeric_structure(old,text) &&
         (!n->active || n->font==font);
     if (!eligible) {
-        n->sync_next=true; /* Prefill/semantic changes must not hold the first live reading. */
+        n->sync_next=!enabled; /* A live first value consumes the prefill bypass. */
         /* 值没变就别动图层栈、也别碰 lv_label_set_text：每次刷新都会给几十个
            数字重播一遍，clear_layers + 文本布局实测把每拍刷新推到 100 ms 量级，
            而这些调用里绝大多数数字跟上一拍一模一样。 */
@@ -233,7 +238,7 @@ void uk_number_set_text(lv_obj_t *obj, const char *text, bool animate)
         return;
     }
     if (!strcmp(old,text)) { n->sync_next=false; return; } /* Same target never restarts motion. */
-    if (!n->sync_next && presentation_gate_enabled && UK_NUMBER_PRESENT_MS>0 && !presentation_batch_open)
+    if (!n->sync_next && !uk_number_presentation_open())
         return; /* Keep this batch still; the next shared beat takes the latest target. */
     n->sync_next=false;
     n->font=font;
@@ -510,6 +515,21 @@ void uk_number_selfcheck(lv_obj_t *parent)
         assert(q && q2);
         lv_obj_set_style_text_font(q,UK_FONT_NUM_32,0); lv_obj_set_width(q,200);
         lv_obj_set_style_text_font(q2,UK_FONT_NUM_32,0); lv_obj_set_width(q2,200);
+        lv_obj_t *bar=lv_bar_create(parent);
+        lv_obj_t *arc=lv_arc_create(parent);
+        lv_bar_set_range(bar,0,100*UK_METER_SCALE);
+        lv_arc_set_range(arc,0,100*UK_METER_SCALE);
+        lv_obj_update_layout(parent);
+        assert(lv_obj_is_visible(bar) && lv_obj_is_visible(arc));
+        uk_meter_set(bar,10*UK_METER_SCALE,true);
+        uk_meter_set(arc,10*UK_METER_SCALE,true);
+        presentation_batch_open=false;
+        uk_number_set_text(q,"10",true); /* First valid value, with no prefill. */
+        uk_number_set_text(q,"11",true);
+        uk_meter_set(bar,11*UK_METER_SCALE,true);
+        uk_meter_settle(bar);
+        assert(!strcmp(lv_label_get_text(q),"10"));
+        assert(lv_bar_get_value(bar)==10*UK_METER_SCALE);
         uk_number_set_text(q,"10",false); lv_obj_update_layout(q);
         uk_number_set_text(q2,"20",false); lv_obj_update_layout(q2);
         number_label_t *qn=(number_label_t *)q, *qn2=(number_label_t *)q2;
@@ -517,17 +537,30 @@ void uk_number_selfcheck(lv_obj_t *parent)
         uk_number_refresh_begin();
         uk_number_set_text(q,"11",true);
         uk_number_set_text(q2,"21",true);
+        uk_meter_set(bar,11*UK_METER_SCALE,true);
+        uk_meter_set(arc,11*UK_METER_SCALE,true);
         assert(qn->active && qn2->active);
         uk_number_settle(q); uk_number_settle(q2);
         uk_number_refresh_begin();
         uk_number_set_text(q,"12",true);
         uk_number_set_text(q2,"22",true);
+        uk_meter_set(bar,12*UK_METER_SCALE,true);
+        uk_meter_set(arc,12*UK_METER_SCALE,true);
+        uk_meter_settle(bar);
+        uk_meter_settle(arc);
+        assert(lv_bar_get_value(bar)==11*UK_METER_SCALE);
+        assert(lv_arc_get_value(arc)==11*UK_METER_SCALE);
         assert(!qn->active && !qn2->active);
         assert(!strcmp(lv_label_get_text(q),"11") && !strcmp(lv_label_get_text(q2),"21"));
         presentation_batch_at=lv_tick_get()-UK_NUMBER_PRESENT_MS;
         uk_number_refresh_begin();
         uk_number_set_text(q,"13",true);
         uk_number_set_text(q2,"23",true);
+        uk_meter_set(bar,13*UK_METER_SCALE,true);
+        uk_meter_set(arc,13*UK_METER_SCALE,true);
+        uk_meter_settle(bar); uk_meter_settle(arc);
+        assert(lv_bar_get_value(bar)==13*UK_METER_SCALE);
+        assert(lv_arc_get_value(arc)==13*UK_METER_SCALE);
         assert(qn->active && qn2->active);
         lv_obj_t *unit=lv_label_create(parent);
         assert(unit);
@@ -539,6 +572,40 @@ void uk_number_selfcheck(lv_obj_t *parent)
         uk_number_set_reading(q,unit,"1.1","MB/s",true);
         assert(!strcmp(lv_label_get_text(q),"1.1") && !strcmp(lv_label_get_text(unit),"MB/s") && !qn->active);
         presentation_batch_open=false;
+        uk_meter_set(bar,0,false); uk_meter_set(arc,0,false);
+        assert(lv_bar_get_value(bar)==0 && lv_arc_get_value(arc)==0);
+        uk_meter_set(bar,21*UK_METER_SCALE,true);
+        uk_meter_set(arc,21*UK_METER_SCALE,true);
+        uk_meter_settle(bar); uk_meter_settle(arc);
+        assert(lv_bar_get_value(bar)==21*UK_METER_SCALE);
+        assert(lv_arc_get_value(arc)==21*UK_METER_SCALE);
+        uk_meter_set(bar,22*UK_METER_SCALE,true);
+        uk_meter_set(arc,22*UK_METER_SCALE,true);
+        uk_meter_settle(bar); uk_meter_settle(arc);
+        assert(lv_bar_get_value(bar)==21*UK_METER_SCALE);
+        assert(lv_arc_get_value(arc)==21*UK_METER_SCALE);
+        uk_number_set_text(q,"--",false);
+        uk_meter_set(bar,0,false); uk_meter_set(arc,0,false);
+        uk_number_set_text(q,"30",true);
+        uk_meter_set(bar,30*UK_METER_SCALE,true);
+        uk_meter_set(arc,30*UK_METER_SCALE,true);
+        uk_number_set_text(q,"31",true);
+        uk_meter_set(bar,31*UK_METER_SCALE,true);
+        uk_meter_set(arc,31*UK_METER_SCALE,true);
+        uk_meter_settle(bar); uk_meter_settle(arc);
+        assert(!strcmp(lv_label_get_text(q),"30"));
+        assert(lv_bar_get_value(bar)==30*UK_METER_SCALE);
+        assert(lv_arc_get_value(arc)==30*UK_METER_SCALE);
+        uk_row_t *row=uk_row_create(parent,false,true);
+        uk_row_set(row,"device A",NULL,"11",NULL,11,0);
+        lv_obj_update_layout(parent);
+        assert(lv_obj_is_visible(row->bar));
+        uk_row_set(row,"device A",NULL,"11",NULL,11,0);
+        uk_row_set(row,"device B",NULL,"12",NULL,12,0);
+        uk_anim_settle(row->row);
+        assert(!strcmp(lv_label_get_text(row->val),"12"));
+        assert(lv_bar_get_value(row->bar)==12*UK_METER_SCALE);
+        lv_obj_delete(row->row); lv_free(row);
         uk_number_set_reading(q,unit,"--","",false);
         assert(!strcmp(lv_label_get_text(q),"--") && !strcmp(lv_label_get_text(unit),"") && !qn->active);
         /* A synchronous prefill/stale reading must not hold the first live value. */
@@ -548,6 +615,8 @@ void uk_number_selfcheck(lv_obj_t *parent)
         uk_number_set_reading(q,unit,"22","KB/s",true);
         assert(!strcmp(lv_label_get_text(q),"21")); /* Following samples obey the beat. */
         lv_obj_delete(unit);
+        lv_obj_delete(bar);
+        lv_obj_delete(arc);
         lv_obj_delete(q); lv_obj_delete(q2);
         presentation_batch_open=saved_batch_open;
         presentation_batch_started=saved_batch_started;

@@ -176,6 +176,7 @@ PREVIEW_REFRESH_WORK=1 PREVIEW_PARTIAL=1 tools/preview/build/preview /tmp/fnos-r
 `PREVIEW_NUMBERS=1` 验证第三方求解器的欠阻尼／临界／过阻尼分支、时间步拆分等价性、位置/速度重定向、单位切换立即发布、仪表与数字生命周期；
 同时用 200 ms 间隔的 15 个匿名读数检查快速更新：输出实际换值次数和最短间隔，验证配置的共享呈现节拍、取最新目标及缺失值即时发布。`number-stream-*` 为实际控件渲染帧；主机时钟和换值次数不代表开发板呈现 FPS。
 `PREVIEW_DATA_MOTION=1` 录制全部六页，含仪表尾段与数字/单位锚点检查。仍使用真实 UI 代码和匿名夹具。
+数字、圆环和条形共用呈现门；`PREVIEW_NUMBERS` 同时检查闭门、首次有效值、缺失恢复和设备换名，完整流程另检查真实卷／温度旧值的即时发布。规则、实机结果和边界见[动画技能复核](../../docs/ui-small-screen-anim-2026-10-24.md)。
 `PREVIEW_CHART_MAP=1`（已进入默认 `run.sh`）还验证曲线游标随最新样本、滚动与尺寸变化保持附着，隐藏、缺失和清空时消失。
 
 ```bash

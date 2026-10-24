@@ -2584,6 +2584,25 @@ static void verify_detail_freshness(void)
         for (int i = 0; i < fixture.nmods; i++)
             if (!strcmp(fixture.mods[i].name, modules[kind])) module = i;
         assert(module >= 0);
+        if (kind != 1 && UK_NUMBER_PRESENT_MS > fnos_ui_refresh_period_ms()) {
+            assert(fnos_status_text(&fixture, &fixture.mods[module].status, "ok"));
+            fixture.vols[0].pct = 11; fixture.temps[0].c = 11;
+            fnos_ui_set_page(kind == 2 ? 3 : 1); regression_tick(); regression_tick();
+            vtick_advance(UK_NUMBER_PRESENT_MS + 1); lv_timer_handler();
+            assert(uk_number_presentation_open());
+            assert(fnos_status_text(&fixture, &fixture.mods[module].status, "stale"));
+            fixture.vols[0].pct = 54; fixture.temps[0].c = 45.6f;
+            vtick_advance(fnos_ui_refresh_period_ms()); lv_timer_handler();
+            uk_anim_settle(lv_screen_active());
+            assert(!uk_number_presentation_open());
+            lv_obj_t *entity = visible_text(lv_screen_active(), identities[kind]);
+            assert(entity);
+            lv_obj_t *bar = NULL;
+            for (lv_obj_t *row = entity; row && !bar; row = lv_obj_get_parent(row))
+                bar = find_widget(row, &lv_bar_class);
+            assert(bar);
+            assert(lv_bar_get_value(bar) == (kind == 0 ? 54 : 45) * UK_METER_SCALE);
+        }
         for (unsigned state = 0; state < sizeof states / sizeof states[0]; state++) {
             assert(fnos_status_text(&fixture, &fixture.mods[module].status, "%s", states[state]));
             fixture.vols[0].pct = 54; fixture.raid[0].ok = true; fixture.temps[0].c = 45.6f;
@@ -4723,7 +4742,13 @@ static void record_number_stream(FILE *timeline)
 {
     lv_obj_t *value=uk_number_label_create(lv_screen_active());
     lv_obj_t *unit=lv_label_create(lv_screen_active());
-    assert(value && unit);
+    lv_obj_t *bar=lv_bar_create(lv_screen_active());
+    lv_obj_t *arc=lv_arc_create(lv_screen_active());
+    assert(value && unit && bar && arc);
+    lv_bar_set_range(bar,0,100*UK_METER_SCALE);
+    lv_arc_set_range(arc,0,100*UK_METER_SCALE);
+    uk_meter_set(bar,50*UK_METER_SCALE,true);
+    uk_meter_set(arc,50*UK_METER_SCALE,true);
     lv_obj_set_style_text_font(value,UK_FONT_NUM_44,0);
     lv_obj_set_style_text_color(value,uk_c(UK_T1),0);
     lv_obj_set_style_text_color(unit,uk_c(UK_T1),0);
@@ -4741,6 +4766,8 @@ static void record_number_stream(FILE *timeline)
             snprintf(latest,sizeof latest,"%u",10+(elapsed/200*37)%89);
             uk_number_refresh_begin();
             uk_number_set_reading(value,unit,latest,"KB/s",true);
+            uk_meter_set(bar,atoi(latest)*UK_METER_SCALE,true);
+            uk_meter_set(arc,atoi(latest)*UK_METER_SCALE,true);
             const char *shown=lv_label_get_text(value);
             assert(!strcmp(shown,elapsed%visible_period==0 ? latest : previous));
             if (strcmp(previous,shown)) {
@@ -4763,11 +4790,17 @@ static void record_number_stream(FILE *timeline)
     vtick_advance(UK_NUMBER_PRESENT_MS+1); lv_timer_handler();
     uk_number_refresh_begin();
     uk_number_set_reading(value,unit,latest,"KB/s",true);
+    uk_meter_set(bar,atoi(latest)*UK_METER_SCALE,true);
+    uk_meter_set(arc,atoi(latest)*UK_METER_SCALE,true);
+    uk_meter_settle(bar); uk_meter_settle(arc);
+    assert(lv_bar_get_value(bar)==atoi(latest)*UK_METER_SCALE);
+    assert(lv_arc_get_value(arc)==atoi(latest)*UK_METER_SCALE);
     assert(!strcmp(lv_label_get_text(value),latest)); /* Latest target, no backlog replay. */
     uk_number_set_reading(value,unit,"--","",false);
     assert(!strcmp(lv_label_get_text(value),"--") && !*lv_label_get_text(unit));
     s_no_settle=false;
     lv_obj_delete(value); lv_obj_delete(unit);
+    lv_obj_delete(bar); lv_obj_delete(arc);
 }
 
 /* Render the actual numeric widget with a deterministic LVGL clock. */

@@ -5034,6 +5034,7 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
         uk_row_set(row, v->mnt, b, c1, NULL, gauge_value(v->pct), 0);
         if (!vols_live) {
             set_txt(row->name2, "%s", b); set_txt(row->val, "%s", c1);
+            uk_meter_set(row->bar, gauge_value(v->pct) * UK_METER_SCALE, false);
             uk_anim_settle(row->row);
         }
         show(row->name2, false);
@@ -5355,6 +5356,7 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
         uk_row_set(r, nm, sub, vb, "°C", gauge_value(g->max_c), 0);
         if (!temps_live) {
             set_txt(r->name2, "%s", sub); set_txt(r->val, "%s", vb);
+            uk_meter_set(r->bar, gauge_value(g->max_c) * UK_METER_SCALE, false);
             uk_anim_settle(r->row);
         }
         /* 原来这里再 set_txt(name2, 与 sub 同文) 覆盖一遍：文本一样，却把

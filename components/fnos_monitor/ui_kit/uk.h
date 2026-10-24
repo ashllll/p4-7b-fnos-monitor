@@ -111,8 +111,9 @@ void uk_number_set_reading(lv_obj_t *value, lv_obj_t *unit, const char *text,
                            const char *unit_text, bool animate);
 void uk_number_settle(lv_obj_t *label);
 void uk_number_motion_enable(bool enabled);
-/* Open at most one synchronized numeric presentation batch per configured cadence. */
+/* Open at most one synchronized numeric/meter batch per configured cadence. */
 void uk_number_refresh_begin(void);
+bool uk_number_presentation_open(void);
 /* Native bar/arc values use UK_METER_SCALE ticks per displayed unit. */
 void uk_meter_set(lv_obj_t *obj, int32_t value, bool animate);
 void uk_meter_settle(lv_obj_t *obj);
