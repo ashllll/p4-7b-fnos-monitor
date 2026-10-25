@@ -8,7 +8,7 @@ import struct
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE / 'nasscreencompanion/app/server'))
@@ -18,6 +18,25 @@ spec.loader.exec_module(launch)
 
 
 class TemperatureTests(unittest.TestCase):
+    def test_temperature_deadline_returns_error_and_reader_recovers(self):
+        import json
+        handlers = {}
+        def expire(*args):
+            handlers[launch.signal.SIGALRM](launch.signal.SIGALRM, None)
+        sock = MagicMock()
+        sock.recv.side_effect = [b'T', b'R', b'X']
+        with patch.object(launch.signal, 'signal', side_effect=lambda sig, fn: handlers.update({sig: fn})), \
+             patch.object(launch.signal, 'setitimer'), \
+             patch('glob.glob', return_value=['/sys/class/scsi_host/host0', '/sys/class/scsi_host/host1']), \
+             patch('builtins.open', side_effect=expire) as opened, \
+             patch.object(launch, 'snapshot', return_value={'rows': [], 'total': 0}):
+            launch.reader(sock, None, os.getppid())
+        frames = [json.loads(call.args[0][4:]) for call in sock.sendall.call_args_list]
+        self.assertIn('errno', frames[0])
+        self.assertIn('deadline exceeded', frames[0]['error'])
+        self.assertEqual(opened.call_count, 1)  # No next controller after the global deadline.
+        self.assertEqual(frames[1]['total'], 0)
+
     def test_reader_fixed_operations_cache_and_unknown_command(self):
         parent, child = socket.socketpair()
         pid = os.fork()
