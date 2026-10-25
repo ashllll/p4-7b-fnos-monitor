@@ -97,7 +97,7 @@ elif [ ! -x "$PREVIEW_DIR/build/preview" ]; then
   INCOMPLETE=1
 else
   # 每条 `./build/preview` 都要被换成记录器；行数对不上说明脚本结构变了，断言会失败
-  # 文本里 4 处调用点（图表映射 / 主渲染 / 夹具循环体 / OOM），运行时 7 次调用（夹具循环体跑 4 次）；
+  # 文本里 9 处调用点，运行时 29 次调用（含刷新、硬件矩阵、动效与八套主题）；
   # 运行时次数由下面的 env.log 块数断言，这里只钉住"改的地方就这几行"。
   PROBE=$(mktemp "$PREVIEW_DIR/.run-guard-probe.XXXXXX") || exit 2
   GUARDBIN=$(mktemp "$PREVIEW_DIR/build/guard-preview.XXXXXX") || exit 2
@@ -106,8 +106,8 @@ else
   sed "s#\./build/preview#./build/$(basename "$GUARDBIN")#g" "$PREVIEW_DIR/run.sh" > "$PROBE"
   CHANGED=$(diff "$PREVIEW_DIR/run.sh" "$PROBE" | grep -c '^[<>]')
   check "探针副本只改了 preview 可执行文件路径" \
-    "$([ "$CALLS" = 4 ] && [ "$LINES" = 4 ] && [ "$CHANGED" = 8 ] && echo 0 || echo 1)" \
-    "调用点 $CALLS 处（$LINES 行）、diff $CHANGED 行（期望 4 处 / 8 行）"
+    "$([ "$CALLS" = 9 ] && [ "$LINES" = 9 ] && [ "$CHANGED" = 18 ] && echo 0 || echo 1)" \
+    "调用点 $CALLS 处（$LINES 行）、diff $CHANGED 行（期望 9 处 / 18 行）"
   cat > "$GUARDBIN" <<'EOF'
 #!/bin/bash
 # 记录本阶段真正拿到的 PREVIEW_* 环境，再转交真二进制。
@@ -146,13 +146,17 @@ EOF
 
   # 逐阶段核对：每个阶段允许出现的 PREVIEW_* 只有它自己设的那几个
   blocks=$(grep -c '^--$' "$ENVLOG")
-  check "记录到了 7 个 preview 阶段（图表映射 + 主渲染 + 4 夹具 + OOM）" "$([ "$blocks" = 7 ] && echo 0 || echo 1)" "记录到 $blocks"
+  check "记录到了 29 个 preview 阶段（含刷新、矩阵、动效与主题）" "$([ "$blocks" = 29 ] && echo 0 || echo 1)" "记录到 $blocks"
   allowed_for() {
     case "$1" in
       1) echo "PREVIEW_CHART_MAP" ;;
       2) echo "PREVIEW_BARMAP" ;;
-      7) echo "PREVIEW_ALLOC_FAIL_AT PREVIEW_HARDWARE_FIXTURE" ;;
-      *) echo "PREVIEW_HARDWARE_FIXTURE" ;;
+      3) echo "PREVIEW_PARTIAL PREVIEW_REFRESH_WORK" ;;
+      4|5|6|7) echo "PREVIEW_HARDWARE_FIXTURE" ;;
+      8) echo "PREVIEW_ALLOC_FAIL_AT PREVIEW_HARDWARE_FIXTURE" ;;
+      13) echo "PREVIEW_PARTIAL PREVIEW_MOTION PREVIEW_MOTION_INPUT PREVIEW_MOTION_FIRST_ENTRY PREVIEW_MOTION_REPEAT_TARGET PREVIEW_MOTION_RESPONSIVENESS" ;;
+      9|10|11|12|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29) echo "PREVIEW_DATA_MOTION" ;;
+      *) echo "UNEXPECTED_STAGE" ;;
     esac
   }
   i=0

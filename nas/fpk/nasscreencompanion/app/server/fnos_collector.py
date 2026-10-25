@@ -244,10 +244,15 @@ class Collector:
                 if self._stop.is_set():
                     break
                 frame = PublishedSnapshot(snap)
-                row = [snap["ts"], snap["cpu"]["pct"], snap["mem"]["pct"],
-                       snap["net"]["rx_kbs"], snap["net"]["tx_kbs"],
+                live = {key: key not in snap.get("errors", []) and
+                        snap.get("modules", {}).get(key, {}).get("status", "ok") == "ok"
+                        for key in ("cpu", "mem", "net", "temps")}
+                row = [snap["ts"], snap["cpu"]["pct"] if live["cpu"] else None,
+                       snap["mem"]["pct"] if live["mem"] else None,
+                       snap["net"]["rx_kbs"] if live["net"] else None,
+                       snap["net"]["tx_kbs"] if live["net"] else None,
                        max((t["c"] for t in snap.get("temps", []) if isinstance(t.get("c"), (int, float))), default=None)
-                       if "temps" not in snap.get("errors", []) and snap.get("modules", {}).get("temps", {}).get("status", "ok") == "ok" else None]
+                       if live["temps"] else None]
             except Exception as exc:                      # 采集失败不能让服务挂掉
                 if self._stop.is_set():
                     break

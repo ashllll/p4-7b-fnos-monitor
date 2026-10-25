@@ -830,7 +830,7 @@ void uk_pool_relayout(lv_obj_t *pool, int32_t min_col_w, bool data_fit, lv_obj_t
         }
     }
     st->cols=cols; st->shown=n;
-    if (note) uk_set_text(note,"%d / %d",n,n);
+    if (note) uk_set_text(note,"%d / %d",(int)n,(int)n);
     uk_viewport_snap(pool,base_gap);
 }
 

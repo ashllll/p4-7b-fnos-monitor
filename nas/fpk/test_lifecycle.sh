@@ -126,7 +126,7 @@ must() { "$@" || { echo "准备命令失败：$1；拒绝继续" >&2; exit 1; };
 step "0. 构建 .fpk 并按真机布局解开"
 # 打包前清掉 Python 字节码缓存：fnpack 会把包目录里的一切原样打进去，
 # __pycache__ 是本地跑测试时留下的构建产物（曾经真的进了 .fpk）。
-must rm -rf "$PKG"/app/server/__pycache__
+must find "$PKG" -name __pycache__ -type d -prune -exec rm -rf {} +
 if command -v fnpack >/dev/null 2>&1; then
   ( cd "$WORK" && fnpack build --directory "$PKG" >/dev/null 2>&1 ) || { echo "fnpack build失败" >&2; exit 1; }
   FPK="$WORK/$(basename "$PKG").fpk"

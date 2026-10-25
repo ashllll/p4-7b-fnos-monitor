@@ -207,9 +207,22 @@ check "负控：旧脚本在旧实例还活着时就把配置写下去了（正�
 # ---------------------------------------------------------------- S3 正常停止没被改坏
 S3="$WORK/s3"
 setup_pkg "$S3"
-python3 -c 'import time; time.sleep(600)' &
+# A clean service stop now requires a receipt from the terminated process.
+python3 - "$S3/var" <<'PYEOF' &
+import json, os, signal, sys, time
+from pathlib import Path
+root = Path(sys.argv[1])
+def stop(*_):
+    (root/'service-exit.json').write_text(json.dumps({'pid': os.getpid(), 'code': 0}))
+    raise SystemExit(0)
+signal.signal(signal.SIGTERM, stop)
+(root/'ready').touch()
+time.sleep(600)
+PYEOF
 v3=$!
 VICTIM_PIDS="$VICTIM_PIDS $v3"
+for _ in $(seq 1 50); do [ -f "$S3/var/ready" ] && break; sleep 0.1; done
+[ -f "$S3/var/ready" ] || { echo "S3 fixture did not become ready" >&2; exit 1; }
 printf '%s\n' "$v3" > "$S3/var/app.pid"
 : > "$S3/app.sock"
 if sout3=$(TRIM_APPDEST="$S3" TRIM_PKGVAR="$S3/var" bash "$S3/cmd/main" stop 2>&1); then rc3=0; else rc3=$?; fi
