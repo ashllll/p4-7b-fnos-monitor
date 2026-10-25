@@ -2294,9 +2294,12 @@ static void verify_overview_charts(void)
     fnos_status_text(&fixture, &fixture.mods[4].status, "stale");
     fnos_status_text(&fixture, &fixture.mods[5].status, "denied");
     fnos_status_text(&fixture, &fixture.mods[6].status, "denied");
+    /* Collector quality travels with every sample, independently of the current gauge. */
+    s_override_sample.cpu = s_override_sample.rx_kbs = s_override_sample.tx_kbs = NAN;
+    s_override_sample.temp_max = NAN;
     s_seq += 2;
     regression_tick();
-    assert(chart_values_equal(cpu, 0, 17) == 1); // stale resource is frozen
+    assert(chart_values_equal(cpu, 0, 17) == 1); // retained value is not republished
     assert(chart_values_equal(mem, 0, 42) == 3); // healthy module still advances
     assert(visible_text(lv_screen_active(), "权限不足"));
     assert(!overview_object("网络吞吐", &lv_chart_class));
@@ -2305,20 +2308,27 @@ static void verify_overview_charts(void)
     assert(lv_obj_get_style_opa(cpu, 0) == LV_OPA_40);
     snapshot("10-overview-partial");
 
-    for (int i = 0; i < fixture.nmods; i++) fnos_status_text(&fixture, &fixture.mods[i].status, "ok");
+    /* A previously captured valid row may arrive while today's CPU is stale. */
+    s_override_sample.cpu = 18;
     s_seq++;
     regression_tick();
-    assert(chart_values_equal(cpu, 0, LV_CHART_POINT_NONE) == 1);
+    assert(chart_values_equal(cpu, 0, 18) == 1);
+    assert(chart_values_equal(cpu, 0, LV_CHART_POINT_NONE) == 2);
+    for (int i = 0; i < fixture.nmods; i++) fnos_status_text(&fixture, &fixture.mods[i].status, "ok");
+    s_override_sample = (fnos_sample_t){ .cpu = 17, .mem = 42, .rx_kbs = 128, .tx_kbs = 64, .temp_max = 71 };
+    s_seq++;
+    regression_tick();
+    assert(chart_values_equal(cpu, 0, LV_CHART_POINT_NONE) == 2);
     s_override_sample.temp_max = NAN;
     s_seq++;
     regression_tick();
-    assert(chart_values_equal(temp, 0, LV_CHART_POINT_NONE) == 1);
+    assert(chart_values_equal(temp, 0, LV_CHART_POINT_NONE) == 4);
     s_override_sample.temp_max = 71;
     fixture.online = false;
     snprintf(fixture.last_err, sizeof fixture.last_err, "timeout");
     int32_t old[CONFIG_FNOS_CHART_WINDOW];
     memcpy(old, lv_chart_get_series_y_array(cpu, uk_trend_raw_series(cpu, 0)), bytes);
-    s_seq++;
+    /* A transport failure publishes no new history row. */
     regression_tick();
     assert(!memcmp(old, lv_chart_get_series_y_array(cpu, uk_trend_raw_series(cpu, 0)), bytes));
     assert(visible_text(lv_screen_active(), "旧值"));

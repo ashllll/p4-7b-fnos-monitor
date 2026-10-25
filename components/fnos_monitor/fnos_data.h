@@ -132,12 +132,14 @@ bool fnos_data_set_poll_interval_ms(unsigned ms);
 // 网络状态变化（断线/重连）：丢弃 HTTP 长连接与会话，避免继续用失效 socket。
 void fnos_data_network_changed(void);
 // 复制当前快照；out须{0}初始化或为调用者独占的有效快照，禁止并发共用out。
-// 取锁失败保留out，返回其ever_ok；false不表示其他消费者也未取得过数据。
+// 非阻塞读取：锁忙时保留out，返回其ever_ok；false不表示其他消费者也未取得过数据。
 bool fnos_data_get(fnos_status_t *out);
 // 增量读取曲线样本：取 seq > 起始序号（since_seq 传 0 表示从头）的最多 max 个样本，
 // 并把下一个游标写回 *next_seq。返回写入 out 的样本数。UI 侧每帧调用一次即可。
 int  fnos_data_hist_read(int64_t since_seq, fnos_sample_t *out, int max, int64_t *next_seq);
-/* Reset-aware reader: reset=true means discard the consumer window before adding
+/* Nonblocking: a busy lock returns no rows without advancing the cursor.
+   Each metric uses NAN for an unavailable sample; other metrics remain valid.
+   Reset-aware reader: reset=true means discard the consumer window before adding
    this batch, including an empty batch on endpoint changes. Keep next_seq even
    when zero rows are returned. The original reader ABI remains available. */
 int fnos_data_hist_read_ex(int64_t since_seq, fnos_sample_t *out, int max, int64_t *next_seq, bool *reset);

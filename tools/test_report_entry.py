@@ -17,6 +17,9 @@ class ReportEntry(unittest.TestCase):
             for name in ('tools','docs','nas/fpk/nasscreencompanion/cmd','build','bin'):
                 (root/name).mkdir(parents=True,exist_ok=True)
             shutil.copyfile(ROOT/'tools/test_report.sh',root/'tools/test_report.sh')
+            shutil.copyfile(ROOT/'tools/host_checks.sh',root/'tools/host_checks.sh')
+            if options.pop('missing_registry',False):
+                (root/'tools/host_checks.sh').unlink()
             if options.pop('unchecked_patch',False):
                 script=root/'tools/test_report.sh'
                 script.write_text(script.read_text().replace('set -euo pipefail','set -uo pipefail',1))
@@ -57,6 +60,8 @@ esac
         self.assertEqual(result.returncode,0,result.stderr+result.stdout)
         self.assertNotIn('__PLAN_PENDING__',text)
         self.assertIn('python3 tools/test_ui_requests.py',text)
+        self.assertIn('python3 nas/fpk/test_mpt_temperature.py',text)
+        self.assertIn('python3 nas/fpk/test_metrics.py',text)
         self.assertNotIn('| — |',text)
 
     def test_incomplete_is_distinct(self):
@@ -86,6 +91,11 @@ esac
         self.assertEqual(result.returncode,0)
         self.assertIn('__PLAN_PENDING__',text)
         self.assertIn('回填 plan_check 结论：',result.stdout)
+
+    def test_missing_shared_registry_fails(self):
+        result,text=self.run_report(missing_registry=True)
+        self.assertNotEqual(result.returncode,0)
+        self.assertEqual(text,'')
 
     def test_unknown_option_rejected_before_checks(self):
         result,text=self.run_report(('--typo',))

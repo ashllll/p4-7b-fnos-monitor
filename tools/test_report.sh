@@ -109,10 +109,11 @@ run_check() {  # run_check <名字> <命令...>
   fi
 }
 : >"$TMP/checks"
-# 放在最前面：产物过期时的"全绿"是对旧代码说的，先确定验的是当前代码
+[ -r tools/host_checks.sh ] || { echo "Missing tools/host_checks.sh" >&2; exit 2; }
+. tools/host_checks.sh || exit 2
+fnos_host_checks run_check
+# 共享检查完成后核对产物，避免把旧构建记成本轮通过。
 run_check "产物不比源码旧（三套产物）" python3 tools/freshness_check.py
-run_check "字段契约（板子读的字段 NAS 是否都在）" python3 nas/fpk/contract_check.py
-run_check "向导表单 schema" python3 nas/fpk/wizard_check.py "$PKG"
 run_check "manifest 取值与包内结构" python3 nas/fpk/manifest_check.py "$PKG"
 run_check "每请求内存判定" python3 nas/fpk/mem_check.py 3000
 run_check "匿名大清单持续发布与 HTTP 内存判定" python3 nas/fpk/mem_check.py 3000 --entities 1024 --publish-every 10
@@ -121,13 +122,6 @@ run_check "匿名大清单持续发布与 HTTP 内存判定" python3 nas/fpk/mem
 # 已经修好了也会被记一行"失败"并置 HARD_FAIL，而写完之后那次复跑只能追一条 ⚠ 注脚，
 # **改不了那一行，也改不了退出码**。现在这里只占位，结论在报告写完后回填（见文件末尾）。
 echo "计划文档与现状一致|__PLAN_PENDING__|python3 tools/plan_check.py" >>"$TMP/checks"
-run_check "证书指纹三方一致（固件 / 服务端 / openssl）" bash tools/certcheck/run.sh
-run_check "连接失败原因标签跨文件契约" python3 tools/reason_check.py
-run_check "管理页 ↔ 服务端接口字段名" python3 nas/fpk/api_check.py
-run_check "权限分类器（矩阵的每一格都来自它）" python3 nas/fpk/perm_check.py
-# 主机预览：方案文档的状态行里写着"主机预览样张与断言全通过"，但报告此前**根本没跑它**
-# ——又是"报告替没跑过的检查背书"。它同时是四条版面审计（字形/溢出/越界/压盖）的入口。
-run_check "主机预览（四条版面审计 + 配对流程断言）" bash tools/preview/run.sh
 # 长测不是交付物，于是它有**三种**状态，不能只塞进 ✓/✗ 两格：
 #   rc 0 = 日志新鲜、服务端Python副本一致、样本健康 → 通过此局部门
 #   rc 2 = 日志缺失/过期/未来时间 → **未判定**：不是本轮缺陷，
@@ -152,49 +146,9 @@ else
   echo "$SOAK_NAME|失败|python3 tools/soak_check.py" >>"$TMP/checks"
   HARD_FAIL=1
 fi
-run_check "Python 开发模式零警告（未关闭的 socket/文件）" python3 nas/fpk/devmode_check.py 30
-run_check "截断真的发生了（六段各喂 50 条）" python3 nas/fpk/collector_check.py
-run_check "满载状态帧能被固件的 parse_status() 吃下" bash tools/parsecheck/run.sh
 # 本轮修复的回归（Codex 复核打回的三条 + M31/M36/M57）。全部在临时目录里跑，用桩 kill /
 # 桩 systemctl / 派生的预览副本，不碰真 NAS、不碰真服务、不删仓库外的数据。
 # 运行时间：生命周期约 2 分钟、令牌路径约 10 秒、预览守卫约 2 分钟（它整跑一次预览）。
-run_check "停止失败时不删记录、不写配置（M21/M25/M26）" bash nas/fpk/test_process_lifecycle.sh
-run_check "配网提交代次、迟到事件与 RPC 失败" python3 tools/test_wifi_submission.py
-run_check "报告入口错误传播与未完成状态（纯桩）" python3 -W error::ResourceWarning tools/test_report_entry.py
-run_check "空原因集合与缺预览配置负控" python3 tools/test_host_gate_failures.py
-run_check "发布配置恢复与工具失败边界（无设备）" python3 -W error::ResourceWarning tools/test_gate_failures.py
-run_check "Manifest 包身份与字段形状负控" python3 -W error::ResourceWarning tools/test_manifest_failures.py
-run_check "PID 写失败与卸载收尾（无 NAS）" python3 nas/fpk/test_lifecycle_failures.py
-run_check "API 与向导规则负控（无 NAS）" python3 nas/fpk/test_validation_gates.py
-run_check "检查器故障收尾（无 NAS）" python3 -W error::ResourceWarning nas/fpk/test_tool_cleanup.py
-run_check "配对状态边界（无网络）" python3 tools/test_pair_state.py
-run_check "配对存储读取故障（无设备）" python3 tools/test_pair_nvs.py
-run_check "配对存储屏障与模拟重启（无设备）" python3 tools/test_pair_nvs_transaction.py
-run_check "串口采集复位与收尾（模拟串口）" python3 tools/test_serial_capture.py
-run_check "SSH 与远程安装脚本（纯桩）" python3 -W error::ResourceWarning nas/fpk/test_ssh_scripts.py
-run_check "配对持久化与锁失败（无设备）" python3 tools/test_pair_commit.py
-run_check "TLS 探针重入与诊断缓冲（无网络）" python3 tools/test_tls_probe_guard.py
-run_check "UI 原子请求与刷新定时器重试（无设备）" python3 tools/test_ui_requests.py
-run_check "启动定时器失败与资源回收（无设备）" python3 tools/test_main_timers.py
-run_check "照片解码预算与坏图拒绝（匿名PNG）" python3 -W error::ResourceWarning tools/test_photo_check.py
-run_check "新鲜度证据缺失拒绝（匿名临时文件）" python3 tools/test_evidence_gates.py
-run_check "证书辅助信息真实 mbedTLS 主机解析（无 NAS）" python3 tools/test_cert_info.py
-run_check "Wi-Fi 存储屏障、读取拒绝与模拟重启（无设备）" python3 tools/test_wifi_store.py
-run_check "串口命令边界、数字溢出与口令行清理（无设备）" python3 tools/test_wifi_cli.py
-run_check "配对诊断缓冲任务边界（无设备）" python3 tools/test_pair_diag.py
-run_check "配对配置快照与锁失败（无设备）" python3 tools/test_pair_snapshot.py
-run_check "升级回退点与恢复标志（无 NAS）" python3 nas/fpk/test_upgrade_safety.py
-run_check "全地址监听预检与未知拒绝（无 NAS）" python3 nas/fpk/test_port_preflight.py
-run_check "历史与实时合并、游标失效及端点重置（无设备）" python3 tools/test_history_merge.py
-run_check "历史回填时间边界（无设备）" python3 tools/test_history.py
-run_check "性能样本完整性（无设备）" python3 tools/test_perf_samples.py
-run_check "大小栈帧与未知调整负控" python3 tools/test_stack_frames.py
-run_check "拍屏错误处理（模拟，无设备）" python3 tools/test_page_shot.py
-run_check "TLS 故障拒绝降级、令牌并发与安全日志" python3 nas/fpk/test_server_safety.py
-run_check "遥测发布所有权、编码复用与停止屏障（无 NAS）" python3 nas/fpk/test_telemetry_publication.py
-run_check "令牌 fail-closed 安装/升级/故障路径（M31）" python3 nas/fpk/test_install_token.py
-run_check "Release 断言与坏夹具拒绝（无设备）" bash tools/preview/test_release_asserts.sh
-run_check "预览输出目录守卫 + 分支变量按阶段隔离（M36/M57）" bash tools/preview/test_run_guard.sh
 # 全量发布构建要两三分钟，默认不跑——但**报告里不能因此写"通过"**。
 # 之前那一行是写死的"通过"，等于报告替一个没跑过的检查背书。
 RELEASE_ROW=""

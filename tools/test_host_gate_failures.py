@@ -15,6 +15,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import reason_check
+from parsecheck.extract import grab
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -29,7 +30,7 @@ class GateFailures(unittest.TestCase):
 
     def test_preview_evidence_failures(self):
         source=(ROOT/'tools/preview/preview.c').read_text()
-        helpers=source[source.index('static void evidence_flush('):source.index('static void snapshot(const char *name)')]
+        helpers='\n'.join(grab(source, name) for name in ('evidence_flush','evidence_close','preview_finish'))
         main=source[source.index('int main(int argc, char **argv)'):]
         # Every successful mode must consume the shared receipt. The finalizer alone
         # cannot prove that an early branch actually calls it.

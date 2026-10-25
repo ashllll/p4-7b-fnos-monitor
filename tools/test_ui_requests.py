@@ -38,7 +38,13 @@ static bool fail_timer;
 static lv_timer_t timer;
 static lv_obj_t object;
 static int s_st;
-static struct { lv_obj_t *screen, *viewport, *page[6]; } s_ui;
+static struct { lv_obj_t *screen, *viewport, *page[6], *tr_net; } s_ui = {.tr_net=&object};
+#define LV_EVENT_VALUE_CHANGED 1
+static lv_obj_t *lv_screen_active(void) { return &object; }
+static void chart_range_note_cb(void) {}
+static void lv_obj_add_event_cb(lv_obj_t *obj, void (*cb)(void), int event, void *data) {
+ assert(obj == &object && cb == chart_range_note_cb && event == LV_EVENT_VALUE_CHANGED && !data);
+}
 static void ui_tick(lv_timer_t *t) { (void)t; }
 static lv_timer_t *lv_timer_create(void (*cb)(lv_timer_t *), int period, void *arg) {
  assert(cb == ui_tick && period == 500 && !arg); ++attempts;
@@ -140,7 +146,7 @@ motion_prefix = r"""
 #define ESP_LOGE(...) ((void)0)
 typedef int lv_obj_t;
 typedef struct {int unused;} lv_anim_t;
-static struct {int from,to,direction;int32_t offset,start,end,width,velocity,spring_b;bool active,tracking,dragging;uint32_t duration;float phase_velocity;} s_motion;
+static struct {int from,to,direction;int32_t offset,start,end,width,velocity,spring_b;bool active,tracking,dragging;uint32_t duration;float phase_velocity,start_velocity;} s_motion;
 static struct {lv_obj_t *page[6],*viewport,*diagnostics_button;} s_ui;
 static bool s_refresh_pending, fail_anim, reduced;
 static struct {bool online;} s_st;
@@ -150,6 +156,16 @@ static lv_anim_t animation;
 static void show(lv_obj_t *o,bool on){(void)o;(void)on;}
 static void lv_obj_set_style_translate_x(lv_obj_t *o,int x,int part){(void)o;assert(!x && !part);}
 static void lv_obj_invalidate(lv_obj_t *o){(void)o;}
+#define LV_PCT(x) (x)
+static bool s_created=true;
+static int s_motion_pending=-1;
+static void lv_obj_set_size(lv_obj_t *o,int w,int h){(void)o;assert(w==100&&h==100);}
+static void lv_obj_set_pos(lv_obj_t *o,int x,int y){(void)o;assert(!x&&!y);}
+static lv_obj_t *lv_obj_get_parent(lv_obj_t *o){return o;}
+static void lv_obj_move_to_index(lv_obj_t *o,int i){(void)o;assert(i>=0&&i<6);}
+static void fnos_ui_set_page(int page){s_page=page;}
+static void refresh_page(int page){s_page=page;}
+static void lv_anim_delete(void *p,void (*cb)(void*,int32_t)){(void)p;(void)cb;}
 static void refresh_soon(void){}
 static void refresh(void){refreshes++;}
 static void pair_refresh(void){pairs++;}
@@ -167,7 +183,7 @@ static void lv_anim_set_path_cb(lv_anim_t *a,void (*cb)(void)){(void)a;assert(cb
 static void lv_anim_set_completed_cb(lv_anim_t *a,void (*cb)(lv_anim_t*)){(void)a;assert(cb==motion_done);}
 static lv_anim_t *lv_anim_start(lv_anim_t *a){(void)a;attempts++;return fail_anim?NULL:&animation;}
 """
-motion_body=fn('motion_finish')+'\n'+fn('motion_snap')
+motion_body='\n'.join(fn(name) for name in ('motion_finish','motion_complete','page_motion_settle','motion_snap'))
 motion_checks=r"""
 static void scenario(bool commit){
  s_motion.from=0;s_motion.to=1;s_motion.direction=1;s_motion.width=1024;s_motion.offset=-128;

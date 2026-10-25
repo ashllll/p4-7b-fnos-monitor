@@ -214,6 +214,8 @@ class BuildArchiveTests(unittest.TestCase):
             # Keep the actual shell checks; tool faults are isolated to this fixture.
             if grep_failure:script=script.replace('grep -E',str(binpath/'grep')+' -E');(binpath/'grep').write_text('#!/bin/sh\nexit 2\n');(binpath/'grep').chmod(0o700)
             if find_failure:script=script.replace('find "$PKG"',str(binpath/'find')+' "$PKG"');(binpath/'find').write_text('#!/bin/sh\nexit 1\n');(binpath/'find').chmod(0o700)
+            # Metadata behavior is tested separately against real synthetic archives.
+            (root/'release_metadata.py').write_text('raise SystemExit(0)\n')
             (root/'build.sh').write_text(script)
             return subprocess.run(['bash',str(root/'build.sh')],capture_output=True,text=True,timeout=15)
     def test_valid(self):self.assertEqual(self.build_fixture('valid').returncode,0)

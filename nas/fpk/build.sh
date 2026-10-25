@@ -50,3 +50,6 @@ if [ -n "$BAD" ]; then
   exit 1
 fi
 echo "✓ 包内没有字节码缓存 / .DS_Store / ._ 资源分叉"
+
+# Package identity has one source: the completed archive, checked against its source manifest.
+python3 release_metadata.py --write
