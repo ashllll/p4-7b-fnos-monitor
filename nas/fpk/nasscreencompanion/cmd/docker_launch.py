@@ -219,8 +219,11 @@ def mpt_temperatures():
 
 
 def reader(sock, limit, parent_pid):
+    class ReaderDeadline(Exception):
+        """Escape per-device OSError handlers when the whole request expires."""
+
     def expired(signum, frame):
-        raise TimeoutError('privileged reader deadline exceeded')
+        raise ReaderDeadline('privileged reader deadline exceeded')
     signal.signal(signal.SIGALRM, expired)
     cached_temperatures, temperature_at = None, 0
     with sock:
