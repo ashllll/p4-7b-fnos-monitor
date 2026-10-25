@@ -1185,8 +1185,7 @@ static void build_header(lv_obj_t *h)
     lv_obj_set_style_pad_hor(hostcol, UK_S3, 0);
     lv_obj_set_style_pad_ver(hostcol, UK_S1 + UK_S1 / 2, 0);
     lv_obj_set_style_bg_color(hostcol, uk_c(UK_SURF_S1), 0);
-    lv_obj_set_style_bg_grad_color(hostcol, uk_c(UK_SURF_T), 0);
-    lv_obj_set_style_bg_grad_dir(hostcol, LV_GRAD_DIR_VER, 0);
+    lv_obj_set_style_bg_grad_dir(hostcol, LV_GRAD_DIR_NONE, 0);
     lv_obj_set_style_bg_opa(hostcol, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(hostcol, UK_RADIUS_SM + UK_S1, 0);
     lv_obj_set_style_border_width(hostcol, 1, 0);
@@ -2890,7 +2889,7 @@ static lv_obj_t *wifi_field_box(lv_obj_t *parent, int32_t grow, lv_obj_t **out_l
     if (grow > 0) { lv_obj_set_flex_grow(b, (uint8_t)grow); lv_obj_set_width(b, 120); }
     else          { lv_obj_set_width(b, LV_PCT(100)); }
     lv_obj_set_height(b, UK_ROW_H);
-    lv_obj_set_style_bg_color(b, uk_c(UK_S1), 0);
+    lv_obj_set_style_bg_color(b, uk_c(UK_SURF_S1), 0);
     lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(b, UK_RADIUS_SM, 0);
     lv_obj_set_style_border_width(b, 1, 0);
@@ -3169,7 +3168,7 @@ static void wifi_fill_list(void)
         lv_obj_set_style_text_color(s_ui.wifi_ap_row[i]->val, uk_c(col), 0);
         /* 从输密码页退回来时，让用户一眼看到刚才点的是哪一条 */
         bool sel = (s_wifi_sel == i);
-        lv_obj_set_style_bg_color(s_ui.wifi_ap_row[i]->row, uk_c(UK_S2), 0);
+        lv_obj_set_style_bg_color(s_ui.wifi_ap_row[i]->row, uk_c(UK_SURF_S2), 0);
         lv_obj_set_style_bg_opa(s_ui.wifi_ap_row[i]->row, sel ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
     }
     pool_layout(&s_wifi_ap_n, &s_wifi_ap_w, &s_wifi_ap_h, n, s_ui.wifi_ap_pool, 860, false, NULL);

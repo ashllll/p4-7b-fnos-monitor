@@ -1381,6 +1381,26 @@ static int preview_finish(void)
     return 0;
 }
 
+/* Audit hidden setup panels too: their styles become visible on first entry. */
+static int audit_surface_styles(lv_obj_t *o, const char *name)
+{
+    int failures = 0;
+    if (lv_obj_get_style_bg_grad_dir(o, LV_PART_MAIN) != LV_GRAD_DIR_NONE) {
+        fprintf(stderr, "surface[%s]: background gradient at %d,%d\n", name,
+                (int)o->coords.x1, (int)o->coords.y1);
+        failures++;
+    }
+    lv_color_t bg = lv_obj_get_style_bg_color(o, LV_PART_MAIN);
+    if (lv_color_eq(bg, uk_c(UK_S1)) || lv_color_eq(bg, uk_c(UK_S2))) {
+        fprintf(stderr, "surface[%s]: spacing token used as background at %d,%d\n", name,
+                (int)o->coords.x1, (int)o->coords.y1);
+        failures++;
+    }
+    for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++)
+        failures += audit_surface_styles(lv_obj_get_child(o, i), name);
+    return failures;
+}
+
 static void snapshot(const char *name)
 {
     if (getenv("PREVIEW_PAGE_CARDS")) {
@@ -1462,6 +1482,7 @@ static void snapshot(const char *name)
        报出一堆假越界 —— 曾因此以为系统页摘要条有 280 高（实际 44）。 */
     lv_obj_update_layout(lv_screen_active());
     lv_refr_now(lv_display_get_default());
+    assert(audit_surface_styles(lv_screen_active(), name) == 0);
     audit_labels(lv_screen_active());
     audit_format_residue(lv_screen_active(), name);
     if (s_motion_frame) {
