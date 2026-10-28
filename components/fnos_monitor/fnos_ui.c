@@ -2135,8 +2135,6 @@ static void build_p3(lv_obj_t *page)
         lv_obj_t *body = uk_card_body(s_ui.p3_note);
         s_ui.system_note = uk_label(body, UK_TYPE_BODY, UK_T2, "等待数据");
         lv_obj_set_width(s_ui.system_note, LV_PCT(100));
-        s_ui.system_note2 = uk_label(body, UK_FONT_CJK_12, UK_T3, "");
-        lv_obj_set_width(s_ui.system_note2, LV_PCT(100));
     }
 
     panel_summary(s_ui.p3_note);
@@ -2210,8 +2208,10 @@ static void build_p3(lv_obj_t *page)
                 }
             }
         }
+        /* 摘要卡只保留一行状态；多行的版本/运行时长属于诊断卡尾部。 */
+        s_ui.system_note2 = uk_label(body, UK_FONT_CJK_12, UK_T3, "");
+        lv_obj_set_width(s_ui.system_note2, LV_PCT(100));
     }
-    lv_obj_set_parent(s_ui.system_note2, uk_card_body(s_ui.diagnostics));
     lv_obj_add_flag(s_ui.diagnostics, LV_OBJ_FLAG_HIDDEN);
 
     pair_build(page);   /* 与诊断同槽位的整页卡，见 pair_show() */
