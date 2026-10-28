@@ -963,6 +963,9 @@ class Collector:
         snap = {"v": 1, "host": self.hostname, "ts": int(time.time()), "ready": True}
         errors = []
         with self.lock:
+            # 整帧 deepcopy 是隔离契约：失败段会回落到上一帧的值，调用方也可能
+            # 同时持有旧快照；浅共享会让任何原地写入污染已发布的帧。
+            # 见 test_server_safety 的 legacy raid 回归（要求新旧对象不同）。
             prev = copy.deepcopy(self.snapshot) if self.snapshot.get("ready") else {}
         for key, fn in (("cpu", self._cpu), ("mem", self._mem), ("net", self._net),
                         ("vols", self._volumes), ("raid", self._raid),
