@@ -90,12 +90,16 @@ class MetricsTests(unittest.TestCase):
             with self.assertRaises(ValueError):module._metrics_get('a'*64,'start')
 
     def test_zfs_distinguishes_absent_from_unreadable(self):
-        c=collector.Collector()
-        with patch.object(collector,'read_text_strict',side_effect=FileNotFoundError()):
-            self.assertIsNone(c._zfs())
-        with patch.object(collector,'read_text_strict',side_effect=PermissionError('denied')):
-            with self.assertRaises(PermissionError):
-                c._zfs()
+        # 两个采集器都必须区分"没装 ZFS"和"读不到 arcstats"；后者要抛给
+        # sample() 保留上一帧，而不是把 ZFS 从快照里静默抹掉。
+        for name,module in (('companion',collector),('legacy',legacy)):
+            with self.subTest(collector=name):
+                c=module.Collector()
+                with patch.object(module,'read_text_strict',side_effect=FileNotFoundError()):
+                    self.assertIsNone(c._zfs())
+                with patch.object(module,'read_text_strict',side_effect=PermissionError('denied')):
+                    with self.assertRaises(PermissionError):
+                        c._zfs()
 
     def test_volume_percent_counts_only_usable_capacity(self):
         st=SimpleNamespace(f_blocks=100,f_frsize=1024**3,f_bfree=30,f_bavail=20)

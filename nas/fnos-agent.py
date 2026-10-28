@@ -51,6 +51,12 @@ def read_text(path, default=""):
         return default
 
 
+def read_text_strict(path):
+    """读不到就抛。空内容有语义的来源（如 ZFS arcstats）不能吞掉权限/IO 错误。"""
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        return f.read()
+
+
 def read_int(path, default=0):
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
@@ -891,7 +897,12 @@ class Collector:
         return result
 
     def _zfs(self):
-        txt = read_text("/proc/spl/kstat/zfs/arcstats")
+        # 文件不存在 = 这台机器没装 ZFS；权限/IO 错误必须抛出去，让 sample()
+        # 保留上一帧并记录 errors，不能把瞬时读失败当成"ZFS 消失"。
+        try:
+            txt = read_text_strict("/proc/spl/kstat/zfs/arcstats")
+        except FileNotFoundError:
+            return None
         if not txt:
             return None
         vals = {}
