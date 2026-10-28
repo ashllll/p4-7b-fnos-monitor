@@ -9,6 +9,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 ROOT=Path(__file__).resolve().parents[1]
+def _enter(case, cm):
+ # TestCase.enterContext 是 3.11+；本套门禁还要能在 3.9 的 CI 上跑。
+ value=cm.__enter__();case.addCleanup(cm.__exit__,None,None,None);return value
 spec=importlib.util.spec_from_file_location('freshness',ROOT/'tools/freshness_check.py')
 m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 class Freshness(unittest.TestCase):
@@ -17,9 +20,9 @@ class Freshness(unittest.TestCase):
   (self.root/'source').mkdir();(self.root/'source/main.c').write_text('fixture')
   (self.root/'artifact').write_text('fixture')
   os.utime(self.root/'source/main.c',(100,100));os.utime(self.root/'artifact',(200,200))
-  self.enterContext(patch.object(m,'REPO',str(self.root)))
+  _enter(self, patch.object(m,'REPO',str(self.root)))
   self.spec={'name':'fixture','artifact':'artifact','roots':['source'],'extra':[],'how':'fixture-only'}
-  self.enterContext(patch.object(m,'ARTIFACTS',[self.spec]))
+  _enter(self, patch.object(m,'ARTIFACTS',[self.spec]))
  def run_gate(self):
   with contextlib.redirect_stdout(io.StringIO()):return m.main()
  def test_normal_and_stale(self):
@@ -61,8 +64,8 @@ class Soak(unittest.TestCase):
   for name in ('nas_companion_server.py','fnos_collector.py','docker_api.py'):
    (self.current/name).write_text('anonymous fixture');(self.staged/name).write_text('anonymous fixture')
   self.log=self.root/'soak.log';self.write_rows(range(1,11))
-  self.enterContext(patch.object(soak,'REPO',str(self.root)))
-  self.enterContext(patch.object(soak.sys,'argv',['soak','--log',str(self.log),'--stage',str(self.stage)]))
+  _enter(self, patch.object(soak,'REPO',str(self.root)))
+  _enter(self, patch.object(soak.sys,'argv',['soak','--log',str(self.log),'--stage',str(self.stage)]))
  def write_rows(self,ids):
   self.log.write_text(''.join(f'#{n} rss=1000KB fd=5 管理面=200 TLS=200 明文引导=200\n' for n in ids))
  def run_gate(self):
@@ -103,7 +106,7 @@ class Plan(unittest.TestCase):
   self.package=self.root/'package.fpk';self.package.write_text('fixture')
   self.report=self.root/'docs/fnos-companion-test-report.md';self.report.write_text('1 项通过，0 项失败')
   for name,value in [('REPO',str(self.root)),('DOCS',[str(self.doc)]),('FIELD_MANIFEST',str(self.fields)),('FPK',str(self.package))]:
-   self.enterContext(patch.object(plan,name,value))
+   _enter(self, patch.object(plan,name,value))
  def run_gate(self):
   with contextlib.redirect_stdout(io.StringIO()):return plan.main()
  def test_cwd_independent(self):

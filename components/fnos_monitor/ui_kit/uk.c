@@ -1370,6 +1370,11 @@ lv_chart_series_t *uk_trend_raw_series(lv_obj_t *chart, int32_t idx)
 
 void uk_trend_get_range(lv_obj_t *chart, int32_t *ymin, int32_t *ymax)
 {
+    if (!chart) {
+        if (ymin) *ymin = 0;
+        if (ymax) *ymax = 0;
+        return;
+    }
     trend_t *t = (trend_t *)chart;
     if (ymin) *ymin = t->range_valid ? t->range_announced[0] : t->chart.ymin[0];
     if (ymax) *ymax = t->range_valid ? t->range_announced[1] : t->chart.ymax[0];

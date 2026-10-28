@@ -163,12 +163,12 @@ static const char *reason_text(uint8_t r)
     case WIFI_REASON_CONNECTION_FAIL:        return "连接失败（信号太弱？）";
     case WIFI_REASON_BEACON_TIMEOUT:         return "与路由器失联（信号不好）";
     /* 下面三个以前只显示数字，而它们恰恰是"明明在范围内却连不上"最常见的答案：
-       本板 sta.threshold.authmode 固定 WPA2_PSK（见 wifi_start），开放网络、
-       WEP/WPA-PSK 以及加密方式不合要求的 AP 都会被这条阈值挡掉（审计 M10）。 */
+       加密网络按 WPA2 阈值，开放网络单独放宽到 OPEN（见 wifi_authmode_for_password）；
+       WEP/WPA-PSK 以及加密方式不合要求的 AP 仍会被这条阈值挡掉（审计 M10）。 */
     case WIFI_REASON_NO_AP_FOUND_W_COMPATIBLE_SECURITY:
         return "找到了网络但加密方式不合适（路由器是混合/旧加密？）";
     case WIFI_REASON_NO_AP_FOUND_IN_AUTHMODE_THRESHOLD:
-        return "这个网络的加密方式不被接受（当前只收 WPA2 及以上，开放网络连不上）";
+        return "这个网络的加密方式不被接受（需要 WPA2 及以上；WEP/WPA 太旧）";
     case WIFI_REASON_NO_AP_FOUND_IN_RSSI_THRESHOLD:
         return "信号太弱，达不到连接阈值（靠近路由器再试）";
     default:                                 return NULL;
@@ -250,6 +250,13 @@ static void on_net_event(void *arg, esp_event_base_t base, int32_t id, void *dat
     }
 }
 
+/* 开放网络没有口令，阈值必须放宽到 OPEN；否则驱动会以
+   NO_AP_FOUND_IN_AUTHMODE_THRESHOLD 直接拒绝（审计 M10）。 */
+static wifi_auth_mode_t wifi_authmode_for_password(const char *pass)
+{
+    return (pass && pass[0]) ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
+}
+
 static bool wifi_start(void) {
     esp_err_t err = esp_netif_init();
     if (err != ESP_OK) { ESP_LOGE(TAG, "esp_netif_init failed: %s", esp_err_to_name(err)); return false; }
@@ -290,7 +297,7 @@ static bool wifi_start(void) {
     // snprintf会把合法32字节SSID/64字节PSK各丢最后一个字节。
     memcpy(cfg.sta.ssid, ssid, strnlen(ssid, sizeof cfg.sta.ssid));
     memcpy(cfg.sta.password, pass, strnlen(pass, sizeof cfg.sta.password));
-    cfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+    cfg.sta.threshold.authmode = wifi_authmode_for_password(pass);
     err = esp_wifi_set_mode(WIFI_MODE_STA);
     if (err == ESP_OK) err = esp_wifi_set_config(WIFI_IF_STA, &cfg);
     if (err == ESP_OK) err = esp_wifi_start();
@@ -487,8 +494,8 @@ static void apply_pending_credentials(void)
     wifi_config_t cfg = { 0 };
     memcpy(cfg.sta.ssid, ssid, strnlen(ssid, sizeof cfg.sta.ssid));
     memcpy(cfg.sta.password, pass, strnlen(pass, sizeof cfg.sta.password));
+    cfg.sta.threshold.authmode = wifi_authmode_for_password(pass);
     memset(pass, 0, sizeof pass);
-    cfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
     esp_wifi_disconnect();
     if (esp_wifi_set_config(WIFI_IF_STA, &cfg) != ESP_OK) {
         submit_failure(generation, "连接失败（信号太弱？）");

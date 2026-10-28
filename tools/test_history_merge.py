@@ -118,7 +118,7 @@ def run():
 static int64_t ui_cursor;
 static int ui_clears;
 static struct { bool ever_ok; } s_st={true};
-static struct { struct { int chart; } overview_resource[2]; int tr_net,temp_history; } s_ui;
+static struct { struct { int chart; } overview_resource[2]; int tr_net,temp_history,overview_temp_history; } s_ui;
 static bool s_overview_gap[2];
 static void uk_trend_clear(int chart) { (void)chart; ui_clears++; }
 static void ui_history_tick(void) {
@@ -163,7 +163,7 @@ def chart_test():
 #include <assert.h>
 #define LV_CHART_POINT_NONE INT32_MAX
 typedef int lv_obj_t;
-static struct { struct {lv_obj_t *chart;} overview_resource[2]; lv_obj_t *tr_net,*temp_history; } s_ui;
+static struct { struct {lv_obj_t *chart;} overview_resource[2]; lv_obj_t *tr_net,*temp_history,*overview_temp_history; } s_ui;
 static bool s_overview_gap[2];
 static int32_t points[5];static int point_count;
 static void uk_trend_push(lv_obj_t *c,int32_t series,int32_t v,uint32_t interval) {(void)c;(void)series;assert(interval==200);assert(point_count<5);points[point_count++]=v;}
@@ -206,7 +206,7 @@ def range_test():
  ui=(ROOT/'components/fnos_monitor/fnos_ui.c').read_text()
  def piece(a,b):
   start=ui.index(a);return ui[start:ui.index(b,start)]
- network=piece('        int32_t peak_tx = chart_peak(s_ui.tr_net, 0);','        set_num(s_ui.net_axis')
+ network=piece('        int32_t peak_tx = chart_peak(s_ui.tr_net, 0);','        chart_range_note(s_ui.tr_net);')
  helper=''
  if 'static int32_t network_chart_max(' in ui:
   a=ui.index('static int32_t network_chart_max(');helper=ui[a:ui.index('\n}',a)+2]
@@ -287,11 +287,18 @@ int main(void){int32_t x,a,b,c,d,want;int n=0;
   result=subprocess.run([str(exe)],input=data,text=True,capture_output=True,env=env,timeout=15)
   assert result.returncode!=0 and 'signed integer overflow' in result.stderr,result.stderr
  with tempfile.TemporaryDirectory(prefix='fnos-chart-cmake-') as d:
-  p=Path(d);(p/'src/widgets/chart').mkdir(parents=True)
+  p=Path(d);(p/'src/widgets/chart').mkdir(parents=True);(p/'src/draw').mkdir(parents=True)
   (p/'src/widgets/chart/lv_chart.c').write_text('int fixture;\n')
+  # 9.6 的 polyline 修复要求 lv_draw_line.c 也参与目标；夹具必须同时造出
+  # 四条原生边界表达式，否则 CMake 钩子会正确报“布局变了”。
+  (p/'src/draw/lv_draw_line.c').write_text(
+   'a.x1 = (int32_t)LV_MIN(a.x1, dsc->points[i].x) - dsc->width;\n'
+   'a.x2 = (int32_t)LV_MAX(a.x2, dsc->points[i].x) + dsc->width;\n'
+   'a.y1 = (int32_t)LV_MIN(a.y1, dsc->points[i].y) - dsc->width;\n'
+   'a.y2 = (int32_t)LV_MAX(a.y2, dsc->points[i].y) + dsc->width;\n')
   header='cmake_minimum_required(VERSION 3.18)\nproject(chart_hook C)\n'
   include='include("'+str(ROOT/'components/fnos_monitor/cmake/fnos_chart_math.cmake')+'")\n'
-  good=header+'add_library(fixture STATIC "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/chart/lv_chart.c")\n'+include+'fnos_use_safe_chart_map(fixture)\n'
+  good=header+'add_library(fixture STATIC "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/chart/lv_chart.c" "${CMAKE_CURRENT_SOURCE_DIR}/src/draw/lv_draw_line.c")\n'+include+'fnos_use_safe_chart_map(fixture)\n'
   (p/'CMakeLists.txt').write_text(good)
   r=subprocess.run(['cmake','-S',str(p),'-B',str(p/'build')],capture_output=True,text=True,timeout=30)
   assert r.returncode==0,r.stderr
@@ -360,7 +367,9 @@ int main(void){
    assert old!=code;src.write_text(old);subprocess.run(flags,check=True,capture_output=True)
    r=subprocess.run([str(exe)],capture_output=True,env=env,timeout=10)
    assert r.returncode and b'outside the range' in r.stderr,r.stderr
-  old=code.replace('double used = 0, total = 0','float used = 0, total = 0')
+  # 只把 used/total 降成 float，free_gb 保持 double：否则 free_gb 自己也会
+  # 溢出，负控先撞上 isfinite(free_gb)，测不到 used/total 的整型转换路径。
+  old=code.replace('double used = 0, total = 0, free_gb = 0;','float used = 0, total = 0; double free_gb = 0;')
   assert old!=code;src.write_text(old);subprocess.run(flags,check=True,capture_output=True)
   r=subprocess.run([str(exe)],capture_output=True,env=env,timeout=10)
   assert r.returncode and b'isfinite(used)' in r.stderr,r.stderr

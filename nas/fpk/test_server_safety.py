@@ -198,6 +198,19 @@ class Safety(unittest.TestCase):
                 self.assertEqual((retained[0]/'backup-0').read_bytes(),before)
                 self.assertEqual(retained[0].stat().st_mode & 0o777,0o700)
 
+    def test_tls_generation_propagates_exception_when_cleanup_also_fails(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp, patch.object(m, 'tls_dir', return_value=tmp), \
+                patch.object(m, '_local_ips', return_value=[]):
+            cert = Path(tmp) / 'server.crt'
+            key = Path(tmp) / 'server.key'
+            with patch.object(m, 'tls_cert_path', return_value=str(cert)), \
+                    patch.object(m, 'tls_key_path', return_value=str(key)):
+                with patch.object(m.subprocess, 'run', side_effect=KeyboardInterrupt):
+                    with patch.object(m.shutil, 'rmtree', side_effect=OSError('fixture')):
+                        with self.assertRaises(KeyboardInterrupt):
+                            m.generate_self_signed()
+
     def test_startup_config_rejects_invalid_auth_tls_and_numbers(self):
         import os,json,tempfile
         envs=('TRIM_SERVICE_PORT','NSC_BIND','NSC_INTERVAL','NSC_HIST','NSC_AUTH','NSC_DOCKER','NSC_TLS')

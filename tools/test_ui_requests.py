@@ -31,6 +31,8 @@ prefix = r'''
 #define ESP_LOGI(...) ((void)0)
 typedef int lv_timer_t;
 typedef int lv_obj_t;
+typedef int lv_event_t;
+#define LV_EVENT_VALUE_CHANGED 0
 static bool s_created;
 static lv_timer_t *s_ui_tick, *s_motion_poll;
 static int errors, attempts, trees, pages, starts, s_page;
@@ -38,7 +40,12 @@ static bool fail_timer;
 static lv_timer_t timer;
 static lv_obj_t object;
 static int s_st;
-static struct { lv_obj_t *screen, *viewport, *page[6]; } s_ui;
+static struct { lv_obj_t *screen, *viewport, *page[6], *tr_net; } s_ui;
+static lv_obj_t *lv_screen_active(void) { return &object; }
+static void chart_range_note_cb(lv_event_t *e) { (void)e; }
+static void lv_obj_add_event_cb(lv_obj_t *o, void (*cb)(lv_event_t *), int ev, void *d) {
+ assert(o && cb == chart_range_note_cb && ev == LV_EVENT_VALUE_CHANGED && !d);
+}
 static void ui_tick(lv_timer_t *t) { (void)t; }
 static lv_timer_t *lv_timer_create(void (*cb)(lv_timer_t *), int period, void *arg) {
  assert(cb == ui_tick && period == 500 && !arg); ++attempts;
@@ -85,6 +92,7 @@ static void interleave(bool temp) {
  assert((temp ? take_temp() : take_page()) == -1);
 }
 int main(void) {
+ s_ui.tr_net = &object; /* build_page() 在真机上负责创建趋势卡并挂到此处 */
  assert(take_page() == -1 && take_temp() == -1 && !read_night());
  fnos_ui_request_page(-1); fnos_ui_request_page(FNOS_UI_PAGE_COUNT);
  fnos_ui_request_temp_expand(-1);
@@ -140,9 +148,12 @@ motion_prefix = r"""
 #define ESP_LOGE(...) ((void)0)
 typedef int lv_obj_t;
 typedef struct {int unused;} lv_anim_t;
-static struct {int from,to,direction;int32_t offset,start,end,width,velocity,spring_b;bool active,tracking,dragging;uint32_t duration;float phase_velocity;} s_motion;
+#define LV_PCT(x) (x)
+static struct {int from,to,direction;int32_t offset,start,end,width,velocity,spring_b;bool active,tracking,dragging;uint32_t duration;float phase_velocity,start_velocity;} s_motion;
 static struct {lv_obj_t *page[6],*viewport,*diagnostics_button;} s_ui;
 static bool s_refresh_pending, fail_anim, reduced;
+static int s_motion_pending = -1;
+static lv_obj_t parent;
 static struct {bool online;} s_st;
 static void uk_number_motion_enable(bool on){(void)on;}
 static int s_page, selected, refreshes, pairs, attempts;
@@ -154,7 +165,14 @@ static void refresh_soon(void){}
 static void refresh(void){refreshes++;}
 static void pair_refresh(void){pairs++;}
 static void nav_select(int p){selected=p;}
+static void fnos_ui_set_page(int p){s_page=p;nav_select(p);}
+static void lv_obj_set_size(lv_obj_t *o,int w,int h){(void)o;(void)w;(void)h;}
+static void lv_obj_set_pos(lv_obj_t *o,int x,int y){(void)o;(void)x;(void)y;}
+static lv_obj_t *lv_obj_get_parent(lv_obj_t *o){(void)o;return &parent;}
+static void lv_obj_move_to_index(lv_obj_t *o,int i){(void)o;(void)i;}
 static bool motion_reduced(void){return reduced;}
+static void motion_complete(void);
+static void page_motion_settle(void){motion_complete();}
 static void motion_exec(void *p,int32_t v){(void)p;(void)v;}
 static void motion_done(lv_anim_t *a){(void)a;}
 static void lv_anim_init(lv_anim_t *a){(void)a;}
@@ -167,7 +185,7 @@ static void lv_anim_set_path_cb(lv_anim_t *a,void (*cb)(void)){(void)a;assert(cb
 static void lv_anim_set_completed_cb(lv_anim_t *a,void (*cb)(lv_anim_t*)){(void)a;assert(cb==motion_done);}
 static lv_anim_t *lv_anim_start(lv_anim_t *a){(void)a;attempts++;return fail_anim?NULL:&animation;}
 """
-motion_body=fn('motion_finish')+'\n'+fn('motion_snap')
+motion_body=fn('motion_finish')+'\n'+fn('motion_complete')+'\n'+fn('motion_snap')
 motion_checks=r"""
 static void scenario(bool commit){
  s_motion.from=0;s_motion.to=1;s_motion.direction=1;s_motion.width=1024;s_motion.offset=-128;

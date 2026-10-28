@@ -35,6 +35,7 @@ preamble = r'''
 #define ESP_LOGI(...) ((void)0)
 #define ESP_OK 0
 #define WIFI_IF_STA 0
+#define WIFI_AUTH_OPEN 0
 #define WIFI_AUTH_WPA2_PSK 3
 #define FNOS_WIFI_SUBMIT_IDLE 0
 #define FNOS_WIFI_SUBMIT_PENDING 1
@@ -54,6 +55,7 @@ preamble = r'''
 #define TAG "test"
 typedef int esp_event_base_t;
 typedef int esp_err_t;
+typedef int wifi_auth_mode_t;
 typedef struct { uint8_t reason; } wifi_event_sta_disconnected_t;
 typedef struct { uint8_t ssid[32]; uint8_t ssid_len; } wifi_event_sta_connected_t;
 typedef struct { struct { struct { uint32_t addr; } ip; } ip_info; } ip_event_got_ip_t;
@@ -106,6 +108,8 @@ static void associate(const char *ssid) {
     on_net_event(NULL, WIFI_EVENT, WIFI_EVENT_STA_CONNECTED, &e);
 }
 int main(void) {
+    assert(wifi_authmode_for_password("") == WIFI_AUTH_OPEN);
+    assert(wifi_authmode_for_password("pass") == WIFI_AUTH_WPA2_PSK);
     fnos_net_set_credentials("test-network", "pass");
     ip(); assert(s_submit_state == FNOS_WIFI_SUBMIT_PENDING); /* stale old IP */
     save_ok = false;
@@ -161,11 +165,14 @@ int main(void) {
     assert(s_retry_due_us==now_us+30000000);
     ip(); assert(s_retry_due_us==0);
     s_online=false; s_configured=false; wifi_schedule_retry(); assert(s_retry_due_us==0);
-    puts("PASS: stale IP / NVS failure / association / resubmission / RPC failures / timeout");
+    fnos_net_set_credentials("open-network", ""); fnos_net_service();
+    assert(captured.sta.threshold.authmode == WIFI_AUTH_OPEN);
+    puts("PASS: stale IP / NVS failure / association / resubmission / RPC failures / timeout / open authmode");
 }
 '''
-names = ['wifi_schedule_retry', 'fnos_utf8_copy', 'fnos_net_set_credentials', 'submit_failure',
-         'apply_pending_credentials', 'on_net_event', 'fnos_net_service']
+names = ['wifi_authmode_for_password', 'wifi_schedule_retry', 'fnos_utf8_copy',
+         'fnos_net_set_credentials', 'submit_failure', 'apply_pending_credentials',
+         'on_net_event', 'fnos_net_service']
 with tempfile.TemporaryDirectory(prefix='fnos-wifi-submit-') as tmp:
     c = Path(tmp) / 'submission.c'
     c.write_text(preamble + '\n'.join(function(n) for n in names) + checks)
@@ -292,7 +299,7 @@ int main(void) {
     puts("PASS: atomic consume/late producer, locked snapshots, legacy SSID copy");
 }
 '''
-thread_names = ['wifi_schedule_retry', 'fnos_utf8_copy','fnos_net_set_credentials','submit_failure',
+thread_names = ['wifi_authmode_for_password','wifi_schedule_retry', 'fnos_utf8_copy','fnos_net_set_credentials','submit_failure',
                 'apply_pending_credentials','fnos_net_service','fnos_net_ssid_r',
                 'fnos_net_ssid','fnos_net_submit_state','fnos_net_state']
 with tempfile.TemporaryDirectory(prefix='fnos-net-threads-') as tmp:

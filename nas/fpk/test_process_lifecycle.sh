@@ -205,11 +205,30 @@ check "负控：旧脚本在旧实例还活着时就把配置写下去了（正�
 /bin/kill -9 "$v2o" 2>/dev/null || true
 
 # ---------------------------------------------------------------- S3 正常停止没被改坏
+# 真实服务在退出前会写 $PKG_VAR/service-exit.json（app/server/nas_companion_server.py
+# 的 main_with_exit_receipt）；stop 用它确认“已停且收尾成功”。夹具若只放一个裸 sleep，
+# 进程被 TERM 杀掉后没有回执，stop 会如实报“收尾结果未通过”——那是 M21 的设计，
+# 不是回归。这里让 victim 模拟真实服务：捕获 SIGTERM，写回执后再退出。
 S3="$WORK/s3"
 setup_pkg "$S3"
-python3 -c 'import time; time.sleep(600)' &
+cat > "$S3/server/service_victim.py" <<'PY'
+import json, os, signal, sys, time
+target = os.environ["FNOS_TEST_EXIT_RECEIPT"]
+ready = os.environ["FNOS_TEST_READY"]
+stop = []
+signal.signal(signal.SIGTERM, lambda *_: stop.append(1))
+with open(ready, "w", encoding="utf-8") as stream:
+    stream.write(str(os.getpid()))
+while not stop:
+    time.sleep(0.02)
+with open(target, "w", encoding="utf-8") as stream:
+    json.dump({"pid": os.getpid(), "code": 0}, stream)
+PY
+FNOS_TEST_EXIT_RECEIPT="$S3/var/service-exit.json" FNOS_TEST_READY="$S3/victim-ready" \
+  python3 "$S3/server/service_victim.py" &
 v3=$!
 VICTIM_PIDS="$VICTIM_PIDS $v3"
+for _ in $(seq 1 100); do [ -s "$S3/victim-ready" ] && break; sleep 0.05; done
 printf '%s\n' "$v3" > "$S3/var/app.pid"
 : > "$S3/app.sock"
 if sout3=$(TRIM_APPDEST="$S3" TRIM_PKGVAR="$S3/var" bash "$S3/cmd/main" stop 2>&1); then rc3=0; else rc3=$?; fi
@@ -217,6 +236,20 @@ sleep 0.3
 check "S3 正常停止仍然成功" "$([ "$rc3" = 0 ] && echo 0 || echo 1)" "rc=$rc3"
 check "S3 正常停止后 PID 记录被清掉" "$([ -f "$S3/var/app.pid" ] && echo 1 || echo 0)"
 check "S3 进程真的结束了" "$(/bin/kill -0 "$v3" 2>/dev/null && echo 1 || echo 0)"
+
+# 负控：没有服务退出回执时，stop 必须报失败（进程已结束也不能谎报收尾成功）。
+S3N="$WORK/s3-no-receipt"
+setup_pkg "$S3N"
+python3 -c 'import time; time.sleep(600)' &
+v3n=$!
+VICTIM_PIDS="$VICTIM_PIDS $v3n"
+printf '%s\n' "$v3n" > "$S3N/var/app.pid"
+: > "$S3N/app.sock"
+if sout3n=$(TRIM_APPDEST="$S3N" TRIM_PKGVAR="$S3N/var" bash "$S3N/cmd/main" stop 2>&1); then rc3n=0; else rc3n=$?; fi
+sleep 0.3
+check "S3 负控：缺退出回执时 stop 返回非零" "$([ "$rc3n" != 0 ] && echo 0 || echo 1)" "rc=$rc3n"
+check "S3 负控：明确说明收尾结果未通过" "$(echo "$sout3n" | grep -q '收尾结果未通过' && echo 0 || echo 1)"
+check "S3 负控：进程仍然真的结束了" "$(/bin/kill -0 "$v3n" 2>/dev/null && echo 1 || echo 0)"
 
 # ---------------------------------------------------------------- S4 启动失败要收尾
 S4="$WORK/s4"

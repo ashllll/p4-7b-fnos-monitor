@@ -80,7 +80,9 @@ def _metrics_get(identifier, suffix):
     if not re.fullmatch(r'[0-9a-f]{64}', identifier) or suffix not in ('json', 'stats?stream=false&one-shot=true'):
         raise ValueError('invalid read-only Docker metric request')
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as raw:
-        raw.settimeout(0.3)
+        # One stats read may wait on a busy daemon; the sampler rotates one
+        # container per frame, so a full second is still bounded.
+        raw.settimeout(1.0)
         raw.connect(DOCKER_SOCKET)
         request = ('GET /containers/%s/%s HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n' % (identifier, suffix)).encode('ascii')
         raw.sendall(request)
@@ -216,6 +218,8 @@ def containers():
     if len(body) > MAX_RESPONSE:
         raise ValueError('Docker response exceeds byte budget')
     rows = json.loads(body)
+    if not isinstance(rows, list) or any(not isinstance(c, dict) for c in rows):
+        raise ValueError('Docker response is not a container list')
     result = [row_from_container(c) for c in rows]
     _metrics.enrich(rows, result)
     result.sort(key=lambda c: (not c['up'], c['n']))

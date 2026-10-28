@@ -1323,8 +1323,11 @@ static int32_t chart_peak(lv_obj_t *chart, int32_t idx)
 
 static int chart_sample_count(lv_obj_t *chart)
 {
+    if (!chart) return 0;
     lv_chart_series_t *series = uk_trend_raw_series(chart, 0);
+    if (!series) return 0;
     const int32_t *values = lv_chart_get_series_y_array(chart, series);
+    if (!values) return 0;
     int count = 0;
     for (uint32_t i = 0; i < lv_chart_get_point_count(chart); i++)
         if (values[i] != LV_CHART_POINT_NONE) count++;
@@ -2549,6 +2552,9 @@ static void pair_build(lv_obj_t *page)
     uk_card_flex(status, 0);
     s_ui.pair_title = uk_card_title(status);
     lv_obj_t *body = uk_card_body(status);
+    /* 只有 pair_grid 滚。卡体若保持默认可滚，AUTO 会在右缘画一条几乎看不见的条，
+       还和键盘/指纹内容抢位置（07-pair-code 实拍）。 */
+    lv_obj_clear_flag(body, LV_OBJ_FLAG_SCROLLABLE);
     s_ui.pair_hint = uk_label(body, UK_FONT_CJK_12, UK_T3, "");
     lv_obj_set_width(s_ui.pair_hint, LV_PCT(100));
     lv_label_set_long_mode(s_ui.pair_hint, LV_LABEL_LONG_MODE_WRAP);
@@ -2567,6 +2573,7 @@ static void pair_build(lv_obj_t *page)
     s_ui.pair_steps = ui_card(grid, "三步完成配对", NULL);
     uk_card_flex(s_ui.pair_steps, 0);
     body = uk_card_body(s_ui.pair_steps);
+    lv_obj_clear_flag(body, LV_OBJ_FLAG_SCROLLABLE);
     for (int i = 0; i < PAIR_STEPS; i++) {
         lv_obj_t *r = uk_row_box(body, 0);
         lv_obj_set_width(r, LV_PCT(100));
@@ -2593,7 +2600,9 @@ static void pair_build(lv_obj_t *page)
 
     s_ui.pair_msg_panel = ui_card(grid, "连接状态", NULL);
     uk_card_flex(s_ui.pair_msg_panel, 0);
-    s_ui.pair_msg = uk_label(uk_card_body(s_ui.pair_msg_panel), UK_FONT_CJK_16, UK_T2, "");
+    body = uk_card_body(s_ui.pair_msg_panel);
+    lv_obj_clear_flag(body, LV_OBJ_FLAG_SCROLLABLE);
+    s_ui.pair_msg = uk_label(body, UK_FONT_CJK_16, UK_T2, "");
     lv_label_set_long_mode(s_ui.pair_msg, LV_LABEL_LONG_MODE_WRAP);
     lv_obj_set_width(s_ui.pair_msg, LV_PCT(100));
     lv_obj_set_height(s_ui.pair_msg, LV_SIZE_CONTENT);
@@ -2603,6 +2612,7 @@ static void pair_build(lv_obj_t *page)
     s_ui.pair_code_panel = s_ui.pair_codecol;
     s_ui.pair_code_lbl = uk_card_title(s_ui.pair_codecol);
     body = uk_card_body(s_ui.pair_codecol);
+    lv_obj_clear_flag(body, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_t *slots = uk_row_box(body, 0);
     lv_obj_set_width(slots, LV_PCT(100));
     for (int i = 0; i < PAIR_CODE_LEN; i++) {
@@ -2650,6 +2660,7 @@ static void pair_build(lv_obj_t *page)
     uk_card_flex(s_ui.pair_info_panel, 0);
     s_ui.pair_info_lbl = uk_card_title(s_ui.pair_info_panel);
     body = uk_card_body(s_ui.pair_info_panel);
+    lv_obj_clear_flag(body, LV_OBJ_FLAG_SCROLLABLE);
     for (int i = 0; i < PAIR_FP_LINES; i++) {
         s_ui.pair_fp[i] = uk_label(body, UK_FONT_NUM_20, UK_T1, "");
         lv_obj_set_width(s_ui.pair_fp[i], LV_SIZE_CONTENT);
@@ -6067,6 +6078,25 @@ void fnos_ui_dump_card_map_fp(FILE *fp)
     /* 卡片在树里是挂在各页下面的：页号从祖先链上读，别用 s_page（建树时它是 0）。 */
     for (int i = 0; i < s_ui.ncards; i++) {
         lv_obj_t *c = s_ui.cards[i];
+        /* Hidden cards keep stale geometry. Reporting them makes the host see a
+           scrollbar "drawn" behind an overlay (or in a hidden stage), which is a
+           false failure: LVGL never painted it. Audit only what is visible now.
+           Overlay bodies are faded via style opacity, not LV_OBJ_FLAG_HIDDEN. */
+        /* While an overlay is open only its own cards are stable surfaces. The
+           page body may still be mid-fade (opaque in the object tree, but covered
+           by the overlay), so geometry alone would audit an invisible layer. */
+        lv_obj_t *overlay_root = s_wifi_open ? s_ui.wifi_card : s_pair_open ? s_ui.pair_card :
+                                 s_diagnostics ? s_ui.diagnostics : NULL;
+        if (overlay_root) {
+            bool inside = false;
+            for (lv_obj_t *p = c; p; p = lv_obj_get_parent(p))
+                if (p == overlay_root) { inside = true; break; }
+            if (!inside) continue;
+        }
+        /* Fade-in/out is a transitional state: a half-transparent card is not
+           a stable surface, and its bar may be clipped by the overlay. */
+        if (!lv_obj_is_visible(c) ||
+            lv_obj_get_style_opa_recursive(c, LV_PART_MAIN) < LV_OPA_COVER) continue;
         /* The modal owns the active surface. Dimmed background scrollbars are
            occluded, while the detail's own scroll region must remain audited. */
         bool modal = s_ui.detail_mask && !lv_obj_has_flag(s_ui.detail_mask, LV_OBJ_FLAG_HIDDEN);

@@ -256,6 +256,7 @@ def generate_self_signed():
         return False, "系统里找不到 openssl，无法生成自签证书"
     stage = None
     keep_backup = False
+    result = None
     try:
         os.makedirs(tls_dir(), exist_ok=True)
         os.chmod(tls_dir(), 0o700)
@@ -313,18 +314,23 @@ def generate_self_signed():
                             os.unlink(target)
                     except OSError:
                         keep_backup = True
-                if keep_backup:
-                    return False, "TLS替换及恢复失败，私有候选目录保留，需检查恢复"
-                raise
-            return True, "已生成并校验自签证书"
+                if not keep_backup:
+                    raise
+            if keep_backup:
+                result = (False, "TLS替换及恢复失败，私有候选目录保留，需检查恢复")
+            else:
+                result = (True, "已生成并校验自签证书")
     except Exception as exc:
-        return False, "TLS生成或替换失败（%s）" % type(exc).__name__
+        result = (False, "TLS生成或替换失败（%s）" % type(exc).__name__)
     finally:
         if stage is not None and not keep_backup:
             try:
                 shutil.rmtree(stage)
             except OSError:
-                return False, "TLS私有候选目录清理失败，需检查"
+                # 清理失败不能吞掉正在传播的异常；成功路径则降级为失败。
+                if result is not None and result[0]:
+                    result = (False, "TLS私有候选目录清理失败，需检查")
+    return result
 
 
 def prepare_tls(regen=False):

@@ -5785,9 +5785,14 @@ int main(int argc, char **argv)
     lv_indev_set_read_cb(touch, touch_read);
     lv_indev_set_display(touch, d);
 
-    /* 预览用 KK_PALETTE=<名字> 选配色，出路数图给用户挑；不设则用默认 cuktech-console。
-       必须在 fnos_ui_create() 之前 —— 颜色在建构件时就被拷进样式里了。 */
-    fnos_ui_theme_use(getenv("KK_PALETTE"));
+    /* 预览用 KK_PALETTE=<名字> 选配色；不设时跟随固件的 CONFIG_FNOS_PALETTE，
+       避免默认审计渲染的是一套非出货配色。必须在 fnos_ui_create() 之前 ——
+       颜色在建构件时就被拷进样式里了。 */
+#ifndef CONFIG_FNOS_PALETTE
+#define CONFIG_FNOS_PALETTE "cuktech-console"
+#endif
+    const char *palette = getenv("KK_PALETTE");
+    fnos_ui_theme_use(palette && palette[0] ? palette : CONFIG_FNOS_PALETTE);
     fprintf(stderr, "palette: %s\n", fnos_ui_theme_name());
 
     if (getenv("PREVIEW_CHART_MAP")) { verify_chart_mapping(); return preview_finish(); }

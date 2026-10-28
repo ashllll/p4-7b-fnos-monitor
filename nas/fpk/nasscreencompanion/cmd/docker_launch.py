@@ -35,7 +35,9 @@ def _metrics_get(identifier, suffix):
     if not re.fullmatch(r'[0-9a-f]{64}', identifier) or suffix not in ('json', 'stats?stream=false&one-shot=true'):
         raise ValueError('invalid read-only Docker metric request')
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as raw:
-        raw.settimeout(0.3)
+        # One stats read may wait on a busy daemon; the sampler rotates one
+        # container per frame, so a full second is still bounded.
+        raw.settimeout(1.0)
         raw.connect(DOCKER_SOCKET)
         request = ('GET /containers/%s/%s HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n' % (identifier, suffix)).encode('ascii')
         raw.sendall(request)

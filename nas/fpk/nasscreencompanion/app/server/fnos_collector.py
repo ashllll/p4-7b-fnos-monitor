@@ -408,13 +408,17 @@ class Collector:
             used = total - st.f_bfree * st.f_frsize
             if total <= 0:
                 continue
+            # 保留块既不是已用也不是可用；百分比按可用容量算（与 df Use% 一致），
+            # 不再把保留块算进已用，避免 used_gb 与 pct 各自采用不同分母。
+            usable = used + free
+            pct = round(100.0 * used / usable, 1) if usable > 0 else 0.0
             seen.add(mnt)
             gb = 1024.0 ** 3
             vols.append({
                 "mnt": mnt, "fs": fstype,
                 "total_gb": round(total / gb, 1), "used_gb": round(used / gb, 1),
                 "free_gb": round(free / gb, 1),
-                "pct": round(100.0 * (total - free) / total, 1),
+                "pct": pct,
             })
         vols.sort(key=lambda v: (v["mnt"] != "/", v["mnt"]))
         return self._trim("vols", vols)
@@ -832,7 +836,12 @@ class Collector:
         return result
 
     def _zfs(self):
-        txt = read_text("/proc/spl/kstat/zfs/arcstats")
+        # 文件不存在 = 这台机器没装 ZFS；权限/IO 错误必须抛出去，让采样层
+        # 保留上一帧并标 stale，不能把瞬时读失败当成"ZFS 消失"。
+        try:
+            txt = read_text_strict("/proc/spl/kstat/zfs/arcstats")
+        except FileNotFoundError:
+            return None
         if not txt:
             return None
         vals = {}

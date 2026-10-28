@@ -89,6 +89,29 @@ class MetricsTests(unittest.TestCase):
             with self.assertRaises(ValueError):module._metrics_get('../unsafe','json')
             with self.assertRaises(ValueError):module._metrics_get('a'*64,'start')
 
+    def test_zfs_distinguishes_absent_from_unreadable(self):
+        c=collector.Collector()
+        with patch.object(collector,'read_text_strict',side_effect=FileNotFoundError()):
+            self.assertIsNone(c._zfs())
+        with patch.object(collector,'read_text_strict',side_effect=PermissionError('denied')):
+            with self.assertRaises(PermissionError):
+                c._zfs()
+
+    def test_volume_percent_counts_only_usable_capacity(self):
+        c=collector.Collector()
+        st=SimpleNamespace(f_blocks=100,f_frsize=1024**3,f_bfree=30,f_bavail=20)
+        with patch.object(collector,'read_text',return_value='/dev/sda /data ext4 rw 0 0\n'),              patch.object(collector.os,'statvfs',return_value=st):
+            rows=c._volumes()
+        self.assertEqual(len(rows),1)
+        self.assertEqual((rows[0]['total_gb'],rows[0]['used_gb'],rows[0]['free_gb']),
+                         (100.0,70.0,20.0))
+        self.assertEqual(rows[0]['pct'],77.8)
+
+    def test_publication_rejects_non_finite_json_numbers(self):
+        with self.assertRaises(ValueError):
+            collector.PublishedSnapshot({'v':1,'host':'fixture','ts':0,'ready':True,
+                                         'value':float('nan')})
+
     def test_generated_metric_copies_reject_drift_and_preserve_entry_code(self):
         self.assertEqual(sync_metrics.sync(),[])
         with tempfile.TemporaryDirectory() as directory:
