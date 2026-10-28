@@ -1350,6 +1350,7 @@ void uk_trend_enable_flow(lv_obj_t *chart)
 /* LVGL 不提供"按索引取序列"，只有 next 遍历 —— 自己走一遍链 */
 static lv_chart_series_t *series_at(lv_obj_t *chart, int32_t idx)
 {
+    if (!chart) return NULL;
     lv_chart_series_t *s = lv_chart_get_series_next(chart, NULL);
     for (int32_t i = 0; i < idx && s; i++) s = lv_chart_get_series_next(chart, s);
     return s;
