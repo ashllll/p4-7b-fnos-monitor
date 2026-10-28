@@ -578,7 +578,7 @@ void uk_row_show(uk_row_t *r, bool show)
 #define UK_COL_FLAG LV_OBJ_FLAG_USER_1      /* 标在列容器上：和"条目"区分开 */
 
 typedef struct {
-    int32_t min_col_w, force_cols, cols, shown, no_stretch;
+    int32_t min_col_w, cols, shown, no_stretch;
 } uk_pool_t;
 
 static void pool_delete_cb(lv_event_t *e)
@@ -621,8 +621,6 @@ lv_obj_t *uk_pool_create(lv_obj_t *parent, int32_t min_col_w)
 }
 
 void uk_pool_add(lv_obj_t *pool, lv_obj_t *child) { lv_obj_set_parent(child, pool); }
-void uk_pool_force_cols(lv_obj_t *pool, int32_t cols)
-{ uk_pool_t *st=lv_obj_get_user_data(pool); if (st) { st->force_cols=cols; st->cols=0; } }
 int32_t uk_pool_cols(lv_obj_t *pool)
 { uk_pool_t *st=lv_obj_get_user_data(pool); return st ? st->cols : 0; }
 int32_t uk_pool_shown(lv_obj_t *pool)
@@ -772,13 +770,12 @@ void uk_pool_relayout(lv_obj_t *pool, int32_t min_col_w, bool data_fit, lv_obj_t
     }
     int32_t cols=(w+gap)/(preferred+gap);
     if (cols<1) cols=1;
-    if (st->force_cols>0) cols=st->force_cols;
     if (n && cols>n) cols=n;
     /* 宽度允许的最多列数：每列至少 min_col_w 宽（再宽就不好读了）。 */
     int32_t cols_max=(w+gap)/(st->min_col_w+gap);
     if (cols_max<1) cols_max=1;
     if (n && cols_max>n) cols_max=n;
-    if (st->force_cols>0 || cols_max<cols) cols_max=cols;
+    if (cols_max<cols) cols_max=cols;
     int32_t cw=(w-gap*(cols-1))/cols;
     for (int32_t i=0;i<n;i++) {
         lv_obj_t *it=lv_obj_get_child(pool,i);
@@ -1498,48 +1495,6 @@ void uk_trend_push(lv_obj_t *chart, int32_t series_idx, int32_t v, uint32_t inte
     if (!lv_anim_start(&a)) { trend_window(chart, x); t->duration = 0; }
 }
 
-/* ── 数字键盘 ─────────────────────────────────────────────────────── */
-static void numpad_event_cb(lv_event_t *e)
-{
-    lv_obj_t *bm = lv_event_get_target(e);
-    void (*cb)(const char *, void *) = (void (*)(const char *, void *))lv_event_get_user_data(e);
-    uint32_t id = lv_buttonmatrix_get_selected_button(bm);
-    const char *txt = lv_buttonmatrix_get_button_text(bm, id);
-    /* 回调是"按键文字 + 用户指针"两参，这里的 user_data 存的是用户指针，
-       所以真正的用户指针通过父对象的 user_data 传（见 uk_numpad_create 注释）。 */
-    void *user = lv_obj_get_user_data(lv_obj_get_parent(bm));
-    if (cb && txt) cb(txt, user);
-}
-
-lv_obj_t *uk_numpad_create(lv_obj_t *parent, void (*cb)(const char *key, void *user), void *user)
-{
-    static const char *map[] = {
-        "1", "2", "3", "\n",
-        "4", "5", "6", "\n",
-        "7", "8", "9", "\n",
-        LV_SYMBOL_CLOSE, "0", LV_SYMBOL_BACKSPACE, ""
-    };
-    lv_obj_t *bm = lv_buttonmatrix_create(parent);
-    lv_obj_set_width(bm, LV_PCT(100));
-    lv_obj_set_flex_grow(bm, 1);
-    lv_buttonmatrix_set_map(bm, map);
-    lv_buttonmatrix_set_button_ctrl_all(bm, LV_BUTTONMATRIX_CTRL_CLICK_TRIG | LV_BUTTONMATRIX_CTRL_NO_REPEAT);
-    lv_obj_set_style_bg_opa(bm, LV_OPA_TRANSP, LV_PART_MAIN);
-    lv_obj_set_style_border_width(bm, 0, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(bm, 0, LV_PART_MAIN);
-    lv_obj_set_style_pad_gap(bm, UK_S2, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(bm, uk_c(UK_SURF_S2), LV_PART_ITEMS);
-    lv_obj_set_style_bg_opa(bm, LV_OPA_COVER, LV_PART_ITEMS);
-    lv_obj_set_style_radius(bm, UK_RADIUS_SM, LV_PART_ITEMS);
-    lv_obj_set_style_text_color(bm, uk_c(UK_T1), LV_PART_ITEMS);
-    lv_obj_set_style_text_font(bm, UK_FONT_NUM_20, LV_PART_ITEMS);
-    /* 键高下限 44：触摸目标不能低于它（LVGL 用 padding 撑，这里给最小高度） */
-    lv_obj_set_style_min_height(bm, UK_ROW_MIN, LV_PART_ITEMS);
-    lv_obj_set_user_data(lv_obj_get_parent(bm), user);   /* 见 numpad_event_cb */
-    lv_obj_add_event_cb(bm, numpad_event_cb, LV_EVENT_VALUE_CHANGED, (void *)cb);
-    return bm;
-}
-
 /* ── 动画 ─────────────────────────────────────────────────────────── */
 /* 这里只留**真在用**的三件：换页淡入（uk_anim_fade）、严重告警呼吸（uk_anim_pulse）、
    值条原生补间（uk_bar_set）。曾经还有两个 API 备而不用，已删：
@@ -1568,28 +1523,6 @@ void uk_anim_pulse(lv_obj_t *obj, bool on)
     lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
     lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
     lv_anim_set_exec_cb(&a, opa_anim_cb);
-    lv_anim_start(&a);
-}
-
-typedef struct { int32_t dy; uint32_t opa_to; } uk_enter_t;
-
-static void enter_anim_cb(void *o, int32_t v)
-{
-    lv_obj_t *obj = (lv_obj_t *)o;
-    lv_obj_set_style_translate_y(obj, v, 0);
-}
-
-void uk_anim_enter(lv_obj_t *obj, int32_t dy, uint32_t ms, uint32_t delay_ms)
-{
-    if (!obj) return;
-    lv_anim_t a;
-    lv_anim_init(&a);
-    lv_anim_set_var(&a, obj);
-    lv_anim_set_values(&a, dy, 0);
-    lv_anim_set_duration(&a, ms);
-    lv_anim_set_delay(&a, delay_ms);
-    lv_anim_set_path_cb(&a, uk_anim_path_damped);
-    lv_anim_set_exec_cb(&a, enter_anim_cb);
     lv_anim_start(&a);
 }
 

@@ -60,7 +60,7 @@ menu "fnOS monitor"
             占用率阈值由 FNOS_UI_USAGE_WARM/HIGH 控制，颜色来自当前主题。
             cuktech-console 低占用为冰青，提醒为蓝色，接近上限为朱红。
             状态色用于圆弧与进度条，历史曲线保持指标身份色；避免紫色。
-            名字写错会退回 cuktech-console（设备照样能开机）。
+            名字写错会退回 michka（设备照样能开机）。
 
     config FNOS_STATUS_MAX_BYTES
         int "Maximum telemetry response bytes"

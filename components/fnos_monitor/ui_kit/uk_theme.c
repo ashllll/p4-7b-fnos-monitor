@@ -158,8 +158,8 @@ static const struct { const char *name; const uk_pal_t *p; } PRESETS[] = {
     { "phosphor", &P_PHOSPHOR },
 };
 
-uk_pal_t g_uk_pal = P_CUKTECH_CONSOLE;
-static const char *s_pal_name = "cuktech-console";
+uk_pal_t g_uk_pal = P_MICHKA;
+static const char *s_pal_name = "michka";
 
 void uk_theme_use(const char *name)
 {
@@ -184,7 +184,7 @@ void fnos_ui_theme_use(const char *name)
     for (size_t i = 0; i < sizeof PRESETS / sizeof PRESETS[0]; i++) {
         if (strcmp(PRESETS[i].name, name) == 0) { uk_theme_use(name); return; }
     }
-    uk_theme_use("cuktech-console");
+    uk_theme_use("michka");
 }
 
 const char *fnos_ui_theme_name(void) { return s_pal_name; }

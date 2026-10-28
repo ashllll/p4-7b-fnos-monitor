@@ -120,7 +120,7 @@
 
 | 分组 | 限制／下一步 |
 | --- | --- |
-| ui_kit 死 API／主题双真值 | 需核实uk_numpad_create/uk_anim_enter和颜色宏保留策略；不以登记当清理。 |
+| ui_kit 死 API／主题双真值 | 2026-10-29 已核实 uk_numpad_create/uk_pool_force_cols/uk_anim_enter 无调用者并删除；主题编译期默认与 Kconfig 统一为 michka；固定 UK_HEX_* 颜色宏无引用并删除，颜色唯一真值为 g_uk_pal。 |
 | 头文件契约 | 契约说明不证明仓外调用者遵守；新opaque游标兼容另列。 |
 | 低危数据／并发 | 仓外计数兼容、设备锁持有时延、实际端点切换仍开放。 |
 | UI 细节 | 真实allocator断言/全对象OOM；主机标签几何非所有长名/物理触摸。 |
