@@ -151,6 +151,7 @@ static bool history_row_values(const cJSON *row, fnos_sample_t *out, int64_t *ts
     float *fields[] = { &out->cpu, &out->mem, &out->rx_kbs, &out->tx_kbs };
     for (int i=0; i<4; i++) {
         const cJSON *v=cJSON_GetArrayItem(row,i+1);
+        if (cJSON_IsNull(v)) { *fields[i]=NAN; continue; }
         if (!cJSON_IsNumber(v) || !isfinite(v->valuedouble) || fabs(v->valuedouble)>FLT_MAX) return false;
         *fields[i]=(float)v->valuedouble;
     }
@@ -468,6 +469,13 @@ static void http_ring_push(int ms)
    在"在线/保留旧数据"之间来回跳。连续 3 拍（≈0.6 s）才判离线。 */
 static uint32_t s_consec_fail;
 
+static bool history_module_live(const fnos_status_t *st, const char *name)
+{
+    for (int i=0; i<st->nmods; i++)
+        if (!strcmp(st->mods[i].name, name)) return !strcmp(st->mods[i].status, "ok");
+    return true; /* Older collectors do not send module metadata. */
+}
+
 static void commit_status(const fnos_status_t *st, int http_ms, int status_code)
 {
     if (xSemaphoreTake(s_lock, portMAX_DELAY) != pdTRUE) {
@@ -500,12 +508,12 @@ static void commit_status(const fnos_status_t *st, int http_ms, int status_code)
     int64_t interval = dst->recv_ms - previous_recv;
     s_h_interval[idx] = s_hist_count && previous_recv > 0 && interval > 0 && interval <= UINT32_MAX
                         ? (uint32_t)interval : 0;
-    s_h_cpu[idx] = dst->cpu.pct;
-    s_h_mem[idx] = dst->mem.pct;
-    s_h_rx[idx]  = dst->net.rx_kbs;
-    s_h_tx[idx]  = dst->net.tx_kbs;
-    bool temp_live=true;
-    for (int i=0;i<dst->nmods;i++) if (!strcmp(dst->mods[i].name,"temps") && strcmp(dst->mods[i].status,"ok")) temp_live=false;
+    s_h_cpu[idx] = history_module_live(dst, "cpu") ? dst->cpu.pct : NAN;
+    s_h_mem[idx] = history_module_live(dst, "mem") ? dst->mem.pct : NAN;
+    bool net_live=history_module_live(dst, "net");
+    s_h_rx[idx]  = net_live ? dst->net.rx_kbs : NAN;
+    s_h_tx[idx]  = net_live ? dst->net.tx_kbs : NAN;
+    bool temp_live=history_module_live(dst, "temps");
     float hottest=NAN;
     for (int i=0;temp_live && i<dst->ntemps;i++)
         if (isfinite(dst->temps[i].c) && (!isfinite(hottest) || dst->temps[i].c>hottest)) hottest=dst->temps[i].c;
@@ -659,7 +667,7 @@ bool fnos_data_get(fnos_status_t *out)
     if (!out) {
         return false;
     }
-    if (!s_lock || xSemaphoreTake(s_lock, pdMS_TO_TICKS(50)) != pdTRUE) {
+    if (!s_lock || xSemaphoreTake(s_lock, 0) != pdTRUE) {
         // 拿不到锁：保留上一帧数值，并沿用上次的有效性——不能因为一次锁超时
         // 就把整屏数值刷成 "--"、状态丸刷成 NO DATA
         return out->ever_ok;
@@ -685,7 +693,7 @@ int fnos_data_hist_read_ex(int64_t since_seq, fnos_sample_t *out, int max, int64
         return 0;
     }
     int n = 0;
-    if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(50)) != pdTRUE) {
+    if (xSemaphoreTake(s_lock, 0) != pdTRUE) {
         if (next_seq) *next_seq = since_seq;
         return 0;
     }

@@ -261,7 +261,6 @@ static atomic_int    s_temp_expand_req = -1;  /* 串口 'temp n'：切温度页�
 static bool          s_diagnostics;
 static fnos_status_t s_st = { .host="", .net={ .ifname="", .state="" } };
 static int64_t       s_seq;
-static bool          s_overview_gap[2]; /* CPU and memory; one gap on recovery. */
 
 /* 各页自适应池的"上次解"：条数与池尺寸都没变就不重排（照 p4 的 s_p4_* 写法）。
    放在文件作用域而不是 refresh() 里的 static：同一个页面有多张池卡，
@@ -345,6 +344,8 @@ static void set_text_v(lv_obj_t *label, bool animate, const char *fmt, va_list a
     }
 }
 
+static void set_txt(lv_obj_t *label, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
+static void set_num(lv_obj_t *label, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
 static void set_txt(lv_obj_t *label, const char *fmt, ...)
 {
     va_list ap; va_start(ap,fmt); set_text_v(label,false,fmt,ap); va_end(ap);
@@ -1186,8 +1187,7 @@ static void build_header(lv_obj_t *h)
     lv_obj_set_style_pad_hor(hostcol, UK_S3, 0);
     lv_obj_set_style_pad_ver(hostcol, UK_S1 + UK_S1 / 2, 0);
     lv_obj_set_style_bg_color(hostcol, uk_c(UK_SURF_S1), 0);
-    lv_obj_set_style_bg_grad_color(hostcol, uk_c(UK_SURF_T), 0);
-    lv_obj_set_style_bg_grad_dir(hostcol, LV_GRAD_DIR_VER, 0);
+    lv_obj_set_style_bg_grad_dir(hostcol, LV_GRAD_DIR_NONE, 0);
     lv_obj_set_style_bg_opa(hostcol, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(hostcol, UK_RADIUS_SM + UK_S1, 0);
     lv_obj_set_style_border_width(hostcol, 1, 0);
@@ -2903,7 +2903,7 @@ static lv_obj_t *wifi_field_box(lv_obj_t *parent, int32_t grow, lv_obj_t **out_l
     if (grow > 0) { lv_obj_set_flex_grow(b, (uint8_t)grow); lv_obj_set_width(b, 120); }
     else          { lv_obj_set_width(b, LV_PCT(100)); }
     lv_obj_set_height(b, UK_ROW_H);
-    lv_obj_set_style_bg_color(b, uk_c(UK_S1), 0);
+    lv_obj_set_style_bg_color(b, uk_c(UK_SURF_S1), 0);
     lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(b, UK_RADIUS_SM, 0);
     lv_obj_set_style_border_width(b, 1, 0);
@@ -3182,7 +3182,7 @@ static void wifi_fill_list(void)
         lv_obj_set_style_text_color(s_ui.wifi_ap_row[i]->val, uk_c(col), 0);
         /* 从输密码页退回来时，让用户一眼看到刚才点的是哪一条 */
         bool sel = (s_wifi_sel == i);
-        lv_obj_set_style_bg_color(s_ui.wifi_ap_row[i]->row, uk_c(UK_S2), 0);
+        lv_obj_set_style_bg_color(s_ui.wifi_ap_row[i]->row, uk_c(UK_SURF_S2), 0);
         lv_obj_set_style_bg_opa(s_ui.wifi_ap_row[i]->row, sel ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
     }
     pool_layout(&s_wifi_ap_n, &s_wifi_ap_w, &s_wifi_ap_h, n, s_ui.wifi_ap_pool, 860, false, NULL);
@@ -3248,7 +3248,7 @@ static void wifi_refresh(void)
                                         uk_c(on ? UK_OK : bad ? UK_WARN : UK_T1), 0);
         }
         if (s_ui.wifi_link_sub) {
-            char b[220];
+            char b[256];
             char st[160];
             char sr[128] = "";
             fnos_net_state_str_r(st, sizeof st);    // 不用共享静态缓冲（审计 M09）
@@ -3866,6 +3866,7 @@ static const char *link_reason(const fnos_status_t *st)
     if (!strcmp(st->last_err, "http status"))      return "NAS 返回了错误状态";
     if (!strcmp(st->last_err, "data capacity"))     return "设备数据超出内存预算，请调整采集或固件配置";
     if (!strcmp(st->last_err, "read error"))       return "读到一半连接断了";
+    if (!strcmp(st->last_err, "http init"))        return "本机 HTTP 客户端初始化失败，重启设备再试";
     return NULL;
 }
 
@@ -4601,7 +4602,7 @@ static void overview_refresh(const fnos_status_t *st)
         else (live ? set_num : set_txt)(r->meta, "可用 %.1f / %.1f GB · 交换 %.1f GB", st->mem.avail_mb / 1024.f, st->mem.total_mb / 1024.f, st->mem.swap_used_mb / 1024.f);
         set_txt(uk_card_note(r->card), "%s", live ? "" : readable ? "旧值" : "不可用");
         if (live && chart_sample_count(r->chart))
-            set_txt(uk_card_note(r->chart_card), "峰 %d%%", chart_peak(r->chart, 0));
+            set_txt(uk_card_note(r->chart_card), "峰 %d%%", (int)chart_peak(r->chart, 0));
         else set_txt(uk_card_note(r->chart_card), "%s", live ? "等待采样" : readable ? "旧历史" : "不可用");
         uk_meter_set(r->gauge, readable ? (int32_t)lroundf(fminf(100, fmaxf(0, pct)) * UK_METER_SCALE) : 0, live);
         const uint32_t usage_color = live ? uk_pct_color(pct) : UK_OFF;
@@ -4622,7 +4623,7 @@ static void overview_refresh(const fnos_status_t *st)
         if (r->context) {
             if (!readable) (live ? set_num : set_txt)(r->context, "无有效读数");
             else if (!chart_sample_count(r->chart)) (live ? set_num : set_txt)(r->context, "等待历史采样");
-            else (live ? set_num : set_txt)(r->context, "%s%d 次采集 · 峰 %d%%", live ? "" : "旧历史 · ", chart_sample_count(r->chart), chart_peak(r->chart, 0));
+            else (live ? set_num : set_txt)(r->context, "%s%d 次采集 · 峰 %d%%", live ? "" : "旧历史 · ", chart_sample_count(r->chart), (int)chart_peak(r->chart, 0));
         }
     }
 
@@ -4828,7 +4829,7 @@ static void header_refresh(void)
 
     if (!st->ever_ok) set_txt(s_ui.h_fresh, "等待采集端");
     else if (!st->online) set_txt(s_ui.h_fresh, "保留旧数据 · %s", fmt_age(age, sizeof age, data_age_ms(st)));
-    else set_txt(s_ui.h_fresh, "");
+    else set_txt(s_ui.h_fresh, "%s", "");
     show(s_ui.h_fresh, !st->ever_ok || !st->online);
 }
 
@@ -5088,12 +5089,12 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
             /* 从未采到过：这不是"离线旧快照"，而是还在等首采。 */
             set_txt(s_ui.overview_note, "%s", why ? why : "等待采集端首次采集");
             set_num(s_ui.home_temp_value, "--");
-            set_txt(s_ui.home_temp_unit, "");
+            set_txt(s_ui.home_temp_unit, "%s", "");
             set_txt(s_ui.home_temp_name, "%s", "等待数据");
         } else {
             set_txt(s_ui.overview_note, "%s", why ? why : "离线，显示最后一次采集快照");
             set_num(s_ui.home_temp_value, "--");
-            set_txt(s_ui.home_temp_unit, "");
+            set_txt(s_ui.home_temp_unit, "%s", "");
             set_txt(s_ui.home_temp_name, "%s", "离线 · 显示上次快照");
         }
         lv_obj_set_style_bg_color(s_ui.home_temp_dot, uk_c(UK_T3), 0);
@@ -5130,7 +5131,7 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
             lv_obj_set_style_bg_color(s_ui.home_temp_dot, uk_c(old_temp ? UK_T3 : uk_temp_color(hottest)), 0);
         } else {
             set_num(s_ui.home_temp_value, "--");
-            set_txt(s_ui.home_temp_unit, "");
+            set_txt(s_ui.home_temp_unit, "%s", "");
             set_txt(s_ui.home_temp_name, "%s", "温度不可用");
             lv_obj_set_style_bg_color(s_ui.home_temp_dot, uk_c(UK_T3), 0);
         }
@@ -5433,7 +5434,7 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
         }
         if (page == 3) {
             set_txt(s_ui.system_note, "等待采集，尚无有效快照");
-            set_num(s_ui.system_note2, "");
+            set_num(s_ui.system_note2, "%s", "");
         }
     }
     /* ── P3：容器 / 温度 ───────────────────────────────────────────────
@@ -5569,10 +5570,10 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
     lv_obj_set_style_text_color(s_ui.temp_hero, uk_c(temps_live ? UK_T1 : UK_T3), 0);
     if (!temps_readable) {
         set_txt(s_ui.temp_hero, "--");
-        set_txt(s_ui.temp_hero_unit, "");
+        set_txt(s_ui.temp_hero_unit, "%s", "");
         const char *state = overview_module_state(st, "temps");
         set_txt(s_ui.temp_note, "%s", st->ever_ok && state ? mod_status_cn(state) : "等待数据");
-        set_txt(s_ui.temp_note2, "");
+        set_txt(s_ui.temp_note2, "%s", "");
         lv_obj_set_style_bg_color(s_ui.temp_hero_dot, uk_c(UK_T3), 0);
         dot_glow(s_ui.temp_hero_dot, UK_T3, 0);
     } else if (st->ntemps == 0) {
@@ -5779,7 +5780,7 @@ static void nav_badge_sync(const fnos_status_t *st)
 {
     if (!s_ui.nav_badge) return;
     if (st->nalerts > 0) {
-        char b[8];
+        char b[12];
         snprintf(b, sizeof b, "%u", (unsigned)st->nalerts);
         set_txt(s_ui.nav_badge, "%s", b);
         show(s_ui.nav_badge_box, true);
@@ -5855,22 +5856,15 @@ static void ui_tick(lv_timer_t *t)
         uk_trend_clear(s_ui.overview_resource[1].chart);
         uk_trend_clear(s_ui.tr_net);
         uk_trend_clear(s_ui.overview_temp_history);
-        memset(s_overview_gap, 0, sizeof s_overview_gap);
     }
-    bool live[] = { overview_live(&s_st, "cpu"), overview_live(&s_st, "mem") };
-    /* History has no per-point validity. Do not plot retained module values as
-       new measurements while the current module explicitly reports stale/error. */
-    if (s_st.ever_ok)
-        for (int k = 0; k < 2; k++) if (!live[k]) s_overview_gap[k] = true;
+    /* Each sample carries its own gaps; today's state cannot rewrite history. */
     uint64_t batch_ms = 0;
     for (int i = 0; i < n; i++) {
         batch_ms += smp[i].interval_ms;
         uk_trend_push(s_ui.overview_temp_history,0,history_chart_value(smp[i].temp_max), smp[i].interval_ms);
-        for (int k = 0; k < 2; k++) if (live[k]) {
+        for (int k = 0; k < 2; k++) {
             lv_obj_t *chart = s_ui.overview_resource[k].chart;
-            if (s_overview_gap[k]) uk_trend_push(chart, 0, LV_CHART_POINT_NONE, smp[i].interval_ms);
             uk_trend_push(chart, 0, history_chart_value(k == 0 ? smp[i].cpu : smp[i].mem), smp[i].interval_ms);
-            s_overview_gap[k] = false;
         }
         uk_trend_push(s_ui.tr_net, 0, history_chart_value(smp[i].tx_kbs), smp[i].interval_ms);
         uk_trend_push(s_ui.tr_net, 1, history_chart_value(smp[i].rx_kbs), smp[i].interval_ms);
@@ -6116,22 +6110,25 @@ void fnos_ui_dump_card_map_fp(FILE *fp)
         /* While an overlay is open only its own cards are stable surfaces. The
            page body may still be mid-fade (opaque in the object tree, but covered
            by the overlay), so geometry alone would audit an invisible layer. */
-        lv_obj_t *overlay_root = s_wifi_open ? s_ui.wifi_card : s_pair_open ? s_ui.pair_card :
+        /* The modal owns the active surface: dimmed background scrollbars are
+           occluded, while the detail's own scroll region must remain audited. */
+        bool modal = s_ui.detail_mask && !lv_obj_has_flag(s_ui.detail_mask, LV_OBJ_FLAG_HIDDEN);
+        /* Overlays live on page 3; elsewhere an open flag left over from a fade is
+           not a stable surface and must not be audited. */
+        lv_obj_t *overlay_root = s_page != 3 ? NULL :
+                                 s_wifi_open ? s_ui.wifi_card : s_pair_open ? s_ui.pair_card :
                                  s_diagnostics ? s_ui.diagnostics : NULL;
-        if (overlay_root) {
+        lv_obj_t *surface = modal ? s_ui.detail_card : overlay_root;
+        if (surface) {
             bool inside = false;
             for (lv_obj_t *p = c; p; p = lv_obj_get_parent(p))
-                if (p == overlay_root) { inside = true; break; }
+                if (p == surface) { inside = true; break; }
             if (!inside) continue;
         }
         /* Fade-in/out is a transitional state: a half-transparent card is not
            a stable surface, and its bar may be clipped by the overlay. */
         if (!lv_obj_is_visible(c) ||
             lv_obj_get_style_opa_recursive(c, LV_PART_MAIN) < LV_OPA_COVER) continue;
-        /* The modal owns the active surface. Dimmed background scrollbars are
-           occluded, while the detail's own scroll region must remain audited. */
-        bool modal = s_ui.detail_mask && !lv_obj_has_flag(s_ui.detail_mask, LV_OBJ_FLAG_HIDDEN);
-        if (modal && c != s_ui.detail_card) continue;
         lv_area_t a;
         lv_obj_get_coords(c, &a);
         /* 有没有列表：卡片的直接子对象里有没有"可滚动"的那个。
@@ -6155,8 +6152,8 @@ void fnos_ui_dump_card_map_fp(FILE *fp)
         /* 先只数不打印（nest 是覆盖面分母），打完 [card] 行再吐嵌套 [bar]：
            主机侧按"最近一条 [card]"归属，顺序反了嵌套条会挂到上一张卡上。 */
         int nest = sc ? dump_nested_bars(NULL, c, pg, 1, sc) : 0;
-        fprintf(fp, "[card] p=%d x=%d y=%d w=%d h=%d list=%d nest=%d\n", pg, a.x1, a.y1,
-                a.x2 - a.x1 + 1, a.y2 - a.y1 + 1, scrolls ? 1 : 0, nest);
+        fprintf(fp, "[card] p=%d x=%d y=%d w=%d h=%d list=%d nest=%d\n", pg, (int)a.x1, (int)a.y1,
+                (int)(a.x2 - a.x1 + 1), (int)(a.y2 - a.y1 + 1), scrolls ? 1 : 0, nest);
         if (sc) dump_nested_bars(fp, c, pg, 1, sc);
         /* 滚动条"该不该有、在哪一列"不能在 PNG 上猜（审计 H14：像素启发式把卡片右缘
            的 4px 灰条当成滚动条，报出 18 处假不合格，另外 215 处"没找到轨道"根本分不清

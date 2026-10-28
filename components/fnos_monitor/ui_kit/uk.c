@@ -61,6 +61,7 @@ static void style_surface(lv_obj_t *o, uint32_t bg, int32_t radius)
 {
     lv_obj_set_style_bg_color(o, uk_c(bg), 0);
     lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_grad_dir(o, LV_GRAD_DIR_NONE, 0);
     lv_obj_set_style_radius(o, radius, 0);
     lv_obj_set_style_border_width(o, 0, 0);
     lv_obj_remove_flag(o, LV_OBJ_FLAG_SCROLLABLE);
@@ -251,10 +252,7 @@ lv_obj_t *uk_card(lv_obj_t *parent, const char *title, const char *note)
     lv_obj_set_width(c, LV_PCT(100));
     lv_obj_set_height(c, LV_SIZE_CONTENT);
     style_surface(c, UK_SURF_S1, UK_RADIUS);
-    /* michka .box: linear-gradient(180deg, --f-bubble, --f-bubble-2) —— 纯色卡看着是"贴纸"，
-       细微的竖向渐变才让它像一块浮起来的玻璃。 */
-    lv_obj_set_style_bg_grad_color(c, uk_c(UK_SURF_T), 0);
-    lv_obj_set_style_bg_grad_dir(c, LV_GRAD_DIR_VER, 0);
+    /* RGB565 surfaces stay solid; depth comes from the palette's surface levels. */
     style_card_edge(c);
     lv_obj_set_style_pad_hor(c, UK_CARD_PAD, 0);
     lv_obj_set_style_pad_ver(c, UK_CARD_PAD_V, 0);
@@ -829,7 +827,7 @@ void uk_pool_relayout(lv_obj_t *pool, int32_t min_col_w, bool data_fit, lv_obj_t
         }
     }
     st->cols=cols; st->shown=n;
-    if (note) uk_set_text(note,"%d / %d",n,n);
+    if (note) uk_set_text(note,"%d / %d",(int)n,(int)n);
     uk_viewport_snap(pool,base_gap);
 }
 

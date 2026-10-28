@@ -58,8 +58,12 @@ idf_component_register(
 target_compile_options(
     ${COMPONENT_LIB}
     PRIVATE
-        $<$<COMPILE_LANGUAGE:C>:-Wno-format -Wno-unused-variable>
+        $<$<COMPILE_LANGUAGE:C>:-Wformat -Werror=format -Wno-unused-variable>
 )
+
+# Existing bounded pairing diagnostics still warn on possible truncation.
+# Keep type/argument format errors fatal for all sources.
+set_source_files_properties("fnos_pair.c" PROPERTIES COMPILE_OPTIONS "-Wno-error=format-truncation")
 
 include("${CMAKE_CURRENT_LIST_DIR}/cmake/fnos_chart_math.cmake")
 fnos_use_safe_chart_map(__idf_lvgl__lvgl)

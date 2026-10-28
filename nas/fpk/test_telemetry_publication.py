@@ -278,6 +278,25 @@ class Publication(unittest.TestCase):
         self.collector.set_hist_len(2)
         self.assertEqual(self.request('/api/v1/history')['rows'], recent['rows'])
 
+    def test_history_quality_is_per_sample_and_per_module(self):
+        for state in ('stale', 'partial', 'denied', 'missing', 'error', 'disabled'):
+            with self.subTest(state=state):
+                snap = fixture(2)
+                snap['modules'] = {key: {'status': state} for key in ('cpu', 'net', 'temps')}
+                publish(self.collector, snap)
+                row = self.request('/api/v1/history', {'n': ['1']})['rows'][0]
+                self.assertEqual(row[1:], [None, 40.5, None, None, None])
+        snap = fixture(2)
+        snap['errors'] = ['mem']  # Legacy errors without module metadata.
+        snap['cpu']['pct'] = 0
+        publish(self.collector, snap)
+        row = self.request('/api/v1/history', {'n': ['1']})['rows'][0]
+        self.assertEqual(row[1:], [0, None, 100, 50, 40])
+        publish(self.collector, fixture(2))
+        rows = self.request('/api/v1/history', {'n': ['2']})['rows']
+        self.assertIsNone(rows[0][2])
+        self.assertEqual(rows[1][1:], [12.5, 40.5, 100, 50, 40])
+
     def http_server(self):
         for name in ('log', 'save_config'):
             mocked = patch.object(m, name)

@@ -27,7 +27,7 @@ EXTRA_SOURCES = ["fnos_snapshot.c"]
 # 按名字抠函数体：名字在哪个源里都能找到（找不到就报错，不静默跳过）。
 FUNCS = [
     # fnos_data.c：薄壳 + 历史回填
-    "parse_status", "history_row_values", "history_alloc", "history_reset", "parse_history", "commit_status", "fnos_data_hist_seq", "fnos_data_hist_read_ex", "fnos_data_hist_read",
+    "parse_status", "history_row_values", "history_alloc", "history_reset", "parse_history", "history_module_live", "commit_status", "fnos_data_hist_seq", "fnos_data_hist_read_ex", "fnos_data_hist_read",
     # fnos_snapshot.c：字符串 arena + 字段解析
     "snapshot_malloc", "owned_alloc",
     "fnos_status_create", "fnos_status_release", "fnos_status_copy", "fnos_status_text",
@@ -148,6 +148,7 @@ int64_t s_hist_reset_seq=-1;
 bool s_hist_backfilled;
 fnos_status_t s_status;
 bool s_valid;
+uint32_t s_consec_fail;
 int64_t host_timer_us = 1000000;
 #define esp_timer_get_time() host_timer_us
 #define http_ring_push(ms) ((void)0)

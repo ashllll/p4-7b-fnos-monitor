@@ -1381,6 +1381,26 @@ static int preview_finish(void)
     return 0;
 }
 
+/* Audit hidden setup panels too: their styles become visible on first entry. */
+static int audit_surface_styles(lv_obj_t *o, const char *name)
+{
+    int failures = 0;
+    if (lv_obj_get_style_bg_grad_dir(o, LV_PART_MAIN) != LV_GRAD_DIR_NONE) {
+        fprintf(stderr, "surface[%s]: background gradient at %d,%d\n", name,
+                (int)o->coords.x1, (int)o->coords.y1);
+        failures++;
+    }
+    lv_color_t bg = lv_obj_get_style_bg_color(o, LV_PART_MAIN);
+    if (lv_color_eq(bg, uk_c(UK_S1)) || lv_color_eq(bg, uk_c(UK_S2))) {
+        fprintf(stderr, "surface[%s]: spacing token used as background at %d,%d\n", name,
+                (int)o->coords.x1, (int)o->coords.y1);
+        failures++;
+    }
+    for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++)
+        failures += audit_surface_styles(lv_obj_get_child(o, i), name);
+    return failures;
+}
+
 static void snapshot(const char *name)
 {
     if (getenv("PREVIEW_PAGE_CARDS")) {
@@ -1462,6 +1482,7 @@ static void snapshot(const char *name)
        报出一堆假越界 —— 曾因此以为系统页摘要条有 280 高（实际 44）。 */
     lv_obj_update_layout(lv_screen_active());
     lv_refr_now(lv_display_get_default());
+    assert(audit_surface_styles(lv_screen_active(), name) == 0);
     audit_labels(lv_screen_active());
     audit_format_residue(lv_screen_active(), name);
     if (s_motion_frame) {
@@ -2279,9 +2300,12 @@ static void verify_overview_charts(void)
     fnos_status_text(&fixture, &fixture.mods[4].status, "stale");
     fnos_status_text(&fixture, &fixture.mods[5].status, "denied");
     fnos_status_text(&fixture, &fixture.mods[6].status, "denied");
+    /* Collector quality travels with every sample, independently of the current gauge. */
+    s_override_sample.cpu = s_override_sample.rx_kbs = s_override_sample.tx_kbs = NAN;
+    s_override_sample.temp_max = NAN;
     s_seq += 2;
     regression_tick();
-    assert(chart_values_equal(cpu, 0, 17) == 1); // stale resource is frozen
+    assert(chart_values_equal(cpu, 0, 17) == 1); // retained value is not republished
     assert(chart_values_equal(mem, 0, 42) == 3); // healthy module still advances
     assert(visible_text(lv_screen_active(), "权限不足"));
     assert(!overview_object("网络吞吐", &lv_chart_class));
@@ -2290,20 +2314,27 @@ static void verify_overview_charts(void)
     assert(lv_obj_get_style_opa(cpu, 0) == LV_OPA_40);
     snapshot("10-overview-partial");
 
-    for (int i = 0; i < fixture.nmods; i++) fnos_status_text(&fixture, &fixture.mods[i].status, "ok");
+    /* A previously captured valid row may arrive while today's CPU is stale. */
+    s_override_sample.cpu = 18;
     s_seq++;
     regression_tick();
-    assert(chart_values_equal(cpu, 0, LV_CHART_POINT_NONE) == 1);
+    assert(chart_values_equal(cpu, 0, 18) == 1);
+    assert(chart_values_equal(cpu, 0, LV_CHART_POINT_NONE) == 2);
+    for (int i = 0; i < fixture.nmods; i++) fnos_status_text(&fixture, &fixture.mods[i].status, "ok");
+    s_override_sample = (fnos_sample_t){ .cpu = 17, .mem = 42, .rx_kbs = 128, .tx_kbs = 64, .temp_max = 71 };
+    s_seq++;
+    regression_tick();
+    assert(chart_values_equal(cpu, 0, LV_CHART_POINT_NONE) == 2);
     s_override_sample.temp_max = NAN;
     s_seq++;
     regression_tick();
-    assert(chart_values_equal(temp, 0, LV_CHART_POINT_NONE) == 1);
+    assert(chart_values_equal(temp, 0, LV_CHART_POINT_NONE) == 4);
     s_override_sample.temp_max = 71;
     fixture.online = false;
     snprintf(fixture.last_err, sizeof fixture.last_err, "timeout");
     int32_t old[CONFIG_FNOS_CHART_WINDOW];
     memcpy(old, lv_chart_get_series_y_array(cpu, uk_trend_raw_series(cpu, 0)), bytes);
-    s_seq++;
+    /* A transport failure publishes no new history row. */
     regression_tick();
     assert(!memcmp(old, lv_chart_get_series_y_array(cpu, uk_trend_raw_series(cpu, 0)), bytes));
     assert(visible_text(lv_screen_active(), "旧值"));
@@ -3286,7 +3317,7 @@ static int has_text(const char *t)
    那一半——把每个标签都灌进去，断言界面上**确实多出一句话**。
    少一个标签的后果很隐蔽：`link_reason()` 返回 NULL，那行字整条消失，界面看着只是
    "没写原因"，用户不知道该干什么。断言用差分（跟"没有原因时"比），所以不用把
-   那 11 句人话在预览里再抄一遍——抄一遍就又有了漂移的机会。 */
+   这些句子在预览里再抄一遍——抄一遍就又有了漂移的机会。 */
 /* 连接失败的原因标签是**跨文件的契约**：`fnos_data.c` 产出短标签，`fnos_ui.c` 的
    `link_reason()` 翻成人话，显示在总览页健康卡右侧那行。`tools/reason_check.py`
    静态核对两边的集合；这里补运行时那一半——**逐个标签断言翻得出话、每句都不一样、
@@ -3300,6 +3331,7 @@ static void verify_reasons(void)
     static const char *TAGS[] = {
         "no wifi", "dns fail", "connect/timeout", "tls handshake", "tls setup",
         "cert parse", "no cert", "token rejected", "bad payload", "http status", "read error",
+        "data capacity", "http init",
     };
     const int NT = (int)(sizeof TAGS / sizeof TAGS[0]);
     fnos_status_t st = {0};

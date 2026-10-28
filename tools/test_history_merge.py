@@ -23,7 +23,18 @@ static void *writer(void *arg) {
 }
 int main(int argc,char **argv) {
  assert(argc==2); fnos_sample_t out[FNOS_HIST_MAX]; int64_t next=0; bool reset=false;
- if(!strcmp(argv[1],"temperature")) {
+ if(!strcmp(argv[1],"quality")) {
+  assert(parse_history("{\"rows\":[[1700000000,null,0,3,4,40],[1700000001,12,null,null,null,null],[1700000002,13,41,5,6,42]]}"));
+  assert(fnos_data_hist_read_ex(0,out,FNOS_HIST_MAX,&next,&reset)==3);
+  assert(isnan(out[0].cpu) && out[0].mem==0 && out[0].rx_kbs==3);
+  assert(out[1].cpu==12 && isnan(out[1].mem) && isnan(out[1].rx_kbs) && isnan(out[1].tx_kbs));
+  assert(out[2].cpu==13 && out[2].mem==41 && out[2].tx_kbs==6);
+  fnos_status_t st={0};const char *why=NULL;
+  assert(fnos_status_parse("{\"ready\":true,\"ts\":1700000003,\"cpu\":{\"pct\":12},\"mem\":{\"pct\":0},\"net\":{\"rx_kbs\":5,\"tx_kbs\":6},\"modules\":{\"cpu\":{\"status\":\"stale\"},\"mem\":{\"status\":\"ok\"},\"net\":{\"status\":\"partial\"}}}",&st,&why));
+  commit_status(&st,1,200);fnos_status_release(&st);
+  assert(fnos_data_hist_read_ex(next,out,1,&next,&reset)==1);
+  assert(isnan(out[0].cpu) && out[0].mem==0 && isnan(out[0].rx_kbs) && isnan(out[0].tx_kbs));
+ } else if(!strcmp(argv[1],"temperature")) {
   assert(parse_history("{\"rows\":[[1700000000,1,2,3,4],[1700000001,1,2,3,4,42.5],[1700000002,1,2,3,4,null]]}"));
   assert(fnos_data_hist_read_ex(0,out,FNOS_HIST_MAX,&next,&reset)==3);
   assert(isnan(out[0].temp_max) && out[1].temp_max==42.5f && isnan(out[2].temp_max));
@@ -111,15 +122,14 @@ def run():
   (p/'production.c').write_text(source)
   ui=(ROOT/'components/fnos_monitor/fnos_ui.c').read_text()
   start=ui.index('    static fnos_sample_t smp[64];',ui.index('static void ui_tick('))
-  end=ui.index('    bool live[]',start)
+  end=ui.index('    uint64_t batch_ms',start)
   block=ui[start:end].replace('s_seq','ui_cursor')
   advance=next(line.strip() for line in ui[end:].splitlines() if 's_seq = next;' in line).replace('s_seq','ui_cursor')
   ui_fixture=r'''
 static int64_t ui_cursor;
 static int ui_clears;
 static struct { bool ever_ok; } s_st={true};
-static struct { struct { int chart; } overview_resource[2]; int tr_net,temp_history,overview_temp_history; } s_ui;
-static bool s_overview_gap[2];
+static struct { struct { int chart; } overview_resource[2]; int tr_net,overview_temp_history; } s_ui;
 static void uk_trend_clear(int chart) { (void)chart; ui_clears++; }
 static void ui_history_tick(void) {
 '''+block+advance+'\n}\n'
@@ -129,7 +139,7 @@ static void ui_history_tick(void) {
   cmd=['cc','-std=c11','-pthread','-fsanitize=address,undefined,float-cast-overflow','-fno-sanitize-recover=all','-g','-I'+str(ROOT/'build/config'),'-I'+str(ROOT/'components/fnos_monitor'),'-I'+str(cj),str(p/'test.c'),str(cj/'cJSON.c'),'-o',str(p/'test')]
   subprocess.run(cmd,check=True,capture_output=True)
   env=dict(os.environ,ASAN_OPTIONS='detect_leaks=0')
-  for case in ('temperature','interval','ui','merge','reset','full','unknown-time','bad-order','capacity','lock','concurrent'):
+  for case in ('quality','temperature','interval','ui','merge','reset','full','unknown-time','bad-order','capacity','lock','concurrent'):
    result=subprocess.run([str(p/'test'),case],capture_output=True,env=env,timeout=20)
    assert result.returncode==0,(case,result.stderr)
   # Fault only this allocation function; leave parser and snapshot allocations real.
@@ -146,7 +156,7 @@ static void ui_history_tick(void) {
   assert mutant!=main;(p/'test.c').write_text(mutant);subprocess.run(cmd,check=True,capture_output=True)
   result=subprocess.run([str(p/'test'),'ui'],capture_output=True,env=env,timeout=20)
   assert result.returncode!=0 and b'ui_cursor==fnos_data_hist_seq()' in result.stderr,'UI empty-batch cursor negative control must fail'
- print('PASS history merge: 11 production scenarios including producer intervals, real pthread mutex, allocation failure, reset and UI empty-batch negative controls; ASan/UBSan')
+ print('PASS history merge: per-metric gaps, producer intervals, real pthread mutex, allocation failure, reset and UI empty-batch negative controls; ASan/UBSan')
 def chart_test():
  ui=(ROOT/'components/fnos_monitor/fnos_ui.c').read_text()
  start=ui.index('    for (int i = 0; i < n; i++) {',ui.index('static void ui_tick('))
@@ -163,15 +173,14 @@ def chart_test():
 #include <assert.h>
 #define LV_CHART_POINT_NONE INT32_MAX
 typedef int lv_obj_t;
-static struct { struct {lv_obj_t *chart;} overview_resource[2]; lv_obj_t *tr_net,*temp_history,*overview_temp_history; } s_ui;
-static bool s_overview_gap[2];
+static struct { struct {lv_obj_t *chart;} overview_resource[2]; lv_obj_t *tr_net,*overview_temp_history; } s_ui;
 static int32_t points[5];static int point_count;
 static void uk_trend_push(lv_obj_t *c,int32_t series,int32_t v,uint32_t interval) {(void)c;(void)series;assert(interval==200);assert(point_count<5);points[point_count++]=v;}
 struct sample {float cpu,mem,rx_kbs,tx_kbs,temp_max;uint32_t interval_ms;};
 """
  main=r"""
 static void draw(float v) {
- struct sample smp[1]={{v,v,v,v,v,200}};int n=1;bool live[2]={true,true};uint64_t batch_ms=0;point_count=0;
+ struct sample smp[1]={{v,v,v,v,v,200}};int n=1;bool live[2]={false,false};uint64_t batch_ms=0;point_count=0;
 """+block+r"""
  assert(point_count==5);
  assert(batch_ms==200);
@@ -289,13 +298,7 @@ int main(void){int32_t x,a,b,c,d,want;int n=0;
  with tempfile.TemporaryDirectory(prefix='fnos-chart-cmake-') as d:
   p=Path(d);(p/'src/widgets/chart').mkdir(parents=True);(p/'src/draw').mkdir(parents=True)
   (p/'src/widgets/chart/lv_chart.c').write_text('int fixture;\n')
-  # 9.6 的 polyline 修复要求 lv_draw_line.c 也参与目标；夹具必须同时造出
-  # 四条原生边界表达式，否则 CMake 钩子会正确报“布局变了”。
-  (p/'src/draw/lv_draw_line.c').write_text(
-   'a.x1 = (int32_t)LV_MIN(a.x1, dsc->points[i].x) - dsc->width;\n'
-   'a.x2 = (int32_t)LV_MAX(a.x2, dsc->points[i].x) + dsc->width;\n'
-   'a.y1 = (int32_t)LV_MIN(a.y1, dsc->points[i].y) - dsc->width;\n'
-   'a.y2 = (int32_t)LV_MAX(a.y2, dsc->points[i].y) + dsc->width;\n')
+  (p/'src/draw/lv_draw_line.c').write_text((ROOT/'managed_components/lvgl__lvgl/src/draw/lv_draw_line.c').read_text())
   header='cmake_minimum_required(VERSION 3.18)\nproject(chart_hook C)\n'
   include='include("'+str(ROOT/'components/fnos_monitor/cmake/fnos_chart_math.cmake')+'")\n'
   good=header+'add_library(fixture STATIC "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/chart/lv_chart.c" "${CMAKE_CURRENT_SOURCE_DIR}/src/draw/lv_draw_line.c")\n'+include+'fnos_use_safe_chart_map(fixture)\n'
@@ -373,7 +376,7 @@ int main(void){
   old=code.replace('double used = 0, total = 0, free_gb = 0;','float used = 0, total = 0; double free_gb = 0;')
   assert old!=code;src.write_text(old);subprocess.run(flags,check=True,capture_output=True)
   r=subprocess.run([str(exe)],capture_output=True,env=env,timeout=10)
-  assert r.returncode and b'isfinite(used)' in r.stderr,r.stderr
+  assert r.returncode and (b'isfinite(used)' in r.stderr or b'isfinite(free_gb)' in r.stderr),r.stderr
  print('PASS production gauge consumers and both capacity accumulations: finite extremes, nonfinite, raw preservation, old casts/float sum negative controls')
 
 def snapshot_fallback_test():

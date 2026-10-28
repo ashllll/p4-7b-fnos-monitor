@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <limits.h>
 #include <stdio.h>
+#include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -326,37 +327,37 @@ static void pf_report(void)
     uint32_t iv50 = pf_pct(s_iv, s_niv, 50);
 
     /* Nested probes are subsets of flush_us, not additional frame time. */
-    printf("[bench_parts] kind=%s page=%d frames=%u frame_us=%llu flush_us=%llu flush_wait_us=%llu",
+    printf("[bench_parts] kind=%s page=%d frames=%" PRIu32 " frame_us=%llu flush_us=%llu flush_wait_us=%llu",
            s_run.kind == PF_IDLE ? "idle" : s_run.kind == PF_SWIPE ? "swipe" : "tap",
            s_run.page, s_parts.frames, (unsigned long long)s_parts.frame_us,
            (unsigned long long)s_parts.flush_us, (unsigned long long)s_parts.flush_wait_us);
     static const char *const names[] = {"ppa", "dma2d", "submit", "freebuf"};
     for (unsigned i = 0; i < FNOS_PERF_TASK_CREATE; i++)
-        printf(" %s_us=%llu %s_n=%u %s_max_us=%u", names[i],
+        printf(" %s_us=%llu %s_n=%" PRIu32 " %s_max_us=%" PRIu32, names[i],
                (unsigned long long)s_parts.stage[i].us, names[i], s_parts.stage[i].calls,
                names[i], s_parts.stage[i].max_us);
     printf("\n");
 
     /* Text contains blend time; these are inclusive probes, never summed. */
-    printf("[bench_draw] kind=%s page=%d frames=%u units=%u worker_n=%u cpu_worker=%.1f",
+    printf("[bench_draw] kind=%s page=%d frames=%" PRIu32 " units=%" PRIu32 " worker_n=%" PRIu32 " cpu_worker=%.1f",
            s_run.kind == PF_IDLE ? "idle" : s_run.kind == PF_SWIPE ? "swipe" : "tap",
-           s_run.page, s_parts.frames, (unsigned)lv_draw_get_unit_count(), s_parts.worker_calls,
+           s_run.page, s_parts.frames, (uint32_t)lv_draw_get_unit_count(), s_parts.worker_calls,
            total ? 100.0 * worker / total : 0.0);
     static const char *const draw_names[] = {"create", "pick", "blend", "text"};
     for (unsigned i = FNOS_PERF_TASK_CREATE; i < FNOS_PERF_STAGE_COUNT; i++) {
         const char *name = draw_names[i - FNOS_PERF_TASK_CREATE];
-        printf(" %s_us=%llu %s_n=%u %s_max_us=%u", name,
+        printf(" %s_us=%llu %s_n=%" PRIu32 " %s_max_us=%" PRIu32, name,
                (unsigned long long)s_parts.stage[i].us, name, s_parts.stage[i].calls,
                name, s_parts.stage[i].max_us);
     }
     printf("\n");
 
-    printf("[bench] kind=%s page=%d cycles=%d misses=%d p2f_n=%d p2f_p50_us=%u p2f_p95_us=%u p2f_max_us=%u"
-           " r2f_n=%d r2f_p50_us=%u r2f_p95_us=%u r2f_max_us=%u"
-           " iv_n=%d iv_p50_us=%u iv_p95_us=%u iv_max_us=%u frames=%u wall_ms=%u fps_avg=%.1f fps_p50=%.1f"
-           " p2rs_n=%d p2rs_p50_us=%u rs2rr_n=%d rs2rr_p50_us=%u rs2rr_p95_us=%u"
-           " rr2rs_n=%d rr2rs_p50_us=%u rr2rs_p95_us=%u"
-           " tick_n=%d tick_p50_us=%u tick_p95_us=%u tick_max_us=%u cpu_lvgl=%.1f cpu_idle=%.1f\n",
+    printf("[bench] kind=%s page=%d cycles=%d misses=%d p2f_n=%d p2f_p50_us=%" PRIu32 " p2f_p95_us=%" PRIu32 " p2f_max_us=%" PRIu32
+           " r2f_n=%d r2f_p50_us=%" PRIu32 " r2f_p95_us=%" PRIu32 " r2f_max_us=%" PRIu32
+           " iv_n=%d iv_p50_us=%" PRIu32 " iv_p95_us=%" PRIu32 " iv_max_us=%" PRIu32 " frames=%" PRIu32 " wall_ms=%" PRIu32 " fps_avg=%.1f fps_p50=%.1f"
+           " p2rs_n=%d p2rs_p50_us=%" PRIu32 " rs2rr_n=%d rs2rr_p50_us=%" PRIu32 " rs2rr_p95_us=%" PRIu32
+           " rr2rs_n=%d rr2rs_p50_us=%" PRIu32 " rr2rs_p95_us=%" PRIu32
+           " tick_n=%d tick_p50_us=%" PRIu32 " tick_p95_us=%" PRIu32 " tick_max_us=%" PRIu32 " cpu_lvgl=%.1f cpu_idle=%.1f\n",
            s_run.kind == PF_TAP ? "tap" : (s_run.kind == PF_SWIPE ? "swipe" : "idle"),
            s_run.page, s_run.cycles, s_run.misses,
            s_np2f, pf_pct(s_p2f, s_np2f, 50), pf_pct(s_p2f, s_np2f, 95), pf_max(s_p2f, s_np2f),
