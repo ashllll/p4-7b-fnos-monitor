@@ -286,9 +286,10 @@ class Collector:
             if dt > 0:
                 pct = max(0.0, min(100.0, 100.0 * (1.0 - (idle - p_idle) / dt)))
         self._prev_cpu = (idle, total)
-        load = read_text("/proc/loadavg").split()
+        load_text = read_text("/proc/loadavg")
+        load = load_text.split()
         runq = procs = 0
-        m = re.search(r"(\d+)\s*/\s*(\d+)", read_text("/proc/loadavg"))
+        m = re.search(r"(\d+)\s*/\s*(\d+)", load_text)
         if m:                       # "2/1928" = 可运行 2 个 / 总任务 1928 个
             runq = int(m.group(1))
             procs = int(m.group(2))

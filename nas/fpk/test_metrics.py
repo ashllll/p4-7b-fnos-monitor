@@ -112,6 +112,20 @@ class MetricsTests(unittest.TestCase):
                                  (100.0,70.0,20.0))
                 self.assertEqual(rows[0]['pct'],77.8)
 
+    def test_cpu_reads_loadavg_once(self):
+        stat='cpu 1 2 3 4 5 6 7 8\n'
+        load='0.10 0.20 0.30 1/100 12345\n'
+        # 负载与 runq/procs 必须来自同一次读取：两次读之间可能变化，
+        # 第二次失败还会把整段 CPU 采集打成异常。
+        for name,module in (('companion',collector),('legacy',legacy)):
+            with self.subTest(collector=name):
+                c=module.Collector()
+                with patch.object(module,'read_text',side_effect=[stat,load]) as read:
+                    cpu=c._cpu()
+                self.assertEqual(cpu['load1'],0.1)
+                self.assertEqual((cpu['runq'],cpu['procs']),(1,100))
+                self.assertEqual(read.call_count,2)
+
     def test_publication_rejects_non_finite_json_numbers(self):
         with self.assertRaises(ValueError):
             collector.PublishedSnapshot({'v':1,'host':'fixture','ts':0,'ready':True,
