@@ -11,7 +11,7 @@ ADR-0001～0007 记录现有原生固件的选择与后续演进；ADR-0008 起�
 | [0001](0001-native-instrument-ui.md) | 通过共享原生 LVGL 构件统一横屏仪表界面 |
 | [0002](0002-continuous-telemetry-motion.md) | 连续遥测保留位置与速度（求解器及参数由 0005 替代） |
 | [0003](0003-module-freshness-and-reading-presence.md) | 读数存在性、模块新鲜度和统计新鲜度分别判断 |
-| [0004](0004-identity-and-status-colors.md) | 指标身份色与当前状态色分离，默认 ULTRA 主题统一 |
+| [0004](0004-identity-and-status-colors.md) | 指标身份色与当前状态色分离（默认主题条款由 michka 迁移取代） |
 | [0005](0005-library-springs-and-attached-cursors.md) | 复用开源阻尼求解器，圆环、条形和曲线游标直接附着图形 |
 | [0006](0006-network-flow-curve.md) | D3 B 样条与原生绘线；网络独占范围及单次平均由 0007 替代 |
 | [0007](0007-all-trend-flow-smoothing.md) | 全部遥测趋势使用双重移动平均，保留原始测量与状态语义 |
