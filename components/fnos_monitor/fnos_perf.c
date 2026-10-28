@@ -4,6 +4,8 @@
 
 #ifdef CONFIG_FNOS_UI_PERF_BENCH
 
+#include <errno.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -581,8 +583,13 @@ void fnos_perf_note_tick(uint32_t us)
 static int pf_int(const char *s, int def)
 {
     if (!s || !*s) return def;
-    int v = atoi(s);
-    return v >= 0 ? v : def;
+    errno = 0;
+    char *end = NULL;
+    long v = strtol(s, &end, 10);
+    if (errno == ERANGE || end == s || v < 0 || v > INT_MAX) return def;
+    while (*end == ' ' || *end == '\t') end++;
+    if (*end) return def;                 /* 整串必须是数字，别把 "3x" 当 3 */
+    return (int)v;
 }
 
 bool fnos_perf_cli(char *line)
