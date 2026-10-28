@@ -1203,6 +1203,14 @@ raise SystemExit(m.main())
         finally:self.state._lock.release();thread.join(2)
         self.assertTrue(done.is_set())
 
+    def test_flush_skips_write_when_no_device_is_dirty(self):
+        m.save_config.reset_mock()
+        self.assertTrue(self.state.flush())
+        m.save_config.assert_not_called()
+        self.cfg['devices'][0]['_dirty'] = True
+        self.assertTrue(self.state.flush())
+        m.save_config.assert_called_once()
+
     def test_flush_failure_retains_dirty_for_retry(self):
         device = self.cfg['devices'][0];device['_dirty'] = True
         with patch.object(m, 'save_config', side_effect=OSError('anonymous fault')):

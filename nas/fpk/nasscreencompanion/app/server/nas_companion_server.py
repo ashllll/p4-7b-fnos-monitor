@@ -739,6 +739,10 @@ class State:
     def flush(self):
         try:
             with self._lock:
+                # 没有设备状态变化就不重写配置：关机时的无谓写入会提升修订号，
+                # 一旦磁盘/权限出错还会把正常停止判成失败。
+                if not any(d.get("_dirty") for d in self.cfg["devices"]):
+                    return True
                 candidate = dict(self.cfg)
                 candidate["devices"] = [{k: v for k, v in d.items() if k != "_dirty"}
                                         for d in self.cfg["devices"]]
