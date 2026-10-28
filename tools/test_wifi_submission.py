@@ -382,7 +382,12 @@ static int esp_wifi_scan_get_ap_records(uint16_t *got,wifi_ap_record_t *out) {
     for(int i=0;i<*got;i++) {strcpy((char*)out[i].ssid,"same");out[i].rssi=-60+i;out[i].authmode=1;}
     return records_rc;
 }
-static void *fixture_alloc(size_t n,size_t size) {return oom?NULL:calloc(n,size);}
+static int alloc_calls, alloc_fail_at;
+static void *fixture_alloc(size_t n,size_t size) {
+    alloc_calls++;
+    if(alloc_fail_at && alloc_calls==alloc_fail_at) return NULL;
+    return oom?NULL:calloc(n,size);
+}
 #define calloc fixture_alloc
 '''
 scan_checks = r'''
@@ -391,10 +396,12 @@ int main(void) {
     scan_collect();assert(s_scan_failed);assert(!s_scan_busy);assert(s_ap_n==0);
     num_rc=0;scan_collect();assert(!s_scan_failed);assert(s_ap_n==0);
     count=2;oom=true;s_scan_busy=true;scan_collect();assert(s_scan_failed);assert(!s_scan_busy);
-    oom=false;records_rc=1;s_scan_busy=true;scan_collect();assert(s_scan_failed);assert(!s_scan_busy);
+    s_ap_n=7;s_scan_failed=false;s_scan_busy=true;oom=false;alloc_calls=0;alloc_fail_at=2;
+    scan_collect();assert(s_scan_failed);assert(!s_scan_busy);assert(s_ap_n==7);
+    alloc_fail_at=0;records_rc=1;s_scan_busy=true;scan_collect();assert(s_scan_failed);assert(!s_scan_busy);
     records_rc=0;s_scan_failed=false;s_scan_busy=true;scan_collect();
     assert(!s_scan_busy);assert(!s_scan_failed);assert(s_ap_n==1);assert(s_aps[0].rssi==-59);
-    puts("PASS: scan error/empty/OOM/records error/dedup strongest");
+    puts("PASS: scan error/empty/OOM/stage OOM/records error/dedup strongest");
 }
 '''
 with tempfile.TemporaryDirectory(prefix='fnos-net-scan-') as tmp:

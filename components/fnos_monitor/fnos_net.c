@@ -50,7 +50,7 @@ static bool s_cred_want;
 
 /* ── 扫描缓存（板上配网用）──────────────────────────────────────────────
    写入方是 fnos_net_service()（普通任务），读取方是 LVGL 任务。
-   条数和整批记录始终在 s_ap_mux 内发布/复制；通知位使用原子交换消费。 */
+   条数和整批记录始终在 s_ap_mux 内发布/复制；去重与格式化在锁外完成，通知位使用原子交换消费。 */
 static fnos_ap_t s_aps[FNOS_AP_MAX];
 static portMUX_TYPE s_ap_mux = portMUX_INITIALIZER_UNLOCKED;  // 见 fnos_net.h 的说明（审计 M09）
 static int s_ap_n;
@@ -602,26 +602,28 @@ static void scan_collect(void) {
         return;
     }
     qsort(recs, got, sizeof *recs, ap_cmp_rssi);        // 先排序：同名去重留下的就是最强的那条
-    /* 整段（清零条数 → 回填 → 放条数）在锁里做，读侧拿同一把锁拷贝整批：
-       以前的"先清零再回填"只保证条数不撕裂，UI 仍可能读到正在被改写一半的 SSID
-       （审计 M09）。锁里只有纯内存操作，不放任何 RPC。 */
-    portENTER_CRITICAL(&s_ap_mux);
-    s_ap_n = 0;
+    /* 去重和格式化都在锁外：s_ap_mux 是关中断的临界区，snprintf/strcmp 不该在里面跑。
+       先在堆上排好完整的一批，锁内只做一次定长 memcpy 发布 —— 读侧仍只会看到完整的一批。 */
+    fnos_ap_t *staged = calloc(FNOS_AP_MAX, sizeof *staged);
+    if (!staged) { free(recs); s_scan_busy = false; s_scan_failed = true; return; }
     int n = 0;
     for (int i = 0; i < (int)got && n < FNOS_AP_MAX; i++) {
         if (recs[i].ssid[0] == 0) continue;
         bool dup = false;
         for (int k = 0; k < n; k++) {
-            if (strcmp(s_aps[k].ssid, (const char *)recs[i].ssid) == 0) { dup = true; break; }
+            if (strcmp(staged[k].ssid, (const char *)recs[i].ssid) == 0) { dup = true; break; }
         }
         if (dup) continue;                              // 同一 SSID 的多个 BSS：只留最强
-        snprintf(s_aps[n].ssid, sizeof s_aps[n].ssid, "%s", (const char *)recs[i].ssid);
-        s_aps[n].rssi = (int8_t)recs[i].rssi;
-        s_aps[n].secure = recs[i].authmode != WIFI_AUTH_OPEN;
+        snprintf(staged[n].ssid, sizeof staged[n].ssid, "%s", (const char *)recs[i].ssid);
+        staged[n].rssi = (int8_t)recs[i].rssi;
+        staged[n].secure = recs[i].authmode != WIFI_AUTH_OPEN;
         n++;
     }
+    portENTER_CRITICAL(&s_ap_mux);
+    memcpy(s_aps, staged, (size_t)n * sizeof *s_aps);
     s_ap_n = n;
     portEXIT_CRITICAL(&s_ap_mux);
+    free(staged);
     free(recs);
     s_scan_busy = false;
     ESP_LOGI(TAG, "scan done: %d 个 AP", n);
