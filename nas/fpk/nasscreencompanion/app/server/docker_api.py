@@ -174,9 +174,9 @@ def _reader_frame(command):
         with _lock:
             if _broken:
                 raise ConnectionError('container reader unavailable; restart the application')
-            if _reader is None:
-                _reader = socket.socket(fileno=int(fd))
             try:
+                if _reader is None:
+                    _reader = socket.socket(fileno=int(fd))
                 timeout = 13 if command == b'T' else 4
                 deadline = time.monotonic() + timeout
                 _reader.settimeout(timeout)
@@ -188,8 +188,15 @@ def _reader_frame(command):
                 if not isinstance(frame, dict):
                     raise ValueError('invalid container reader frame')
             except Exception:
-                _reader.close()
+                # 继承的 FD 无效/已关闭时 _reader 还是 None；先标记通道失效再关，
+                # 不能让清理本身抛 AttributeError 掩盖真正的错误。
                 _broken = True
+                reader, _reader = _reader, None
+                if reader is not None:
+                    try:
+                        reader.close()
+                    except OSError:
+                        pass
                 raise
         if 'errno' in frame:
             raise OSError(frame['errno'], frame.get('error', 'container reader failed'))
