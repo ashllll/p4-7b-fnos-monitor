@@ -671,6 +671,10 @@ class State:
                     not all("0" <= c <= "9" for c in code) or
                     not hmac.compare_digest(code, pend["code"])):
                 return None, "配对码不正确"
+            # name 是客户端可控的自由文本；数字/对象会抛 TypeError，数组还会被
+            # 原样写进 devices[].name，让下次启动的配置校验失败。先卡类型再截断。
+            if name is not None and not isinstance(name, str):
+                return None, "设备名必须是字符串"
             token = secrets.token_urlsafe(24)
             dev = {
                 "name": (name or "未命名设备")[:40],

@@ -556,6 +556,17 @@ async function run(code, negative=false){
         with self.assertRaises(TypeError):
             namespace['try_pair'](self.state, 'é', 'fixture', 'fixture')
 
+    def test_pair_rejects_non_string_device_name(self):
+        self.state.new_pair_code()
+        code = self.state.pending_pair['code']
+        before = copy.deepcopy(self.state.pending_pair)
+        for name in (123, True, {}, []):
+            token, error = self.state.try_pair(code, name, 'fixture')
+            self.assertIsNone(token)
+            self.assertIn('设备名', error)
+            self.assertEqual(self.state.pending_pair, before)
+            m.save_config.assert_not_called()
+
     def test_legacy_unicode_token_and_invalid_startup(self):
         import sys
         legacy_path = Path(__file__).resolve().parents[1] / 'fnos-agent.py'
