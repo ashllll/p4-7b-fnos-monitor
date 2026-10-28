@@ -37,6 +37,7 @@ static portMUX_TYPE s_cfg_mux = portMUX_INITIALIZER_UNLOCKED;
 static _Atomic int8_t s_rssi;          // 缓存值：UI 只读它，不触发 RPC
 static int64_t s_rssi_ms;             // 仅网络 service 所属任务读写
 static atomic_bool s_connect_wanted;  // 重连请求标志（定时器只置位，不直接调 esp_wifi_connect）
+static atomic_bool s_reassociate;      // LOST_IP 请求强制重新关联，由 service 任务消费
 static atomic_bool s_online;
 static _Atomic uint8_t s_wifi_retry_count;
 static int64_t s_retry_due_us;          // s_cfg_mux；0表示没有待办重连
@@ -246,6 +247,9 @@ static void on_net_event(void *arg, esp_event_base_t base, int32_t id, void *dat
         sntp_start_once();
     } else if (base == IP_EVENT && id == IP_EVENT_STA_LOST_IP) {
         mark_offline();
+        /* LOST_IP 不保证伴随 DISCONNECTED：只清 IP 会永远停在离线/连接中。
+           事件任务只置位；disconnect/connect 是 ESP-Hosted 同步 RPC，交给 service。 */
+        atomic_store(&s_reassociate, true);
         ESP_LOGW(TAG, "ip lost");
     }
 }
@@ -649,6 +653,12 @@ void fnos_net_service(void) {
     }
     portEXIT_CRITICAL(&s_cfg_mux);
     apply_pending_credentials();
+    if (atomic_exchange(&s_reassociate, false) && s_configured && !s_online) {
+        esp_err_t err = esp_wifi_disconnect();
+        if (err != ESP_OK) ESP_LOGW(TAG, "wifi reassociate disconnect failed: %s", esp_err_to_name(err));
+        /* DISCONNECTED 通常也会排重连；这里兜底一次，防止事件丢失后停在离线。 */
+        wifi_schedule_retry();
+    }
     portENTER_CRITICAL(&s_cfg_mux);
     bool retry_due = s_retry_due_us && now_us >= s_retry_due_us;
     if (retry_due) s_retry_due_us = 0;

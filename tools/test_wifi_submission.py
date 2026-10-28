@@ -64,16 +64,16 @@ static int s_cfg_mux, s_ip_mux, s_submit_state;
 static uint32_t s_submit_generation, s_submit_applied_generation, s_submit_associated_generation;
 static char s_pend_ssid[64], s_pend_pass[96], s_ssid[64], s_reason[128], s_submit_reason[128], s_ip[16];
 static bool s_cred_want, s_wifi_inited;
-static atomic_bool s_online, s_configured, s_scan_done, s_scan_want, s_scan_busy, s_connect_wanted;
+static atomic_bool s_online, s_configured, s_scan_done, s_scan_want, s_scan_busy, s_connect_wanted, s_reassociate;
 static bool s_started = true;
 static _Atomic uint8_t s_wifi_retry_count;
 static void *s_eg, *s_wifi_retry_timer;
 static int64_t s_submit_started_us, s_retry_due_us, now_us;
 static bool save_ok = true, resubmit_during_save;
-static int config_rc, connect_rc, connect_calls;
+static int config_rc, connect_rc, connect_calls, disconnect_calls;
 static int64_t esp_timer_get_time(void) { return now_us; }
 static int esp_wifi_connect(void) { connect_calls++; return connect_rc; }
-static int esp_wifi_disconnect(void) { return 0; }
+static int esp_wifi_disconnect(void) { disconnect_calls++; return 0; }
 static wifi_config_t captured;
 static int esp_wifi_set_config(int i, wifi_config_t *c) { (void)i; captured=*c; return config_rc; }
 static void wifi_schedule_retry(void);
@@ -167,7 +167,15 @@ int main(void) {
     s_online=false; s_configured=false; wifi_schedule_retry(); assert(s_retry_due_us==0);
     fnos_net_set_credentials("open-network", ""); fnos_net_service();
     assert(captured.sta.threshold.authmode == WIFI_AUTH_OPEN);
-    puts("PASS: stale IP / NVS failure / association / resubmission / RPC failures / timeout / open authmode");
+    /* LOST_IP must ask the service task to force a fresh association; the event
+       callback itself must not issue the ESP-Hosted RPC. */
+    s_online=true; s_configured=true; s_connect_wanted=false;
+    disconnect_calls=0;
+    on_net_event(NULL, IP_EVENT, IP_EVENT_STA_LOST_IP, NULL);
+    assert(!s_online); assert(atomic_load(&s_reassociate)); assert(disconnect_calls==0);
+    fnos_net_service();
+    assert(disconnect_calls==1); assert(!atomic_load(&s_reassociate));
+    puts("PASS: stale IP / NVS failure / association / resubmission / RPC failures / timeout / open authmode / lost-IP reassociation");
 }
 '''
 names = ['wifi_authmode_for_password', 'wifi_schedule_retry', 'fnos_utf8_copy',
