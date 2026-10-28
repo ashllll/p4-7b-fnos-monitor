@@ -27,8 +27,15 @@
 #include "esp_lcd_touch_gt911.h"
 #include "bsp_err_check.h"
 #include "esp_codec_dev_defaults.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 static const char *TAG = "ESP32_P4_EV";
+
+/* GT911 may not answer the first probe after power-on or a shared LCD reset;
+ * retry a bounded number of times before treating touch as absent. */
+#define BSP_TOUCH_PROBE_ATTEMPTS 3
+#define BSP_TOUCH_PROBE_DELAY_MS 50
 
 #if (BSP_CONFIG_NO_GRAPHIC_LIB == 0)
 static lv_indev_t *disp_indev = NULL;
@@ -533,18 +540,23 @@ esp_err_t bsp_touch_new(const bsp_touch_config_t *config, esp_lcd_touch_handle_t
         },
     };
     esp_lcd_panel_io_handle_t tp_io_handle = NULL;
-    esp_lcd_panel_io_i2c_config_t tp_io_config;
-    if (ESP_OK == bsp_i2c_device_probe(ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS)) {
-        ESP_LOGI(TAG, "Touch 0x5d found");
-        esp_lcd_panel_io_i2c_config_t config = ESP_LCD_TOUCH_IO_I2C_GT911_CONFIG();
-        memcpy(&tp_io_config, &config, sizeof(config));
-    } else if (ESP_OK == bsp_i2c_device_probe(ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS_BACKUP)) {
-        ESP_LOGI(TAG, "Touch 0x14 found");
-        esp_lcd_panel_io_i2c_config_t config = ESP_LCD_TOUCH_IO_I2C_GT911_CONFIG();
-        config.dev_addr = ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS_BACKUP;
-        memcpy(&tp_io_config, &config, sizeof(config));
-    } else {
-        ESP_LOGE(TAG, "Touch not found");
+    esp_lcd_panel_io_i2c_config_t tp_io_config = ESP_LCD_TOUCH_IO_I2C_GT911_CONFIG();
+    bool touch_found = false;
+    for (int attempt = 0; attempt < BSP_TOUCH_PROBE_ATTEMPTS && !touch_found; attempt++) {
+        if (attempt > 0) {
+            vTaskDelay(pdMS_TO_TICKS(BSP_TOUCH_PROBE_DELAY_MS));
+        }
+        if (ESP_OK == bsp_i2c_device_probe(ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS)) {
+            ESP_LOGI(TAG, "Touch 0x5d found (attempt %d)", attempt + 1);
+            touch_found = true;
+        } else if (ESP_OK == bsp_i2c_device_probe(ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS_BACKUP)) {
+            ESP_LOGI(TAG, "Touch 0x14 found (attempt %d)", attempt + 1);
+            tp_io_config.dev_addr = ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS_BACKUP;
+            touch_found = true;
+        }
+    }
+    if (!touch_found) {
+        ESP_LOGE(TAG, "Touch not found after %d probes", BSP_TOUCH_PROBE_ATTEMPTS);
         return ESP_ERR_NOT_FOUND;
     }
     tp_io_config.scl_speed_hz = CONFIG_BSP_I2C_CLK_SPEED_HZ;
@@ -641,7 +653,13 @@ lv_display_t *bsp_display_start_with_config(bsp_display_cfg_t *cfg)
 
     BSP_NULL_CHECK(disp = bsp_display_lcd_init(cfg), NULL);
 
-    BSP_NULL_CHECK(disp_indev = bsp_display_indev_init(cfg, disp), NULL);
+    /* Touch is optional for this display: if the GT911 still does not answer,
+     * start the panel anyway so the dashboard and data collection keep running.
+     * Only the touch input is lost; callers can still use the serial CLI. */
+    disp_indev = bsp_display_indev_init(cfg, disp);
+    if (disp_indev == NULL) {
+        ESP_LOGW(TAG, "Touch input unavailable; starting display without touch");
+    }
 
     ESP_ERROR_CHECK(esp_lv_adapter_start());
 

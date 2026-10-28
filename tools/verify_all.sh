@@ -310,6 +310,11 @@ if python3 tools/test_wifi_submission.py >"$OUT/wifi_submission.log" 2>&1; then
 else
   bad "配网事件回归失败（见 $OUT/wifi_submission.log）"
 fi
+if python3 tools/test_touch_startup.py >"$OUT/touch_startup.log" 2>&1; then
+  pass "触摸探测重试与无触摸降级启动（无设备）"
+else
+  bad "触摸启动回归失败（见 $OUT/touch_startup.log）"
+fi
 if python3 tools/test_page_shot.py >"$OUT/page_shot_mock.log" 2>&1; then
   pass "拍屏错误处理（模拟，无设备）"
 else

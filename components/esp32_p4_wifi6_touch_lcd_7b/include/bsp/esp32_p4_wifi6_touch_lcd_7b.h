@@ -288,7 +288,9 @@ lv_display_t *bsp_display_start(void);
  *
  * @param cfg display configuration
  *
- * @return Pointer to LVGL display or NULL when error occured
+ * @return Pointer to LVGL display or NULL when error occured. Touch input is
+ *         optional: if the touch controller stays absent the display still
+ *         starts and bsp_display_get_input_dev() returns NULL.
  */
 lv_display_t *bsp_display_start_with_config(bsp_display_cfg_t *cfg);
 
