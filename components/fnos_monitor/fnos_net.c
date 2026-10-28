@@ -63,7 +63,13 @@ static int ap_cmp_rssi(const void *a, const void *b) {
     int ra = ((const wifi_ap_record_t *)a)->rssi, rb = ((const wifi_ap_record_t *)b)->rssi;
     return rb - ra;                     // 信号强的排前面（rssi 是负值，越大越强）
 }
-static bool s_handlers_registered;
+/* 事件处理器注册进度：IDF 的注册表是链表，重复注册会收到两次回调，
+   所以按位记录已成功的项；部分失败后重试只补缺，不从头再来。 */
+#define NET_HANDLER_WIFI_EVENT 0x01u
+#define NET_HANDLER_STA_GOT_IP 0x02u
+#define NET_HANDLER_STA_LOST_IP 0x04u
+#define NET_HANDLERS_ALL (NET_HANDLER_WIFI_EVENT | NET_HANDLER_STA_GOT_IP | NET_HANDLER_STA_LOST_IP)
+static uint8_t s_handlers_registered;
 /* ── UTF-8 安全的拷贝（审计 M10）───────────────────────────────────────
    屏幕上的中文是 UTF-8 多字节串，而"复制到定长缓冲"这种操作如果按字节截断，
    最后一个汉字会被切成半个：字库拿不到完整码点 → 那一行字**整条不显示**，
@@ -261,6 +267,21 @@ static wifi_auth_mode_t wifi_authmode_for_password(const char *pass)
     return (pass && pass[0]) ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
 }
 
+static esp_err_t register_handler_once(esp_event_base_t base, int32_t id, uint8_t bit) {
+    if (s_handlers_registered & bit) return ESP_OK;
+    esp_err_t err = esp_event_handler_register(base, id, &on_net_event, NULL);
+    if (err == ESP_OK) s_handlers_registered |= bit;
+    return err;
+}
+
+static esp_err_t handlers_ensure_registered(void) {
+    esp_err_t err = register_handler_once(WIFI_EVENT, ESP_EVENT_ANY_ID, NET_HANDLER_WIFI_EVENT);
+    if (err != ESP_OK) return err;
+    err = register_handler_once(IP_EVENT, IP_EVENT_STA_GOT_IP, NET_HANDLER_STA_GOT_IP);
+    if (err != ESP_OK) return err;
+    return register_handler_once(IP_EVENT, IP_EVENT_STA_LOST_IP, NET_HANDLER_STA_LOST_IP);
+}
+
 static bool wifi_start(void) {
     esp_err_t err = esp_netif_init();
     if (err != ESP_OK) { ESP_LOGE(TAG, "esp_netif_init failed: %s", esp_err_to_name(err)); return false; }
@@ -279,14 +300,9 @@ static bool wifi_start(void) {
         if (err != ESP_OK) { ESP_LOGE(TAG, "esp_wifi_init failed: %s", esp_err_to_name(err)); return false; }
         s_wifi_inited = true;
     }
-    if (!s_handlers_registered) {
-        // 必须在 esp_wifi_start() 之前注册，否则会漏掉 STA_START。
-        err = esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &on_net_event, NULL);
-        if (err == ESP_OK) err = esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &on_net_event, NULL);
-        if (err == ESP_OK) err = esp_event_handler_register(IP_EVENT, IP_EVENT_STA_LOST_IP, &on_net_event, NULL);
-        if (err != ESP_OK) { ESP_LOGE(TAG, "event handler register failed: %s", esp_err_to_name(err)); return false; }
-        s_handlers_registered = true;
-    }
+    // 必须在 esp_wifi_start() 之前注册，否则会漏掉 STA_START。
+    err = handlers_ensure_registered();
+    if (err != ESP_OK) { ESP_LOGE(TAG, "event handler register failed: %s", esp_err_to_name(err)); return false; }
     char ssid[64] = "", pass[96] = "";
     bool configured = fnos_wifi_store_load(ssid, sizeof ssid, pass, sizeof pass);
     portENTER_CRITICAL(&s_cfg_mux);
