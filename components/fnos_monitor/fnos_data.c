@@ -347,6 +347,11 @@ static bool http_get(const char *url, char **buffer, size_t *capacity, size_t bu
         }
         s_client = esp_http_client_init(&cfg);
         if (!s_client) {
+            /* 初始化失败不是网络故障：把原因和出参都写全，避免 UI 误报 connect/timeout。 */
+            snprintf(s_conn_err, sizeof s_conn_err, "%s", "http init");
+            *out_status = 0;
+            *out_len = 0;
+            *out_ms = 0;
             return false;
         }
     } else {
