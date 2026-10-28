@@ -479,23 +479,27 @@ INTERVAL_MIN_S = 0.05
 INTERVAL_MAX_S = 60.0
 
 
+def _config_number(value, key, cast, lo, hi):
+    """启动校验和热更新共用的数字规则；bool 与截断的小数都不接受。"""
+    try:
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            raise ValueError
+        result = cast(value)
+        if cast is int and isinstance(value, float) and result != value:
+            raise ValueError
+        if not lo <= result <= hi:
+            raise ValueError
+    except (TypeError, ValueError, OverflowError):
+        raise ConfigError("%s 取值非法或超出范围" % key) from None
+    return result
+
+
 def _validate_startup_config(cfg):
     """Validate before constructing collectors/listeners; never repair bad auth/TLS."""
     for key, cast, lo, hi in (("interval", float, INTERVAL_MIN_S, INTERVAL_MAX_S),
                               ("hist_len", int, 30, 3600),
                               ("port", int, 1, 65535)):
-        value = cfg[key]
-        try:
-            if isinstance(value, bool) or not isinstance(value, (int, float, str)):
-                raise ValueError
-            result = cast(value)
-            if cast is int and isinstance(value, float) and result != value:
-                raise ValueError
-            if not lo <= result <= hi:
-                raise ValueError
-        except (TypeError, ValueError, OverflowError):
-            raise ConfigError("%s 取值非法或超出范围" % key) from None
-        cfg[key] = result
+        cfg[key] = _config_number(cfg[key], key, cast, lo, hi)
     for key in ("tls_enabled", "docker_enabled"):
         cfg[key] = _config_bool(cfg[key], key)
     if not isinstance(cfg["bind"], str) or not cfg["bind"].strip() or "\0" in cfg["bind"]:
@@ -1216,12 +1220,7 @@ class Handler(BaseHTTPRequestHandler):
                                   ("hist_len", int, 30, 3600),
                                   ("port", int, 1, 65535)):
             if key in body:
-                try:
-                    val = cast(body[key])
-                except (TypeError, ValueError, OverflowError):
-                    raise ConfigError("%s 取值非法" % key)
-                if not (lo <= val <= hi):
-                    raise ConfigError("%s 必须在 %s~%s 之间" % (key, lo, hi))
+                val = _config_number(body[key], key, cast, lo, hi)
                 if candidate.get(key) != val:
                     candidate[key] = val
                     changed.append(key)

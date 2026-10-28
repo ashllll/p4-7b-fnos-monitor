@@ -1026,6 +1026,19 @@ raise SystemExit(m.main())
         self.assertEqual(restart, ['tls_enabled'])
         self.assertFalse(self.cfg['tls_enabled'])
 
+    def test_runtime_config_rejects_values_startup_rejects(self):
+        before = copy.deepcopy(self.cfg)
+        for body in ({'interval': True}, {'interval': float('nan')},
+                     {'port': 8798.9}, {'hist_len': 30.5}):
+            with self.assertRaises(m.ConfigError):
+                self.handler()._apply_config(body)
+            self.assertEqual(self.cfg, before)
+            m.save_config.assert_not_called()
+        changed, restart = self.handler()._apply_config({'interval': '2.5'})
+        self.assertEqual(changed, ['interval'])
+        self.assertEqual(restart, [])
+        self.assertEqual(self.cfg['interval'], 2.5)
+
     def test_persistence_failure_keeps_memory_and_pair_code(self):
         self.state.new_pair_code()
         code = self.state.pending_pair['code']
