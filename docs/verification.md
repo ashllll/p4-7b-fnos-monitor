@@ -59,13 +59,13 @@ python3 tools/test_evidence_gates.py
 python3 tools/plan_check.py
 ```
 
-两个入口共用 `tools/host_checks.sh` 的主机检查清单（当前 55 项），包含完整预览、滚动条审计、历史质量、锁竞争、MPT 超时、指标质量和安装包元数据核对。`bash tools/verify_all.sh` 继续执行实际固件构建与栈检查；`bash tools/test_report.sh --full` 另跑匿名 NAS 生命周期、内存检查并生成 [测试报告](fnos-companion-test-report.md)。`--quick` 跳过生命周期，明确返回未完成；`--full` 仍可能因长测证据不足返回 2。缺少工具或证据不能计通过，硬失败优先返回失败。
+两个入口共用 `tools/host_checks.sh` 的主机检查清单（当前 56 项），包含完整预览、滚动条审计、历史质量、锁竞争、MPT 超时、指标质量和安装包元数据核对。`bash tools/verify_all.sh` 继续执行实际固件构建与栈检查；`bash tools/test_report.sh --full` 另跑匿名 NAS 生命周期、内存检查并生成 [测试报告](fnos-companion-test-report.md)。`--quick` 跳过生命周期，明确返回未完成；`--full` 仍可能因长测证据不足返回 2。缺少工具或证据不能计通过，硬失败优先返回失败。
 
 在干净构建目录首次运行 `bash tools/verify_all.sh` 前，先执行一次 `./idf.sh build`：脚本的主机检查阶段包含预览，需要 `build/config/sdkconfig.h`，而固件构建在后续阶段；缺少该头文件会明确报错，不会静默跳过。
 
 NAS 回归使用与目标 fnOS 一致的 Python 3.12；先让 PATH 中的 `python3` 指向它。ESP-IDF 构建另用其匹配虚拟环境，不要共用解释器。主机预览输出可设 `FNOS_PREVIEW_OUT=out/my-check`，设备配置头可设 `FNOS_UI_DEVICE_CONFIG`。本机 Python 3.15 会在既有 TLS 清理路径报 `return in finally` 警告，尚未声称兼容该版本。
 
-`bash nas/fpk/build.sh` 从实际 FPK 生成 `nas/fpk/release.json` 与 README 校验块；`python3 nas/fpk/release_metadata.py` 只核对。检查会验证包内 manifest、fnpack 的 app.tgz 校验值、整包 SHA-256、大小及 README 一致性。生成元数据不代表已部署或发布。
+`bash nas/fpk/build.sh` 从实际 FPK 生成 `nas/fpk/release.json` 与 README 校验块；`python3 nas/fpk/release_metadata.py` 只核对。检查会验证包内 manifest、fnpack 的 app.tgz 校验值、整包 SHA-256、大小、README 一致性，以及包内 app 与源码逐文件一致。生成元数据不代表已部署或发布。
 
 NAS 侧入口与安装合同见 [伴侣实现合同](fnos-companion-app-plan.md) 和 [应用说明](../nas/fpk/README.md)。生命周期夹具只认领本次启动的进程、失败时保留证据；临时环境通过不等于真实 fnOS 包用户／目录权限、网关、证书或升级已验收。
 

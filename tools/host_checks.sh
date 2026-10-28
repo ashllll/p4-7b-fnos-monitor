@@ -56,5 +56,6 @@ fnos_host_checks() {
   "$@" "TLS 接收超时隔离" python3 nas/fpk/tls_accept_check.py
   "$@" "UI 数据读取锁竞争与恢复" python3 tools/test_data_lock.py
   "$@" "安装包元数据负控" python3 nas/fpk/test_release_metadata.py
+  "$@" "安装包内 app 与源码一致" python3 nas/fpk/verify_package_sources.py
   "$@" "安装包、manifest 与 README 一致" python3 nas/fpk/release_metadata.py
 }
