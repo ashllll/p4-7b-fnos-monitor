@@ -59,7 +59,7 @@ python3 tools/test_evidence_gates.py
 python3 tools/plan_check.py
 ```
 
-两个入口共用 `tools/host_checks.sh` 的 54 项主机检查清单，包含完整预览、滚动条审计、历史质量、锁竞争、MPT 超时、指标质量和安装包元数据核对。`bash tools/verify_all.sh` 继续执行实际固件构建与栈检查；`bash tools/test_report.sh --full` 另跑匿名 NAS 生命周期、内存检查并生成 [测试报告](fnos-companion-test-report.md)。`--quick` 跳过生命周期，明确返回未完成；`--full` 仍可能因长测证据不足返回 2。缺少工具或证据不能计通过，硬失败优先返回失败。
+两个入口共用 `tools/host_checks.sh` 的主机检查清单（当前 55 项），包含完整预览、滚动条审计、历史质量、锁竞争、MPT 超时、指标质量和安装包元数据核对。`bash tools/verify_all.sh` 继续执行实际固件构建与栈检查；`bash tools/test_report.sh --full` 另跑匿名 NAS 生命周期、内存检查并生成 [测试报告](fnos-companion-test-report.md)。`--quick` 跳过生命周期，明确返回未完成；`--full` 仍可能因长测证据不足返回 2。缺少工具或证据不能计通过，硬失败优先返回失败。
 
 在干净构建目录首次运行 `bash tools/verify_all.sh` 前，先执行一次 `./idf.sh build`：脚本的主机检查阶段包含预览，需要 `build/config/sdkconfig.h`，而固件构建在后续阶段；缺少该头文件会明确报错，不会静默跳过。
 
