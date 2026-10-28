@@ -136,6 +136,7 @@ static struct {
     overview_resource_t overview_resource[2];
     lv_obj_t *overview_rows[3], *overview_temp_history;
     lv_obj_t *overview_net_context, *overview_status_card, *overview_capacity_card;
+    lv_obj_t *overview_volume_card;   /* 保留块挤掉容量行卷数时，“卷占用”卡头补一个 */
     lv_obj_t *overview_rate[2], *overview_unit[2]; /* DOWN, UP */
     lv_obj_t *overview_volumes;
     lv_obj_t *volume_empty;
@@ -1805,6 +1806,7 @@ static void build_p0(lv_obj_t *page)
     s_ui.capacity_free = uk_label(body, UK_FONT_CJK_12, UK_T3, "等待容量数据");
     lv_obj_set_width(s_ui.capacity_free, LV_PCT(100));
     lv_obj_t *volume_card = overview_card(objects, "卷占用", NULL);
+    s_ui.overview_volume_card = volume_card;
     lv_obj_set_width(volume_card, 0);
     body = uk_card_body(volume_card);
     /* Compact volume comparisons; full identities and capacity are on Storage.
@@ -4675,6 +4677,11 @@ static void overview_refresh(const fnos_status_t *st)
         used += st->vols[i].used_gb; total += st->vols[i].total_gb;
         free_gb += st->vols[i].free_gb;
     }
+    /* 保留块既不在 used 也不在 free 里。容量条按可用容量算（df Use% 口径），
+       差额单独显示，避免「已用/总量」和每个卷的百分比各说一套。 */
+    const double usable = used + free_gb;
+    const double reserved = total - used - free_gb > 0.2 ? total - used - free_gb : 0;
+    const int32_t capacity_pct = usable > 0 ? gauge_value(used / usable * 100.0 + 0.5) : 0;
     for (int i = 0; i < st->nraid; i++) if (st->raid[i].ok) healthy_raid++;
     const bool raid_readable = overview_readable(st, "raid");
     const bool raid_live = raid_readable && overview_live(st, "raid");
@@ -4711,11 +4718,23 @@ static void overview_refresh(const fnos_status_t *st)
     if (storage) (storage_live ? set_num : set_txt)(s_ui.capacity_detail, "/ %s", fmt_cap(c1, sizeof c1, total));
     else set_txt(s_ui.capacity_detail, "%s", st->ever_ok ? "没有可用容量数据" : "等待存储数据");
     module_note(s_ui.overview_capacity_card, st, "vols");
-    set_txt(s_ui.capacity_free, storage ? "可用 %s · %d 个卷" : "容量不可用",
-            fmt_cap(b, sizeof b, free_gb), st->nvols);
+    if (!storage) set_txt(s_ui.capacity_free, "容量不可用");
+    else if (reserved > 0)
+        set_txt(s_ui.capacity_free, "可用 %s · 保留 %s",
+                fmt_cap(b, sizeof b, free_gb), fmt_cap(c1, sizeof c1, reserved));
+    else
+        set_txt(s_ui.capacity_free, "可用 %s · %d 个卷", fmt_cap(b, sizeof b, free_gb), st->nvols);
+    /* 只有保留块挤掉容量行里的卷数时才在卡头补一个，避免同一屏重复两次：
+       容量卡正文宽 171px，可用+保留+卷数一行放不下，卷数本来也更属于卷清单。 */
+    if (s_ui.overview_volume_card) {
+        if (storage && reserved > 0) set_txt(uk_card_note(s_ui.overview_volume_card), "%d 个卷", st->nvols);
+        else set_txt(uk_card_note(s_ui.overview_volume_card), "%s", "");
+    }
     show(s_ui.capacity_bar, storage);
-    uk_meter_set(s_ui.capacity_bar, (total > 0 ? gauge_value(used / total * 100) : 0) * UK_METER_SCALE, storage_live);
-    overview_style_color(s_ui.capacity_bar, LV_STYLE_BG_COLOR, uk_c(storage_live ? uk_pct_color(used / total * 100) : UK_OFF), LV_PART_INDICATOR);
+    uk_meter_set(s_ui.capacity_bar, capacity_pct * UK_METER_SCALE, storage_live);
+    overview_style_color(s_ui.capacity_bar, LV_STYLE_BG_COLOR,
+                         uk_c(storage_live && usable > 0 ? uk_pct_color(used / usable * 100.0) : UK_OFF),
+                         LV_PART_INDICATOR);
     int count = storage ? st->nvols : 0;
     if (count > s_ui.overview_volume_capacity) {
         overview_volume_t *grown = uk_realloc(s_ui.overview_volume, (size_t)count * sizeof *grown);
@@ -5043,6 +5062,7 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
             total += st->vols[i].total_gb;
             free_gb += st->vols[i].free_gb;
         }
+        const double usable = used + free_gb;
         double capacities[] = { used, total, free_gb };
         for (int i = 0; i < 3; i++) {
             const char *value, *unit;
@@ -5054,9 +5074,12 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
         }
         /* P1 的容量条与上面的三栏数字同源：一眼看出"还剩多少"。 */
         if (s_ui.storage_bar) {
-            int32_t pct = (readable && st->nvols && total > 0) ? gauge_value(used / total * 100.0 + 0.5) : 0;
+            /* 与卷行、采集端的 df Use% 同一分母：保留块不算已用，也不算可用。 */
+            int32_t pct = (readable && st->nvols && usable > 0) ? gauge_value(used / usable * 100.0 + 0.5) : 0;
             uk_meter_set(s_ui.storage_bar, LV_MAX(0,pct) * UK_METER_SCALE, live);
-            lv_obj_set_style_bg_color(s_ui.storage_bar, uk_c(live && total > 0 ? uk_pct_color(used / total * 100) : UK_OFF), LV_PART_INDICATOR);
+            lv_obj_set_style_bg_color(s_ui.storage_bar,
+                                      uk_c(live && usable > 0 ? uk_pct_color(used / usable * 100.0) : UK_OFF),
+                                      LV_PART_INDICATOR);
         }
     }
     if (page == 0) {
@@ -5142,6 +5165,14 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
         snprintf(b, sizeof b, "剩余 %s / 总计 %s · %s",
                  fmt_cap(c1, sizeof c1, v->free_gb), fmt_cap(c2, sizeof c2, v->total_gb),
                  v->fs[0] ? v->fs : "-");
+        /* 每个卷的保留块 = 总量 - 已用 - 可用；>0.2 GB 才展示，避免 0.1 GB 舍入噪声。 */
+        const double reserved = (double)v->total_gb - v->used_gb - v->free_gb;
+        if (reserved > 0.2) {
+            size_t used_len = strlen(b);
+            if (used_len + 2 < sizeof b)
+                snprintf(b + used_len, sizeof b - used_len, " · 保留 %s",
+                         fmt_cap(c1, sizeof c1, reserved));
+        }
         snprintf(c1, sizeof c1, "%.0f%%", v->pct);
         /* 条色走配置后的 uk_pct_color，读数保持白色：
            全项目只能有一套阈值，颜色限于局部仪表。

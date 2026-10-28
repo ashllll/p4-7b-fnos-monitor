@@ -1956,7 +1956,9 @@ static void assert_overview_storage_neutral(const char *note)
     assert(visible_text(lv_obj_get_parent(used), "GB"));
     assert(lv_color_eq(lv_obj_get_style_text_color(used, 0), uk_c(UK_T3)));
     assert(assert_usage_bars(card, UK_OFF) == 1);
-    assert(visible_text(card, "可用 50.0 GB · 1 个卷"));
+    assert(visible_text(card, "可用 50.0 GB · 保留 50.0 GB"));
+    lv_obj_t *volume_card = overview_object("卷占用", &lv_obj_class);
+    assert(volume_card && visible_text(volume_card, "1 个卷"));
 }
 
 /* Module freshness must agree between summaries and entity readings. */
@@ -2231,12 +2233,16 @@ static void verify_overview_charts(void)
     fixture.vols[0].total_gb = 1000;
     fixture.vols[0].used_gb = 900;
     fixture.vols[0].free_gb = 50;
-    fixture.vols[0].pct = 90;
+    fixture.vols[0].pct = 94.7;
     regression_tick();
     /* Capacity numerics use the same timed publication as CPU and memory. */
     for (int i = 0; i < 8; i++) regression_tick();
     lv_obj_t *capacity_card = overview_object("存储容量", &lv_obj_class);
-    assert(visible_text(capacity_card, "可用 50.0 GB · 1 个卷"));
+    /* 1000 GB 里 900 已用、50 可用，差额 50 是文件系统保留块：条按 900/950 算，
+       但文案必须把保留量说出来，否则三栏数字加不出总量。 */
+    assert(visible_text(capacity_card, "可用 50.0 GB · 保留 50.0 GB"));
+    lv_obj_t *volume_card = overview_object("卷占用", &lv_obj_class);
+    assert(volume_card && visible_text(volume_card, "1 个卷"));
     fnos_status_text(&fixture, &fixture.mods[3].status, "stale");
     regression_tick();
     assert_overview_storage_neutral("旧值");

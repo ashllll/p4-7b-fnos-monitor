@@ -34,8 +34,8 @@ NAS_HOST=nas.example.test NAS_USER=your-user bash nas/install.sh uninstall
 在 NAS 上进行只读检查：
 
 ```bash
-# 默认鉴权：不带令牌应返回 401；这不是完整状态或鉴权端到端验收。
-curl --silent --output /dev/null --write-out 'HTTP %{http_code}\n' http://127.0.0.1:8799/api/v1/health
+# 默认鉴权：不带令牌访问受保护的 status 应返回 401；health 是公开存活探针，返回 200 属正常。
+curl --silent --output /dev/null --write-out 'HTTP %{http_code}\n' http://127.0.0.1:8799/api/v1/status
 python3 /usr/local/bin/fnos-agent.py --selftest
 python3 /usr/local/bin/fnos-agent.py --temps
 journalctl -u fnos-agent -n 50 --no-pager

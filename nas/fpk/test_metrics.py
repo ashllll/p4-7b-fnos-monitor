@@ -98,14 +98,19 @@ class MetricsTests(unittest.TestCase):
                 c._zfs()
 
     def test_volume_percent_counts_only_usable_capacity(self):
-        c=collector.Collector()
         st=SimpleNamespace(f_blocks=100,f_frsize=1024**3,f_bfree=30,f_bavail=20)
-        with patch.object(collector,'read_text',return_value='/dev/sda /data ext4 rw 0 0\n'),              patch.object(collector.os,'statvfs',return_value=st):
-            rows=c._volumes()
-        self.assertEqual(len(rows),1)
-        self.assertEqual((rows[0]['total_gb'],rows[0]['used_gb'],rows[0]['free_gb']),
-                         (100.0,70.0,20.0))
-        self.assertEqual(rows[0]['pct'],77.8)
+        # 伴侣采集器与 fnos-agent.py 各自维护一份 _volumes；口径必须一致，
+        # 否则同一块盘在 8799 和伴侣端口上显示不同的 Use%。
+        for name,module in (('companion',collector),('legacy',legacy)):
+            with self.subTest(collector=name):
+                c=module.Collector()
+                with patch.object(module,'read_text',return_value='/dev/sda /data ext4 rw 0 0\n'), \
+                     patch.object(module.os,'statvfs',return_value=st):
+                    rows=c._volumes()
+                self.assertEqual(len(rows),1)
+                self.assertEqual((rows[0]['total_gb'],rows[0]['used_gb'],rows[0]['free_gb']),
+                                 (100.0,70.0,20.0))
+                self.assertEqual(rows[0]['pct'],77.8)
 
     def test_publication_rejects_non_finite_json_numbers(self):
         with self.assertRaises(ValueError):

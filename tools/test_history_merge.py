@@ -319,8 +319,9 @@ def gauge_test():
  aggregates=re.findall(r'    (?:    )?double used = 0, total = 0(?:, free_gb = 0)?;.*?for \(int i = 0; i < st->nvols; i\+\+\) \{.*?\n    (?:    )?\}',ui,re.S)
  assert len(aggregates)==2
  # Extract all actual gauge consumers, including color calls, and require safe entry.
- expressions=re.findall(r'gauge_value\((vol->pct|v->pct|g->max_c|used / total \* 100(?:\.0 \+ 0\.5)?)\)',ui)
- assert set(expressions)=={'vol->pct','v->pct','g->max_c','used / total * 100','used / total * 100.0 + 0.5'},expressions
+ # 容量条与卷行、采集端统一按可用容量（used + free）算百分比；只认这一条入口。
+ expressions=re.findall(r'gauge_value\((vol->pct|v->pct|g->max_c|used / usable \* 100\.0 \+ 0\.5)\)',ui)
+ assert set(expressions)=={'vol->pct','v->pct','g->max_c','used / usable * 100.0 + 0.5'},expressions
  base=r"""
 #include <stdint.h>
 #include <stdbool.h>
@@ -352,7 +353,7 @@ int main(void){
  for(unsigned i=0;i<sizeof input/sizeof input[0];i++)assert(gauge_value(input[i])==expected[i]);
  struct {float pct;} vol_obj={FLT_MAX},*vol=&vol_obj,*v=&vol_obj;
  struct {float max_c;} grp={FLT_MAX},*g=&grp;
- double used=(double)FLT_MAX*2,total=(double)FLT_MAX*2;
+ double used=(double)FLT_MAX*2,total=(double)FLT_MAX*2,usable=(double)FLT_MAX*2;
 """
  for expr in expressions:code+='assert(gauge_value('+expr+')==100);\n'
  code+='assert(vol->pct==FLT_MAX && g->max_c==FLT_MAX);return 0;}\n'
