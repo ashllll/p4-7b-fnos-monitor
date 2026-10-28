@@ -561,7 +561,12 @@ esp_err_t bsp_touch_new(const bsp_touch_config_t *config, esp_lcd_touch_handle_t
     }
     tp_io_config.scl_speed_hz = CONFIG_BSP_I2C_CLK_SPEED_HZ;
     ESP_RETURN_ON_ERROR(esp_lcd_new_panel_io_i2c(i2c_handle, &tp_io_config, &tp_io_handle), TAG, "");
-    return esp_lcd_touch_new_i2c_gt911(tp_io_handle, &tp_cfg, ret_touch);
+    esp_err_t err = esp_lcd_touch_new_i2c_gt911(tp_io_handle, &tp_cfg, ret_touch);
+    if (err != ESP_OK) {
+        /* The panel IO is ours; release it when the touch driver cannot start. */
+        (void)esp_lcd_panel_io_del(tp_io_handle);
+    }
+    return err;
 }
 
 #if (BSP_CONFIG_NO_GRAPHIC_LIB == 0)

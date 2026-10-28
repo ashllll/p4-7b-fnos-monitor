@@ -70,7 +70,8 @@ typedef struct {
     ((esp_lcd_panel_io_i2c_config_t){ .dev_addr = ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS })
 
 static void *i2c_handle = NULL;
-static int probe_calls, delay_calls, create_calls, probe_ok_at = -1, probe_ok_addr, created_addr;
+static int probe_calls, delay_calls, create_calls, io_del_calls, touch_init_rc;
+static int probe_ok_at = -1, probe_ok_addr, created_addr;
 
 static esp_err_t bsp_i2c_init(void)
 {
@@ -108,7 +109,17 @@ static esp_err_t esp_lcd_touch_new_i2c_gt911(esp_lcd_panel_io_handle_t io,
     (void)io;
     (void)cfg;
     create_calls++;
+    if (touch_init_rc != ESP_OK) {
+        return touch_init_rc;
+    }
     *ret_touch = (void *)1;
+    return ESP_OK;
+}
+
+static esp_err_t esp_lcd_panel_io_del(esp_lcd_panel_io_handle_t io)
+{
+    (void)io;
+    io_del_calls++;
     return ESP_OK;
 }
 
@@ -117,6 +128,8 @@ static void reset_fixture(void)
     probe_calls = 0;
     delay_calls = 0;
     create_calls = 0;
+    io_del_calls = 0;
+    touch_init_rc = ESP_OK;
     probe_ok_at = -1;
     probe_ok_addr = 0;
     created_addr = -1;
@@ -145,6 +158,7 @@ int main(void)
     assert(delay_calls == 1);
     assert(created_addr == ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS_BACKUP);
     assert(create_calls == 1);
+    assert(io_del_calls == 0);
 
     /* Primary address appears on the third attempt. */
     reset_fixture();
@@ -154,8 +168,18 @@ int main(void)
     assert(probe_calls == 5);
     assert(delay_calls == 2);
     assert(created_addr == ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS);
+    assert(io_del_calls == 0);
 
-    puts("PASS: touch probe retries, backup address and absent controller");
+    /* Touch driver failure releases the panel IO it was given. */
+    reset_fixture();
+    probe_ok_at = 0;
+    probe_ok_addr = ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS;
+    touch_init_rc = ESP_ERR_NOT_FOUND;
+    assert(bsp_touch_new(&cfg, &touch) == ESP_ERR_NOT_FOUND);
+    assert(create_calls == 1);
+    assert(io_del_calls == 1);
+
+    puts("PASS: touch probe retries, backup address, absent controller and IO cleanup");
     return 0;
 }
 '''
