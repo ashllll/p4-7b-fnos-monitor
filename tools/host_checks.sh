@@ -10,6 +10,7 @@ fnos_host_checks() {
   "$@" "权限分类器（矩阵的每一格都来自它）" python3 nas/fpk/perm_check.py
   "$@" "主机预览（四条版面审计 + 配对流程断言）" bash tools/preview/run.sh "${FNOS_PREVIEW_OUT:-out}"
   "$@" "滚动条与卡片间距" node tools/preview/scroll_gap.js "tools/preview/${FNOS_PREVIEW_OUT:-out}"
+  "$@" "渲染失败按字形/几何分诊（无设备）" bash tools/preview/test_render_diagnosis.sh
   "$@" "Python 开发模式零警告（未关闭的 socket/文件）" python3 nas/fpk/devmode_check.py 30
   "$@" "截断真的发生了（六段各喂 50 条）" python3 nas/fpk/collector_check.py
   "$@" "满载状态帧能被固件的 parse_status() 吃下" bash tools/parsecheck/run.sh
@@ -46,6 +47,7 @@ fnos_host_checks() {
   "$@" "历史与实时合并、游标失效及端点重置（无设备）" python3 tools/test_history_merge.py
   "$@" "历史回填时间边界（无设备）" python3 tools/test_history.py
   "$@" "性能样本完整性（无设备）" python3 tools/test_perf_samples.py
+  "$@" "台架参数解析、空闲与帧作用域（无设备）" python3 tools/test_perf_timing.py
   "$@" "大小栈帧与未知调整负控" python3 tools/test_stack_frames.py
   "$@" "拍屏错误处理（模拟，无设备）" python3 tools/test_page_shot.py
   "$@" "TLS 故障拒绝降级、令牌并发与安全日志" python3 nas/fpk/test_server_safety.py
@@ -58,6 +60,7 @@ fnos_host_checks() {
   "$@" "磁盘与容器指标质量" python3 nas/fpk/test_metrics.py
   "$@" "TLS 接收超时隔离" python3 nas/fpk/tls_accept_check.py
   "$@" "UI 数据读取锁竞争与恢复" python3 tools/test_data_lock.py
+  "$@" "HTTP 连接复用、半截响应与重连（无设备）" python3 tools/test_http_connection.py
   "$@" "安装包元数据负控" python3 nas/fpk/test_release_metadata.py
   "$@" "安装包内 app 与源码一致" python3 nas/fpk/verify_package_sources.py
   "$@" "安装包、manifest 与 README 一致" python3 nas/fpk/release_metadata.py
