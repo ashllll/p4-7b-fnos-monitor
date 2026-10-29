@@ -21,6 +21,8 @@ fnos_host_checks() {
   "$@" "发布配置恢复与工具失败边界（无设备）" python3 -W error::ResourceWarning tools/test_gate_failures.py
   "$@" "Manifest 包身份与字段形状负控" python3 -W error::ResourceWarning tools/test_manifest_failures.py
   "$@" "PID 写失败与卸载收尾（无 NAS）" python3 nas/fpk/test_lifecycle_failures.py
+  "$@" "启动权限、证书与备份保留（无 NAS）" python3 nas/fpk/startup_permission_check.py
+  "$@" "配置覆盖安装、升级与读写失败保留（无 NAS）" python3 nas/fpk/config_persistence_check.py
   "$@" "API 与向导规则负控（无 NAS）" python3 nas/fpk/test_validation_gates.py
   "$@" "检查器故障收尾（无 NAS）" python3 -W error::ResourceWarning nas/fpk/test_tool_cleanup.py
   "$@" "配对状态边界（无网络）" python3 tools/test_pair_state.py
@@ -52,6 +54,7 @@ fnos_host_checks() {
   "$@" "Release 断言与坏夹具拒绝（无设备）" bash tools/preview/test_release_asserts.sh
   "$@" "预览输出目录守卫 + 分支变量按阶段隔离（M36/M57）" bash tools/preview/test_run_guard.sh
   "$@" "MPT 温度超时与只读协议" python3 nas/fpk/test_mpt_temperature.py
+  "$@" "温度命名、去重与分区跳过（假 sysfs）" python3 nas/fpk/temps_check.py
   "$@" "磁盘与容器指标质量" python3 nas/fpk/test_metrics.py
   "$@" "TLS 接收超时隔离" python3 nas/fpk/tls_accept_check.py
   "$@" "UI 数据读取锁竞争与恢复" python3 tools/test_data_lock.py
