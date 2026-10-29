@@ -136,6 +136,7 @@ static struct {
     overview_resource_t overview_resource[2];
     lv_obj_t *overview_rows[3], *overview_temp_history;
     lv_obj_t *overview_net_context, *overview_status_card, *overview_capacity_card;
+    lv_obj_t *overview_volume_card;   /* 保留块挤掉容量行卷数时，“卷占用”卡头补一个 */
     lv_obj_t *overview_rate[2], *overview_unit[2]; /* DOWN, UP */
     lv_obj_t *overview_volumes;
     lv_obj_t *volume_empty;
@@ -1323,8 +1324,11 @@ static int32_t chart_peak(lv_obj_t *chart, int32_t idx)
 
 static int chart_sample_count(lv_obj_t *chart)
 {
+    if (!chart) return 0;
     lv_chart_series_t *series = uk_trend_raw_series(chart, 0);
+    if (!series) return 0;
     const int32_t *values = lv_chart_get_series_y_array(chart, series);
+    if (!values) return 0;
     int count = 0;
     for (uint32_t i = 0; i < lv_chart_get_point_count(chart); i++)
         if (values[i] != LV_CHART_POINT_NONE) count++;
@@ -1802,6 +1806,7 @@ static void build_p0(lv_obj_t *page)
     s_ui.capacity_free = uk_label(body, UK_FONT_CJK_12, UK_T3, "等待容量数据");
     lv_obj_set_width(s_ui.capacity_free, LV_PCT(100));
     lv_obj_t *volume_card = overview_card(objects, "卷占用", NULL);
+    s_ui.overview_volume_card = volume_card;
     lv_obj_set_width(volume_card, 0);
     body = uk_card_body(volume_card);
     /* Compact volume comparisons; full identities and capacity are on Storage.
@@ -2130,8 +2135,6 @@ static void build_p3(lv_obj_t *page)
         lv_obj_t *body = uk_card_body(s_ui.p3_note);
         s_ui.system_note = uk_label(body, UK_TYPE_BODY, UK_T2, "等待数据");
         lv_obj_set_width(s_ui.system_note, LV_PCT(100));
-        s_ui.system_note2 = uk_label(body, UK_FONT_CJK_12, UK_T3, "");
-        lv_obj_set_width(s_ui.system_note2, LV_PCT(100));
     }
 
     panel_summary(s_ui.p3_note);
@@ -2205,8 +2208,10 @@ static void build_p3(lv_obj_t *page)
                 }
             }
         }
+        /* 摘要卡只保留一行状态；多行的版本/运行时长属于诊断卡尾部。 */
+        s_ui.system_note2 = uk_label(body, UK_FONT_CJK_12, UK_T3, "");
+        lv_obj_set_width(s_ui.system_note2, LV_PCT(100));
     }
-    lv_obj_set_parent(s_ui.system_note2, uk_card_body(s_ui.diagnostics));
     lv_obj_add_flag(s_ui.diagnostics, LV_OBJ_FLAG_HIDDEN);
 
     pair_build(page);   /* 与诊断同槽位的整页卡，见 pair_show() */
@@ -2549,6 +2554,9 @@ static void pair_build(lv_obj_t *page)
     uk_card_flex(status, 0);
     s_ui.pair_title = uk_card_title(status);
     lv_obj_t *body = uk_card_body(status);
+    /* 只有 pair_grid 滚。卡体若保持默认可滚，AUTO 会在右缘画一条几乎看不见的条，
+       还和键盘/指纹内容抢位置（07-pair-code 实拍）。 */
+    lv_obj_clear_flag(body, LV_OBJ_FLAG_SCROLLABLE);
     s_ui.pair_hint = uk_label(body, UK_FONT_CJK_12, UK_T3, "");
     lv_obj_set_width(s_ui.pair_hint, LV_PCT(100));
     lv_label_set_long_mode(s_ui.pair_hint, LV_LABEL_LONG_MODE_WRAP);
@@ -2567,6 +2575,7 @@ static void pair_build(lv_obj_t *page)
     s_ui.pair_steps = ui_card(grid, "三步完成配对", NULL);
     uk_card_flex(s_ui.pair_steps, 0);
     body = uk_card_body(s_ui.pair_steps);
+    lv_obj_clear_flag(body, LV_OBJ_FLAG_SCROLLABLE);
     for (int i = 0; i < PAIR_STEPS; i++) {
         lv_obj_t *r = uk_row_box(body, 0);
         lv_obj_set_width(r, LV_PCT(100));
@@ -2593,7 +2602,9 @@ static void pair_build(lv_obj_t *page)
 
     s_ui.pair_msg_panel = ui_card(grid, "连接状态", NULL);
     uk_card_flex(s_ui.pair_msg_panel, 0);
-    s_ui.pair_msg = uk_label(uk_card_body(s_ui.pair_msg_panel), UK_FONT_CJK_16, UK_T2, "");
+    body = uk_card_body(s_ui.pair_msg_panel);
+    lv_obj_clear_flag(body, LV_OBJ_FLAG_SCROLLABLE);
+    s_ui.pair_msg = uk_label(body, UK_FONT_CJK_16, UK_T2, "");
     lv_label_set_long_mode(s_ui.pair_msg, LV_LABEL_LONG_MODE_WRAP);
     lv_obj_set_width(s_ui.pair_msg, LV_PCT(100));
     lv_obj_set_height(s_ui.pair_msg, LV_SIZE_CONTENT);
@@ -2603,6 +2614,7 @@ static void pair_build(lv_obj_t *page)
     s_ui.pair_code_panel = s_ui.pair_codecol;
     s_ui.pair_code_lbl = uk_card_title(s_ui.pair_codecol);
     body = uk_card_body(s_ui.pair_codecol);
+    lv_obj_clear_flag(body, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_t *slots = uk_row_box(body, 0);
     lv_obj_set_width(slots, LV_PCT(100));
     for (int i = 0; i < PAIR_CODE_LEN; i++) {
@@ -2650,6 +2662,7 @@ static void pair_build(lv_obj_t *page)
     uk_card_flex(s_ui.pair_info_panel, 0);
     s_ui.pair_info_lbl = uk_card_title(s_ui.pair_info_panel);
     body = uk_card_body(s_ui.pair_info_panel);
+    lv_obj_clear_flag(body, LV_OBJ_FLAG_SCROLLABLE);
     for (int i = 0; i < PAIR_FP_LINES; i++) {
         s_ui.pair_fp[i] = uk_label(body, UK_FONT_NUM_20, UK_T1, "");
         lv_obj_set_width(s_ui.pair_fp[i], LV_SIZE_CONTENT);
@@ -3853,6 +3866,7 @@ static const char *link_reason(const fnos_status_t *st)
     if (!strcmp(st->last_err, "http status"))      return "NAS 返回了错误状态";
     if (!strcmp(st->last_err, "data capacity"))     return "设备数据超出内存预算，请调整采集或固件配置";
     if (!strcmp(st->last_err, "read error"))       return "读到一半连接断了";
+    if (!strcmp(st->last_err, "http init"))        return "本机 HTTP 客户端初始化失败，重启设备再试";
     return NULL;
 }
 
@@ -4664,6 +4678,11 @@ static void overview_refresh(const fnos_status_t *st)
         used += st->vols[i].used_gb; total += st->vols[i].total_gb;
         free_gb += st->vols[i].free_gb;
     }
+    /* 保留块既不在 used 也不在 free 里。容量条按可用容量算（df Use% 口径），
+       差额单独显示，避免「已用/总量」和每个卷的百分比各说一套。 */
+    const double usable = used + free_gb;
+    const double reserved = total - used - free_gb > 0.2 ? total - used - free_gb : 0;
+    const int32_t capacity_pct = usable > 0 ? gauge_value(used / usable * 100.0 + 0.5) : 0;
     for (int i = 0; i < st->nraid; i++) if (st->raid[i].ok) healthy_raid++;
     const bool raid_readable = overview_readable(st, "raid");
     const bool raid_live = raid_readable && overview_live(st, "raid");
@@ -4700,11 +4719,23 @@ static void overview_refresh(const fnos_status_t *st)
     if (storage) (storage_live ? set_num : set_txt)(s_ui.capacity_detail, "/ %s", fmt_cap(c1, sizeof c1, total));
     else set_txt(s_ui.capacity_detail, "%s", st->ever_ok ? "没有可用容量数据" : "等待存储数据");
     module_note(s_ui.overview_capacity_card, st, "vols");
-    set_txt(s_ui.capacity_free, storage ? "可用 %s · %d 个卷" : "容量不可用",
-            fmt_cap(b, sizeof b, free_gb), st->nvols);
+    if (!storage) set_txt(s_ui.capacity_free, "容量不可用");
+    else if (reserved > 0)
+        set_txt(s_ui.capacity_free, "可用 %s · 保留 %s",
+                fmt_cap(b, sizeof b, free_gb), fmt_cap(c1, sizeof c1, reserved));
+    else
+        set_txt(s_ui.capacity_free, "可用 %s · %d 个卷", fmt_cap(b, sizeof b, free_gb), st->nvols);
+    /* 只有保留块挤掉容量行里的卷数时才在卡头补一个，避免同一屏重复两次：
+       容量卡正文宽 171px，可用+保留+卷数一行放不下，卷数本来也更属于卷清单。 */
+    if (s_ui.overview_volume_card) {
+        if (storage && reserved > 0) set_txt(uk_card_note(s_ui.overview_volume_card), "%d 个卷", st->nvols);
+        else set_txt(uk_card_note(s_ui.overview_volume_card), "%s", "");
+    }
     show(s_ui.capacity_bar, storage);
-    uk_meter_set(s_ui.capacity_bar, (total > 0 ? gauge_value(used / total * 100) : 0) * UK_METER_SCALE, storage_live);
-    overview_style_color(s_ui.capacity_bar, LV_STYLE_BG_COLOR, uk_c(storage_live ? uk_pct_color(used / total * 100) : UK_OFF), LV_PART_INDICATOR);
+    uk_meter_set(s_ui.capacity_bar, capacity_pct * UK_METER_SCALE, storage_live);
+    overview_style_color(s_ui.capacity_bar, LV_STYLE_BG_COLOR,
+                         uk_c(storage_live && usable > 0 ? uk_pct_color(used / usable * 100.0) : UK_OFF),
+                         LV_PART_INDICATOR);
     int count = storage ? st->nvols : 0;
     if (count > s_ui.overview_volume_capacity) {
         overview_volume_t *grown = uk_realloc(s_ui.overview_volume, (size_t)count * sizeof *grown);
@@ -5032,6 +5063,7 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
             total += st->vols[i].total_gb;
             free_gb += st->vols[i].free_gb;
         }
+        const double usable = used + free_gb;
         double capacities[] = { used, total, free_gb };
         for (int i = 0; i < 3; i++) {
             const char *value, *unit;
@@ -5043,9 +5075,12 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
         }
         /* P1 的容量条与上面的三栏数字同源：一眼看出"还剩多少"。 */
         if (s_ui.storage_bar) {
-            int32_t pct = (readable && st->nvols && total > 0) ? gauge_value(used / total * 100.0 + 0.5) : 0;
+            /* 与卷行、采集端的 df Use% 同一分母：保留块不算已用，也不算可用。 */
+            int32_t pct = (readable && st->nvols && usable > 0) ? gauge_value(used / usable * 100.0 + 0.5) : 0;
             uk_meter_set(s_ui.storage_bar, LV_MAX(0,pct) * UK_METER_SCALE, live);
-            lv_obj_set_style_bg_color(s_ui.storage_bar, uk_c(live && total > 0 ? uk_pct_color(used / total * 100) : UK_OFF), LV_PART_INDICATOR);
+            lv_obj_set_style_bg_color(s_ui.storage_bar,
+                                      uk_c(live && usable > 0 ? uk_pct_color(used / usable * 100.0) : UK_OFF),
+                                      LV_PART_INDICATOR);
         }
     }
     if (page == 0) {
@@ -5131,6 +5166,14 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
         snprintf(b, sizeof b, "剩余 %s / 总计 %s · %s",
                  fmt_cap(c1, sizeof c1, v->free_gb), fmt_cap(c2, sizeof c2, v->total_gb),
                  v->fs[0] ? v->fs : "-");
+        /* 每个卷的保留块 = 总量 - 已用 - 可用；>0.2 GB 才展示，避免 0.1 GB 舍入噪声。 */
+        const double reserved = (double)v->total_gb - v->used_gb - v->free_gb;
+        if (reserved > 0.2) {
+            size_t used_len = strlen(b);
+            if (used_len + 2 < sizeof b)
+                snprintf(b + used_len, sizeof b - used_len, " · 保留 %s",
+                         fmt_cap(c1, sizeof c1, reserved));
+        }
         snprintf(c1, sizeof c1, "%.0f%%", v->pct);
         /* 条色走配置后的 uk_pct_color，读数保持白色：
            全项目只能有一套阈值，颜色限于局部仪表。
@@ -6060,17 +6103,32 @@ void fnos_ui_dump_card_map_fp(FILE *fp)
     /* 卡片在树里是挂在各页下面的：页号从祖先链上读，别用 s_page（建树时它是 0）。 */
     for (int i = 0; i < s_ui.ncards; i++) {
         lv_obj_t *c = s_ui.cards[i];
-        /* Export the active overlay and its descendants, not occluded cards.
-           Faded System cards may remain in the tree while setup owns the page. */
+        /* Hidden cards keep stale geometry. Reporting them makes the host see a
+           scrollbar "drawn" behind an overlay (or in a hidden stage), which is a
+           false failure: LVGL never painted it. Audit only what is visible now.
+           Overlay bodies are faded via style opacity, not LV_OBJ_FLAG_HIDDEN. */
+        /* While an overlay is open only its own cards are stable surfaces. The
+           page body may still be mid-fade (opaque in the object tree, but covered
+           by the overlay), so geometry alone would audit an invisible layer. */
+        /* The modal owns the active surface: dimmed background scrollbars are
+           occluded, while the detail's own scroll region must remain audited. */
         bool modal = s_ui.detail_mask && !lv_obj_has_flag(s_ui.detail_mask, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_t *surface = modal ? s_ui.detail_card : s_page == 3 ?
-            (s_wifi_open ? s_ui.wifi_card : s_pair_open ? s_ui.pair_card :
-             s_diagnostics ? s_ui.diagnostics : NULL) : NULL;
+        /* Overlays live on page 3; elsewhere an open flag left over from a fade is
+           not a stable surface and must not be audited. */
+        lv_obj_t *overlay_root = s_page != 3 ? NULL :
+                                 s_wifi_open ? s_ui.wifi_card : s_pair_open ? s_ui.pair_card :
+                                 s_diagnostics ? s_ui.diagnostics : NULL;
+        lv_obj_t *surface = modal ? s_ui.detail_card : overlay_root;
         if (surface) {
-            lv_obj_t *ancestor = c;
-            while (ancestor && ancestor != surface) ancestor = lv_obj_get_parent(ancestor);
-            if (!ancestor) continue;
+            bool inside = false;
+            for (lv_obj_t *p = c; p; p = lv_obj_get_parent(p))
+                if (p == surface) { inside = true; break; }
+            if (!inside) continue;
         }
+        /* Fade-in/out is a transitional state: a half-transparent card is not
+           a stable surface, and its bar may be clipped by the overlay. */
+        if (!lv_obj_is_visible(c) ||
+            lv_obj_get_style_opa_recursive(c, LV_PART_MAIN) < LV_OPA_COVER) continue;
         lv_area_t a;
         lv_obj_get_coords(c, &a);
         /* 有没有列表：卡片的直接子对象里有没有"可滚动"的那个。

@@ -15,8 +15,9 @@ export PATH="$HOME/.local/bin:$PATH"
 
 PKG=nasscreencompanion
 python3 ../sync_docker_metrics.py
-find "$PKG" -name '__pycache__' -type d -prune -exec rm -rf {} +
-find "$PKG" \( -name '*.pyc' -o -name '*.pyo' -o -name '.DS_Store' \) -delete
+# Avoid recursive rm: remove bytecode files first, then the now-empty cache directories.
+find "$PKG" -type f \( -name '*.pyc' -o -name '*.pyo' -o -name '.DS_Store' \) -exec rm -f {} +
+find "$PKG" -depth -type d -name '__pycache__' -exec rmdir {} +
 
 fnpack build --directory "$PKG"
 
@@ -50,6 +51,12 @@ if [ -n "$BAD" ]; then
   exit 1
 fi
 echo "✓ 包内没有字节码缓存 / .DS_Store / ._ 资源分叉"
+
+# Verify the packaged app before writing release metadata: a stale package must not
+# get a fresh identity block.
+if [ -d "$PKG/app" ]; then
+  python3 verify_package_sources.py "$FPK" "$PKG/app"
+fi
 
 # Package identity has one source: the completed archive, checked against its source manifest.
 python3 release_metadata.py --write

@@ -9,7 +9,10 @@ import json
 
 
 def _encode(value):
-    return json.dumps(value, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+    # NaN/Infinity are not valid JSON; fail before publication instead of letting
+    # the board receive an unparsable snapshot.
+    return json.dumps(value, ensure_ascii=False, separators=(',', ':'),
+                      allow_nan=False).encode('utf-8')
 
 
 class PublishedSnapshot:

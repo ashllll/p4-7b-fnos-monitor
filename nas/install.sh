@@ -95,9 +95,10 @@ fi
 
 step "本机验证 http://$NAS_HOST:8799 —— 先证明鉴权真的生效"
 # 审计 M31：令牌是 fail-closed 的，所以"不带令牌能拿到 200"才是故障而不是成功。
-# 这里不带任何凭据打一次，必须看到 401；看到 200 说明令牌没生效（unit 缺
+# /api/v1/health 是故意公开的存活探针，不能拿它证明鉴权；这里探受保护的
+# /api/v1/status，必须看到 401；看到 200 说明令牌没生效（unit 缺
 # EnvironmentFile、文件为空、或者谁加了 --insecure-no-auth），直接判失败。
-NOAUTH_CODE=$(curl -s -m 6 -o /dev/null -w '%{http_code}' "http://$NAS_HOST:8799/api/v1/health" || true)
+NOAUTH_CODE=$(curl -s -m 6 -o /dev/null -w '%{http_code}' "http://$NAS_HOST:8799/api/v1/status" || true)
 if [ "$NOAUTH_CODE" = "401" ]; then
   echo "  ✓ 不带令牌：HTTP 401（鉴权生效）"
 else

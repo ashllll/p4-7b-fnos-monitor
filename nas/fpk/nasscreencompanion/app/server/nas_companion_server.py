@@ -64,7 +64,7 @@ from fnos_collector import (                       # noqa: E402
 )
 
 APPNAME = "nasscreencompanion"
-APPVER = os.environ.get("TRIM_APPVER") or "1.2.10"   # manifest 里的 version 由应用中心经 TRIM_APPVER 注入；这个默认值给开发模式兜底
+APPVER = os.environ.get("TRIM_APPVER") or "1.2.11"   # manifest 里的 version 由应用中心经 TRIM_APPVER 注入；这个默认值给开发模式兜底
 GATEWAY_PREFIX = "/app/" + APPNAME
 SOCKET_NAME = "app.sock"                 # 必须位于 target 目录（网关要求）
 LOG_TAIL = 400                           # 内存里保留的日志行数（供管理页看）
@@ -256,6 +256,7 @@ def generate_self_signed():
         return False, "系统里找不到 openssl，无法生成自签证书"
     stage = None
     keep_backup = False
+    result = None
     try:
         os.makedirs(tls_dir(), exist_ok=True)
         os.chmod(tls_dir(), 0o700)
@@ -313,18 +314,23 @@ def generate_self_signed():
                             os.unlink(target)
                     except OSError:
                         keep_backup = True
-                if keep_backup:
-                    return False, "TLS替换及恢复失败，私有候选目录保留，需检查恢复"
-                raise
-            return True, "已生成并校验自签证书"
+                if not keep_backup:
+                    raise
+            if keep_backup:
+                result = (False, "TLS替换及恢复失败，私有候选目录保留，需检查恢复")
+            else:
+                result = (True, "已生成并校验自签证书")
     except Exception as exc:
-        return False, "TLS生成或替换失败（%s）" % type(exc).__name__
+        result = (False, "TLS生成或替换失败（%s）" % type(exc).__name__)
     finally:
         if stage is not None and not keep_backup:
             try:
                 shutil.rmtree(stage)
             except OSError:
-                return False, "TLS私有候选目录清理失败，需检查"
+                # 清理失败不能吞掉正在传播的异常；成功路径则降级为失败。
+                if result is not None and result[0]:
+                    result = (False, "TLS私有候选目录清理失败，需检查")
+    return result
 
 
 def prepare_tls(regen=False):
@@ -473,23 +479,27 @@ INTERVAL_MIN_S = 0.05
 INTERVAL_MAX_S = 60.0
 
 
+def _config_number(value, key, cast, lo, hi):
+    """启动校验和热更新共用的数字规则；bool 与截断的小数都不接受。"""
+    try:
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            raise ValueError
+        result = cast(value)
+        if cast is int and isinstance(value, float) and result != value:
+            raise ValueError
+        if not lo <= result <= hi:
+            raise ValueError
+    except (TypeError, ValueError, OverflowError):
+        raise ConfigError("%s 取值非法或超出范围" % key) from None
+    return result
+
+
 def _validate_startup_config(cfg):
     """Validate before constructing collectors/listeners; never repair bad auth/TLS."""
     for key, cast, lo, hi in (("interval", float, INTERVAL_MIN_S, INTERVAL_MAX_S),
                               ("hist_len", int, 30, 3600),
                               ("port", int, 1, 65535)):
-        value = cfg[key]
-        try:
-            if isinstance(value, bool) or not isinstance(value, (int, float, str)):
-                raise ValueError
-            result = cast(value)
-            if cast is int and isinstance(value, float) and result != value:
-                raise ValueError
-            if not lo <= result <= hi:
-                raise ValueError
-        except (TypeError, ValueError, OverflowError):
-            raise ConfigError("%s 取值非法或超出范围" % key) from None
-        cfg[key] = result
+        cfg[key] = _config_number(cfg[key], key, cast, lo, hi)
     for key in ("tls_enabled", "docker_enabled"):
         cfg[key] = _config_bool(cfg[key], key)
     if not isinstance(cfg["bind"], str) or not cfg["bind"].strip() or "\0" in cfg["bind"]:
@@ -665,6 +675,10 @@ class State:
                     not all("0" <= c <= "9" for c in code) or
                     not hmac.compare_digest(code, pend["code"])):
                 return None, "配对码不正确"
+            # name 是客户端可控的自由文本；数字/对象会抛 TypeError，数组还会被
+            # 原样写进 devices[].name，让下次启动的配置校验失败。先卡类型再截断。
+            if name is not None and not isinstance(name, str):
+                return None, "设备名必须是字符串"
             token = secrets.token_urlsafe(24)
             dev = {
                 "name": (name or "未命名设备")[:40],
@@ -725,6 +739,10 @@ class State:
     def flush(self):
         try:
             with self._lock:
+                # 没有设备状态变化就不重写配置：关机时的无谓写入会提升修订号，
+                # 一旦磁盘/权限出错还会把正常停止判成失败。
+                if not any(d.get("_dirty") for d in self.cfg["devices"]):
+                    return True
                 candidate = dict(self.cfg)
                 candidate["devices"] = [{k: v for k, v in d.items() if k != "_dirty"}
                                         for d in self.cfg["devices"]]
@@ -1206,12 +1224,7 @@ class Handler(BaseHTTPRequestHandler):
                                   ("hist_len", int, 30, 3600),
                                   ("port", int, 1, 65535)):
             if key in body:
-                try:
-                    val = cast(body[key])
-                except (TypeError, ValueError, OverflowError):
-                    raise ConfigError("%s 取值非法" % key)
-                if not (lo <= val <= hi):
-                    raise ConfigError("%s 必须在 %s~%s 之间" % (key, lo, hi))
+                val = _config_number(body[key], key, cast, lo, hi)
                 if candidate.get(key) != val:
                     candidate[key] = val
                     changed.append(key)

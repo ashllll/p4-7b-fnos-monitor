@@ -348,6 +348,11 @@ static bool http_get(const char *url, char **buffer, size_t *capacity, size_t bu
         }
         s_client = esp_http_client_init(&cfg);
         if (!s_client) {
+            /* 初始化失败不是网络故障：把原因和出参都写全，避免 UI 误报 connect/timeout。 */
+            snprintf(s_conn_err, sizeof s_conn_err, "%s", "http init");
+            *out_status = 0;
+            *out_len = 0;
+            *out_ms = 0;
             return false;
         }
     } else {
@@ -371,6 +376,7 @@ static bool http_get(const char *url, char **buffer, size_t *capacity, size_t bu
     // 会被下一次请求当成响应解析，而 status_code 只在头解析成功时才更新 —— 一次失败
     // 会污染后面若干轮，属于"静默且粘滞"的故障。
     if (esp_http_client_fetch_headers(s_client) < 0) {
+        snprintf(s_conn_err, sizeof s_conn_err, "%s", "read error");
         *out_status = 0;
         *out_ms = (int)((esp_timer_get_time() - t0) / 1000);
         http_drop_client();
@@ -394,7 +400,11 @@ static bool http_get(const char *url, char **buffer, size_t *capacity, size_t bu
             *capacity = next;
         }
         int r = esp_http_client_read(s_client, *buffer + total, (int)*capacity - 1 - total);
-        if (r < 0) { err = ESP_FAIL; break; }
+        if (r < 0) {
+            snprintf(s_conn_err, sizeof s_conn_err, "%s", "read error");
+            err = ESP_FAIL;
+            break;
+        }
         if (r == 0) break;
         total += r;
     }

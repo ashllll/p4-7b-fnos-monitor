@@ -1,6 +1,7 @@
 // uk_theme.h — ui_kit 设计令牌（颜色 / 阈值 / 字体 / 度量）
 //
-// 值沿用 v9/v11 合同（与已归档原型 docs/archive/ui/mockup-v11/css/tokens.css 同源），但**不再推导坐标**：
+// 颜色只有 g_uk_pal 一份真值（见 uk_theme.c）；阈值/字体/度量沿用 v9/v11 合同
+// （与已归档原型 docs/archive/ui/mockup-v11/css/tokens.css 同源），但**不再推导坐标**：
 // 本文件只有"长什么样"的令牌，"摆在哪"由 LVGL flex 决定。
 //
 // 硬约束（RGB565 实测踩过）：不许渐变——470px 宽的卡上渐变只能量出 7 条色阶，
@@ -13,42 +14,11 @@
 #include "lvgl.h"
 #include "sdkconfig.h"
 
-/* ── 中性 / 表面 ──────────────────────────────────────────────────── */
-#define UK_HEX_BG        0x131416   /* 画布                           */
-#define UK_HEX_S0        0x0E0F11   /* 嵌槽 / 内凹分组底              */
-#define UK_HEX_S1        0x1C1E21   /* 表面 L1：卡片                  */
-#define UK_HEX_SURF_T    0x1F2226   /* 卡片表面（原渐变中间调→纯色）  */
-#define UK_HEX_S2        0x282B2F   /* 表面 L2：胶囊底、嵌槽          */
-#define UK_HEX_S3        0x34383D   /* 表面 L3：容量条轨道            */
-#define UK_HEX_OFF       0x42474D   /* 关闭 / 离线                    */
-#define UK_HEX_LINE      0x2E3238   /* 分隔线                         */
-
-/* ── 文本 ─────────────────────────────────────────────────────────── */
-#define UK_HEX_T1        0xF9FAFA   /* 主文本 / 数字                  */
-#define UK_HEX_T2        0xDEE0E3   /* 次级正文                       */
-#define UK_HEX_T3        0xB7BCC2   /* 标签 / 行副标题                */
-#define UK_HEX_T4        0x8F98A2   /* 轴标签 / 禁用 / 无数据         */
-
-/* ── 品牌与状态 ───────────────────────────────────────────────────── */
-#define UK_HEX_BLUE      0x0068F5   /* 主操作填充                     */
-#define UK_HEX_BLUE_TXT  0x4797FF   /* 暗底上的蓝色文字               */
-#define UK_HEX_OK        0x37BE5F
-#define UK_HEX_WARN      0xE79913
-#define UK_HEX_DANGER    0xF5777C
-
-/* ── 数据序列 ─────────────────────────────────────────────────────── */
-#define UK_HEX_S_CPU     0x4797FF
-#define UK_HEX_S_MEM     0x63BDE3
-#define UK_HEX_S_TEMP    0xA0BD28
-#define UK_HEX_S_DOWN    0x63BDE3
-#define UK_HEX_S_UP      0xB47CDE
-#define UK_HEX_S_ZFS     0xA0BD28
+/* 颜色唯一真值是 g_uk_pal（uk_theme.c 的运行时预设）。早期的固定
+   UK_HEX_* 令牌已删：它们来自 v9/v11 原型，数值与当前主题分叉，
+   留着只会让调用方以为有两个配色来源。 */
 
 /* ── 导航（rail） ─────────────────────────────────────────────────── */
-#define UK_HEX_RAIL_N    0x141518
-#define UK_HEX_RAIL_DAY  0x1C1F22
-#define UK_HEX_NAV       0x232629
-#define UK_HEX_NAV_SEL   0x272A2D
 #define UK_NAV_SEL_OPA   54
 #define UK_EDGE_RAIL     20
 #define UK_EDGE_OPA      28         /* Quiet edges distinguish adjacent product surfaces */

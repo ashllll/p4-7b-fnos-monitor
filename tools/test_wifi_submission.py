@@ -35,6 +35,7 @@ preamble = r'''
 #define ESP_LOGI(...) ((void)0)
 #define ESP_OK 0
 #define WIFI_IF_STA 0
+#define WIFI_AUTH_OPEN 0
 #define WIFI_AUTH_WPA2_PSK 3
 #define FNOS_WIFI_SUBMIT_IDLE 0
 #define FNOS_WIFI_SUBMIT_PENDING 1
@@ -54,6 +55,7 @@ preamble = r'''
 #define TAG "test"
 typedef int esp_event_base_t;
 typedef int esp_err_t;
+typedef int wifi_auth_mode_t;
 typedef struct { uint8_t reason; } wifi_event_sta_disconnected_t;
 typedef struct { uint8_t ssid[32]; uint8_t ssid_len; } wifi_event_sta_connected_t;
 typedef struct { struct { struct { uint32_t addr; } ip; } ip_info; } ip_event_got_ip_t;
@@ -62,16 +64,32 @@ static int s_cfg_mux, s_ip_mux, s_submit_state;
 static uint32_t s_submit_generation, s_submit_applied_generation, s_submit_associated_generation;
 static char s_pend_ssid[64], s_pend_pass[96], s_ssid[64], s_reason[128], s_submit_reason[128], s_ip[16];
 static bool s_cred_want, s_wifi_inited;
-static atomic_bool s_online, s_configured, s_scan_done, s_scan_want, s_scan_busy, s_connect_wanted;
+#define NET_HANDLER_WIFI_EVENT 0x01u
+#define NET_HANDLER_STA_GOT_IP 0x02u
+#define NET_HANDLER_STA_LOST_IP 0x04u
+#define NET_HANDLERS_ALL (NET_HANDLER_WIFI_EVENT | NET_HANDLER_STA_GOT_IP | NET_HANDLER_STA_LOST_IP)
+#define ESP_EVENT_ANY_ID -1
+static uint8_t s_handlers_registered;
+static int event_register_calls, event_register_fail_at = -1;
+static int event_register_attempts[8];
+static esp_err_t esp_event_handler_register(esp_event_base_t base, int32_t id,
+                                            void (*handler)(void *, esp_event_base_t, int32_t, void *),
+                                            void *arg) {
+    (void)handler; (void)arg;
+    int seq = event_register_calls++;
+    event_register_attempts[seq] = (base == WIFI_EVENT) ? 0 : (id == IP_EVENT_STA_GOT_IP ? 1 : 2);
+    return seq == event_register_fail_at ? -1 : 0;
+}
+static atomic_bool s_online, s_configured, s_scan_done, s_scan_want, s_scan_busy, s_connect_wanted, s_reassociate;
 static bool s_started = true;
 static _Atomic uint8_t s_wifi_retry_count;
 static void *s_eg, *s_wifi_retry_timer;
 static int64_t s_submit_started_us, s_retry_due_us, now_us;
 static bool save_ok = true, resubmit_during_save;
-static int config_rc, connect_rc, connect_calls;
+static int config_rc, connect_rc, connect_calls, disconnect_calls;
 static int64_t esp_timer_get_time(void) { return now_us; }
 static int esp_wifi_connect(void) { connect_calls++; return connect_rc; }
-static int esp_wifi_disconnect(void) { return 0; }
+static int esp_wifi_disconnect(void) { disconnect_calls++; return 0; }
 static wifi_config_t captured;
 static int esp_wifi_set_config(int i, wifi_config_t *c) { (void)i; captured=*c; return config_rc; }
 static void wifi_schedule_retry(void);
@@ -106,6 +124,8 @@ static void associate(const char *ssid) {
     on_net_event(NULL, WIFI_EVENT, WIFI_EVENT_STA_CONNECTED, &e);
 }
 int main(void) {
+    assert(wifi_authmode_for_password("") == WIFI_AUTH_OPEN);
+    assert(wifi_authmode_for_password("pass") == WIFI_AUTH_WPA2_PSK);
     fnos_net_set_credentials("test-network", "pass");
     ip(); assert(s_submit_state == FNOS_WIFI_SUBMIT_PENDING); /* stale old IP */
     save_ok = false;
@@ -161,11 +181,35 @@ int main(void) {
     assert(s_retry_due_us==now_us+30000000);
     ip(); assert(s_retry_due_us==0);
     s_online=false; s_configured=false; wifi_schedule_retry(); assert(s_retry_due_us==0);
-    puts("PASS: stale IP / NVS failure / association / resubmission / RPC failures / timeout");
+    fnos_net_set_credentials("open-network", ""); fnos_net_service();
+    assert(captured.sta.threshold.authmode == WIFI_AUTH_OPEN);
+    /* LOST_IP must ask the service task to force a fresh association; the event
+       callback itself must not issue the ESP-Hosted RPC. */
+    s_online=true; s_configured=true; s_connect_wanted=false;
+    disconnect_calls=0;
+    on_net_event(NULL, IP_EVENT, IP_EVENT_STA_LOST_IP, NULL);
+    assert(!s_online); assert(atomic_load(&s_reassociate)); assert(disconnect_calls==0);
+    fnos_net_service();
+    assert(disconnect_calls==1); assert(!atomic_load(&s_reassociate));
+    /* A partial registration failure must not re-register the handlers that
+       already succeeded: IDF appends duplicates and would deliver twice. */
+    s_handlers_registered=0; event_register_calls=0; event_register_fail_at=1;
+    assert(handlers_ensure_registered() == -1);
+    assert(event_register_calls==2);
+    assert(s_handlers_registered==NET_HANDLER_WIFI_EVENT);
+    event_register_fail_at=-1;
+    assert(handlers_ensure_registered()==ESP_OK);
+    assert(event_register_calls==4);
+    assert(event_register_attempts[2]==1 && event_register_attempts[3]==2);
+    assert(s_handlers_registered==NET_HANDLERS_ALL);
+    event_register_calls=0;
+    assert(handlers_ensure_registered()==ESP_OK && event_register_calls==0);
+    puts("PASS: stale IP / NVS failure / association / resubmission / RPC failures / timeout / open authmode / lost-IP reassociation");
 }
 '''
-names = ['wifi_schedule_retry', 'fnos_utf8_copy', 'fnos_net_set_credentials', 'submit_failure',
-         'apply_pending_credentials', 'on_net_event', 'fnos_net_service']
+names = ['wifi_authmode_for_password', 'wifi_schedule_retry', 'fnos_utf8_copy',
+         'fnos_net_set_credentials', 'submit_failure', 'apply_pending_credentials',
+         'on_net_event', 'register_handler_once', 'handlers_ensure_registered', 'fnos_net_service']
 with tempfile.TemporaryDirectory(prefix='fnos-wifi-submit-') as tmp:
     c = Path(tmp) / 'submission.c'
     c.write_text(preamble + '\n'.join(function(n) for n in names) + checks)
@@ -292,7 +336,7 @@ int main(void) {
     puts("PASS: atomic consume/late producer, locked snapshots, legacy SSID copy");
 }
 '''
-thread_names = ['wifi_schedule_retry', 'fnos_utf8_copy','fnos_net_set_credentials','submit_failure',
+thread_names = ['wifi_authmode_for_password','wifi_schedule_retry', 'fnos_utf8_copy','fnos_net_set_credentials','submit_failure',
                 'apply_pending_credentials','fnos_net_service','fnos_net_ssid_r',
                 'fnos_net_ssid','fnos_net_submit_state','fnos_net_state']
 with tempfile.TemporaryDirectory(prefix='fnos-net-threads-') as tmp:
@@ -338,7 +382,12 @@ static int esp_wifi_scan_get_ap_records(uint16_t *got,wifi_ap_record_t *out) {
     for(int i=0;i<*got;i++) {strcpy((char*)out[i].ssid,"same");out[i].rssi=-60+i;out[i].authmode=1;}
     return records_rc;
 }
-static void *fixture_alloc(size_t n,size_t size) {return oom?NULL:calloc(n,size);}
+static int alloc_calls, alloc_fail_at;
+static void *fixture_alloc(size_t n,size_t size) {
+    alloc_calls++;
+    if(alloc_fail_at && alloc_calls==alloc_fail_at) return NULL;
+    return oom?NULL:calloc(n,size);
+}
 #define calloc fixture_alloc
 '''
 scan_checks = r'''
@@ -347,10 +396,12 @@ int main(void) {
     scan_collect();assert(s_scan_failed);assert(!s_scan_busy);assert(s_ap_n==0);
     num_rc=0;scan_collect();assert(!s_scan_failed);assert(s_ap_n==0);
     count=2;oom=true;s_scan_busy=true;scan_collect();assert(s_scan_failed);assert(!s_scan_busy);
-    oom=false;records_rc=1;s_scan_busy=true;scan_collect();assert(s_scan_failed);assert(!s_scan_busy);
+    s_ap_n=7;s_scan_failed=false;s_scan_busy=true;oom=false;alloc_calls=0;alloc_fail_at=2;
+    scan_collect();assert(s_scan_failed);assert(!s_scan_busy);assert(s_ap_n==7);
+    alloc_fail_at=0;records_rc=1;s_scan_busy=true;scan_collect();assert(s_scan_failed);assert(!s_scan_busy);
     records_rc=0;s_scan_failed=false;s_scan_busy=true;scan_collect();
     assert(!s_scan_busy);assert(!s_scan_failed);assert(s_ap_n==1);assert(s_aps[0].rssi==-59);
-    puts("PASS: scan error/empty/OOM/records error/dedup strongest");
+    puts("PASS: scan error/empty/OOM/stage OOM/records error/dedup strongest");
 }
 '''
 with tempfile.TemporaryDirectory(prefix='fnos-net-scan-') as tmp:

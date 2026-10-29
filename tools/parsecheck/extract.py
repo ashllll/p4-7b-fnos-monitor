@@ -135,6 +135,8 @@ def main():
      · s_h_*      —— 历史回填的环形缓冲，parse_history 往里写
    它们的值本身不参与解析，只是被赋值。缓冲尺寸照抄 fnos_data.h 的 FNOS_HIST_MAX。 */
 int64_t s_nas_ts;
+/* commit_status() 成功时会清零连续失败计数（note_failure() 里自增）。 */
+uint32_t s_consec_fail;
 char s_conn_err[24];
 float s_h_cpu[FNOS_HIST_MAX], s_h_mem[FNOS_HIST_MAX];
 float s_h_rx[FNOS_HIST_MAX], s_h_tx[FNOS_HIST_MAX], s_h_temp[FNOS_HIST_MAX];

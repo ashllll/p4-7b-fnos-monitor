@@ -89,6 +89,52 @@ class MetricsTests(unittest.TestCase):
             with self.assertRaises(ValueError):module._metrics_get('../unsafe','json')
             with self.assertRaises(ValueError):module._metrics_get('a'*64,'start')
 
+    def test_zfs_distinguishes_absent_from_unreadable(self):
+        # 两个采集器都必须区分"没装 ZFS"和"读不到 arcstats"；后者要抛给
+        # sample() 保留上一帧，而不是把 ZFS 从快照里静默抹掉。
+        for name,module in (('companion',collector),('legacy',legacy)):
+            with self.subTest(collector=name):
+                c=module.Collector()
+                with patch.object(module,'read_text_strict',side_effect=FileNotFoundError()):
+                    self.assertIsNone(c._zfs())
+                with patch.object(module,'read_text_strict',side_effect=PermissionError('denied')):
+                    with self.assertRaises(PermissionError):
+                        c._zfs()
+
+    def test_volume_percent_counts_only_usable_capacity(self):
+        st=SimpleNamespace(f_blocks=100,f_frsize=1024**3,f_bfree=30,f_bavail=20)
+        # 伴侣采集器与 fnos-agent.py 各自维护一份 _volumes；口径必须一致，
+        # 否则同一块盘在 8799 和伴侣端口上显示不同的 Use%。
+        for name,module in (('companion',collector),('legacy',legacy)):
+            with self.subTest(collector=name):
+                c=module.Collector()
+                with patch.object(module,'read_text',return_value='/dev/sda /data ext4 rw 0 0\n'), \
+                     patch.object(module.os,'statvfs',return_value=st):
+                    rows=c._volumes()
+                self.assertEqual(len(rows),1)
+                self.assertEqual((rows[0]['total_gb'],rows[0]['used_gb'],rows[0]['free_gb']),
+                                 (100.0,70.0,20.0))
+                self.assertEqual(rows[0]['pct'],77.8)
+
+    def test_cpu_reads_loadavg_once(self):
+        stat='cpu 1 2 3 4 5 6 7 8\n'
+        load='0.10 0.20 0.30 1/100 12345\n'
+        # 负载与 runq/procs 必须来自同一次读取：两次读之间可能变化，
+        # 第二次失败还会把整段 CPU 采集打成异常。
+        for name,module in (('companion',collector),('legacy',legacy)):
+            with self.subTest(collector=name):
+                c=module.Collector()
+                with patch.object(module,'read_text',side_effect=[stat,load]) as read:
+                    cpu=c._cpu()
+                self.assertEqual(cpu['load1'],0.1)
+                self.assertEqual((cpu['runq'],cpu['procs']),(1,100))
+                self.assertEqual(read.call_count,2)
+
+    def test_publication_rejects_non_finite_json_numbers(self):
+        with self.assertRaises(ValueError):
+            collector.PublishedSnapshot({'v':1,'host':'fixture','ts':0,'ready':True,
+                                         'value':float('nan')})
+
     def test_generated_metric_copies_reject_drift_and_preserve_entry_code(self):
         self.assertEqual(sync_metrics.sync(),[])
         with tempfile.TemporaryDirectory() as directory:

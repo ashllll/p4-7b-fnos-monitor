@@ -29,7 +29,9 @@ if name=='ssh':
     elif mode=='execfail' and (cmd.startswith('python3 ') or ('sudo ' in cmd and ' bash ' in cmd)):
         sys.exit(7)
 if name=='scp' and mode=='scpfail':sys.exit(6)
-if name=='curl':print('401',end='')
+if name=='curl':
+    url=next((value for value in args if value.startswith('http')),'')
+    print('401' if '/api/v1/status' in url else '200',end='')
 '''
 class SSHScripts(unittest.TestCase):
     def run_script(self,script,mode='',action=None,password=False):
@@ -81,6 +83,9 @@ class SSHScripts(unittest.TestCase):
         result,commands=self.run_script('install.sh',action='verify')
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertEqual([name for name,_ in commands],['curl'])
+        urls=[value for name,args in commands if name=='curl' for value in args if value.startswith('http')]
+        self.assertTrue(urls and all('/api/v1/status' in url for url in urls),urls)
+        self.assertFalse(any('/api/v1/health' in url for url in urls),urls)
     def test_unknown_action_never_connects(self):
         result,commands=self.run_script('install.sh',action='typo')
         self.assertEqual(result.returncode,2);self.assertEqual(commands,[])

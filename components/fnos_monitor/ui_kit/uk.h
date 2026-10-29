@@ -167,8 +167,6 @@ void       uk_pool_stretch(lv_obj_t *pool, bool on);   /* 兼容旧调用；当�
 void uk_pool_add(lv_obj_t *pool, lv_obj_t *child);
 int32_t uk_pool_shown(lv_obj_t *pool);
 int32_t uk_pool_cols(lv_obj_t *pool);
-/* 池的列数策略可覆盖（默认 0 = 自动）：>0 时强制该列数（不收敛）。 */
-void uk_pool_force_cols(lv_obj_t *pool, int32_t cols);
 /* 视口行对齐：容器纵向溢出时把"半行"赶出视口 —— 只调行距、不动行高、不藏数据
    （容器装得下时行距回到 base_gap）。base_gap = 本来要用的那个行距。 */
 void uk_viewport_snap(lv_obj_t *box, int32_t base_gap);
@@ -225,17 +223,10 @@ void uk_trend_settle(lv_obj_t *chart);
 /** 历史曲线启用平滑与流动：只改绘制几何，不动采样数据。 */
 void uk_trend_enable_flow(lv_obj_t *chart); /* Snap a history batch/hidden view to newest. */
 
-/* 数字键盘：原生 lv_buttonmatrix，回调收到按钮文字。 */
-lv_obj_t *uk_numpad_create(lv_obj_t *parent, void (*cb)(const char *key, void *user), void *user);
-
 /* ── 动画（"保证动画效果"：全部走 LVGL 原生 lv_anim） ─────────────── */
 /* 只保留真在用的：换页淡入、严重告警呼吸、值条原生补间。
    （`uk_page_load()` 与 `uk_anim_int()` 已删——见 uk.c 里那段说明。） */
 void uk_anim_pulse(lv_obj_t *obj, bool on);
-/* 进场：从下方 dy 滑入 + 淡入（列表/卡片用，delay 支持错峰）。
-   注意 dy≠0 时对象坐标会离开原位（LVGL 的 translate 会算进 refr_pos），
-   贴边的卡片在这一帧就会被父对象裁掉——所以要动整块卡片时用 uk_anim_fade。 */
-void uk_anim_enter(lv_obj_t *obj, int32_t dy, uint32_t ms, uint32_t delay_ms);
 /* 淡入：只改 opa，不动坐标，父对象不会裁到它（换页入场用这个）。 */
 void uk_anim_fade(lv_obj_t *obj, lv_opa_t from, uint32_t ms, uint32_t delay_ms);
 /* 把子树里在飞的 opa 动画立刻落到终值（主机预览截"稳态帧"用；设备上不用调）。 */

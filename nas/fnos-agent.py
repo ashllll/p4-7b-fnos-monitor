@@ -51,6 +51,12 @@ def read_text(path, default=""):
         return default
 
 
+def read_text_strict(path):
+    """读不到就抛。空内容有语义的来源（如 ZFS arcstats）不能吞掉权限/IO 错误。"""
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        return f.read()
+
+
 def read_int(path, default=0):
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
@@ -139,7 +145,9 @@ def _metrics_get(identifier, suffix):
     if not re.fullmatch(r'[0-9a-f]{64}', identifier) or suffix not in ('json', 'stats?stream=false&one-shot=true'):
         raise ValueError('invalid read-only Docker metric request')
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as raw:
-        raw.settimeout(0.3)
+        # One stats read may wait on a busy daemon; the sampler rotates one
+        # container per frame, so a full second is still bounded.
+        raw.settimeout(1.0)
         raw.connect(DOCKER_SOCKET)
         request = ('GET /containers/%s/%s HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n' % (identifier, suffix)).encode('ascii')
         raw.sendall(request)
@@ -321,9 +329,10 @@ class Collector:
             if dt > 0:
                 pct = max(0.0, min(100.0, 100.0 * (1.0 - (idle - p_idle) / dt)))
         self._prev_cpu = (idle, total)
-        load = read_text("/proc/loadavg").split()
+        load_text = read_text("/proc/loadavg")
+        load = load_text.split()
         runq = procs = 0
-        m = re.search(r"(\d+)\s*/\s*(\d+)", read_text("/proc/loadavg"))
+        m = re.search(r"(\d+)\s*/\s*(\d+)", load_text)
         if m:                       # "2/1928" = 可运行 2 个 / 总任务 1928 个
             runq = int(m.group(1))
             procs = int(m.group(2))
@@ -442,13 +451,16 @@ class Collector:
             used = total - st.f_bfree * st.f_frsize
             if total <= 0:
                 continue
+            # 保留块既不是已用也不是可用；百分比按可用容量算（与 df Use% 一致），
+            # 与伴侣采集器的 /api/v1/status 保持同一口径。
+            usable = used + free
             seen.add(mnt)
             gb = 1024.0 ** 3
             vols.append({
                 "mnt": mnt, "fs": fstype,
                 "total_gb": round(total / gb, 1), "used_gb": round(used / gb, 1),
                 "free_gb": round(free / gb, 1),
-                "pct": round(100.0 * (total - free) / total, 1),
+                "pct": round(100.0 * used / usable, 1) if usable > 0 else 0.0,
             })
         vols.sort(key=lambda v: (v["mnt"] != "/", v["mnt"]))
         return vols
@@ -885,7 +897,12 @@ class Collector:
         return result
 
     def _zfs(self):
-        txt = read_text("/proc/spl/kstat/zfs/arcstats")
+        # 文件不存在 = 这台机器没装 ZFS；权限/IO 错误必须抛出去，让 sample()
+        # 保留上一帧并记录 errors，不能把瞬时读失败当成"ZFS 消失"。
+        try:
+            txt = read_text_strict("/proc/spl/kstat/zfs/arcstats")
+        except FileNotFoundError:
+            return None
         if not txt:
             return None
         vals = {}
@@ -961,6 +978,9 @@ class Collector:
         snap = {"v": 1, "host": self.hostname, "ts": int(time.time()), "ready": True}
         errors = []
         with self.lock:
+            # 整帧 deepcopy 是隔离契约：失败段会回落到上一帧的值，调用方也可能
+            # 同时持有旧快照；浅共享会让任何原地写入污染已发布的帧。
+            # 见 test_server_safety 的 legacy raid 回归（要求新旧对象不同）。
             prev = copy.deepcopy(self.snapshot) if self.snapshot.get("ready") else {}
         for key, fn in (("cpu", self._cpu), ("mem", self._mem), ("net", self._net),
                         ("vols", self._volumes), ("raid", self._raid),

@@ -291,9 +291,10 @@ class Collector:
             if dt > 0:
                 pct = max(0.0, min(100.0, 100.0 * (1.0 - (idle - p_idle) / dt)))
         self._prev_cpu = (idle, total)
-        load = read_text("/proc/loadavg").split()
+        load_text = read_text("/proc/loadavg")
+        load = load_text.split()
         runq = procs = 0
-        m = re.search(r"(\d+)\s*/\s*(\d+)", read_text("/proc/loadavg"))
+        m = re.search(r"(\d+)\s*/\s*(\d+)", load_text)
         if m:                       # "2/1928" = 可运行 2 个 / 总任务 1928 个
             runq = int(m.group(1))
             procs = int(m.group(2))
@@ -413,13 +414,17 @@ class Collector:
             used = total - st.f_bfree * st.f_frsize
             if total <= 0:
                 continue
+            # 保留块既不是已用也不是可用；百分比按可用容量算（与 df Use% 一致），
+            # 不再把保留块算进已用，避免 used_gb 与 pct 各自采用不同分母。
+            usable = used + free
+            pct = round(100.0 * used / usable, 1) if usable > 0 else 0.0
             seen.add(mnt)
             gb = 1024.0 ** 3
             vols.append({
                 "mnt": mnt, "fs": fstype,
                 "total_gb": round(total / gb, 1), "used_gb": round(used / gb, 1),
                 "free_gb": round(free / gb, 1),
-                "pct": round(100.0 * (total - free) / total, 1),
+                "pct": pct,
             })
         vols.sort(key=lambda v: (v["mnt"] != "/", v["mnt"]))
         return self._trim("vols", vols)
@@ -837,7 +842,12 @@ class Collector:
         return result
 
     def _zfs(self):
-        txt = read_text("/proc/spl/kstat/zfs/arcstats")
+        # 文件不存在 = 这台机器没装 ZFS；权限/IO 错误必须抛出去，让采样层
+        # 保留上一帧并标 stale，不能把瞬时读失败当成"ZFS 消失"。
+        try:
+            txt = read_text_strict("/proc/spl/kstat/zfs/arcstats")
+        except FileNotFoundError:
+            return None
         if not txt:
             return None
         vals = {}

@@ -31,6 +31,8 @@ prefix = r'''
 #define ESP_LOGI(...) ((void)0)
 typedef int lv_timer_t;
 typedef int lv_obj_t;
+typedef int lv_event_t;
+#define LV_EVENT_VALUE_CHANGED 0
 static bool s_created;
 static lv_timer_t *s_ui_tick, *s_motion_poll;
 static int errors, attempts, trees, pages, starts, s_page;
@@ -38,12 +40,11 @@ static bool fail_timer;
 static lv_timer_t timer;
 static lv_obj_t object;
 static int s_st;
-static struct { lv_obj_t *screen, *viewport, *page[6], *tr_net; } s_ui = {.tr_net=&object};
-#define LV_EVENT_VALUE_CHANGED 1
+static struct { lv_obj_t *screen, *viewport, *page[6], *tr_net; } s_ui;
 static lv_obj_t *lv_screen_active(void) { return &object; }
-static void chart_range_note_cb(void) {}
-static void lv_obj_add_event_cb(lv_obj_t *obj, void (*cb)(void), int event, void *data) {
- assert(obj == &object && cb == chart_range_note_cb && event == LV_EVENT_VALUE_CHANGED && !data);
+static void chart_range_note_cb(lv_event_t *e) { (void)e; }
+static void lv_obj_add_event_cb(lv_obj_t *o, void (*cb)(lv_event_t *), int ev, void *d) {
+ assert(o && cb == chart_range_note_cb && ev == LV_EVENT_VALUE_CHANGED && !d);
 }
 static void ui_tick(lv_timer_t *t) { (void)t; }
 static lv_timer_t *lv_timer_create(void (*cb)(lv_timer_t *), int period, void *arg) {
@@ -91,6 +92,7 @@ static void interleave(bool temp) {
  assert((temp ? take_temp() : take_page()) == -1);
 }
 int main(void) {
+ s_ui.tr_net = &object; /* build_page() 在真机上负责创建趋势卡并挂到此处 */
  assert(take_page() == -1 && take_temp() == -1 && !read_night());
  fnos_ui_request_page(-1); fnos_ui_request_page(FNOS_UI_PAGE_COUNT);
  fnos_ui_request_temp_expand(-1);

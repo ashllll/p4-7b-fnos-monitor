@@ -198,6 +198,19 @@ class Safety(unittest.TestCase):
                 self.assertEqual((retained[0]/'backup-0').read_bytes(),before)
                 self.assertEqual(retained[0].stat().st_mode & 0o777,0o700)
 
+    def test_tls_generation_propagates_exception_when_cleanup_also_fails(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp, patch.object(m, 'tls_dir', return_value=tmp), \
+                patch.object(m, '_local_ips', return_value=[]):
+            cert = Path(tmp) / 'server.crt'
+            key = Path(tmp) / 'server.key'
+            with patch.object(m, 'tls_cert_path', return_value=str(cert)), \
+                    patch.object(m, 'tls_key_path', return_value=str(key)):
+                with patch.object(m.subprocess, 'run', side_effect=KeyboardInterrupt):
+                    with patch.object(m.shutil, 'rmtree', side_effect=OSError('fixture')):
+                        with self.assertRaises(KeyboardInterrupt):
+                            m.generate_self_signed()
+
     def test_startup_config_rejects_invalid_auth_tls_and_numbers(self):
         import os,json,tempfile
         envs=('TRIM_SERVICE_PORT','NSC_BIND','NSC_INTERVAL','NSC_HIST','NSC_AUTH','NSC_DOCKER','NSC_TLS')
@@ -542,6 +555,17 @@ async function run(code, negative=false){
         namespace = dict(m.__dict__); exec(source, namespace)
         with self.assertRaises(TypeError):
             namespace['try_pair'](self.state, 'é', 'fixture', 'fixture')
+
+    def test_pair_rejects_non_string_device_name(self):
+        self.state.new_pair_code()
+        code = self.state.pending_pair['code']
+        before = copy.deepcopy(self.state.pending_pair)
+        for name in (123, True, {}, []):
+            token, error = self.state.try_pair(code, name, 'fixture')
+            self.assertIsNone(token)
+            self.assertIn('设备名', error)
+            self.assertEqual(self.state.pending_pair, before)
+            m.save_config.assert_not_called()
 
     def test_legacy_unicode_token_and_invalid_startup(self):
         import sys
@@ -1002,6 +1026,19 @@ raise SystemExit(m.main())
         self.assertEqual(restart, ['tls_enabled'])
         self.assertFalse(self.cfg['tls_enabled'])
 
+    def test_runtime_config_rejects_values_startup_rejects(self):
+        before = copy.deepcopy(self.cfg)
+        for body in ({'interval': True}, {'interval': float('nan')},
+                     {'port': 8798.9}, {'hist_len': 30.5}):
+            with self.assertRaises(m.ConfigError):
+                self.handler()._apply_config(body)
+            self.assertEqual(self.cfg, before)
+            m.save_config.assert_not_called()
+        changed, restart = self.handler()._apply_config({'interval': '2.5'})
+        self.assertEqual(changed, ['interval'])
+        self.assertEqual(restart, [])
+        self.assertEqual(self.cfg['interval'], 2.5)
+
     def test_persistence_failure_keeps_memory_and_pair_code(self):
         self.state.new_pair_code()
         code = self.state.pending_pair['code']
@@ -1165,6 +1202,14 @@ raise SystemExit(m.main())
             thread.start();self.assertTrue(entered.wait(1));self.assertFalse(done.wait(.05))
         finally:self.state._lock.release();thread.join(2)
         self.assertTrue(done.is_set())
+
+    def test_flush_skips_write_when_no_device_is_dirty(self):
+        m.save_config.reset_mock()
+        self.assertTrue(self.state.flush())
+        m.save_config.assert_not_called()
+        self.cfg['devices'][0]['_dirty'] = True
+        self.assertTrue(self.state.flush())
+        m.save_config.assert_called_once()
 
     def test_flush_failure_retains_dirty_for_retry(self):
         device = self.cfg['devices'][0];device['_dirty'] = True

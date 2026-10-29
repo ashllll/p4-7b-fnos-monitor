@@ -1977,7 +1977,9 @@ static void assert_overview_storage_neutral(const char *note)
     assert(visible_text(lv_obj_get_parent(used), "GB"));
     assert(lv_color_eq(lv_obj_get_style_text_color(used, 0), uk_c(UK_T3)));
     assert(assert_usage_bars(card, UK_OFF) == 1);
-    assert(visible_text(card, "可用 50.0 GB · 1 个卷"));
+    assert(visible_text(card, "可用 50.0 GB · 保留 50.0 GB"));
+    lv_obj_t *volume_card = overview_object("卷占用", &lv_obj_class);
+    assert(volume_card && visible_text(volume_card, "1 个卷"));
 }
 
 /* Module freshness must agree between summaries and entity readings. */
@@ -2252,12 +2254,16 @@ static void verify_overview_charts(void)
     fixture.vols[0].total_gb = 1000;
     fixture.vols[0].used_gb = 900;
     fixture.vols[0].free_gb = 50;
-    fixture.vols[0].pct = 90;
+    fixture.vols[0].pct = 94.7;
     regression_tick();
     /* Capacity numerics use the same timed publication as CPU and memory. */
     for (int i = 0; i < 8; i++) regression_tick();
     lv_obj_t *capacity_card = overview_object("存储容量", &lv_obj_class);
-    assert(visible_text(capacity_card, "可用 50.0 GB · 1 个卷"));
+    /* 1000 GB 里 900 已用、50 可用，差额 50 是文件系统保留块：条按 900/950 算，
+       但文案必须把保留量说出来，否则三栏数字加不出总量。 */
+    assert(visible_text(capacity_card, "可用 50.0 GB · 保留 50.0 GB"));
+    lv_obj_t *volume_card = overview_object("卷占用", &lv_obj_class);
+    assert(volume_card && visible_text(volume_card, "1 个卷"));
     fnos_status_text(&fixture, &fixture.mods[3].status, "stale");
     regression_tick();
     assert_overview_storage_neutral("旧值");
@@ -3311,7 +3317,7 @@ static int has_text(const char *t)
    那一半——把每个标签都灌进去，断言界面上**确实多出一句话**。
    少一个标签的后果很隐蔽：`link_reason()` 返回 NULL，那行字整条消失，界面看着只是
    "没写原因"，用户不知道该干什么。断言用差分（跟"没有原因时"比），所以不用把
-   那 11 句人话在预览里再抄一遍——抄一遍就又有了漂移的机会。 */
+   这些句子在预览里再抄一遍——抄一遍就又有了漂移的机会。 */
 /* 连接失败的原因标签是**跨文件的契约**：`fnos_data.c` 产出短标签，`fnos_ui.c` 的
    `link_reason()` 翻成人话，显示在总览页健康卡右侧那行。`tools/reason_check.py`
    静态核对两边的集合；这里补运行时那一半——**逐个标签断言翻得出话、每句都不一样、
@@ -3325,6 +3331,7 @@ static void verify_reasons(void)
     static const char *TAGS[] = {
         "no wifi", "dns fail", "connect/timeout", "tls handshake", "tls setup",
         "cert parse", "no cert", "token rejected", "bad payload", "http status", "read error",
+        "data capacity", "http init",
     };
     const int NT = (int)(sizeof TAGS / sizeof TAGS[0]);
     fnos_status_t st = {0};
@@ -5816,9 +5823,14 @@ int main(int argc, char **argv)
     lv_indev_set_read_cb(touch, touch_read);
     lv_indev_set_display(touch, d);
 
-    /* 预览用 KK_PALETTE=<名字> 选配色，出路数图给用户挑；不设则用默认 cuktech-console。
-       必须在 fnos_ui_create() 之前 —— 颜色在建构件时就被拷进样式里了。 */
-    fnos_ui_theme_use(getenv("KK_PALETTE"));
+    /* 预览用 KK_PALETTE=<名字> 选配色；不设时跟随固件的 CONFIG_FNOS_PALETTE，
+       避免默认审计渲染的是一套非出货配色。必须在 fnos_ui_create() 之前 ——
+       颜色在建构件时就被拷进样式里了。 */
+#ifndef CONFIG_FNOS_PALETTE
+#define CONFIG_FNOS_PALETTE "cuktech-console"
+#endif
+    const char *palette = getenv("KK_PALETTE");
+    fnos_ui_theme_use(palette && palette[0] ? palette : CONFIG_FNOS_PALETTE);
     fprintf(stderr, "palette: %s\n", fnos_ui_theme_name());
 
     if (getenv("PREVIEW_CHART_MAP")) { verify_chart_mapping(); return preview_finish(); }

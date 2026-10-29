@@ -191,6 +191,21 @@ def main():
         try: api.containers(); raise AssertionError('broken stream reused')
         except ConnectionError: pass
     worker.close(); api._reader = None; api._broken = False
+
+    # An invalid inherited FD must fail closed with the original error, not an
+    # AttributeError from cleaning up a reader that was never created.
+    with patch.dict(os.environ, NSC_DOCKER_READER_FD='not-a-fd'):
+        api._reader = None; api._broken = False
+        try:
+            api.containers(); raise AssertionError('invalid reader fd accepted')
+        except ValueError:
+            pass
+        assert api._broken, 'invalid reader fd must mark the channel broken'
+        try:
+            api.containers(); raise AssertionError('broken reader channel reused')
+        except ConnectionError:
+            pass
+    api._reader = None; api._broken = False
     print('PASS: disabled / denied / full inventory / full names and IDs / explicit policy / root startup defaults / cached totals / stale timestamp / recovery / empty / fixed HTTP GET / IPC framing / reader exit')
 
 

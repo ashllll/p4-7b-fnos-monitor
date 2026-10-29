@@ -2,9 +2,9 @@
 
 把飞牛 NAS 的运行状态（CPU / 内存 / 网络 / 存储 / 阵列 / 温度）以**只读**方式提供给局域网内的屏幕设备。管理界面在飞牛桌面里打开。
 
-当前应用名为 **飞牛监控**，包名 `nasscreencompanion`，版本 **1.2.7**。面向 x86，最低 fnOS **1.2.0701**，依赖应用 `python312`。当前通过应用中心手动安装，尚未提交官方应用库。已通过匿名主机回归与真实 NAS 应用中心升级，配置、证书保留和运行身份已核对，详见 [FPK 验证范围](../../docs/fpk-performance-2026-10-12.md)。
+当前应用名为 **飞牛监控**，包名 `nasscreencompanion`，版本 **1.2.11**。面向 x86，最低 fnOS **1.2.0701**，依赖应用 `python312`。当前通过应用中心手动安装，尚未提交官方应用库。匿名主机回归已通过；真实 NAS 应用中心升级的最近记录是 1.2.10（见[优化验证记录](../../docs/optimization-2026-10-25.md)），1.2.11 尚未实机升级，配置、证书保留和运行身份需在实机复测。
 
-从仓库根目录获取 [nasscreencompanion.fpk](nasscreencompanion.fpk)（`bash nas/fpk/build.sh` 产出）；上一版的大小与 SHA-256 见 [1.2.4 发布记录](../../docs/release-1.2.4.md)。固件构建、Wi-Fi 与端点配置见 [项目 README](../../README.md)，独立 SSH/systemd 采集器见 [nas/README.md](../README.md)。本应用默认 HTTPS 8798，独立采集器默认 HTTP 8799；`nas/install.sh` 不用于安装本 FPK。
+从仓库根目录获取 [nasscreencompanion.fpk](nasscreencompanion.fpk)（`bash nas/fpk/build.sh` 产出）；早期版本的大小与 SHA-256 见 [1.2.4 发布记录](../../docs/release-1.2.4.md)。固件构建、Wi-Fi 与端点配置见 [项目 README](../../README.md)，独立 SSH/systemd 采集器见 [nas/README.md](../README.md)。本应用默认 HTTPS 8798，独立采集器默认 HTTP 8799；`nas/install.sh` 不用于安装本 FPK。
 
 管理服务使用普通包用户。1.2.0 起，生命周期由系统以 root 启动一个受限容器读取进程；随后立即降权运行管理服务。日常管理通过飞牛桌面完成。
 

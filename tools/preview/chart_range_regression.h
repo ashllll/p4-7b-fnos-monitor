@@ -26,6 +26,12 @@ static void range_advance(uint32_t ms)
 
 static void verify_chart_range_continuity(void)
 {
+    /* Partial UI construction can leave a chart pointer null; trend helpers
+       are called from the history pump and must tolerate it. */
+    assert(uk_trend_raw_series(NULL, 0) == NULL);
+    assert(uk_trend_series(NULL, 0) == NULL);
+    uk_trend_push(NULL, 0, 1, 0);
+
     bool saved_no_settle = s_no_settle;
     s_no_settle = true;
     lv_obj_set_style_bg_color(lv_screen_active(), uk_c(UK_BG), 0);

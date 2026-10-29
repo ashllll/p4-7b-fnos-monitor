@@ -12,8 +12,12 @@ static void meter_cursor_draw(lv_event_t *e)
     lv_obj_get_content_coords(obj, &track);
     lv_area_t cursor = bar->indic_area;
     bool horizontal = lv_area_get_width(&track) >= lv_area_get_height(&track);
-    int32_t thickness = LV_MAX(2, (horizontal ? lv_area_get_height(&track) :
-                                  lv_area_get_width(&track)) / 3);
+    int32_t span = horizontal ? lv_area_get_width(&track) : lv_area_get_height(&track);
+    int32_t cross = horizontal ? lv_area_get_height(&track) : lv_area_get_width(&track);
+    if (span <= 0 || cross <= 0) return;   // 零尺寸的条没有可画的游标
+    /* 游标沿条的方向展开；极窄的条要把游标压到条内，否则
+       LV_CLAMP 的上界会小于下界，游标会被画到轨道外面。 */
+    int32_t thickness = LV_MIN(LV_MAX(2, cross / 3), span);
     bool reversed = bar->val_reversed ^
         (horizontal && lv_obj_get_style_base_dir(obj, LV_PART_MAIN) == LV_BASE_DIR_RTL);
     if (horizontal) {

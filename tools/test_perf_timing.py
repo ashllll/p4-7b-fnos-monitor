@@ -25,9 +25,12 @@ def function(name):
 
 prefix = r'''
 #include <assert.h>
+#include <errno.h>
+#include <limits.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "fnos_perf.h"
 typedef int TaskHandle_t;
@@ -79,6 +82,17 @@ static void event(int code, int64_t at) {
     else pf_parts_cb(&e);
 }
 int main(void) {
+    /* Bench parameters come off the serial CLI: reject junk and overflow instead of atoi UB. */
+    assert(pf_int("120", 5) == 120);
+    assert(pf_int("0", 5) == 0);
+    assert(pf_int(" 4 ", 5) == 4);
+    assert(pf_int(NULL, 5) == 5);
+    assert(pf_int("", 7) == 7);
+    assert(pf_int("-1", 5) == 5);
+    assert(pf_int("12x", 5) == 5);
+    assert(pf_int("2147483647", 5) == 2147483647);
+    assert(pf_int("2147483648", 5) == 5);
+    assert(pf_int("999999999999999999999999", 5) == 5);
     s_owner = 99; /* UI creation may have happened on main, not LVGL. */
     s_req.kind = PF_IDLE; s_req.seconds = 1;
     clock_us = 1000; pf_start();
@@ -126,7 +140,7 @@ int main(void) {
     uint32_t total, ui, idle, worker;
     pf_cpu_delta(&total, &ui, &idle, &worker);
     assert(total == 75 && worker == 25 && ui == 0 && idle == 0);
-    puts("production timing callbacks: idle, task ownership, frame scope, reset passed");
+    puts("production timing callbacks: argument parsing, idle, task ownership, frame scope, reset passed");
 }
 '''
 with tempfile.TemporaryDirectory() as tmp:
@@ -134,7 +148,7 @@ with tempfile.TemporaryDirectory() as tmp:
     task_type_start = source.index('typedef struct {\n    char name[configMAX_TASK_NAME_LEN]')
     task_type_end = source.index('} pf_task_t;', task_type_start) + len('} pf_task_t;')
     c.write_text(prefix + state + source[task_type_start:task_type_end] + stubs + '\n'.join(function(n) for n in
-                 ['pf_push', 'pf_start_cb', 'pf_render_cb', 'pf_start', 'pf_cpu_delta']) + checks)
+                 ['pf_push', 'pf_int', 'pf_start_cb', 'pf_render_cb', 'pf_start', 'pf_cpu_delta']) + checks)
     exe = Path(tmp) / 'timing'
     subprocess.run([os.environ.get('CC', 'cc'), '-std=c11', '-Wall', '-Wextra',
                     '-I', str(ROOT / 'components/fnos_monitor'), str(c), '-o', str(exe)], check=True)

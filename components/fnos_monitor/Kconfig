@@ -44,13 +44,14 @@ menu "fnOS monitor"
             平时保持 0，交给你自己点导航/滑动翻页。
 
     config FNOS_PALETTE
-        string "主题（cuktech / unifi / cuktech-console / device / graphite / abyss / phosphor）"
-        default "cuktech-console"
+        string "主题（michka / cuktech / unifi / cuktech-console / device / graphite / abyss / phosphor）"
+        default "michka"
         help
             预置配色见 components/fnos_monitor/ui_kit/uk_theme.c：
+              michka           当前默认：michka 远程显示方向（见 docs/ui-michka-slate-2026-10-22.md）
               cuktech          暖黑仪表、象牙白与香槟金（历史备选）
               unifi            中性深灰控制台、白色强调与分隔线清单
-              cuktech-console  ULTRA 参考：黑底白字，冰青/蓝强调、局部橙色（默认）
+              cuktech-console  ULTRA 参考：黑底白字，冰青/蓝强调、局部橙色（历史默认）
               device           暖黑与铜色
               graphite         暖中性石墨
               abyss            深黑与暖金
@@ -59,7 +60,7 @@ menu "fnOS monitor"
             占用率阈值由 FNOS_UI_USAGE_WARM/HIGH 控制，颜色来自当前主题。
             cuktech-console 低占用为冰青，提醒为蓝色，接近上限为朱红。
             状态色用于圆弧与进度条，历史曲线保持指标身份色；避免紫色。
-            名字写错会退回 cuktech-console（设备照样能开机）。
+            名字写错会退回 michka（设备照样能开机）。
 
     config FNOS_STATUS_MAX_BYTES
         int "Maximum telemetry response bytes"

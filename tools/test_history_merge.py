@@ -296,9 +296,8 @@ int main(void){int32_t x,a,b,c,d,want;int n=0;
   result=subprocess.run([str(exe)],input=data,text=True,capture_output=True,env=env,timeout=15)
   assert result.returncode!=0 and 'signed integer overflow' in result.stderr,result.stderr
  with tempfile.TemporaryDirectory(prefix='fnos-chart-cmake-') as d:
-  p=Path(d);(p/'src/widgets/chart').mkdir(parents=True)
+  p=Path(d);(p/'src/widgets/chart').mkdir(parents=True);(p/'src/draw').mkdir(parents=True)
   (p/'src/widgets/chart/lv_chart.c').write_text('int fixture;\n')
-  (p/'src/draw').mkdir()
   (p/'src/draw/lv_draw_line.c').write_text((ROOT/'managed_components/lvgl__lvgl/src/draw/lv_draw_line.c').read_text())
   header='cmake_minimum_required(VERSION 3.18)\nproject(chart_hook C)\n'
   include='include("'+str(ROOT/'components/fnos_monitor/cmake/fnos_chart_math.cmake')+'")\n'
@@ -323,8 +322,9 @@ def gauge_test():
  aggregates=re.findall(r'    (?:    )?double used = 0, total = 0(?:, free_gb = 0)?;.*?for \(int i = 0; i < st->nvols; i\+\+\) \{.*?\n    (?:    )?\}',ui,re.S)
  assert len(aggregates)==2
  # Extract all actual gauge consumers, including color calls, and require safe entry.
- expressions=re.findall(r'gauge_value\((vol->pct|v->pct|g->max_c|used / total \* 100(?:\.0 \+ 0\.5)?)\)',ui)
- assert set(expressions)=={'vol->pct','v->pct','g->max_c','used / total * 100','used / total * 100.0 + 0.5'},expressions
+ # 容量条与卷行、采集端统一按可用容量（used + free）算百分比；只认这一条入口。
+ expressions=re.findall(r'gauge_value\((vol->pct|v->pct|g->max_c|used / usable \* 100\.0 \+ 0\.5)\)',ui)
+ assert set(expressions)=={'vol->pct','v->pct','g->max_c','used / usable * 100.0 + 0.5'},expressions
  base=r"""
 #include <stdint.h>
 #include <stdbool.h>
@@ -356,7 +356,7 @@ int main(void){
  for(unsigned i=0;i<sizeof input/sizeof input[0];i++)assert(gauge_value(input[i])==expected[i]);
  struct {float pct;} vol_obj={FLT_MAX},*vol=&vol_obj,*v=&vol_obj;
  struct {float max_c;} grp={FLT_MAX},*g=&grp;
- double used=(double)FLT_MAX*2,total=(double)FLT_MAX*2;
+ double used=(double)FLT_MAX*2,total=(double)FLT_MAX*2,usable=(double)FLT_MAX*2;
 """
  for expr in expressions:code+='assert(gauge_value('+expr+')==100);\n'
  code+='assert(vol->pct==FLT_MAX && g->max_c==FLT_MAX);return 0;}\n'
@@ -371,7 +371,9 @@ int main(void){
    assert old!=code;src.write_text(old);subprocess.run(flags,check=True,capture_output=True)
    r=subprocess.run([str(exe)],capture_output=True,env=env,timeout=10)
    assert r.returncode and b'outside the range' in r.stderr,r.stderr
-  old=code.replace('double used = 0, total = 0','float used = 0, total = 0')
+  # 只把 used/total 降成 float，free_gb 保持 double：否则 free_gb 自己也会
+  # 溢出，负控先撞上 isfinite(free_gb)，测不到 used/total 的整型转换路径。
+  old=code.replace('double used = 0, total = 0, free_gb = 0;','float used = 0, total = 0; double free_gb = 0;')
   assert old!=code;src.write_text(old);subprocess.run(flags,check=True,capture_output=True)
   r=subprocess.run([str(exe)],capture_output=True,env=env,timeout=10)
   assert r.returncode and (b'isfinite(used)' in r.stderr or b'isfinite(free_gb)' in r.stderr),r.stderr

@@ -6,7 +6,7 @@ EnvironmentFile，也没有任何东西创建 /etc/fnos-agent.env，默认安装
 agent 的报错文案与结果文档都声称"安装脚本会生成 0600 的令牌文件"。
 
 这条回归把 nas/install-remote.sh 整套在**临时根**里跑一遍（FNAS_INSTALL_ROOT 前缀根、
-SYSTEMCTL 桩、FNAS_AGENT_HEALTH_URL 指向本进程里的桩服务），不碰真 NAS、不碰真
+SYSTEMCTL 桩、FNAS_AGENT_AUTH_URL 指向本进程里的桩服务），不碰真 NAS、不碰真
 systemd、不碰 8799，逐条验证：
 
   A 首次安装：生成 24 字节令牌、0600、写进 env 文件、unit 会加载它，输出里**只有指纹**；
@@ -74,7 +74,15 @@ class _StubHandler(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.0"
 
     def do_GET(self):
-        self.send_response(self.server.code)
+        # 真 agent 的 /api/v1/health 故意公开，/api/v1/status 才要求令牌；
+        # 桩必须照这个语义回应，否则探错端点的回归会假绿。
+        if self.path == "/api/v1/health":
+            code = 200
+        elif self.path == "/api/v1/status":
+            code = self.server.code
+        else:
+            code = 404
+        self.send_response(code)
         self.send_header("Content-Length", "2")
         self.end_headers()
         self.wfile.write(b"{}")
@@ -86,7 +94,7 @@ class _StubHandler(http.server.BaseHTTPRequestHandler):
 def start_health(code):
     srv = HealthStub(code)
     threading.Thread(target=srv.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
-    return srv, "http://127.0.0.1:%d/api/v1/health" % srv.server_address[1]
+    return srv, "http://127.0.0.1:%d/api/v1/status" % srv.server_address[1]
 
 
 def make_systemctl(bindir):
@@ -111,7 +119,7 @@ def run_install(root, bindir, health_url, action="install", py_src=None, unit_sr
         "FNAS_INSTALL_ROOT": str(root),
         "SYSTEMCTL": str(Path(bindir) / "systemctl"),
         "SYSTEMCTL_LOG": str(Path(bindir) / "calls.log"),
-        "FNAS_AGENT_HEALTH_URL": health_url,
+        "FNAS_AGENT_AUTH_URL": health_url,
         "FNAS_AGENT_WAIT_S": wait_s,
     })
     cmd = ["bash", str(INSTALL), action]
@@ -287,6 +295,17 @@ def main():
           "可疑行：%s" % (bad_lines or "无"))
     check("J 脚本里有 root 属主安装分支（真机上才是 root）",
           "-o root -g root" in INSTALL.read_text(encoding="utf-8"))
+
+    # ---------- K 鉴权自证必须探受保护的端点 ----------
+    install_sh = (NAS / "install.sh").read_text(encoding="utf-8")
+    noauth_probe = next((line for line in install_sh.splitlines()
+                         if line.startswith("NOAUTH_CODE=")), "")
+    check("K install.sh 的鉴权自证探 /api/v1/status（health 是公开端点）",
+          "/api/v1/status" in noauth_probe and "/api/v1/health" not in noauth_probe,
+          noauth_probe)
+    check("K install-remote.sh 默认探 /api/v1/status",
+          "FNAS_AGENT_AUTH_URL:-http://127.0.0.1:8799/api/v1/status" in
+          INSTALL.read_text(encoding="utf-8"))
 
     if FAILED:
         print("✗ %d 项没通过：%s" % (len(FAILED), "、".join(FAILED)))

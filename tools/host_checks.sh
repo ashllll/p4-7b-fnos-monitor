@@ -10,16 +10,20 @@ fnos_host_checks() {
   "$@" "权限分类器（矩阵的每一格都来自它）" python3 nas/fpk/perm_check.py
   "$@" "主机预览（四条版面审计 + 配对流程断言）" bash tools/preview/run.sh "${FNOS_PREVIEW_OUT:-out}"
   "$@" "滚动条与卡片间距" node tools/preview/scroll_gap.js "tools/preview/${FNOS_PREVIEW_OUT:-out}"
+  "$@" "渲染失败按字形/几何分诊（无设备）" bash tools/preview/test_render_diagnosis.sh
   "$@" "Python 开发模式零警告（未关闭的 socket/文件）" python3 nas/fpk/devmode_check.py 30
   "$@" "截断真的发生了（六段各喂 50 条）" python3 nas/fpk/collector_check.py
   "$@" "满载状态帧能被固件的 parse_status() 吃下" bash tools/parsecheck/run.sh
   "$@" "停止失败时不删记录、不写配置（M21/M25/M26）" bash nas/fpk/test_process_lifecycle.sh
   "$@" "配网提交代次、迟到事件与 RPC 失败" python3 tools/test_wifi_submission.py
+  "$@" "触摸探测重试与无触摸降级启动（无设备）" python3 tools/test_touch_startup.py
   "$@" "报告入口错误传播与未完成状态（纯桩）" python3 -W error::ResourceWarning tools/test_report_entry.py
   "$@" "空原因集合与缺预览配置负控" python3 tools/test_host_gate_failures.py
   "$@" "发布配置恢复与工具失败边界（无设备）" python3 -W error::ResourceWarning tools/test_gate_failures.py
   "$@" "Manifest 包身份与字段形状负控" python3 -W error::ResourceWarning tools/test_manifest_failures.py
   "$@" "PID 写失败与卸载收尾（无 NAS）" python3 nas/fpk/test_lifecycle_failures.py
+  "$@" "启动权限、证书与备份保留（无 NAS）" python3 nas/fpk/startup_permission_check.py
+  "$@" "配置覆盖安装、升级与读写失败保留（无 NAS）" python3 nas/fpk/config_persistence_check.py
   "$@" "API 与向导规则负控（无 NAS）" python3 nas/fpk/test_validation_gates.py
   "$@" "检查器故障收尾（无 NAS）" python3 -W error::ResourceWarning nas/fpk/test_tool_cleanup.py
   "$@" "配对状态边界（无网络）" python3 tools/test_pair_state.py
@@ -43,6 +47,7 @@ fnos_host_checks() {
   "$@" "历史与实时合并、游标失效及端点重置（无设备）" python3 tools/test_history_merge.py
   "$@" "历史回填时间边界（无设备）" python3 tools/test_history.py
   "$@" "性能样本完整性（无设备）" python3 tools/test_perf_samples.py
+  "$@" "台架参数解析、空闲与帧作用域（无设备）" python3 tools/test_perf_timing.py
   "$@" "大小栈帧与未知调整负控" python3 tools/test_stack_frames.py
   "$@" "拍屏错误处理（模拟，无设备）" python3 tools/test_page_shot.py
   "$@" "TLS 故障拒绝降级、令牌并发与安全日志" python3 nas/fpk/test_server_safety.py
@@ -51,9 +56,12 @@ fnos_host_checks() {
   "$@" "Release 断言与坏夹具拒绝（无设备）" bash tools/preview/test_release_asserts.sh
   "$@" "预览输出目录守卫 + 分支变量按阶段隔离（M36/M57）" bash tools/preview/test_run_guard.sh
   "$@" "MPT 温度超时与只读协议" python3 nas/fpk/test_mpt_temperature.py
+  "$@" "温度命名、去重与分区跳过（假 sysfs）" python3 nas/fpk/temps_check.py
   "$@" "磁盘与容器指标质量" python3 nas/fpk/test_metrics.py
   "$@" "TLS 接收超时隔离" python3 nas/fpk/tls_accept_check.py
   "$@" "UI 数据读取锁竞争与恢复" python3 tools/test_data_lock.py
+  "$@" "HTTP 连接复用、半截响应与重连（无设备）" python3 tools/test_http_connection.py
   "$@" "安装包元数据负控" python3 nas/fpk/test_release_metadata.py
+  "$@" "安装包内 app 与源码一致" python3 nas/fpk/verify_package_sources.py
   "$@" "安装包、manifest 与 README 一致" python3 nas/fpk/release_metadata.py
 }

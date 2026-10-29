@@ -191,15 +191,23 @@ int main(void)
 {
     /* 复核意见里点名的两条真实原因文本（与 fnos_net.c 保持一致） */
     const char *a = "找到了网络但加密方式不合适（路由器是混合/旧加密？）";
-    const char *b = "这个网络的加密方式不被接受（当前只收 WPA2 及以上，开放网络连不上）";
+    const char *b = "这个网络的加密方式不被接受（需要 WPA2 及以上；WEP/WPA 太旧）";
+
+    /* 专门造一条 73 字节、且第 72 字节切在汉字中间的串：负向控制只关心
+       "按字节截断会坏 UTF-8"，不该被真实文案的字节长度偶然绑住。 */
+    char long_cn[80];
+    for (int i = 0; i < 23; i++) memcpy(long_cn + i * 3, "中", 3);
+    long_cn[69] = 'A';
+    memcpy(long_cn + 70, "文", 3);
+    long_cn[73] = 0;
 
     char small[72], big[128], tiny[1], one[8];
 
     /* 老做法在 72 字节缓存上必须产出非法 UTF-8 —— 证明这条检查抓得住回归 */
     naive_copy(small, sizeof small, a);
     check(!utf8_valid(small), "负向控制：按字节截断 72 字节缓存确实产出非法 UTF-8（旧行为）");
-    naive_copy(small, sizeof small, b);
-    check(!utf8_valid(small), "负向控制：更长的原因在 72 字节缓存上同样非法");
+    naive_copy(small, sizeof small, long_cn);
+    check(!utf8_valid(small), "负向控制：73 字节原因在 72 字节缓存上切在汉字中间");
 
     /* 新做法：任何容量下都必须是合法 UTF-8 且 NUL 结尾 */
     memset(big, 0x7f, sizeof big);

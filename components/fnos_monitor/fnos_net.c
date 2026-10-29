@@ -37,6 +37,7 @@ static portMUX_TYPE s_cfg_mux = portMUX_INITIALIZER_UNLOCKED;
 static _Atomic int8_t s_rssi;          // 缓存值：UI 只读它，不触发 RPC
 static int64_t s_rssi_ms;             // 仅网络 service 所属任务读写
 static atomic_bool s_connect_wanted;  // 重连请求标志（定时器只置位，不直接调 esp_wifi_connect）
+static atomic_bool s_reassociate;      // LOST_IP 请求强制重新关联，由 service 任务消费
 static atomic_bool s_online;
 static _Atomic uint8_t s_wifi_retry_count;
 static int64_t s_retry_due_us;          // s_cfg_mux；0表示没有待办重连
@@ -49,7 +50,7 @@ static bool s_cred_want;
 
 /* ── 扫描缓存（板上配网用）──────────────────────────────────────────────
    写入方是 fnos_net_service()（普通任务），读取方是 LVGL 任务。
-   条数和整批记录始终在 s_ap_mux 内发布/复制；通知位使用原子交换消费。 */
+   条数和整批记录始终在 s_ap_mux 内发布/复制；去重与格式化在锁外完成，通知位使用原子交换消费。 */
 static fnos_ap_t s_aps[FNOS_AP_MAX];
 static portMUX_TYPE s_ap_mux = portMUX_INITIALIZER_UNLOCKED;  // 见 fnos_net.h 的说明（审计 M09）
 static int s_ap_n;
@@ -62,7 +63,13 @@ static int ap_cmp_rssi(const void *a, const void *b) {
     int ra = ((const wifi_ap_record_t *)a)->rssi, rb = ((const wifi_ap_record_t *)b)->rssi;
     return rb - ra;                     // 信号强的排前面（rssi 是负值，越大越强）
 }
-static bool s_handlers_registered;
+/* 事件处理器注册进度：IDF 的注册表是链表，重复注册会收到两次回调，
+   所以按位记录已成功的项；部分失败后重试只补缺，不从头再来。 */
+#define NET_HANDLER_WIFI_EVENT 0x01u
+#define NET_HANDLER_STA_GOT_IP 0x02u
+#define NET_HANDLER_STA_LOST_IP 0x04u
+#define NET_HANDLERS_ALL (NET_HANDLER_WIFI_EVENT | NET_HANDLER_STA_GOT_IP | NET_HANDLER_STA_LOST_IP)
+static uint8_t s_handlers_registered;
 /* ── UTF-8 安全的拷贝（审计 M10）───────────────────────────────────────
    屏幕上的中文是 UTF-8 多字节串，而"复制到定长缓冲"这种操作如果按字节截断，
    最后一个汉字会被切成半个：字库拿不到完整码点 → 那一行字**整条不显示**，
@@ -163,12 +170,12 @@ static const char *reason_text(uint8_t r)
     case WIFI_REASON_CONNECTION_FAIL:        return "连接失败（信号太弱？）";
     case WIFI_REASON_BEACON_TIMEOUT:         return "与路由器失联（信号不好）";
     /* 下面三个以前只显示数字，而它们恰恰是"明明在范围内却连不上"最常见的答案：
-       本板 sta.threshold.authmode 固定 WPA2_PSK（见 wifi_start），开放网络、
-       WEP/WPA-PSK 以及加密方式不合要求的 AP 都会被这条阈值挡掉（审计 M10）。 */
+       加密网络按 WPA2 阈值，开放网络单独放宽到 OPEN（见 wifi_authmode_for_password）；
+       WEP/WPA-PSK 以及加密方式不合要求的 AP 仍会被这条阈值挡掉（审计 M10）。 */
     case WIFI_REASON_NO_AP_FOUND_W_COMPATIBLE_SECURITY:
         return "找到了网络但加密方式不合适（路由器是混合/旧加密？）";
     case WIFI_REASON_NO_AP_FOUND_IN_AUTHMODE_THRESHOLD:
-        return "这个网络的加密方式不被接受（当前只收 WPA2 及以上，开放网络连不上）";
+        return "这个网络的加密方式不被接受（需要 WPA2 及以上；WEP/WPA 太旧）";
     case WIFI_REASON_NO_AP_FOUND_IN_RSSI_THRESHOLD:
         return "信号太弱，达不到连接阈值（靠近路由器再试）";
     default:                                 return NULL;
@@ -246,8 +253,33 @@ static void on_net_event(void *arg, esp_event_base_t base, int32_t id, void *dat
         sntp_start_once();
     } else if (base == IP_EVENT && id == IP_EVENT_STA_LOST_IP) {
         mark_offline();
+        /* LOST_IP 不保证伴随 DISCONNECTED：只清 IP 会永远停在离线/连接中。
+           事件任务只置位；disconnect/connect 是 ESP-Hosted 同步 RPC，交给 service。 */
+        atomic_store(&s_reassociate, true);
         ESP_LOGW(TAG, "ip lost");
     }
+}
+
+/* 开放网络没有口令，阈值必须放宽到 OPEN；否则驱动会以
+   NO_AP_FOUND_IN_AUTHMODE_THRESHOLD 直接拒绝（审计 M10）。 */
+static wifi_auth_mode_t wifi_authmode_for_password(const char *pass)
+{
+    return (pass && pass[0]) ? WIFI_AUTH_WPA2_PSK : WIFI_AUTH_OPEN;
+}
+
+static esp_err_t register_handler_once(esp_event_base_t base, int32_t id, uint8_t bit) {
+    if (s_handlers_registered & bit) return ESP_OK;
+    esp_err_t err = esp_event_handler_register(base, id, &on_net_event, NULL);
+    if (err == ESP_OK) s_handlers_registered |= bit;
+    return err;
+}
+
+static esp_err_t handlers_ensure_registered(void) {
+    esp_err_t err = register_handler_once(WIFI_EVENT, ESP_EVENT_ANY_ID, NET_HANDLER_WIFI_EVENT);
+    if (err != ESP_OK) return err;
+    err = register_handler_once(IP_EVENT, IP_EVENT_STA_GOT_IP, NET_HANDLER_STA_GOT_IP);
+    if (err != ESP_OK) return err;
+    return register_handler_once(IP_EVENT, IP_EVENT_STA_LOST_IP, NET_HANDLER_STA_LOST_IP);
 }
 
 static bool wifi_start(void) {
@@ -268,14 +300,9 @@ static bool wifi_start(void) {
         if (err != ESP_OK) { ESP_LOGE(TAG, "esp_wifi_init failed: %s", esp_err_to_name(err)); return false; }
         s_wifi_inited = true;
     }
-    if (!s_handlers_registered) {
-        // 必须在 esp_wifi_start() 之前注册，否则会漏掉 STA_START。
-        err = esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &on_net_event, NULL);
-        if (err == ESP_OK) err = esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &on_net_event, NULL);
-        if (err == ESP_OK) err = esp_event_handler_register(IP_EVENT, IP_EVENT_STA_LOST_IP, &on_net_event, NULL);
-        if (err != ESP_OK) { ESP_LOGE(TAG, "event handler register failed: %s", esp_err_to_name(err)); return false; }
-        s_handlers_registered = true;
-    }
+    // 必须在 esp_wifi_start() 之前注册，否则会漏掉 STA_START。
+    err = handlers_ensure_registered();
+    if (err != ESP_OK) { ESP_LOGE(TAG, "event handler register failed: %s", esp_err_to_name(err)); return false; }
     char ssid[64] = "", pass[96] = "";
     bool configured = fnos_wifi_store_load(ssid, sizeof ssid, pass, sizeof pass);
     portENTER_CRITICAL(&s_cfg_mux);
@@ -290,7 +317,7 @@ static bool wifi_start(void) {
     // snprintf会把合法32字节SSID/64字节PSK各丢最后一个字节。
     memcpy(cfg.sta.ssid, ssid, strnlen(ssid, sizeof cfg.sta.ssid));
     memcpy(cfg.sta.password, pass, strnlen(pass, sizeof cfg.sta.password));
-    cfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+    cfg.sta.threshold.authmode = wifi_authmode_for_password(pass);
     err = esp_wifi_set_mode(WIFI_MODE_STA);
     if (err == ESP_OK) err = esp_wifi_set_config(WIFI_IF_STA, &cfg);
     if (err == ESP_OK) err = esp_wifi_start();
@@ -487,8 +514,8 @@ static void apply_pending_credentials(void)
     wifi_config_t cfg = { 0 };
     memcpy(cfg.sta.ssid, ssid, strnlen(ssid, sizeof cfg.sta.ssid));
     memcpy(cfg.sta.password, pass, strnlen(pass, sizeof cfg.sta.password));
+    cfg.sta.threshold.authmode = wifi_authmode_for_password(pass);
     memset(pass, 0, sizeof pass);
-    cfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
     esp_wifi_disconnect();
     if (esp_wifi_set_config(WIFI_IF_STA, &cfg) != ESP_OK) {
         submit_failure(generation, "连接失败（信号太弱？）");
@@ -575,26 +602,28 @@ static void scan_collect(void) {
         return;
     }
     qsort(recs, got, sizeof *recs, ap_cmp_rssi);        // 先排序：同名去重留下的就是最强的那条
-    /* 整段（清零条数 → 回填 → 放条数）在锁里做，读侧拿同一把锁拷贝整批：
-       以前的"先清零再回填"只保证条数不撕裂，UI 仍可能读到正在被改写一半的 SSID
-       （审计 M09）。锁里只有纯内存操作，不放任何 RPC。 */
-    portENTER_CRITICAL(&s_ap_mux);
-    s_ap_n = 0;
+    /* 去重和格式化都在锁外：s_ap_mux 是关中断的临界区，snprintf/strcmp 不该在里面跑。
+       先在堆上排好完整的一批，锁内只做一次定长 memcpy 发布 —— 读侧仍只会看到完整的一批。 */
+    fnos_ap_t *staged = calloc(FNOS_AP_MAX, sizeof *staged);
+    if (!staged) { free(recs); s_scan_busy = false; s_scan_failed = true; return; }
     int n = 0;
     for (int i = 0; i < (int)got && n < FNOS_AP_MAX; i++) {
         if (recs[i].ssid[0] == 0) continue;
         bool dup = false;
         for (int k = 0; k < n; k++) {
-            if (strcmp(s_aps[k].ssid, (const char *)recs[i].ssid) == 0) { dup = true; break; }
+            if (strcmp(staged[k].ssid, (const char *)recs[i].ssid) == 0) { dup = true; break; }
         }
         if (dup) continue;                              // 同一 SSID 的多个 BSS：只留最强
-        snprintf(s_aps[n].ssid, sizeof s_aps[n].ssid, "%s", (const char *)recs[i].ssid);
-        s_aps[n].rssi = (int8_t)recs[i].rssi;
-        s_aps[n].secure = recs[i].authmode != WIFI_AUTH_OPEN;
+        snprintf(staged[n].ssid, sizeof staged[n].ssid, "%s", (const char *)recs[i].ssid);
+        staged[n].rssi = (int8_t)recs[i].rssi;
+        staged[n].secure = recs[i].authmode != WIFI_AUTH_OPEN;
         n++;
     }
+    portENTER_CRITICAL(&s_ap_mux);
+    memcpy(s_aps, staged, (size_t)n * sizeof *s_aps);
     s_ap_n = n;
     portEXIT_CRITICAL(&s_ap_mux);
+    free(staged);
     free(recs);
     s_scan_busy = false;
     ESP_LOGI(TAG, "scan done: %d 个 AP", n);
@@ -642,6 +671,12 @@ void fnos_net_service(void) {
     }
     portEXIT_CRITICAL(&s_cfg_mux);
     apply_pending_credentials();
+    if (atomic_exchange(&s_reassociate, false) && s_configured && !s_online) {
+        esp_err_t err = esp_wifi_disconnect();
+        if (err != ESP_OK) ESP_LOGW(TAG, "wifi reassociate disconnect failed: %s", esp_err_to_name(err));
+        /* DISCONNECTED 通常也会排重连；这里兜底一次，防止事件丢失后停在离线。 */
+        wifi_schedule_retry();
+    }
     portENTER_CRITICAL(&s_cfg_mux);
     bool retry_due = s_retry_due_us && now_us >= s_retry_due_us;
     if (retry_due) s_retry_due_us = 0;

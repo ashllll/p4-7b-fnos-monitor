@@ -17,7 +17,7 @@
 # 测试缝（只为主机回归，真机上都不需要设）：
 #   FNAS_INSTALL_ROOT   前缀根目录，用于临时根里跑整套安装
 #   SYSTEMCTL           覆盖 systemctl 命令，用于桩掉服务管理器
-#   FNAS_AGENT_HEALTH_URL  覆盖鉴权自证请求的地址（默认 http://127.0.0.1:8799/api/v1/health）
+#   FNAS_AGENT_AUTH_URL  覆盖鉴权自证请求的地址（默认 http://127.0.0.1:8799/api/v1/status）
 set -euo pipefail
 
 ACTION="${1:-install}"
@@ -30,7 +30,7 @@ UNIT_SRC="${3:-/tmp/fnos-agent.service}"
 
 ROOT="${FNAS_INSTALL_ROOT:-}"
 SYSTEMCTL="${SYSTEMCTL:-systemctl}"
-HEALTH_URL="${FNAS_AGENT_HEALTH_URL:-http://127.0.0.1:8799/api/v1/health}"
+AUTH_URL="${FNAS_AGENT_AUTH_URL:-http://127.0.0.1:8799/api/v1/status}"
 PY_DST="$ROOT/usr/local/bin/fnos-agent.py"
 UNIT_DST="$ROOT/etc/systemd/system/fnos-agent.service"
 ENV_DST="$ROOT/etc/fnos-agent.env"
@@ -155,9 +155,10 @@ sleep "${FNAS_AGENT_WAIT_S:-2}"
 "$SYSTEMCTL" is-active fnos-agent.service
 "$SYSTEMCTL" --no-pager -l status fnos-agent.service | head -12
 
-# 鉴权自证：不带令牌打本机 /api/v1/health 必须被拒（401）。看不到 401 就说明
+# 鉴权自证：不带令牌打本机受保护的 /api/v1/status 必须被拒（401）。
+# /api/v1/health 是故意公开的存活探针，不能拿它证明鉴权。看不到 401 就说明
 # 令牌没生效（比如被 --insecure-no-auth 或空文件放过去了），这里要如实报错。
-code="$(python3 - "$HEALTH_URL" <<'PYEOF'
+code="$(python3 - "$AUTH_URL" <<'PYEOF'
 import sys, urllib.error, urllib.request
 try:
     with urllib.request.urlopen(sys.argv[1], timeout=3) as r:
@@ -169,9 +170,9 @@ except Exception as e:
 PYEOF
 )"
 case "$code" in
-  401) say "鉴权已生效：不带令牌的 $HEALTH_URL 返回 401" ;;
+  401) say "鉴权已生效：不带令牌的 $AUTH_URL 返回 401" ;;
   200) echo "[fnos-agent] 没带令牌却拿到 200：鉴权没生效，请检查 $ENV_DST 与 unit 的 EnvironmentFile" >&2; exit 1 ;;
-  *)   echo "[fnos-agent] 本机健康检查没拿到明确结果（${code}）：请看 systemctl status 与 journalctl -u fnos-agent" >&2; exit 1 ;;
+  *)   echo "[fnos-agent] 鉴权自证没拿到明确结果（${code}）：请看 systemctl status 与 journalctl -u fnos-agent" >&2; exit 1 ;;
 esac
 say "令牌放在 ${ENV_DST}（0600）。要在板子上配置时，在 NAS 上执行： sudo grep '^FNAS_TOKEN=' ${ENV_DST}"
 say "令牌不会出现在本脚本的任何输出里；换令牌用： bash $0 rotate-token"

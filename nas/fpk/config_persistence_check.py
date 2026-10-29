@@ -90,13 +90,15 @@ with mock.patch("builtins.open", side_effect=fixture_open):
         server = PACKAGE / "app" / "server" / "nas_companion_server.py"
         tree = ast.parse(server.read_text(encoding="utf-8"), filename=str(server))
         selected = [node for node in tree.body
-                    if (isinstance(node, ast.FunctionDef) and node.name in ("load_config", "_config_bool", "_validate_startup_config"))
+                    if (isinstance(node, ast.FunctionDef) and node.name in (
+                        "load_config", "_config_bool", "_config_number",
+                        "_validate_startup_config"))
                     or (isinstance(node, ast.ClassDef) and node.name == "ConfigError")
                     or (isinstance(node, ast.Assign) and any(
                         isinstance(target, ast.Name) and target.id in (
                             "DEFAULT_CONFIG", "INTERVAL_MIN_S", "INTERVAL_MAX_S")
                         for target in node.targets))]
-        self.assertEqual(len(selected), 7,
+        self.assertEqual(len(selected), 8,
                          "expected production loader, validators, error, defaults and interval bounds")
         self.loader_namespace = {"json": json, "os": os, "copy": copy, "cfg_path": lambda: str(self.config),
                                  "log": mock.Mock()}
