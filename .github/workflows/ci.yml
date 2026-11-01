@@ -80,14 +80,22 @@ jobs:
         if: always()
         run: |
           out="$RUNNER_TEMP/fnos-verify"
-          mkdir -p "$out/build"
+          # Keep the build tree's shape: flasher_args.json refers to
+          # bootloader/bootloader.bin and partition_table/partition-table.bin by
+          # those relative paths, so flattening would produce an unusable release.
+          mkdir -p "$out/build/bootloader" "$out/build/partition_table"
           for f in build/fnos_monitor.bin build/fnos_monitor.elf build/fnos_monitor.map \
-                   build/bootloader/bootloader.bin build/partition_table/partition-table.bin \
                    build/flasher_args.json; do
             if [ -f "$f" ]; then cp "$f" "$out/build/"; fi
           done
+          if [ -f build/bootloader/bootloader.bin ]; then
+            cp build/bootloader/bootloader.bin "$out/build/bootloader/"
+          fi
+          if [ -f build/partition_table/partition-table.bin ]; then
+            cp build/partition_table/partition-table.bin "$out/build/partition_table/"
+          fi
           if [ -f "$RUNNER_TEMP/verify.log" ]; then cp "$RUNNER_TEMP/verify.log" "$out/"; fi
-          ls -l "$out/build" || true
+          find "$out/build" -type f -maxdepth 2 -exec ls -l {} \; || true
 
       - name: Upload verification evidence
         if: always()
