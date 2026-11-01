@@ -44,11 +44,17 @@ jobs:
       # The host preview compiles against build/config/sdkconfig.h, so the
       # firmware build has to happen before the host checks.
       - name: Firmware build
-        run: bash idf.sh build
+        run: |
+          set -euo pipefail
+          # The image ships the toolchain but not an activated shell; export.sh
+          # is what puts the IDF python env on IDF_PYTHON_ENV_PATH.
+          . "$IDF_PATH/export.sh" > /dev/null
+          bash idf.sh build
 
       - name: Host checks, stack budget and UI exit check
         run: |
-          set -o pipefail
+          set -euo pipefail
+          . "$IDF_PATH/export.sh" > /dev/null
           VERIFY_OUT="$RUNNER_TEMP/fnos-verify" bash tools/verify_all.sh 2>&1 | tail -80
 
       - name: Upload verification evidence
