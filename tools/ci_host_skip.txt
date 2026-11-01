@@ -1,0 +1,5 @@
+# 这些检查依赖 macOS / 非 root 宿主的语义，在 CI 的 Linux root 容器里换的是前提而不是结果，
+# 因此由 `bash tools/verify_all.sh --ci` 显式跳过。格式：检查名片段|理由
+权限分类器|perm_check 用 chmod 000 判权限，root 下读权限恒成立
+Python 开发模式零警告|devmode_check 需要 fnOS 包用户身份，容器里没有该用户
+PID 写失败与卸载收尾|写 /run 与包用户身份在 root 容器里不成立

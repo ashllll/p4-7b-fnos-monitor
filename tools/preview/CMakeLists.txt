@@ -96,5 +96,6 @@ add_executable(snapshot_check snapshot_check.c
 target_include_directories(snapshot_check PRIVATE
   "${CMAKE_CURRENT_BINARY_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/stub"
   "${COMP}" "${REPO}/managed_components/espressif__cjson/cJSON")
+target_link_libraries(snapshot_check PRIVATE m)
 target_compile_options(snapshot_check PRIVATE -UNDEBUG -fsanitize=address,undefined -fno-omit-frame-pointer)
 target_link_options(snapshot_check PRIVATE -fsanitize=address,undefined)

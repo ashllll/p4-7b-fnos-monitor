@@ -351,7 +351,9 @@ class Safety(unittest.TestCase):
                     srv.process_request(a,('anonymous',0))
                     with srv._requests_done:self.assertTrue(srv._requests_done.wait_for(lambda:not srv._requests,timeout=2))
                 self.assertEqual(len(wrapped),1);self.assertEqual(wrapped[0].fileno(),-1)
-                error.assert_called_once();unhandled.assert_not_called();self.assertEqual(b.recv(1),b'')
+                error.assert_called_once();unhandled.assert_not_called()
+                try:self.assertEqual(b.recv(1),b'')
+                except ConnectionResetError:pass  # RST 也是零字节泄露，只是关闭风格不同
             finally:srv.server_close();a.close();b.close()
             # Successful TLS then partial HTTP also resolves the detached live fd.
             srv=m.ThreadedHTTPServer(('127.0.0.1',0),m.Handler);srv.ssl_context=ctx;srv.connection_timeout_s=.5

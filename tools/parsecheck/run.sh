@@ -18,7 +18,7 @@ python3 tools/parsecheck/extract.py components/fnos_monitor/fnos_data.c "$OUT/ps
 # 用多大的样本由下面的容量探针挑，这里先不生成。
 
 CJ=managed_components/espressif__cjson/cJSON
-cc -I build/config -I "$CJ" -I components/fnos_monitor -o "$OUT/ps" \
+cc -I build/config -I "$CJ" -I components/fnos_monitor -lm -o "$OUT/ps" \
    tools/parsecheck/main.c "$OUT/ps.c" "$CJ/cJSON.c" 2>&1 | head -20
 [ -x "$OUT/ps" ] || { echo "编译失败"; exit 1; }
 

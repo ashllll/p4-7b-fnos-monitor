@@ -5,16 +5,18 @@
 #   L3 实机（--flash）：烧录 → 串口 30s 崩溃/复位扫描 + 堆
 #   L3 拍屏（--photo）：capture-board 手机取景
 #
-# 用法：bash tools/verify_all.sh [--flash] [--photo] [--port /dev/cu.usbmodemXXXX]
+# 用法：bash tools/verify_all.sh [--flash] [--photo] [--ci] [--port /dev/cu.usbmodemXXXX]
+#       --ci 跳过 tools/ci_host_skip.txt 里登记的环境耦合检查（每条必须写理由）
 # 任何一级失败即退出非零，并在最后打印 PASS/FAIL 汇总。
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 2
 PROJ="$PWD"
 OUT="${VERIFY_OUT:-/tmp/fnos-verify}"
-FLASH=0; PHOTO=0; PORT="${FNOS_SERIAL_PORT:-}"
+FLASH=0; PHOTO=0; CI=0; PORT="${FNOS_SERIAL_PORT:-}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --flash) FLASH=1 ;;
+    --ci) CI=1 ;;
     --photo) PHOTO=1 ;;
     --port)
       [ $# -ge 2 ] && [ -n "$2" ] || { echo "--port requires a value" >&2; exit 2; }
@@ -36,7 +38,7 @@ fi
 for preview_var in $(compgen -e); do
   case "$preview_var" in PREVIEW_*) unset "$preview_var" ;; esac
 done
-ok=0; fail=0
+ok=0; fail=0; skipped=0
 step() { printf '\n=== %s ===\n' "$1"; }
 pass() { printf '  [PASS] %s\n' "$1"; ok=$((ok+1)); }
 bad()  { printf '  [FAIL] %s\n' "$1"; fail=$((fail+1)); }
@@ -71,8 +73,25 @@ echo "验收结果目录：$OUT"
 # All host checks share the report entry's registry, including the full preview.
 step "L1 主机回归（共享清单）"
 CHECK_INDEX=0
+# --ci 只跳过清单里点名、且写明理由的检查：它们是 macOS/非 root 宿主的前提，
+# 在 Linux 容器里换语义而不是换结果。未登记的一律照跑。
+CI_SKIPS=()
+if [ "$CI" = 1 ] && [ -r tools/ci_host_skip.txt ]; then
+  while IFS='|' read -r pattern reason; do
+    case "$pattern" in ''|'#'*) continue ;; esac
+    CI_SKIPS+=("${pattern}|${reason}")
+  done < tools/ci_host_skip.txt
+fi
 host_check() {
   local name="$1"; shift
+  local entry
+  for entry in ${CI_SKIPS[@]+"${CI_SKIPS[@]}"}; do
+    case "$name" in *"${entry%%|*}"*)
+      skipped=$((skipped+1))
+      printf '  [SKIP] %s —— CI 环境豁免：%s\n' "$name" "${entry#*|}"
+      return 0 ;;
+    esac
+  done
   CHECK_INDEX=$((CHECK_INDEX+1))
   local log="$OUT/check-$CHECK_INDEX.log"
   if "$@" >"$log" 2>&1; then
@@ -171,5 +190,5 @@ if [ "$PHOTO" = 1 ]; then
   fi
 fi
 
-printf '\n================ 汇总：%d PASS / %d FAIL ================\n' "$ok" "$fail"
+printf '\n================ 汇总：%d PASS / %d FAIL / %d SKIP（CI 环境豁免） ================\n' "$ok" "$fail" "$skipped"
 [ "$fail" -eq 0 ]

@@ -20,6 +20,7 @@ cd "$(cd "$(dirname "$0")/../.." && pwd)"
 command -v openssl >/dev/null || { echo "缺少 openssl，无法验证指纹" >&2; exit 1; }
 SRC=components/fnos_monitor/fnos_pair.c
 MB="$HOME/.platformio/packages/framework-espidf@3.50503.0/components/mbedtls/mbedtls"
+[ -d "$MB" ] || MB="${IDF_PATH:-$HOME/esp/esp-idf}/components/mbedtls/mbedtls"
 OUT=$(mktemp -d)
 trap 'rm -rf "$OUT"' EXIT
 

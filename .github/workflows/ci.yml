@@ -27,12 +27,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Two checks diff against older commits; a shallow clone cannot see them.
+          fetch-depth: 0
 
       - name: Host tooling
         run: |
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            nodejs openssl git ca-certificates build-essential clang
+            nodejs openssl git ca-certificates build-essential clang libclang-rt-18-dev
           node --version
           openssl version
           # The host tests build with ASan/UBSan; prove that link path works
@@ -69,7 +72,7 @@ jobs:
         run: |
           set -euo pipefail
           . "$IDF_PATH/export.sh" > /dev/null
-          VERIFY_OUT="$RUNNER_TEMP/fnos-verify" bash tools/verify_all.sh 2>&1 | tee "$RUNNER_TEMP/verify.log"
+          VERIFY_OUT="$RUNNER_TEMP/fnos-verify" bash tools/verify_all.sh --ci 2>&1 | tee "$RUNNER_TEMP/verify.log"
 
       - name: Upload verification evidence
         if: always()
