@@ -2733,7 +2733,8 @@ static void pair_btn_cb(lv_event_t *e)
     if (s_pair_open && s_page == 3) return;
     fnos_ui_set_page(3);
     pair_show(true);
-    /* 立刻按当前阶段摆一次，否则最长 500ms 里会先闪一下"键盘+指纹"混在一起的样子 */
+    /* 立刻按当前阶段摆一次，否则最长一个数据帧周期（默认 200 ms）里会先闪一下
+       "键盘+指纹"混在一起的样子 */
     pair_refresh();
 }
 
@@ -2786,7 +2787,7 @@ static const wifi_key_t WIFI_KB_SYMBOLS[WIFI_KB_KEYS] = {
     { "ABC", WK_LAYER_UPPER, 0 }, { "空格", WK_SPACE, 0 },
 };
 
-/* 校验失败的说明要"粘"住：刷新每 500ms 跑一次，如果只 set_txt 一次，用户还没看清
+/* 校验失败的说明要"粘"住：刷新每帧跑一次（默认 200 ms），如果只 set_txt 一次，用户还没看清
    就被下一拍的阶段提示盖掉（预览就是靠这条断言抓出来的）。任何一次按键/换页都清掉它。 */
 static char s_wifi_err[120];
 static int  s_wifi_stage = WIFI_ST_SCAN;
@@ -3122,7 +3123,7 @@ static void wifi_btn_cb(lv_event_t *e)
     wifi_refresh();
 }
 
-/* ── 刷新：把"网络层的事实"翻到卡上（每 500ms 由 ui_tick 调一次） ─────────
+/* ── 刷新：把"网络层的事实"翻到卡上（每个数据帧由 ui_tick 调一次） ─────────
    这张卡的每一句话都必须来自 fnos_net_* 的实际状态，不能靠界面自己记：
    连接可能在任何时刻成功或失败，界面只负责如实显示。 */
 
@@ -5009,8 +5010,8 @@ static void alert_health_sync(const fnos_status_t *st, int running)
 /* ── 按页刷新 ─────────────────────────────────────────────────────────
    顶栏 / 底栏 / 健康 chip 每 tick 都要新；**页面正文只刷当前页**，其余页记 dirty，
    切页时由 refresh_page() 补刷（page_layout / motion_prepare / set_page）。
-   数据 1Hz、UI 2Hz，原来 500ms 把 6 页正文全刷一遍，一半是白做的：实机上这次
-   tick 要 75ms，而它跑在 LVGL 任务里（持显示锁），直接顶住手势帧。 */
+   六页正文全刷一遍在实机上是 75ms 量级，而这个 tick 跑在 LVGL 任务里（持显示锁），
+   直接顶住手势帧，所以只刷当前页。 */
 static bool s_page_dirty[FNOS_UI_PAGE_COUNT];
 static void refresh_page(int idx);
 
@@ -5483,7 +5484,7 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
        这种同型号的盘看起来就是一堆重复行。现在一台设备一行：设备名 + 最热通道 + 路数，
        全量通道在「温度」页。分组见 temp_groups()。 */
     /* 一份分组喂两页：系统页读摘要行、温度页读设备块。两页都不在时连分组都别算
-       （temp_groups 里要排序 + 逐通道比较，2Hz 全跑不值）。 */
+       （temp_groups 里要排序 + 逐通道比较，每个数据帧全跑不值）。 */
     const bool temps_readable = overview_readable(st, "temps");
     const bool temps_live = temps_readable && overview_live(st, "temps");
     bool tgrp_ok = ((page == 3) || (page == 4)) && temp_groups();
@@ -6510,7 +6511,7 @@ void fnos_ui_set_page(int idx)
     s_motion_pending = -1;
     if (idx == s_page) {
         /* 点的是当前页：没必要在按下的这一帧同步刷一遍整个应用，交给下一拍
-           （≤500ms）或手势收尾那次的 refresh。 */
+           （≤ 一个数据帧周期）或手势收尾那次的 refresh。 */
         s_refresh_pending = true;
         if (s_motion.active && (paused || motion_reduced())) fnos_ui_motion_settle();
         return;

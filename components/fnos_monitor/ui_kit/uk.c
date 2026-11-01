@@ -1578,7 +1578,7 @@ void uk_anim_settle(lv_obj_t *root)
 {
     if (!root) return;
     /* 在飞的 opa 动画一律落到终值 255：主机预览靠它拿到"稳态帧"。
-       不这么做就得推进虚拟时钟，而时钟一推，挂在 500ms 上的 ui_tick 也跟着走，
+       不这么做就得推进虚拟时钟，而时钟一推，挂在数据帧周期上的 ui_tick 也跟着走，
        数据年龄/轮询计数就漂了，快照不再可复现。 */
     if (lv_anim_get(root, opa_anim_cb)) {
         lv_anim_delete(root, opa_anim_cb);

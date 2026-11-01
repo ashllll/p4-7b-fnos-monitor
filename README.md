@@ -6,13 +6,13 @@
 
 **飞牛 NAS 的桌面状态屏。** ESP32-P4 · 7 英寸触控 · 1024 × 600 · 原生 LVGL
 
-[快速开始](#快速开始) · [六页界面](#界面预览) · [硬件要求](#硬件要求) · [设计总览](docs/design-overview-2026-10-14.md) · [文档导航](#文档导航)
+[快速开始](#快速开始) · [六页界面](#界面预览) · [架构与数据流](#架构与数据流) · [硬件要求](#硬件要求) · [文档导航](#文档导航)
 
 ![fnOS Monitor 总览：CPU、内存、设备状态、网络、存储容量与最热温度](docs/images/ui-michka-slate-2026-10-22/overview.png)
 
 一个独立屏幕，持续呈现 NAS 的运行状态。日常看仪表、趋势和状态；需要深入时，再进入存储、网络、系统、温度与告警页面。fnOS 配套应用负责采集，开发板负责显示。
 
-> 画面由石板灰界面阶段源码通过真实 LVGL 在主机渲染，使用匿名夹具与合成读数；不是个人 NAS 快照或物理屏幕照片。[查看全部 15 张界面与复现说明](docs/images/ui-michka-slate-2026-10-22/README.md)。后续温度页已移除趋势卡，当前布局见[温度页记录](docs/ui-temperature-compact-2026-10-24.md)。
+> 画面由石板灰界面阶段源码通过真实 LVGL 在主机渲染，使用匿名夹具与合成读数；不是个人 NAS 快照或物理屏幕照片。[查看全部 15 个界面文件与复现说明](docs/images/ui-michka-slate-2026-10-22/README.md)。这批图渲染于 2026-10-22：此后卡片改为主题纯色、温度页移除趋势卡、诊断页新增两行，个别图与当前界面略有差异；当前布局见[温度页记录](docs/ui-temperature-compact-2026-10-24.md)与[石板灰界面记录](docs/ui-michka-slate-2026-10-22.md)。
 
 ## 一眼掌握，按需深入
 
@@ -21,7 +21,7 @@
 - **数据状态清楚表达**：实时、旧值、无数据、权限不足与离线分别提示；保留真实零值，缺失不会伪装成健康。
 - **屏幕完成配置**：Wi-Fi、HTTPS 配对与证书指纹核对无需写入 NAS 管理员密码；详情保留打开时的快照。
 
-底部导航直达六页，横向拖动以原生裁剪揭示下一页，内容保持原位、边界跟随手指；清单纵向滚动，且总是停在整行上。当前默认 `michka` 主题复刻 [michka](https://michka.org/) 的 slate sensor-panel 皮肤：近黑画布、灰色气泡卡片、居中的方块帽标题、Inter 数字；夜间模式及显示参数可配置。
+底部导航直达六页，横向拖动以原生裁剪揭示下一页，内容保持原位、边界跟随手指；清单纵向滚动，布局时把卡底对齐到整行，展开的设备块可能高于视口。当前默认 `michka` 主题复刻 [michka](https://michka.org/) 的 slate sensor-panel 皮肤：近黑画布、灰色纯色气泡卡片、居中的方块帽标题、Inter 数字。夜间按配置时段自动压暗配色与背光，亮度与时段在编译配置中设定，屏幕内只提供动效开关。
 
 ## 硬件要求
 
@@ -34,7 +34,7 @@
 | NAS 端 | fnOS、`python312`；当前配套安装包声明 `platform=x86` |
 | 网络 | 开发板可访问 NAS 的 HTTPS 遥测端口，应用默认 `8798` |
 
-当前只迭代这块开发板的横屏。设备数量、名称与清单布局按实际数据自适应；其他分辨率和竖屏不属于当前支持范围。pre-v3 与 rev3.x 固件不能互刷。
+当前只迭代这块开发板的横屏。设备数量、名称与清单布局按实际数据自适应；其他分辨率和竖屏不属于当前支持范围。本仓库默认按 ESP32-P4 rev3.x 构建（`CONFIG_ESP32P4_REV_MIN_300`）；pre-v3 板卡需改用对应的芯片版本选项。
 
 ## 快速开始
 
@@ -51,7 +51,7 @@
 1. 在应用中心安装依赖 `python312`。
 2. 下载 [飞牛监控安装包](nas/fpk/nasscreencompanion.fpk)，通过「应用中心 → 手动安装」安装。
 3. 保持默认 HTTPS 与配对令牌，确认遥测端口（默认 `8798`）。需要容器状态时启用容器采集。
-4. 从飞牛桌面打开「飞牛监控」，在「能力矩阵」检查当前设备能采集哪些数据。
+4. 从飞牛桌面打开「飞牛监控」，在「能力矩阵」检查当前设备能采集哪些数据，同页「诊断」可看逐项原始读取结果。
 
 <!-- fpk-metadata:start -->
 仓库当前安装包版本 **1.2.11**，大小 **108788 字节**，SHA-256：
@@ -86,7 +86,7 @@ export FNOS_SERIAL_PORT='/dev/cu.YOUR_BOARD_PORT'
 
 `idf.sh` 支持 `FNOS_IDF_ENV=/path/to/activation.sh ./idf.sh build`。源码与配置模板随仓库分发，个人实机固件和 NVS 留在本地。
 
-联网后可在串口输入 `wifi version`，通过官方 RPC 只读查询板上无线协处理器的固件版本。它与 `dependencies.lock` 中的主机 ESP-Hosted 依赖版本分别记录；离线或查询失败会提示原因，不执行协处理器升级。
+联网后可在串口输入 `wifi version`，通过官方 RPC 只读查询板上无线协处理器的固件版本。它与 `dependencies.lock` 中的主机 ESP-Hosted 依赖版本分别记录；离线或查询失败会提示原因，不执行协处理器升级。该查询在实机上曾超时返回 `ESP_FAIL`（官方 `Req[0x15e]`），当前 C6 版本仍未取到；它是兼容性调查入口，不代表已可读取版本。
 
 ### 3. 连 Wi-Fi 并建立设备信任
 
@@ -96,7 +96,7 @@ export FNOS_SERIAL_PORT='/dev/cu.YOUR_BOARD_PORT'
 4. 对照 NAS 管理页，逐段核对开发板显示的证书 SHA-256 指纹，一致后接受配对。
 5. 回到总览，检查数据新鲜度和各采集来源状态。
 
-应用默认端口是 `8798`；模板中的 `8799` 为旧采集器回退值，保存后的配对端点覆盖模板。换证书需要重新确认信任，撤销设备后该设备的遥测请求被拒绝。首次明文引导只提供公开证书，不能代替指纹核对。
+应用默认端口是 `8798`；模板中的 `8799` 是独立采集器（SSH + systemd）的默认端口，保存后的配对端点覆盖模板。换证书需要重新确认信任，撤销设备后该设备的遥测请求被拒绝。首次明文引导只提供公开证书，不能代替指纹核对。
 
 ## 界面预览
 
@@ -129,7 +129,7 @@ export FNOS_SERIAL_PORT='/dev/cu.YOUR_BOARD_PORT'
 
 ![历史温度页样例，包含当前已移除的趋势卡](docs/images/ui-michka-slate-2026-10-22/temperature.png)
 
-上图保留原阶段样例；当前温度页仅保留全宽摘要与设备通道清单，见[布局与验证](docs/ui-temperature-compact-2026-10-24.md)。
+上图为 2026-10-22 稿，保留当时包含趋势卡的样例；当前温度页仅保留全宽摘要与设备通道清单，见[布局与验证](docs/ui-temperature-compact-2026-10-24.md)。
 
 ### 告警：按严重程度筛选事件
 
@@ -142,7 +142,7 @@ export FNOS_SERIAL_PORT='/dev/cu.YOUR_BOARD_PORT'
 
 ### 从连接到查看详情
 
-配网、配对和诊断沿用主界面的控件语言。地址、Wi-Fi 与设备信任可在屏幕上配置。
+配网、配对和诊断沿用主界面的控件语言。Wi-Fi、六位配对码与设备证书指纹可在屏幕上配置；NAS 地址与端口在配对中获取，未配对时回落到固件配置的模板端点。
 
 | 选择 Wi-Fi | 输入网络口令 |
 | --- | --- |
@@ -163,15 +163,15 @@ export FNOS_SERIAL_PORT='/dev/cu.YOUR_BOARD_PORT'
 
 ![设置与诊断：连接、采集和运行信息](docs/images/ui-michka-slate-2026-10-22/diagnostics.png)
 
-连接失败时可查看阶段、最近原因、数据年龄和来源状态；配网、配对入口集中在同一面板。
+上图为 2026-10-22 版（9 行）；当前诊断页按「连接 / 采集 / 运行」分组，运行组另含「采集段」与「动效」两行，共 11 行。连接失败时可查看连接结果、最近错误、数据年龄与采集段状态；配网、配对入口集中在同一面板。
 
 </details>
 
-| 体检摘要 | 夜间模式 |
+| 告警无事件态（含体检摘要） | 夜间模式 |
 | --- | --- |
-| ![无告警时的体检摘要](docs/images/ui-michka-slate-2026-10-22/health-summary.png) | ![夜间总览](docs/images/ui-michka-slate-2026-10-22/night.png) |
+| ![告警页无事件态：严重程度筛选与 2×2 体检摘要](docs/images/ui-michka-slate-2026-10-22/health-summary.png) | ![夜间总览](docs/images/ui-michka-slate-2026-10-22/night.png) |
 
-无告警事件不等于所有指标都正常；夜间背光需在真实屏幕上体验。
+`health-summary.png` 与上方告警图为同一帧的无事件状态。无告警事件不等于所有指标都正常，体检块会继续回答「看住了什么、现在什么状态」。夜间配色可直接看到，背光压暗需在真实屏幕上体验。
 
 </details>
 
@@ -183,20 +183,84 @@ export FNOS_SERIAL_PORT='/dev/cu.YOUR_BOARD_PORT'
 
 ![日常数据流：NAS 采集、可选 Docker、管理网关、开发板 HTTPS 拉取与 LVGL 快照显示](docs/diagrams/runtime-data-flow.svg)
 
-两张图使用 `diagram-design` 重绘，沿用本项目黑底蓝青仪表视觉；[可编辑源文件与导出说明](docs/diagrams/README.md)随仓库保留。
+两张图使用 `diagram-design` 重绘，沿用项目当前的仪表视觉；[可编辑源文件与导出说明](docs/diagrams/README.md)随仓库保留。
 
-管理页通过飞牛应用网关打开，遥测端口供屏幕取数据。网络请求在轮询任务执行，UI 只读取内存快照；请求或解析失败保留最后有效数据，并提示连接／新鲜度状态。采集使用 Linux 本机来源；当前实现没有调用飞牛私有遥测 API。
+管理页通过飞牛应用网关打开。遥测通路随部署形态不同：飞牛伴生应用默认 `8798`（HTTPS + 配对令牌），独立采集器默认 `8799`（HTTP + 令牌），配对成功后以 NVS 中的端点为准。遥测请求由 `fnos_poll` 任务发出；配对阶段的取证书、TLS 探针与配对请求在独立的 `fnos_pair` 任务里，两者都不在 UI 任务中执行。UI 只读取内存快照；请求或解析失败保留最后有效数据，并提示连接／新鲜度状态。采集使用 Linux 本机来源；当前实现没有调用飞牛私有遥测 API。
 
 | 数据 | 来源与条件 |
 | --- | --- |
 | CPU、负载、内存 | `/proc/stat`、`/proc/loadavg`、`/proc/meminfo` |
 | 网络接口与速率 | `/proc/net/dev`、默认路由；各接口独立计算 |
 | 存储、阵列、磁盘 IO | `/proc/mounts`、`statvfs`、`/proc/mdstat`、`/proc/diskstats` |
+| ZFS 缓存 | 有 ZFS 时读 `/proc/spl/kstat/zfs/arcstats`（ARC 容量与命中率，不可读时显示「未采集到 ZFS 数据」） |
 | 硬件温度 | `/sys/class/hwmon/*/temp*_input`；FPK 另对无 hwmon 的 MPT 控制器使用固定只读 IO Unit page 7 请求，依驱动和可读通道 |
 | 容器与资源 | 显式启用后，由受限辅助进程查询固定 Docker GET |
 | 可选 SMART | `smartctl -j -H -n standby,3`；依工具、设备、权限与启用选项 |
 
 管理服务以普通包用户运行；生命周期脚本与独立 Docker／MPT 只读辅助进程使用各自所需权限。磁盘和网口清单可能包含逻辑／虚拟设备，条目数量不能直接当成物理数量。字段语义见 [遥测说明](docs/ui-telemetry-2026-10-12.md)。
+
+## 架构与数据流
+
+### 固件：一条快照，多个执行体
+
+`main/main.cpp` 依次完成：NVS 初始化 → Wi-Fi 起站（数据层等联网，UI 不等）→ MIPI-DSI 显示与触摸 → 主题定色 → `fnos_ui_create()` 建六页构件 → `fnos_data_start()` 起轮询 → 夜间背光定时器 →（可选）长测心跳。显示起不来时只剩串口 CLI：`ui_retry_task` 按 5/10/20/40/60 秒最多重建 5 轮，这段时间不采集数据。
+
+| 执行体 | 职责 | 边界 |
+| --- | --- | --- |
+| LVGL 任务（12 KiB 栈，置于 PSRAM） | `fnos_ui.c` + `ui_kit` 的全部写屏，100 ms tick；六页常驻，tick 只刷当前页正文，其余页记 dirty | 只调纯内存读接口（`fnos_data_get`、`fnos_net_rssi`）；扫描只投递 `fnos_net_scan_request()`，绝不同步等 RPC |
+| `fnos_poll`（6 KiB 栈） | 唯一发遥测 HTTP 的任务：超时、退避、断线判定、提交快照、写曲线环 | 唯一写快照的任务，写时持锁 |
+| `fnos_pair`（7 KiB 栈） | `GET /api/v1/identity` 取证书、TLS 探针、`POST /api/v1/pair` | 信任建立独立于轮询；成功后写 NVS 并递增代次，轮询侧重建端点 |
+| Wi-Fi 事件任务与 `wifi_cli` | 事件回调只置标志位；重连、起站重试、扫描等 ESP-Hosted 同步 RPC 全在 `fnos_net_service()` 里执行 | UI 与事件回调都不进入 RPC |
+
+### 固件侧数据边界
+
+- 一份快照：`fnos_status_t` 常驻 PSRAM，互斥量保护；读侧非阻塞，拿不到锁就沿用上一帧数值与有效性，不把整屏刷成「--」。
+- 清单与字符串是引用计数的借用存储，跨刷新保留必须 `fnos_status_copy`、结束用 `fnos_status_release`，禁止裸结构体复制。
+- 超预算（整帧 256 KiB、快照 1 MiB）时置 `source_dropped` 并在屏上提示，不静默少显示。
+- 曲线环与快照分离：源模块 `status != "ok"` 时写入缺口，而不是补 0。
+
+<details>
+<summary><strong>固件模块职责与遥测接口清单</strong></summary>
+
+模块：
+
+- `fnos_ui.c` + `ui_kit/`：六页（总览／存储／网络／系统／温度／告警）与全部控件、主题、动效。
+- `fnos_data.c`：轮询、快照提交、曲线环、诊断计数。
+- `fnos_net.c`：Wi-Fi STA、C6 RPC 调度、扫描缓存、RSSI（5 秒 TTL）。
+- `fnos_pair.c`：TOFU 配对状态机与 NVS 持久化。
+- `fnos_snapshot.c`：JSON → `fnos_status_t`，预算与引用计数；平台无关，主机预览用同一份。
+- `fnos_perf.c` / `fnos_perf_display.c`：台架性能计数，未启用 `CONFIG_FNOS_UI_PERF_BENCH` 时不参与编译。
+- `fnos_wifi_cli.c` / `fnos_wifi_store.c`：串口 CLI 与凭据存储。
+
+遥测面（伴生应用默认 8798）：
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/v1/health`、`/healthz` | 存活与 `ready` |
+| GET | `/api/v1/identity` | 鉴权之前可取，返回协议版本、主机、TLS 状态与 `cert_pem`；明文连接只放行这一条 |
+| POST | `/api/v1/pair` | 配对；每 IP 5 次 / 300 秒限流 |
+| GET | `/api/v1/status` | 遥测快照；明文连接被引导拦截（403），TLS 连接缺令牌返回 401 |
+| GET | `/api/v1/history?n=` | 曲线回填，列为 `ts,cpu,mem,rx_kbs,tx_kbs,temp_max` |
+
+管理端点（`/`、`/api/state`、`/api/probe`、`/api/diagnostics`、`/api/logs`、`/api/status-now`）只在 Unix Socket 上响应，并要求网关身份头。
+
+</details>
+
+### NAS 侧：一个进程、两个对外面
+
+- 管理面：Unix Socket `app.sock`（0600），飞牛网关校验登录态后转发并带 `X-Trim-Userid/Isadmin/Username`，前缀 `/app/nasscreencompanion`。信任建立在安装用户与目录权限上，不抵御同 UID 进程伪造。
+- 遥测面：TCP `8798`，默认 TLS + 配对令牌，严格只读，不含任何管理动作。
+- 模块：`nas_companion_server.py`（路由、鉴权、限流、静态管理页）、`fnos_collector.py`（`/proc`、`/sys`、`statvfs`、`mdstat`、`diskstats`、hwmon、SMART、ZFS ARC）、`docker_api.py`（经继承 FD 的只读 Docker 传输）、`telemetry_snapshot.py`（每拍一次编码）、`cmd/docker_launch.py`（root 生命周期：先读 Docker／MPT，再降权起服务）。
+- `nas/fnos-agent.py` 是并存的独立采集器（SSH + systemd，默认 HTTP `8799`），与伴生应用互不接管；端口被占时只报错退出。
+
+### 一次遥测请求的链路
+
+1. NAS 的采样线程按 `interval`（默认 1.0 秒）采样，生成候选后深拷贝并一次性编码为 JSON（`allow_nan=False`）；HTTP 层只读这份已发布字节，不再触碰采集对象。
+2. 板端 `fnos_poll`：先 `fnos_net_service()`，离线则只标记状态；在线则发 `GET https://<nas>:8798/api/v1/status`，带 `X-Token`，超时 3 秒，keep-alive。
+3. 服务端校验令牌后返回预编码 body，只在尾部拼上本次请求的 `age_s`／`app`／`app_ver`。
+4. 板端解析进 `fnos_status_t`，持锁提交：浅拷贝 + 序号递增 + 写曲线环。
+5. UI 在下一个 tick 取这份快照渲染；顶栏与底栏每 tick 更新，正文只刷当前页。
+6. 失败路径：连续 3 拍才判离线，退避每次 +1 秒、封顶 5 秒；屏上保留旧值并给出 Wi-Fi／域名／TLS／令牌／解析／预算对应的中文原因。
 
 ## 硬件自适应与资源边界
 
@@ -210,16 +274,26 @@ export FNOS_SERIAL_PORT='/dev/cu.YOUR_BOARD_PORT'
 | `CONFIG_FNOS_STATUS_MAX_BYTES` | 262144 B | 遥测整帧字节预算 |
 | `CONFIG_FNOS_SNAPSHOT_MAX_BYTES` | 1048576 B | 单份清单与字符串存储预算 |
 | `CONFIG_FNOS_UI_LIST_MIN_WIDTH` | 260 px | 首选清单宽度，实际列数由空间与文本推导 |
+| `CONFIG_FNOS_UI_NUMBER_BUDGET_BYTES` | 131072 B | 数字动效字形的临时层预算；耗尽时回落到最新静态读数，不影响遥测与清单 |
+| `CONFIG_FNOS_UI_TEXT_SCRATCH_BYTES` | 256 B | 栈上文本格式化暂存；更长文本改用等长分配，不截断 |
 | `CONFIG_FNOS_UI_REDUCED_MOTION` | 关闭 | 保留跟手，松手直接落定 |
 | `CONFIG_FNOS_PALETTE` | `michka` | 当前 slate sensor-panel 主题；历史主题仍可选择 |
+| `CONFIG_FNOS_SOAK_DIAG` | 关闭 | 72 小时长测心跳（每 10 秒一行 `FNOS_DIAG` JSON），生产版保持关闭 |
 
-预算限制字节资源，不限定设备数量。受控 UI 分配失败有提示与重试；真实 LVGL 内存耗尽恢复仍是开放验收项。[硬件自适应记录](docs/ui-hardware-adaptive-audit-2026-10-08.md)包含清单、名称与滚动验证范围。
+预算限制字节资源，不限定设备数量。受控 UI 分配失败有提示与回列表重试；真实 LVGL 内存耗尽恢复仍是开放验收项。[硬件自适应记录](docs/ui-hardware-adaptive-audit-2026-10-08.md)包含清单、名称与滚动验证范围。
 
 </details>
 
 ## 开发与验证
 
-主机预览编译同一份 `fnos_ui.c`、`ui_kit`、生成字库及 LVGL，板级接口使用测试替身。修改后可先渲染检查布局和状态：
+主机预览编译同一份 `fnos_ui.c`、`ui_kit`、生成字库及 LVGL，板级接口使用测试替身。改完先跑统一入口：
+
+```bash
+# 四级证据：L1 主机回归 + L2 构建/栈深 + 可选 L3 实机与拍屏
+bash tools/verify_all.sh                          # 加 --flash --port /dev/cu.xxx、--photo
+```
+
+也可以拆开跑：
 
 ```bash
 ./idf.sh build
@@ -228,23 +302,51 @@ python3 tools/stack_check.py
 python3 tools/test_history_merge.py
 ```
 
+`tools/host_checks.sh` 是与发布报告共用的主机检查清单（当前 62 项），含 `tools/test_touch_startup.py` 的 GT911 三次重试与无触摸降级启动回归、`tools/test_history_merge.py` 的历史合并回归，以及完整的主机预览；`tools/verify_all.sh` 逐项执行它并补上构建与静态栈深。
+
 2026-10-23 的完整预览记录生成 **131 张 1024×600 状态 PNG + 10 张刷新／对齐回归 PNG**，并执行字形、格式残留、标签溢出、对象越界、触控重叠与对比度审计，覆盖不同硬件组合和受控分配失败。这个数量对应 [当日验证记录](docs/ui-validation-2026-10-23.md)，不是未来运行固定不变的样本总数。数字、仪表及切页动效的独立入口见 [预览说明](tools/preview/README.md)。本页产品图的文件映射与校验值见 [图片清单](docs/images/ui-michka-slate-2026-10-22/manifest.json)。
 
-固件构建和主机渲染不代替实机验收。[2026-10-24 裁剪揭示对照](docs/ui-drag-lvgl96-2026-10-24.md)中，三页在线拖动 P50 帧间隔从约 38–48 ms 降到约 16.56 ms，接近面板 60 Hz；P95 仍约 28–37 ms，未达到全程锁定 60 FPS。实拍仍受斜拍与局部遮挡限制，完整触控验收仍开放。此前结果见 [2026-10-23 验证记录](docs/ui-validation-2026-10-23.md)。当前实施待办集中见[待办与验收缺口](docs/todo-implementation-2026-10-23.md)；72 小时运行、掉电／旧 NVS 回退、真实内存耗尽恢复和更广泛的硬件／权限矩阵仍开放。
+固件构建和主机渲染不代替实机验收。[2026-10-24 裁剪揭示对照](docs/ui-drag-lvgl96-2026-10-24.md)中，三页在线拖动 P50 帧间隔从约 38–48 ms 降到约 16.56 ms，接近面板 60 Hz；P95 仍约 28–37 ms，未达到全程锁定 60 FPS。实拍仍受斜拍与局部遮挡限制，完整触控验收仍开放。此前结果见 [2026-10-23 验证记录](docs/ui-validation-2026-10-23.md)；当前实施待办集中见[待办与验收缺口](docs/todo-implementation-2026-10-23.md)。
 
 <details>
 <summary><strong>最近迭代与版本边界</strong></summary>
 
 ### 最近迭代与版本边界
 
+- **当前发布基线 `6ae531d`（2026-10-30）**：审计项收口与 FPK 1.2.11——汇聚负载单次采样、ZFS 与卷容量语义、Docker JSON 与超时、触摸探测失败后无触摸启动、网卡失联重关联，默认主题定为 `michka`。打包流程新增「包内 app 与源码逐文件一致」门禁，陈旧包拿不到新的版本与校验块。固件构建与匿名主机回归通过；**FPK 1.2.11 尚未在真实 NAS 升级**，最近一次实机升级记录仍是 1.2.10，见[飞牛应用说明](nas/fpk/README.md)。
 - **此前已发布基线 `b64be21`（2026-10-23）**：完成圆环与同行单位对齐、Wi-Fi 恢复及网络清单布局缓存，源码已发布。在线拖动实测仍约 20–26 FPS；手势、整屏实拍、长期运行与故障恢复边界见[验证记录](docs/ui-validation-2026-10-23.md)和[当前待办](docs/todo-implementation-2026-10-23.md)。
-- **当前 michka 石板灰界面（2026-10-22）**：六页共用一套 slate sensor-panel 皮肤——近黑画布、灰色渐变气泡卡片、居中方块帽标题、Inter 数字、顶栏日期与大号时钟；清单统一行高，卡底只停在整行；图表去掉刻度只留卡头量程。README 同步 15 张匿名产品图。[设计与验证](docs/ui-michka-slate-2026-10-22.md) · [历史 ULTRA 记录](docs/ui-ultra-release-2026-10-14.md)。
-
+- **michka 石板灰界面（2026-10-22 视觉基线）**：六页共用一套 slate sensor-panel 皮肤——近黑画布、灰色纯色气泡卡片、居中方块帽标题、Inter 数字、顶栏日期与大号时钟；清单统一行高，卡底只停在整行；图表去掉刻度只留卡头量程。2026-10-25 起卡片统一为纯色表面，不再使用渐变。产品图渲染于 2026-10-22。[设计与验证](docs/ui-michka-slate-2026-10-22.md) · [历史 ULTRA 记录](docs/ui-ultra-release-2026-10-14.md)。
 - **前一阶段界面基线 `7647d9b`**：CUKTECH 六页横屏、连续阻尼与新鲜度修复；模板构建、主机回归、静态检查、烧录哈希与短时串口观察已完成。[完整验证记录](docs/skills-workflow-2026-10-14.md)。
-- **历史质量优化与 1.2.10 部署（2026-10-25）**：历史质量缺口、UI 非阻塞读取、统一回归入口及包身份检查，见[优化验证记录](docs/optimization-2026-10-25.md)。上方版本和校验值由构建自动生成；固件已烧录、FPK 已部署，配置／配对／证书保留及短采样通过，72 小时长测待做。此前 1.2.9 的部署证据见[控制器温度记录](docs/nas-hba-temperature-2026-10-24.md)。
+- **历史质量优化与 1.2.10 部署（2026-10-25）**：历史质量缺口、UI 非阻塞读取、统一回归入口及包身份检查，见[优化验证记录](docs/optimization-2026-10-25.md)。上方版本和校验值由构建自动生成；固件已烧录、FPK 1.2.10 已部署，配置／配对／证书保留及短采样通过，72 小时长测待做。此前 1.2.9 的部署证据见[控制器温度记录](docs/nas-hba-temperature-2026-10-24.md)。
 - **历史 NAS 与设备证据**：[FPK 性能和 1.2.7 阶段记录](docs/fpk-performance-2026-10-12.md)、[1.2.4 发布记录](docs/release-1.2.4.md)、[架构重构](docs/architecture-refactor-2026-10-13.md)、[触控调度](docs/perf-touch-2026-10-12.md)和[交互优化](docs/perf-system-motion-2026-10-12.md)保留各自的源码、产物和验收范围。
 
 </details>
+
+## 已知限制与开放项
+
+### 设计上就存在的边界
+
+- 时序：NAS 采样 1 秒、板端轮询 200 毫秒、UI 100 毫秒；刷新快于采样不会产生新数据。
+- 曲线按秒采样：板端环形缓冲 600 点，NAS 端 `/history` 默认只保留 300 行；两边都只在内存里，重启即空。
+- 快照读侧非阻塞、写侧持锁拷贝：清单越大，单次提交持锁越久，极端清单下 UI 会拿到上一帧。
+- 证书只钉配对时人工核对的那一枚，不做公共 CA 链校验并跳过 CN 校验（换 IP 不影响信任）；NAS 换证书必须重新配对。
+- 容器数据默认关闭，开启后需要 root 辅助进程读 `docker.sock`；不开启时没有容器数据可显示。
+- 管理面同 UID 可伪造网关身份头，这是部署边界而非待修缺陷。
+- 目标形态唯一：1024×600 横屏；其他分辨率与竖屏不在支持范围。
+
+### 仍开放的验收（未见通过记录）
+
+| 开放项 | 现状 |
+| --- | --- |
+| 真实 72 小时长测 | 未完成；曾中断，只保留短时心跳 |
+| 掉电与 NVS 回退 | 24 KiB NVS 备份未演练；旧格式迁移与真实掉电未测 |
+| 真实 LVGL 内存耗尽恢复 | 默认构建先触发断言；只验证过调用者收 NULL 的回退 |
+| 真实 NAS 上的配对、换证、撤销 | 未实机验收；1.2.11 在真实 NAS 的升级仓库内只有「未做」记录 |
+| 物理屏与真实手指触控 | 拖动 P50 约 16.56 毫秒、P95 仍 28–37 毫秒，不宣称全程 60 FPS；取景斜拍、右侧被裁切 |
+| 硬件与权限矩阵 | MPT IO Unit、ZFS、卸载重装、多机型未覆盖 |
+| 主机预览的证明力 | 板级接口是替身，预览通过不等于设备通过；栈检查只给静态下界 |
+
+证据与编号见[当前待办](docs/todo-implementation-2026-10-23.md)、[验证指南](docs/verification.md)与[历史审计矩阵](docs/open-items-2026-10-11.md)。
 
 ## 常见问题
 
@@ -254,7 +356,7 @@ python3 tools/test_history_merge.py
 | 容器没有数据 | 容器采集开关、能力矩阵、Docker Socket 与辅助进程；未启用／无权限不等于零容器 |
 | 开发板无法连接 NAS | NAS 地址、实际遥测端口、监听状态与网络；区分连接、TLS 和令牌错误 |
 | 指纹改变或设备被撤销 | 核对当前证书，按配对流程重新授权 |
-| 温度或 SMART 缺失 | 驱动、hwmon、工具与权限；缺失不等于 0°C 或健康 |
+| 温度、SMART 或 ZFS 缺失 | 驱动、hwmon、工具与权限；缺失不等于 0°C 或健康 |
 | 名称缺字、屏幕冻结或画面异常 | 字库覆盖、PSRAM、任务栈、IDF 与驱动配置；见[验证说明](docs/verification.md) |
 
 ## 文档导航
@@ -263,8 +365,8 @@ python3 tools/test_history_merge.py
 
 | 想做什么 | 文档 |
 | --- | --- |
-| 全面理解产品、界面与工程设计 | [设计总览：页面、视觉、动效、数据、架构与验收](docs/design-overview-2026-10-14.md) |
-| 安装与维护 NAS 应用 | [飞牛应用](nas/fpk/README.md) · [可选旧采集器](nas/README.md) |
+| 全面理解产品、界面与工程设计 | [设计总览（2026-10-14 基线，栈版本与截图已落后于当前实现）](docs/design-overview-2026-10-14.md) |
+| 安装与维护 NAS 应用 | [飞牛应用](nas/fpk/README.md) · [可选独立采集器（SSH + systemd）](nas/README.md) |
 | 理解当前界面与动效 | [michka 石板灰](docs/ui-michka-slate-2026-10-22.md) · [ULTRA 配色（历史）](docs/ui-cuktech-ultra-2026-10-14.md) · [页面合同](docs/ui-cuktech-2026-10-14.md) · [电流表式动效](docs/ui-ammeter-motion-2026-10-14.md) |
 | 复现产品图与主机检查 | [截图来源](docs/images/ui-michka-slate-2026-10-22/README.md) · [预览工具](tools/preview/README.md) |
 | 查看最新验证和剩余事项 | [本轮待办实施验收](docs/ui-todo-validation-2026-10-23.md) · [此前已发布的 UI 验证](docs/ui-validation-2026-10-23.md) · [当前待办](docs/todo-implementation-2026-10-23.md) · [历史审计矩阵](docs/open-items-2026-10-11.md) · [早期发布与缺陷记录](docs/ui-ultra-release-2026-10-14.md) · [历史 Skills 全流程](docs/skills-workflow-2026-10-14.md) |
@@ -277,7 +379,7 @@ python3 tools/test_history_merge.py
 
 ## 许可证
 
-项目自有固件、采集器与飞牛应用采用 [Apache License 2.0](LICENSE)。[Damped Springs](components/fnos_monitor/ui_kit/third_party/README.md) 保留 Ryan Juckett 的 zlib-style 许可；LVGL / cJSON 为 MIT；Inter、Noto Sans SC、Chakra Petch 字体为 SIL OFL，相关许可保留在 [fonts/](components/fnos_monitor/fonts/)。
+项目自有固件、采集器与飞牛应用采用 [Apache License 2.0](LICENSE)。[第三方组件清单](components/fnos_monitor/ui_kit/third_party/README.md)说明 Damped Springs（Ryan Juckett，zlib-style）与 d3-shape 的 `curveBasis` 派生实现（Mike Bostock，ISC）；LVGL / cJSON 为 MIT；Inter、Noto Sans SC、Chakra Petch 字体为 SIL OFL，相关许可保留在 [fonts/](components/fnos_monitor/fonts/)。
 
 **michka 迁移部分继承上游 CC BY-NC 4.0（署名—非商业性使用）**：michka 原始材料及其衍生修改保留上游许可、作者与修改记录，不适用本项目自有代码的 Apache-2.0 声明。现有独立代码和第三方依赖仍保留各自许可；本轮没有替换根许可证。适用范围、署名模板和发行要求见 [许可政策](docs/michka/LICENSING.md) 与 [ADR-0011](docs/adr/0011-michka-upstream-license-inheritance.md)。
 

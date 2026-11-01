@@ -1471,7 +1471,7 @@ static void snapshot(const char *name)
     /* 截图要的是**稳态**：换页入场是 160ms 淡入 + 20ms 错峰，不落终值就会截到
        "半透明的一页"——那种帧既不能当像素基线，也不代表设备上停留的样子。
        这里直接把在飞的 opa 动画落到终值，而不是推进虚拟时钟：推时钟会连带把
-       应用定时器（ui_tick，500ms 一跳）也喂一跳，数据年龄/轮询计数跟着漂，
+       应用定时器（ui_tick，按数据帧周期一跳）也喂一跳，数据年龄/轮询计数跟着漂，
        快照就不再可复现了。想看动画中途的样子用 PREVIEW_ENTER_MID=1。 */
     if (!s_no_settle) {
         fnos_ui_motion_settle();  /* public page-transition completion, static snapshots only */
@@ -1529,7 +1529,7 @@ static const char *state_name(preview_state_t s)
          : s == ST_LEGACY ? "legacy" : "warming";
 }
 
-/* 虚拟时钟。设备上 500 ms 一跳；预览里同一段"20 秒"必须瞬时且可复现，所以直接推虚拟时间。
+/* 虚拟时钟。设备上一跳取 fnos_ui_refresh_period_ms()（默认 200 ms）；预览里同一段"20 秒"必须瞬时且可复现，所以直接推虚拟时间。
    两个都必须接管：LV_OS_NONE 下 lv_delay_ms() 是 busy-wait（`while(lv_tick_elaps(t) < ms)`），
    而虚拟 tick 只在我们自己推进时才前进 —— 不接管 delay cb 就会死循环烧 CPU。 */
 static uint32_t s_vms;
@@ -1541,7 +1541,7 @@ static void run_state(preview_state_t st, int index)
 {
     s_state = st;
     if (st != ST_WARMING) {
-        /* 20 s 虚拟时间：500 ms 一次 tick，喂满 90 点曲线 */
+        /* 20 s 虚拟时间：每步推进 500 ms，共 40 步喂满 90 点曲线 */
         for (int i = 0; i < 40; i++) {
             if (st != ST_OFFLINE && st != ST_OFFLINE_TLS) s_seq += 12;
             vtick_advance(500);
