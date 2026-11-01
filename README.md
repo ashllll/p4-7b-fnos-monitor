@@ -12,7 +12,7 @@
 
 一个独立屏幕，持续呈现 NAS 的运行状态。日常看仪表、趋势和状态；需要深入时，再进入存储、网络、系统、温度与告警页面。fnOS 配套应用负责采集，开发板负责显示。
 
-> 画面由石板灰界面阶段源码通过真实 LVGL 在主机渲染，使用匿名夹具与合成读数；不是个人 NAS 快照或物理屏幕照片。[查看全部 15 个界面文件与复现说明](docs/images/ui-michka-slate-2026-10-22/README.md)。这批图渲染于 2026-10-22：此后卡片改为主题纯色、温度页移除趋势卡、诊断页新增两行，个别图与当前界面略有差异；当前布局见[温度页记录](docs/ui-temperature-compact-2026-10-24.md)与[石板灰界面记录](docs/ui-michka-slate-2026-10-22.md)。
+> 画面由当前源码通过真实 LVGL 在主机渲染，使用匿名夹具与合成读数；不是个人 NAS 快照或物理屏幕照片。[查看全部 15 个界面文件与复现说明](docs/images/ui-michka-slate-2026-10-22/README.md)。这 15 个文件于 2026-11-02 用源码基线 `6ae531d` 重新渲染，与当前界面一致；主题与布局见[石板灰界面记录](docs/ui-michka-slate-2026-10-22.md)。
 
 ## 一眼掌握，按需深入
 
@@ -42,7 +42,9 @@
 
 以下按默认 HTTPS 模式展示。先准备 NAS 应用和开发板，再在屏幕上完成配对；证书指纹需要人工对照 NAS 管理页。
 
-![首次配对流程：准备两端、核对指纹、确认配对结果与失败出口](docs/diagrams/first-connection.svg)
+![首次配对流程：准备两端、核对指纹、确认配对结果与失败出口](assets/readme/first-connection.gif)
+
+动图按屏幕顺序播一次完整配对；静态矢量源见 [first-connection.svg](docs/diagrams/first-connection.svg)。
 
 配对码过期时在管理页重新生成；网络、证书或保存失败时按屏幕提示处理。只有显示「配对完成」后才进入日常监控。
 
@@ -127,9 +129,9 @@ export FNOS_SERIAL_PORT='/dev/cu.YOUR_BOARD_PORT'
 
 ### 温度：最高温与设备通道
 
-![历史温度页样例，包含当前已移除的趋势卡](docs/images/ui-michka-slate-2026-10-22/temperature.png)
+![温度页：全宽最热摘要与按设备的通道清单](docs/images/ui-michka-slate-2026-10-22/temperature.png)
 
-上图为 2026-10-22 稿，保留当时包含趋势卡的样例；当前温度页仅保留全宽摘要与设备通道清单，见[布局与验证](docs/ui-temperature-compact-2026-10-24.md)。
+当前温度页只保留全宽最热摘要与按设备的通道清单，不再有趋势卡，见[布局与验证](docs/ui-temperature-compact-2026-10-24.md)。
 
 ### 告警：按严重程度筛选事件
 
@@ -163,7 +165,7 @@ export FNOS_SERIAL_PORT='/dev/cu.YOUR_BOARD_PORT'
 
 ![设置与诊断：连接、采集和运行信息](docs/images/ui-michka-slate-2026-10-22/diagnostics.png)
 
-上图为 2026-10-22 版（9 行）；当前诊断页按「连接 / 采集 / 运行」分组，运行组另含「采集段」与「动效」两行，共 11 行。连接失败时可查看连接结果、最近错误、数据年龄与采集段状态；配网、配对入口集中在同一面板。
+诊断页按「连接 / 采集 / 运行」分组，共 11 行；截图可见前 9 行，运行组的「采集段」与「动效」需滚动查看。连接失败时可查看连接结果、最近错误、数据年龄与采集段状态；配网、配对入口集中在同一面板。
 
 </details>
 
@@ -181,9 +183,11 @@ export FNOS_SERIAL_PORT='/dev/cu.YOUR_BOARD_PORT'
 
 箭头表示数据或请求的方向。屏幕主动拉取遥测；虚线区分可选容器数据与遥测响应。
 
-![日常数据流：NAS 采集、可选 Docker、管理网关、开发板 HTTPS 拉取与 LVGL 快照显示](docs/diagrams/runtime-data-flow.svg)
+![日常数据流：NAS 采集、可选 Docker、管理网关、开发板 HTTPS 拉取与 LVGL 快照显示](assets/readme/runtime-data-flow.gif)
 
-两张图使用 `diagram-design` 重绘，沿用项目当前的仪表视觉；[可编辑源文件与导出说明](docs/diagrams/README.md)随仓库保留。
+动图从采集逐段点亮到界面显示；静态矢量源见 [runtime-data-flow.svg](docs/diagrams/runtime-data-flow.svg)。
+
+两张图按当前实现重绘，沿用项目仪表视觉；动图由 SVG 与 motion spec 渲染，[源文件与复现命令](docs/diagrams/README.md)随仓库保留。
 
 管理页通过飞牛应用网关打开。遥测通路随部署形态不同：飞牛伴生应用默认 `8798`（HTTPS + 配对令牌），独立采集器默认 `8799`（HTTP + 令牌），配对成功后以 NVS 中的端点为准。遥测请求由 `fnos_poll` 任务发出；配对阶段的取证书、TLS 探针与配对请求在独立的 `fnos_pair` 任务里，两者都不在 UI 任务中执行。UI 只读取内存快照；请求或解析失败保留最后有效数据，并提示连接／新鲜度状态。采集使用 Linux 本机来源；当前实现没有调用飞牛私有遥测 API。
 
@@ -315,7 +319,7 @@ python3 tools/test_history_merge.py
 
 - **当前发布基线 `6ae531d`（2026-10-30）**：审计项收口与 FPK 1.2.11——汇聚负载单次采样、ZFS 与卷容量语义、Docker JSON 与超时、触摸探测失败后无触摸启动、网卡失联重关联，默认主题定为 `michka`。打包流程新增「包内 app 与源码逐文件一致」门禁，陈旧包拿不到新的版本与校验块。固件构建与匿名主机回归通过；**FPK 1.2.11 尚未在真实 NAS 升级**，最近一次实机升级记录仍是 1.2.10，见[飞牛应用说明](nas/fpk/README.md)。
 - **此前已发布基线 `b64be21`（2026-10-23）**：完成圆环与同行单位对齐、Wi-Fi 恢复及网络清单布局缓存，源码已发布。在线拖动实测仍约 20–26 FPS；手势、整屏实拍、长期运行与故障恢复边界见[验证记录](docs/ui-validation-2026-10-23.md)和[当前待办](docs/todo-implementation-2026-10-23.md)。
-- **michka 石板灰界面（2026-10-22 视觉基线）**：六页共用一套 slate sensor-panel 皮肤——近黑画布、灰色纯色气泡卡片、居中方块帽标题、Inter 数字、顶栏日期与大号时钟；清单统一行高，卡底只停在整行；图表去掉刻度只留卡头量程。2026-10-25 起卡片统一为纯色表面，不再使用渐变。产品图渲染于 2026-10-22。[设计与验证](docs/ui-michka-slate-2026-10-22.md) · [历史 ULTRA 记录](docs/ui-ultra-release-2026-10-14.md)。
+- **michka 石板灰界面（2026-10-22 视觉基线）**：六页共用一套 slate sensor-panel 皮肤——近黑画布、灰色纯色气泡卡片、居中方块帽标题、Inter 数字、顶栏日期与大号时钟；清单统一行高，卡底只停在整行；图表去掉刻度只留卡头量程。2026-10-25 起卡片统一为纯色表面，不再使用渐变。产品图于 2026-11-02 用当前源码重新渲染。[设计与验证](docs/ui-michka-slate-2026-10-22.md) · [历史 ULTRA 记录](docs/ui-ultra-release-2026-10-14.md)。
 - **前一阶段界面基线 `7647d9b`**：CUKTECH 六页横屏、连续阻尼与新鲜度修复；模板构建、主机回归、静态检查、烧录哈希与短时串口观察已完成。[完整验证记录](docs/skills-workflow-2026-10-14.md)。
 - **历史质量优化与 1.2.10 部署（2026-10-25）**：历史质量缺口、UI 非阻塞读取、统一回归入口及包身份检查，见[优化验证记录](docs/optimization-2026-10-25.md)。上方版本和校验值由构建自动生成；固件已烧录、FPK 1.2.10 已部署，配置／配对／证书保留及短采样通过，72 小时长测待做。此前 1.2.9 的部署证据见[控制器温度记录](docs/nas-hba-temperature-2026-10-24.md)。
 - **历史 NAS 与设备证据**：[FPK 性能和 1.2.7 阶段记录](docs/fpk-performance-2026-10-12.md)、[1.2.4 发布记录](docs/release-1.2.4.md)、[架构重构](docs/architecture-refactor-2026-10-13.md)、[触控调度](docs/perf-touch-2026-10-12.md)和[交互优化](docs/perf-system-motion-2026-10-12.md)保留各自的源码、产物和验收范围。

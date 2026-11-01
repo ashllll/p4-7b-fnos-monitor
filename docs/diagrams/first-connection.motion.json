@@ -1,0 +1,33 @@
+{
+  "width": 1200,
+  "fps": 24,
+  "duration": 5.4,
+  "colors": 256,
+  "dither": "none",
+  "clip_to_base_alpha": true,
+  "transparent_color": "#FF00FF",
+  "alpha_threshold": 8,
+  "max_size_mb": 2,
+  "reveals": [
+    { "id": "fc-arw-1", "axis": "x", "start": 0.55, "end": 0.86, "exit": { "start": 4.30, "end": 4.46 } },
+    { "id": "fc-arw-2", "axis": "x", "start": 1.05, "end": 1.36, "exit": { "start": 4.26, "end": 4.42 } },
+    { "id": "fc-arw-3", "axis": "y", "start": 1.55, "end": 1.86, "exit": { "start": 4.22, "end": 4.38 } },
+    { "id": "fc-arw-4", "axis": "x", "start": 2.12, "end": 2.36, "exit": { "start": 4.18, "end": 4.34 } },
+    { "id": "fc-arw-5", "axis": "x", "start": 3.10, "end": 3.34, "exit": { "start": 4.14, "end": 4.30 } },
+    { "id": "fc-arw-6", "axis": "x", "start": 1.60, "end": 2.10, "exit": { "start": 4.10, "end": 4.26 } },
+    { "id": "fc-arw-7", "axis": "y", "start": 2.30, "end": 2.55, "exit": { "start": 4.06, "end": 4.22 } }
+  ],
+  "layers": [
+    { "id": "fc-card-a", "enter": { "start": 0.10, "end": 0.60, "from": [0, 14] }, "exit": { "start": 4.72, "end": 5.08, "to": [0, 10] } },
+    { "id": "fc-card-b", "enter": { "start": 0.62, "end": 1.12, "from": [0, 14] }, "exit": { "start": 4.76, "end": 5.12, "to": [0, 10] } },
+    { "id": "fc-card-c", "enter": { "start": 1.14, "end": 1.64, "from": [0, 14] }, "exit": { "start": 4.80, "end": 5.16, "to": [0, 10] } },
+    { "id": "fc-card-d", "enter": { "start": 1.66, "end": 2.16, "from": [0, 14] }, "exit": { "start": 4.84, "end": 5.20, "to": [0, 10] } },
+    { "id": "fc-card-e", "enter": { "start": 2.18, "end": 2.68, "from": [0, 14] }, "exit": { "start": 4.88, "end": 5.24, "to": [0, 10] } },
+    { "id": "fc-card-f", "enter": { "start": 2.66, "end": 3.16, "from": [0, 14] }, "exit": { "start": 4.92, "end": 5.28, "to": [0, 10] } },
+    { "id": "fc-fail", "enter": { "start": 2.55, "end": 3.05, "from": [0, 10] }, "exit": { "start": 4.96, "end": 5.30, "to": [0, 8] } },
+    { "id": "fc-lab-1", "enter": { "start": 0.80, "end": 1.00, "from": [0, 0] }, "exit": { "start": 4.30, "end": 4.46, "to": [0, 0] } },
+    { "id": "fc-lab-2", "enter": { "start": 1.80, "end": 2.00, "from": [0, 0] }, "exit": { "start": 4.22, "end": 4.38, "to": [0, 0] } },
+    { "id": "fc-lab-3", "enter": { "start": 2.00, "end": 2.20, "from": [0, 0] }, "exit": { "start": 4.10, "end": 4.26, "to": [0, 0] } },
+    { "id": "fc-lab-4", "enter": { "start": 2.50, "end": 2.70, "from": [0, 0] }, "exit": { "start": 4.06, "end": 4.22, "to": [0, 0] } }
+  ]
+}
