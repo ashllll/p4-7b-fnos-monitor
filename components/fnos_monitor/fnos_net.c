@@ -696,7 +696,7 @@ void fnos_net_service(void) {
         }
     }
     if (!s_started) {
-        // 起站失败（esp_wifi_init/start 出错）时周期重试，但别每 500 ms 试一次刷日志
+        // 起站失败（esp_wifi_init/start 出错）时每 5 秒重试一次，避免每次失败都刷一行日志
         static int64_t last_try_ms;
         int64_t now = esp_timer_get_time() / 1000;
         if (now - last_try_ms > 5000) {
