@@ -74,20 +74,27 @@ jobs:
           . "$IDF_PATH/export.sh" > /dev/null
           VERIFY_OUT="$RUNNER_TEMP/fnos-verify" bash tools/verify_all.sh --ci 2>&1 | tee "$RUNNER_TEMP/verify.log"
 
+      # A multi-path artifact keeps absolute runner segments (__w/...), which the
+      # release job cannot address; stage everything under one root instead.
+      - name: Collect build outputs
+        if: always()
+        run: |
+          out="$RUNNER_TEMP/fnos-verify"
+          mkdir -p "$out/build"
+          for f in build/fnos_monitor.bin build/fnos_monitor.elf build/fnos_monitor.map \
+                   build/bootloader/bootloader.bin build/partition_table/partition-table.bin \
+                   build/flasher_args.json; do
+            if [ -f "$f" ]; then cp "$f" "$out/build/"; fi
+          done
+          if [ -f "$RUNNER_TEMP/verify.log" ]; then cp "$RUNNER_TEMP/verify.log" "$out/"; fi
+          ls -l "$out/build" || true
+
       - name: Upload verification evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: verify-${{ github.run_id }}
-          path: |
-            ${{ runner.temp }}/fnos-verify
-            ${{ runner.temp }}/verify.log
-            build/fnos_monitor.bin
-            build/fnos_monitor.elf
-            build/fnos_monitor.map
-            build/bootloader/bootloader.bin
-            build/partition_table/partition-table.bin
-            build/flasher_args.json
+          path: ${{ runner.temp }}/fnos-verify
           if-no-files-found: warn
           retention-days: 14
 
