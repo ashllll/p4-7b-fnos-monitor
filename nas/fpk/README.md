@@ -200,8 +200,12 @@ python3 nas/fpk/collector_check.py
 python3 nas/fpk/docker_check.py
 python3 nas/fpk/startup_permission_check.py
 python3 nas/fpk/config_persistence_check.py
+python3 nas/fpk/test_metrics.py             # 匿名指标夹具：模块质量与 null／零值语义
+python3 nas/fpk/test_server_safety.py       # TLS fail-closed、令牌序列化、停机收尾
 bash nas/fpk/test_lifecycle.sh     # 打包 + 匿名临时布局中的完整生命周期
 ```
+
+`build.sh` 打完还会自动调用 `python3 nas/fpk/verify_package_sources.py <fpk> <包内 app 目录>`，包内 app 与源码不一致就拒绝出包，不需要手工执行。
 
 1.2.4 发布基线的生命周期结果为 143 通过、0 失败；这是 [发布记录](../../docs/release-1.2.4.md) 中的历史结果，当前运行次数以工具输出为准。macOS 临时布局、源代码检查和主机 VM 不等于真实 NAS 的 Linux 身份、权限或物理显示验收。
 
