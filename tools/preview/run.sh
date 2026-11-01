@@ -1,5 +1,5 @@
 #!/bin/bash
-# 主机预览一键跑：设备 Kconfig → 主机 LVGL → 渲染 4 页 × 3 状态 → PPM/PNG。
+# 主机预览一键跑：设备 Kconfig → 主机 LVGL → 渲染六页全部状态 → PPM/PNG。
 #
 #   tools/preview/run.sh [输出目录]     默认 out/
 #
@@ -88,7 +88,7 @@ fi
 
 # 主机 LVGL 用设备端真实 Kconfig（含 CONFIG_LV_CONF_SKIP=1，于是全靠 CONFIG_LV_*）
 grep -E '^#define CONFIG_LV_' "$DEVICE_CONFIG" > lv_kconfig_host.h
-# 只有三处必须偏离设备：LVGL 9.5 的 lv_conf_kconfig.h 会把 CONFIG_LV_OS_FREERTOS 翻成
+# 只有三处必须偏离设备：LVGL 9.6 的 lv_conf_kconfig.h 会把 CONFIG_LV_OS_FREERTOS 翻成
 # LV_OS_FREERTOS、把 CONFIG_LV_USE_CUSTOM_MALLOC 翻成 LV_STDLIB_CUSTOM（设备那边由
 # esp_lvgl_port 提供 lv_malloc_core，主机上没有 → 落到 LVGL 的 weak 桩，永远返回 NULL）。
 # 主机改成 LV_OS_NONE + libc malloc，语义等价（设备是 FreeRTOS 任务 + esp 堆）。

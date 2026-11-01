@@ -51,7 +51,7 @@ static void pf_prof_arm(void)
 
 #define PF_SAMPLES        256     /* 每种样本的上限；满了丢新样本（报里的 n 让人看得见） */
 #define PF_STEP_MS        8       /* 脚本推进节奏 = UK_GESTURE_POLL_MS */
-#define PF_SETTLE_MS      800     /* 换页请求由 ui_tick(500ms) 落地，留一跳余量 */
+#define PF_SETTLE_MS      800     /* 换页请求由 ui_tick 落地（一个数据帧周期，默认 200 ms），留余量 */
 #define PF_TAP_HOLD_MS    60      /* 按住时长：短于读周期就可能一次都没报按下 */
 #define PF_ARM_TIMEOUT_MS 300     /* 置了按下却等不到 indev 上报，判 miss */
 #define PF_RELEASE_MS     80      /* 松开后等 indev 把 RELEASED 读走 */

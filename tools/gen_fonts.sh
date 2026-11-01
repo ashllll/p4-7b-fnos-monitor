@@ -9,7 +9,7 @@
 # 用法：bash tools/gen_fonts.sh
 #
 # ⚠️ 必须 --no-compress（RLE 压缩字体在这块板子上会"字体花屏 + 闪烁"）：
-#   lv_font_conv 默认输出 RLE 压缩字体（描述符里 .bitmap_format = 1），而 LVGL 9.5
+#   lv_font_conv 默认输出 RLE 压缩字体（描述符里 .bitmap_format = 1），而 LVGL 9.6
 #   的解压器用的是**一份全局状态**（src/core/lv_global.h 的 LV_GLOBAL_DEFAULT()->font_fmt_rle，
 #   rle_init/rle_next 都在它上面跑，font/fmt_txt/lv_font_fmt_txt.c 里没有任何锁）。
 #   本工程开着 CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=2，LVGL 会把一帧拆成两个 tile 用两个线程并行绘制，
