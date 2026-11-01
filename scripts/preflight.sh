@@ -23,12 +23,9 @@ hits=$(git grep -lE '^(<<<<<<< |>>>>>>> |=======$)' -- . 2>/dev/null || true)
 [ -z "$hits" ] && note conflict-markers pass || bad conflict-markers "$hits"
 
 # 2. paths that break on Windows or are otherwise not portable
-hits=$(git ls-files 2>/dev/null | while IFS= read -r f; do
-  base=$(basename "$f")
-  case "$base" in
-    CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9]) echo "$f (windows reserved name)";;
-  esac
-done)
+# awk instead of a case inside $(): bash 3.2 (macOS /bin/bash) fails to parse
+# `case` nested in a command substitution pipeline.
+hits=$(git ls-files 2>/dev/null | awk -F/ '$NF ~ /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/ { printf "%s (windows reserved name)\n", $0 }' || true)
 [ -z "$hits" ] && note path-sanity pass || bad path-sanity "$hits"
 
 # 3-4. staged-only checks: these judge what you are about to commit
