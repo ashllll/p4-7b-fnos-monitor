@@ -86,7 +86,7 @@ def run():
             (p/'test.c').write_text(candidate+'\n'+MAIN)
             build = subprocess.run(['cc','-std=c11','-pthread','-fsanitize=address,undefined',
                                     '-I'+str(ROOT/'components/fnos_monitor'), '-I'+str(ROOT/'build/config'),
-                                    '-I'+str(cj), str(p/'test.c'), str(cj/'cJSON.c'), '-o', str(p/'test')],
+                                    '-I'+str(cj), str(p/'test.c'), str(cj/'cJSON.c'), '-lm', '-o', str(p/'test')],
                                    capture_output=True, text=True)
             if build.returncode:
                 # 编译器才是判据：把它的报错原样带出来，而不是只留一行回调栈。

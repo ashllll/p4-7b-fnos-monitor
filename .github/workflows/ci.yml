@@ -32,7 +32,7 @@ jobs:
         run: |
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            nodejs openssl git ca-certificates build-essential
+            nodejs openssl git ca-certificates build-essential clang
           node --version
           openssl version
           # The host tests build with ASan/UBSan; prove that link path works
@@ -44,6 +44,11 @@ jobs:
 
       # The component manager downloads LVGL 9.6 and the ESP-IDF adapters on the
       # first build; dependencies.lock pins the exact set.
+      # actions/checkout runs inside the container as root while the workspace
+      # is owned by the runner user; the checks shell out to `git describe`.
+      - name: Trust the workspace for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Cache managed components
         uses: actions/cache@v4
         with:
@@ -64,7 +69,7 @@ jobs:
         run: |
           set -euo pipefail
           . "$IDF_PATH/export.sh" > /dev/null
-          VERIFY_OUT="$RUNNER_TEMP/fnos-verify" bash tools/verify_all.sh 2>&1 | tail -80
+          VERIFY_OUT="$RUNNER_TEMP/fnos-verify" bash tools/verify_all.sh 2>&1 | tee "$RUNNER_TEMP/verify.log"
 
       - name: Upload verification evidence
         if: always()
@@ -73,6 +78,7 @@ jobs:
           name: verify-${{ github.run_id }}
           path: |
             ${{ runner.temp }}/fnos-verify
+            ${{ runner.temp }}/verify.log
             build/fnos_monitor.bin
             build/fnos_monitor.elf
             build/fnos_monitor.map

@@ -136,7 +136,7 @@ static void ui_history_tick(void) {
   main=MAIN.replace('static void live(',ui_fixture+'\nstatic void live(',1)
   (p/'test.c').write_text(main)
   cj=ROOT/'managed_components/espressif__cjson/cJSON'
-  cmd=['cc','-std=c11','-pthread','-fsanitize=address,undefined,float-cast-overflow','-fno-sanitize-recover=all','-g','-I'+str(ROOT/'build/config'),'-I'+str(ROOT/'components/fnos_monitor'),'-I'+str(cj),str(p/'test.c'),str(cj/'cJSON.c'),'-o',str(p/'test')]
+  cmd=['cc','-std=c11','-pthread','-fsanitize=address,undefined,float-cast-overflow','-fno-sanitize-recover=all','-g','-I'+str(ROOT/'build/config'),'-I'+str(ROOT/'components/fnos_monitor'),'-I'+str(cj),str(p/'test.c'),str(cj/'cJSON.c'),'-lm','-o',str(p/'test')]
   subprocess.run(cmd,check=True,capture_output=True)
   env=dict(os.environ,ASAN_OPTIONS='detect_leaks=0')
   for case in ('quality','temperature','interval','ui','merge','reset','full','unknown-time','bad-order','capacity','lock','concurrent'):
@@ -200,7 +200,7 @@ int main(void) {
 """
  with tempfile.TemporaryDirectory(prefix='fnos-chart-values-') as d:
   p=Path(d);src=p/'test.c';exe=p/'test'
-  cmd=['cc','-std=c11','-fsanitize=address,undefined,float-cast-overflow','-fno-sanitize-recover=all',str(src),'-o',str(exe)]
+  cmd=['cc','-std=c11','-fsanitize=address,undefined,float-cast-overflow','-fno-sanitize-recover=all',str(src),'-lm','-o',str(exe)]
   env=dict(os.environ,ASAN_OPTIONS='detect_leaks=0')
   src.write_text(pre+helper+main);subprocess.run(cmd,check=True,capture_output=True)
   result=subprocess.run([str(exe)],capture_output=True,env=env,timeout=10)
@@ -244,7 +244,7 @@ int main(void){
 """
  with tempfile.TemporaryDirectory(prefix='fnos-chart-range-') as d:
   p=Path(d);src=p/'test.c';exe=p/'test';src.write_text(code)
-  cmd=['cc','-std=c11','-fsanitize=address,undefined,float-cast-overflow','-fno-sanitize-recover=all',str(src),'-o',str(exe)]
+  cmd=['cc','-std=c11','-fsanitize=address,undefined,float-cast-overflow','-fno-sanitize-recover=all',str(src),'-lm','-o',str(exe)]
   subprocess.run(cmd,check=True,capture_output=True)
   result=subprocess.run([str(exe)],capture_output=True,env=dict(os.environ,ASAN_OPTIONS='detect_leaks=0'),timeout=10)
   assert result.returncode==0,result.stderr.decode(errors='replace')
@@ -285,14 +285,14 @@ int main(void){int32_t x,a,b,c,d,want;int n=0;
  with tempfile.TemporaryDirectory(prefix='fnos-chart-map-') as d:
   p=Path(d);src=p/'test.c';exe=p/'test';src.write_text(main)
   flags=['cc','-std=c11','-fsanitize=address,undefined','-fno-sanitize-recover=all']
-  cmd=flags+[str(src),str(ROOT/'components/fnos_monitor/fnos_chart_math.c'),'-o',str(exe)]
+  cmd=flags+[str(src),str(ROOT/'components/fnos_monitor/fnos_chart_math.c'),'-lm','-o',str(exe)]
   subprocess.run(cmd,check=True,capture_output=True)
   env=dict(os.environ,ASAN_OPTIONS='detect_leaks=0')
   result=subprocess.run([str(exe)],input=data,text=True,capture_output=True,env=env,timeout=15)
   assert result.returncode==0,result.stderr
   lv=(ROOT/'managed_components/lvgl__lvgl/src/misc/lv_math.c').read_text();a=lv.index('int32_t lv_map(');b=lv.index('\n}',a)+2
   old=p/'old.c';old.write_text('#include <stdint.h>\n'+lv[a:b].replace('lv_map(', 'fnos_chart_map(',1))
-  subprocess.run(flags+[str(src),str(old),'-o',str(exe)],check=True,capture_output=True)
+  subprocess.run(flags+[str(src),str(old),'-lm','-o',str(exe)],check=True,capture_output=True)
   result=subprocess.run([str(exe)],input=data,text=True,capture_output=True,env=env,timeout=15)
   assert result.returncode!=0 and 'signed integer overflow' in result.stderr,result.stderr
  with tempfile.TemporaryDirectory(prefix='fnos-chart-cmake-') as d:
@@ -362,7 +362,7 @@ int main(void){
  code+='assert(vol->pct==FLT_MAX && g->max_c==FLT_MAX);return 0;}\n'
  with tempfile.TemporaryDirectory(prefix='fnos-ui-gauge-') as d:
   p=Path(d);src=p/'test.c';exe=p/'test'
-  flags=['cc','-std=c11','-fsanitize=address,undefined,float-cast-overflow','-fno-sanitize-recover=all',str(src),'-o',str(exe)]
+  flags=['cc','-std=c11','-fsanitize=address,undefined,float-cast-overflow','-fno-sanitize-recover=all',str(src),'-lm','-o',str(exe)]
   env=dict(os.environ,ASAN_OPTIONS='detect_leaks=0')
   src.write_text(code);subprocess.run(flags,check=True,capture_output=True)
   r=subprocess.run([str(exe)],capture_output=True,env=env,timeout=10)
@@ -420,7 +420,7 @@ int main(void) {
 """
  with tempfile.TemporaryDirectory(prefix='fnos-snapshot-fallback-') as d:
   p=Path(d);src=p/'test.c';exe=p/'test'
-  flags=['cc','-std=c11','-pthread','-fsanitize=address,undefined','-fno-sanitize-recover=all',str(src),'-o',str(exe)]
+  flags=['cc','-std=c11','-pthread','-fsanitize=address,undefined','-fno-sanitize-recover=all',str(src),'-lm','-o',str(exe)]
   for old in (False,True):
    code=production.replace('return out->ever_ok;','return s_valid;') if old else production
    if old:assert code!=production

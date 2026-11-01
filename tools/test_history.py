@@ -39,7 +39,7 @@ int main(int argc,char **argv) {
 }
 ''')
   cj=ROOT/'managed_components/espressif__cjson/cJSON'
-  subprocess.run(['cc','-std=c11','-fsanitize=address,undefined,float-cast-overflow','-fno-sanitize-recover=all','-g','-I'+str(ROOT/'build/config'),'-I'+str(ROOT/'components/fnos_monitor'),'-I'+str(cj),str(out/'main.c'),str(cj/'cJSON.c'),'-o',str(out/'test')],check=True,capture_output=True)
+  subprocess.run(['cc','-std=c11','-fsanitize=address,undefined,float-cast-overflow','-fno-sanitize-recover=all','-g','-I'+str(ROOT/'build/config'),'-I'+str(ROOT/'components/fnos_monitor'),'-I'+str(cj),str(out/'main.c'),str(cj/'cJSON.c'),'-lm','-o',str(out/'test')],check=True,capture_output=True)
   for name,rows,n,valid,span,gap in CASES:
    result=subprocess.run([str(out/'test'),json.dumps({'rows':rows}),str(n),str(valid),str(span),str(gap)],capture_output=True,text=True,env=dict(os.environ,ASAN_OPTIONS='detect_leaks=0'),timeout=10)
    if result.returncode:raise RuntimeError(name+' failed: '+result.stderr)
@@ -54,7 +54,7 @@ int main(void) {
  return 0;
 }
 ''')
-  subprocess.run(['cc','-fsanitize=address,undefined','-fno-sanitize-recover=all',str(out/'utf.c'),'-o',str(out/'utf')],check=True,capture_output=True)
+  subprocess.run(['cc','-fsanitize=address,undefined','-fno-sanitize-recover=all',str(out/'utf.c'),'-lm','-o',str(out/'utf')],check=True,capture_output=True)
   subprocess.run([str(out/'utf')],check=True,capture_output=True,env=dict(os.environ,ASAN_OPTIONS='detect_leaks=0'),timeout=10)
   ui_source=(ROOT/'components/fnos_monitor/fnos_ui.c').read_text()
   span=re.search(r'^static const char \*hist_span_text\(.*?^}',ui_source,re.M|re.S).group(0)
@@ -70,7 +70,7 @@ int main(void) {
   for negative in (False,True):
    candidate=span if not negative else span.replace('int64_t sec =','int sec =')
    (out/'span.c').write_text(prefix+candidate+span_main)
-   subprocess.run(['cc','-fsanitize=address,undefined','-I'+str(ROOT/'components/fnos_monitor'),'-I'+str(ROOT/'build/config'),str(out/'span.c'),'-o',str(out/'span')],check=True)
+   subprocess.run(['cc','-fsanitize=address,undefined','-I'+str(ROOT/'components/fnos_monitor'),'-I'+str(ROOT/'build/config'),str(out/'span.c'),'-lm','-o',str(out/'span')],check=True)
    result=subprocess.run([str(out/'span')],capture_output=True,env=dict(os.environ,ASAN_OPTIONS='detect_leaks=0'),timeout=10)
    if negative: assert result.returncode!=0 and b'strstr(b' in result.stderr,'UI narrowing negative control must reject the wrapped duration'
    else: assert result.returncode==0,result.stderr
@@ -80,7 +80,7 @@ int main(void) {
   old=source.replace('ts<=ts_last','ts<ts_last')
   assert old!=source
   (out/'production.c').write_text(old)
-  subprocess.run(['cc','-std=c11','-I'+str(ROOT/'build/config'),'-I'+str(ROOT/'components/fnos_monitor'),'-I'+str(cj),str(out/'main.c'),str(cj/'cJSON.c'),'-o',str(out/'negative')],check=True,capture_output=True)
+  subprocess.run(['cc','-std=c11','-I'+str(ROOT/'build/config'),'-I'+str(ROOT/'components/fnos_monitor'),'-I'+str(cj),str(out/'main.c'),str(cj/'cJSON.c'),'-lm','-o',str(out/'negative')],check=True,capture_output=True)
   rows=[[1700000000,1,2,3,4],[1700000000,2,3,4,5],[1700000002,3,4,5,6]]
   result=subprocess.run([str(out/'negative'),json.dumps({'rows':rows}),'3','0','0','0'],capture_output=True,timeout=10)
   assert result.returncode!=0 and b'hist_ts_ok' in result.stderr,'duplicate-time negative control must hit the metadata assertion'
