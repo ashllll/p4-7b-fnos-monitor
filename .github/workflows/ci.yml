@@ -1,0 +1,110 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: build + host checks
+    runs-on: ubuntu-22.04
+    container:
+      image: espressif/idf:v5.5.5
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Host tooling
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            nodejs openssl git ca-certificates
+          node --version
+          openssl version
+
+      # The component manager downloads LVGL 9.6 and the ESP-IDF adapters on the
+      # first build; dependencies.lock pins the exact set.
+      - name: Cache managed components
+        uses: actions/cache@v4
+        with:
+          path: managed_components
+          key: managed-${{ hashFiles('dependencies.lock') }}
+
+      # The host preview compiles against build/config/sdkconfig.h, so the
+      # firmware build has to happen before the host checks.
+      - name: Firmware build
+        run: bash idf.sh build
+
+      - name: Host checks, stack budget and UI exit check
+        run: |
+          set -o pipefail
+          VERIFY_OUT="$RUNNER_TEMP/fnos-verify" bash tools/verify_all.sh 2>&1 | tail -80
+
+      - name: Upload verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/fnos-verify
+            build/fnos_monitor.bin
+            build/fnos_monitor.elf
+            build/fnos_monitor.map
+            build/bootloader/bootloader.bin
+            build/partition_table/partition-table.bin
+            build/flasher_args.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  release:
+    name: publish firmware
+    needs: gate
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download build from the gate job
+        uses: actions/download-artifact@v4
+        with:
+          name: verify-${{ github.run_id }}
+          path: artifacts
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          cp artifacts/build/fnos_monitor.bin artifacts/build/bootloader/bootloader.bin \
+             artifacts/build/partition_table/partition-table.bin release/
+          cp artifacts/build/fnos_monitor.elf artifacts/build/fnos_monitor.map release/ || true
+          cp artifacts/build/flasher_args.json release/ || true
+          cat > release/FLASH.txt <<'EOF'
+          Flash with the ESP-IDF in the release notes' version:
+
+            esptool.py --chip esp32p4 -p <port> -b 460800 \
+              write_flash @flasher_args.json
+
+          The board image is built from the tagged commit by GitHub Actions.
+          The fnOS companion app (.fpk) is NOT part of this release: fnpack is
+          not available on hosted runners, so build it locally with
+          `bash nas/fpk/build.sh`.
+          EOF
+          gh release create "$TAG" release/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$TAG" \
+            --notes "Firmware built from $GITHUB_SHA by the CI gate. The fnOS companion package is built locally; see README." \
+            --verify-tag
