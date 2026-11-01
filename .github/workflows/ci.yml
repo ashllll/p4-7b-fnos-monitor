@@ -32,9 +32,15 @@ jobs:
         run: |
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            nodejs openssl git ca-certificates
+            nodejs openssl git ca-certificates build-essential
           node --version
           openssl version
+          # The host tests build with ASan/UBSan; prove that link path works
+          # before the suite, so a missing runtime shows up as one clear line.
+          printf 'int main(void){return 0;}\n' > /tmp/san.c
+          cc -std=c11 -fsanitize=address,undefined /tmp/san.c -o /tmp/san
+          /tmp/san
+          echo "host sanitizers: ok
 
       # The component manager downloads LVGL 9.6 and the ESP-IDF adapters on the
       # first build; dependencies.lock pins the exact set.

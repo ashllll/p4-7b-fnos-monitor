@@ -84,10 +84,14 @@ def run():
                     assert changed != body
                     candidate = candidate.replace(body, changed)
             (p/'test.c').write_text(candidate+'\n'+MAIN)
-            subprocess.run(['cc','-std=c11','-pthread','-fsanitize=address,undefined',
-                            '-I'+str(ROOT/'components/fnos_monitor'), '-I'+str(ROOT/'build/config'),
-                            '-I'+str(cj), str(p/'test.c'), str(cj/'cJSON.c'), '-o', str(p/'test')],
-                           check=True, capture_output=True)
+            build = subprocess.run(['cc','-std=c11','-pthread','-fsanitize=address,undefined',
+                                    '-I'+str(ROOT/'components/fnos_monitor'), '-I'+str(ROOT/'build/config'),
+                                    '-I'+str(cj), str(p/'test.c'), str(cj/'cJSON.c'), '-o', str(p/'test')],
+                                   capture_output=True, text=True)
+            if build.returncode:
+                # 编译器才是判据：把它的报错原样带出来，而不是只留一行回调栈。
+                sys.stderr.write(build.stdout + build.stderr)
+                raise SystemExit(f'cc failed with {build.returncode}')
             result = subprocess.run([str(p/'test')], capture_output=True, text=True, timeout=5,
                                     env=dict(os.environ, ASAN_OPTIONS='detect_leaks=0'))
             print(('old wait: ' if old else 'current: ')+result.stdout.strip())
