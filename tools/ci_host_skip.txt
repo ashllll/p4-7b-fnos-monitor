@@ -3,3 +3,4 @@
 权限分类器|perm_check 用 chmod 000 判权限，root 下读权限恒成立
 Python 开发模式零警告|devmode_check 需要 fnOS 包用户身份，容器里没有该用户
 PID 写失败与卸载收尾|写 /run 与包用户身份在 root 容器里不成立
+进程生命周期|容器 PID 1 不回收子进程、且缺 fnOS 包用户身份：S3 «正常停止后进程真的结束了» 与 S4 «PID 记录被保留» 在 Linux root 容器里前提不成立（同一脚本在 macOS 全绿）
