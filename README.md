@@ -314,7 +314,7 @@ python3 tools/test_history_merge.py
 
 每次推送到 `main` 或开 PR，GitHub Actions 用 `espressif/idf:v5.5.5` 容器跑一遍 `.github/workflows/ci.yml`：先 `bash idf.sh build`（主机预览要读生成的 `build/config/sdkconfig.h`），再 `bash tools/verify_all.sh --ci` 走完 L1 主机回归、L2 构建与静态栈深、`ui_kit` 出局检查；证据目录与固件二进制作为 artifact 保留 14 天。`--ci` 只跑跨平台部分：依赖非 root 宿主语义或 fnOS 包用户身份的检查按 [`tools/ci_host_skip.txt`](tools/ci_host_skip.txt) 逐条豁免并在输出里打印理由，完整套件仍在本机跑。推 `v*` 标签时，同一份构建产物发布为 GitHub Release（固件 bin、elf、map、烧录参数与烧录说明）。
 
-本仓库不挂本地 preflight 钩子：门禁就是上面这条工作流，推送后结果直接看 Actions 页面；其他仓库的全局钩子不受影响。
+本地提交与推送使用全局 Git hooks（`core.hooksPath=/Users/llll/.config/git/hooks`）：提交时运行 `bash scripts/preflight.sh --staged`，推送时运行 `bash scripts/preflight.sh`。本地检查通过后再推送；现有 Actions 工作流继续执行构建与主机回归，合并前确认检查通过。
 
 `.fpk` 不在 CI 里产出：托管 runner 上没有 `fnpack`，应用仍按[飞牛应用说明](nas/fpk/README.md)在本地 `bash nas/fpk/build.sh` 打包，包内 app 与源码一致性由 `verify_package_sources.py` 当场核对。
 

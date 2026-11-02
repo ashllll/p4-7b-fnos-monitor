@@ -1,0 +1,460 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "P4-7B 飞牛监控屏 · 模块与数据流",
+    "subtitle": "NAS 采集与遥测 · 板端快照与界面 · 主机验证",
+    "locale": "zh-CN",
+    "output": "architecture-fnos-monitor.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/ashllll/p4-7b-fnos-monitor",
+      "provider": "github",
+      "revision": "9d80d49fbb2b417df57b3901a3c8979e2ca83e7e"
+    }
+  },
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "NAS 侧伴生应用 · python312",
+      "wraps": [
+        "collector",
+        "server"
+      ]
+    },
+    {
+      "kind": "region",
+      "label": "ESP32-P4 固件 · FreeRTOS",
+      "wraps": [
+        "net",
+        "poll",
+        "snapshot",
+        "ui",
+        "bsp"
+      ]
+    }
+  ],
+  "components": [
+    {
+      "id": "nas_hw",
+      "type": "external",
+      "label": "fnOS 主机",
+      "sublabel": "/proc · mdstat · hwmon",
+      "pos": [
+        30,
+        80
+      ],
+      "size": [
+        170,
+        62
+      ],
+      "icon": "external",
+      "sources": [
+        {
+          "path": "nas/fpk/nasscreencompanion/app/server/fnos_collector.py",
+          "label": "采集来源"
+        }
+      ]
+    },
+    {
+      "id": "collector",
+      "type": "backend",
+      "label": "采集器",
+      "sublabel": "fnos_collector.py",
+      "pos": [
+        290,
+        80
+      ],
+      "size": [
+        170,
+        62
+      ],
+      "tag": "1 s 采样",
+      "icon": "backend",
+      "sources": [
+        {
+          "path": "nas/fpk/nasscreencompanion/app/server/fnos_collector.py"
+        }
+      ]
+    },
+    {
+      "id": "server",
+      "type": "backend",
+      "label": "伴生服务",
+      "sublabel": "nas_companion_server.py",
+      "pos": [
+        550,
+        80
+      ],
+      "size": [
+        180,
+        62
+      ],
+      "tag": "8798 · TLS",
+      "icon": "backend",
+      "sources": [
+        {
+          "path": "nas/fpk/nasscreencompanion/app/server/nas_companion_server.py"
+        },
+        {
+          "path": "nas/fpk/nasscreencompanion/app/server/telemetry_snapshot.py",
+          "label": "每拍编码"
+        }
+      ]
+    },
+    {
+      "id": "net",
+      "type": "backend",
+      "label": "Wi-Fi 链路",
+      "sublabel": "fnos_net.c · ESP-Hosted",
+      "pos": [
+        820,
+        80
+      ],
+      "size": [
+        160,
+        62
+      ],
+      "icon": "backend",
+      "sources": [
+        {
+          "path": "components/fnos_monitor/fnos_net.c"
+        },
+        {
+          "path": "components/fnos_monitor/fnos_net.h"
+        }
+      ]
+    },
+    {
+      "id": "poll",
+      "type": "backend",
+      "label": "轮询任务",
+      "sublabel": "fnos_data.c · fnos_poll",
+      "pos": [
+        1070,
+        80
+      ],
+      "size": [
+        160,
+        62
+      ],
+      "tag": "6 KiB 栈",
+      "icon": "backend",
+      "sources": [
+        {
+          "path": "components/fnos_monitor/fnos_data.c",
+          "line": 545,
+          "label": "poll_task"
+        },
+        {
+          "path": "components/fnos_monitor/fnos_data.c",
+          "line": 647,
+          "label": "xTaskCreate"
+        }
+      ]
+    },
+    {
+      "id": "snapshot",
+      "type": "database",
+      "label": "快照 + 曲线环",
+      "sublabel": "fnos_data + fnos_snapshot",
+      "pos": [
+        1070,
+        320
+      ],
+      "size": [
+        160,
+        62
+      ],
+      "tag": "互斥量保护",
+      "icon": "database",
+      "sources": [
+        {
+          "path": "components/fnos_monitor/fnos_snapshot.c",
+          "line": 153,
+          "label": "fnos_status_parse"
+        },
+        {
+          "path": "components/fnos_monitor/fnos_snapshot.c",
+          "line": 64,
+          "label": "fnos_status_copy"
+        },
+        {
+          "path": "components/fnos_monitor/fnos_data.c",
+          "line": 545,
+          "label": "快照发布与历史"
+        }
+      ]
+    },
+    {
+      "id": "ui",
+      "type": "frontend",
+      "label": "界面 · 六页",
+      "sublabel": "fnos_ui.c + ui_kit",
+      "pos": [
+        820,
+        320
+      ],
+      "size": [
+        160,
+        62
+      ],
+      "tag": "LVGL 唯一写入者",
+      "icon": "frontend",
+      "sources": [
+        {
+          "path": "components/fnos_monitor/fnos_ui.c",
+          "line": 5956,
+          "label": "fnos_ui_create"
+        },
+        {
+          "path": "components/fnos_monitor/ui_kit/uk.c",
+          "label": "设计系统构件"
+        }
+      ]
+    },
+    {
+      "id": "bsp",
+      "type": "backend",
+      "label": "BSP + 适配器",
+      "sublabel": "esp_lvgl_adapter",
+      "pos": [
+        570,
+        320
+      ],
+      "size": [
+        160,
+        62
+      ],
+      "icon": "backend",
+      "sources": [
+        {
+          "path": "components/esp32_p4_wifi6_touch_lcd_7b/esp32_p4_wifi6_touch_lcd_7b.c",
+          "line": 727
+        }
+      ]
+    },
+    {
+      "id": "screen",
+      "type": "external",
+      "label": "7 英寸触屏",
+      "sublabel": "1024×600 MIPI-DSI",
+      "pos": [
+        320,
+        320
+      ],
+      "size": [
+        160,
+        62
+      ],
+      "icon": "external",
+      "sources": [
+        {
+          "path": "main/main.cpp",
+          "label": "bsp_display_start_with_config"
+        }
+      ]
+    },
+    {
+      "id": "pair",
+      "type": "security",
+      "label": "配对 / 信任锚",
+      "sublabel": "fnos_pair.c · TOFU",
+      "pos": [
+        555,
+        196
+      ],
+      "size": [
+        170,
+        62
+      ],
+      "tag": "指纹人工比对",
+      "icon": "security",
+      "sources": [
+        {
+          "path": "components/fnos_monitor/fnos_pair.c",
+          "line": 1058,
+          "label": "配对任务"
+        },
+        {
+          "path": "components/fnos_monitor/fnos_pair.h",
+          "label": "TOFU 契约"
+        }
+      ]
+    },
+    {
+      "id": "host_tools",
+      "type": "external",
+      "label": "主机工装",
+      "sublabel": "tools/preview",
+      "pos": [
+        820,
+        500
+      ],
+      "size": [
+        160,
+        62
+      ],
+      "tag": "主机检查",
+      "icon": "external",
+      "sources": [
+        {
+          "path": "tools/preview/CMakeLists.txt",
+          "label": "复用同一份 UI 源码"
+        },
+        {
+          "path": "components/fnos_monitor/CMakeLists.txt",
+          "label": "固件源码清单"
+        }
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "c1",
+      "from": "nas_hw",
+      "to": "collector",
+      "label": "原始采样",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "c2",
+      "from": "collector",
+      "to": "server",
+      "label": "预编码",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "c3",
+      "from": "server",
+      "to": "net",
+      "label": "HTTPS",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "c4",
+      "from": "net",
+      "to": "poll",
+      "label": "状态 / 传输",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "c5",
+      "from": "poll",
+      "to": "snapshot",
+      "label": "持锁提交",
+      "fromSide": "right",
+      "toSide": "right",
+      "via": [
+        [
+          1290,
+          111
+        ],
+        [
+          1290,
+          351
+        ]
+      ]
+    },
+    {
+      "id": "c6",
+      "from": "snapshot",
+      "to": "ui",
+      "label": "非阻塞读",
+      "fromSide": "left",
+      "toSide": "right"
+    },
+    {
+      "id": "c7",
+      "from": "ui",
+      "to": "bsp",
+      "label": "绘制",
+      "fromSide": "left",
+      "toSide": "right"
+    },
+    {
+      "id": "c8",
+      "from": "bsp",
+      "to": "screen",
+      "label": "MIPI-DSI",
+      "fromSide": "left",
+      "toSide": "right"
+    },
+    {
+      "id": "c9",
+      "from": "pair",
+      "to": "server",
+      "label": "配对握手",
+      "variant": "security",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "id": "c10",
+      "from": "pair",
+      "to": "poll",
+      "label": "令牌 → 端点",
+      "variant": "security",
+      "fromSide": "right",
+      "toSide": "bottom",
+      "via": [
+        [
+          1150,
+          227
+        ]
+      ]
+    },
+    {
+      "id": "c11",
+      "from": "host_tools",
+      "to": "ui",
+      "label": "同一份 fnos_ui.c",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "bottom"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "一条数据路径",
+      "items": [
+        "fnos_poll 是唯一写快照的执行体，LVGL 任务只做非阻塞读",
+        "默认整帧 256 KiB、快照 1 MiB；超预算拒绝新帧并提示容量错误",
+        "六页共用一份快照与曲线环，页面切换不重新取数"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "一份 UI 源码，两个构建目标",
+      "items": [
+        "固件 CMakeLists 显式列源文件，不用 glob（字体是生成的）",
+        "tools/preview 复用 fnos_ui.c + ui_kit + 字体，顶掉 esp_* 与网络层",
+        "fnos_ui_create() 的调用方正是 main/main.cpp 与 tools/preview/preview.c"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "信任不由服务器给",
+      "items": [
+        "证书由板子自取、自算 SHA-256，指纹上屏由人比对",
+        "确认前不发任何带令牌请求，也不接受服务器 JSON 里的指纹字段",
+        "明文连接只放行 GET /api/v1/identity"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "红线：同步 RPC 不进回调",
+      "items": [
+        "esp_wifi_* 经 ESP-Hosted 到 C6，最坏阻塞 5 秒",
+        "只能在普通任务里调，不得进 LVGL 定时器或 esp_timer 回调",
+        "显示锁拿不到时先降级：数据照采，UI 按 5→60 秒退避重建"
+      ]
+    }
+  ]
+}

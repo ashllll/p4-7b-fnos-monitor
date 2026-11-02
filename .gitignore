@@ -53,3 +53,11 @@ procedures/
 # Local experiment and release verification data
 /.scratch/
 /.local-artifacts/
+
+# Local diagram receipts and code-navigation state
+/.archify/
+/.serena/
+/docs/diagrams/*.browser-check.json
+/docs/diagrams/*.delivery.json
+/docs/diagrams/*.finalize-summary.json
+/docs/diagrams/*.finalize.json
