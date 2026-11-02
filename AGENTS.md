@@ -1,10 +1,10 @@
 # p4-7b-fnos-monitor
 
-本目录是 ESP32-P4 7B 的开发工程。继承 `../AGENTS.md` 的嵌入式开发/发布分离规则与用户当前提供的全局协作、技能和设备约束。
+本目录是 ESP32-P4 7B 的发布工程。继承用户当前提供的全局协作、技能、嵌入式开发/发布分离和设备约束。
 
-- **本项目协作规则（开发目录与发布目录均适用）**：Codex 直接完成实现、调查与审核，禁用所有 DeepSeek Harness / DSH 任务委派；此规则覆盖旧的自动委派与 OCR + DSH 流程，只有用户再次明确授权才能恢复。
-- 开发目录：`/Users/llll/code/esp/p4-7b-fnos-monitor`。
-- 发布目录：`/Users/llll/code/esp/p4-7b-fnos-monitor-release`（2026-10-08 已核实独立克隆，main，origin `https://github.com/ashllll/p4-7b-fnos-monitor.git`）。禁止在开发目录执行源码发布、推送或 PR；发布目录保留既有远端历史。
+- **本项目协作规则（开发目录与发布目录均适用）**：由 DSH 直接完成实现、调查与审核，可派 DSH 子代理承担有界工作，但不得把任务委派给 Codex；此规则覆盖旧的「Codex 主导 + 禁用 DSH 委派」与 OCR + DSH 流程。
+- 开发目录线索：`/Users/llll/code/esp/p4-7b-fnos-monitor`；跨目录同步前重新核实其存在性与项目归属。
+- 发布目录：`/Volumes/U/CODE/p4-7b-fnos-monitor-release`（2026-11-02 已核实 Git 根目录，目标分支 `main`，origin `git@github.com:ashllll/p4-7b-fnos-monitor.git`）。禁止在开发目录执行源码发布、推送或 PR；发布目录保留既有远端历史。
 - 真实配置 `components/fnos_monitor/fnos_config.h` 留本地，使用 `.example.h`；不发布个人固件、串口日志、截图或凭据。
 - UI 唯一源码是 `components/fnos_monitor/fnos_ui.c` + `ui_kit` 构件；旧 JSON/MVVM 管线已移除。当前实现见 `docs/ui-v12-lvgl-native.md`，最新整改与验证见 `docs/ui-fixes-2026-10-07.md`；总览环表/趋势/卷比较设计合同与验证见 `docs/ui-overview-cuktech.md`；六页骨架重排（六页 IA + 12 栅格 + 首页 443px 纵向预算）见 `docs/ui-iter3-skeleton-2026-10-08.md`，剩余问题清零（告警页体检块、温度展开串口取证、结论带 %d 漏屏修复）见 `docs/ui-iter4-remaining-2026-10-08.md`。
 - 公开默认主题为 `michka`，当前设计见 `docs/ui-michka-slate-2026-10-22.md`，本地 `sdkconfig` 的主题选择优先。以下保留历史视觉方向 `docs/ui-cuktech-2026-10-14.md`：当时默认 `cuktech-console` 主题（ULTRA 黑底蓝青／朱红；配色与发布证据见 `docs/ui-ultra-release-2026-10-14.md`）、图表与仪表数字优先、全宽内容和底部页导航、按设备排列的遥测单元；六页、详情、诊断、配网与配对使用同一套组件语言。2026-10-20 的工艺整改、图标层与首页重排（读数与单位同原子、顶栏入口常驻、详情面板收回内容区、卡头/行内笔画图标、hero 首行 + 2×2 状态瓦片、告警事件流）见 `docs/ui-craft-2026-10-20.md`。原 UniFi 方案保留为历史记录 `docs/ui-unifi-v11-2026-10-12.md`；原生跟手动效的历史记录见 `docs/ui-device-reference.md`。改动页面控制器后同时运行 `PREVIEW_MOTION` 及首次入页/重复目标回归，命令见 `tools/preview/README.md`。
