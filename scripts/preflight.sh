@@ -34,14 +34,22 @@ if [ "$MODE" = staged ]; then
 
   hits=$(printf '%s\n' "$staged" | while IFS= read -r f; do
     [ -n "$f" ] && [ -f "$f" ] || continue
-    sz=$(stat -c %s "$f" 2>/dev/null || echo 0)
+    sz=$(wc -c < "$f" 2>/dev/null | tr -d '[:space:]')
+    sz=${sz:-0}
     [ "$sz" -gt 10485760 ] && echo "$f ($((sz / 1048576)) MB)"
   done)
   [ -z "$hits" ] && note blobs-over-10MB pass || bad blobs-over-10MB "$hits"
 
+  # 占位符只对“命中的密钥片段”生效，不能按整行丢弃：
+  # 一行里同时有真密钥和 example 时，整行过滤会静默漏检。
   cred=$(git diff --cached -U0 2>/dev/null | grep -E '^\+' | grep -vE '^\+\+\+' | sed 's/^+//' \
     | grep -nE '(-----BEGIN [A-Z ]*PRIVATE KEY-----)|(gh[pousr]_[A-Za-z0-9]{20,})|(sk-[A-Za-z0-9]{20,})|(AKIA[0-9A-Z]{16})|(xox[abprs]-[A-Za-z0-9-]{10,})' \
-    | grep -vE '(<[^>]{1,40}>)|(xxx)|(REDACTED)|(example)|(YOUR_)' || true)
+    | python3 -c 'import re,sys
+pat=re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----|gh[pousr]_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|xox[abprs]-[A-Za-z0-9-]{10,}")
+ph=("<","xxx","redacted","example","your_")
+for line in sys.stdin:
+    if any(not any(h in m.group(0).lower() for h in ph) for m in pat.finditer(line)):
+        sys.stdout.write(line)' || true)
   [ -z "$cred" ] && note credential-scan pass || bad credential-scan "$cred"
 fi
 

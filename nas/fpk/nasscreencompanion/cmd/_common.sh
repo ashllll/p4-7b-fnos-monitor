@@ -309,7 +309,9 @@ for use_tls in (True, False):
             if not chunk:
                 break
             buf += chunk
-            if b'"ok"' in buf:
+            # 403 的失败体也是 {"ok":false}，子串 "ok" 会把失败判成存活；
+            # 去掉空白后只认 "ok":true。
+            if b'"ok":true' in buf.replace(b" ", b"").replace(b"\n", b""):
                 sys.exit(0)
     except Exception:
         pass

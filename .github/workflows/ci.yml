@@ -132,8 +132,8 @@ jobs:
           mkdir -p release
           cp artifacts/build/fnos_monitor.bin artifacts/build/bootloader/bootloader.bin \
              artifacts/build/partition_table/partition-table.bin release/
-          cp artifacts/build/fnos_monitor.elf artifacts/build/fnos_monitor.map release/ || true
-          cp artifacts/build/flasher_args.json release/ || true
+          cp artifacts/build/fnos_monitor.elf artifacts/build/fnos_monitor.map release/
+          cp artifacts/build/flasher_args.json release/
           cat > release/FLASH.txt <<'EOF'
           Flash with the ESP-IDF in the release notes' version:
 

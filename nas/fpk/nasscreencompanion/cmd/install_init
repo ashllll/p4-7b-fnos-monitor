@@ -28,8 +28,13 @@ else
   esac
 fi
 
-if [ "$W_PORT" != "$DEV_AGENT_PORT" ] && port_busy "$DEV_AGENT_PORT"; then
-  say "检测到 $DEV_AGENT_PORT 上有服务（应为开发版采集器）。两者可以并存：本应用用 ${W_PORT}，安装和运行都不会改动它。"
+if [ "$W_PORT" != "$DEV_AGENT_PORT" ]; then
+  port_busy "$DEV_AGENT_PORT"; dev_rc=$?
+  case "$dev_rc" in
+    0) say "检测到 $DEV_AGENT_PORT 上有服务（应为开发版采集器）。两者可以并存：本应用用 ${W_PORT}，安装和运行都不会改动它。" ;;
+    1) ;;
+    *) say "无法判定 $DEV_AGENT_PORT 是否被占用（不影响安装；本应用用 ${W_PORT}）。" ;;
+  esac
 fi
 
 if [ "$W_AUTH" = "lan" ]; then

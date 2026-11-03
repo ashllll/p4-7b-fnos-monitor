@@ -1061,6 +1061,9 @@ class Handler(BaseHTTPRequestHandler):
                 want = int((q.get("n") or [""])[0])
             except (TypeError, ValueError):
                 want = 0
+            # 负数会走 read_history 的“全量”分支，恰好触发注释要防的截断重试；
+            # 上限也夹到实际历史长度，避免超长响应。
+            want = 0 if want <= 0 else min(want, len(coll.history))
             rows = coll.read_history(want)
             return self._send(200, {"cols": ["ts", "cpu", "mem", "rx_kbs", "tx_kbs", "temp_max"],
                                     "rows": rows, "n": len(rows)})
@@ -1857,6 +1860,7 @@ def main_with_exit_receipt(argv=None):
     finally:
         if serving:
             target = os.path.join(os.path.dirname(cfg_path()), "service-exit.json")
+            os.makedirs(os.path.dirname(target), exist_ok=True)
             fd, candidate = tempfile.mkstemp(prefix=".service-exit-", dir=os.path.dirname(target))
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as stream:
