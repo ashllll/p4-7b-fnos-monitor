@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>代码审核报告 · p4-7b-fnos-monitor · 2026-11-03</title>
+<style>
+  :root{
+    --bg:#0e1116; --bg2:#151a21; --bg3:#1c232c; --fg:#e6edf3; --muted:#9aa7b4;
+    --line:#2a3441; --accent:#5ac8fa; --accent2:#7ee787; --warn:#f0b429; --bad:#ff7b72; --p3:#a5a5ff;
+    --chip:#20262f; --shadow:0 8px 30px rgba(0,0,0,.35);
+  }
+  [data-theme="light"]{
+    --bg:#f6f8fa; --bg2:#ffffff; --bg3:#eef1f5; --fg:#1f2328; --muted:#5b6572;
+    --line:#d8dee6; --accent:#0969da; --accent2:#1a7f37; --warn:#9a6700; --bad:#cf222e; --p3:#6639ba;
+    --chip:#eaeef2; --shadow:0 8px 24px rgba(31,35,40,.10);
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans SC",sans-serif}
+  a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline}
+  code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.9em}
+  code{background:var(--bg3);padding:.1em .35em;border-radius:5px}
+  header{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+  .bar{max-width:1180px;margin:0 auto;padding:12px 20px;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+  .brand{font-weight:700;letter-spacing:.02em;margin-right:auto}
+  .brand small{color:var(--muted);font-weight:500;margin-left:8px}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  button.chip{background:var(--chip);color:var(--fg);border:1px solid var(--line);border-radius:999px;padding:5px 12px;cursor:pointer;font-size:13px}
+  button.chip[aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
+  #theme{background:var(--chip);border:1px solid var(--line);color:var(--fg);border-radius:8px;padding:6px 10px;cursor:pointer}
+  .wrap{max-width:1180px;margin:0 auto;padding:28px 20px 80px;display:grid;grid-template-columns:220px minmax(0,1fr);gap:34px}
+  nav.toc{position:sticky;top:76px;align-self:start;font-size:13px}
+  nav.toc a{display:block;color:var(--muted);padding:5px 8px;border-left:2px solid transparent}
+  nav.toc a.active{color:var(--accent);border-left-color:var(--accent);background:var(--bg2)}
+  h1{font-size:30px;margin:0 0 6px} h2{font-size:21px;margin:38px 0 12px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+  h3{font-size:16px;margin:22px 0 8px}
+  p{color:var(--fg)} .muted{color:var(--muted)}
+  .lead{color:var(--muted);font-size:15px;margin:0 0 18px}
+  .grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
+  .card{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:14px 16px;box-shadow:var(--shadow)}
+  .card b{display:block;font-size:13px;color:var(--muted);font-weight:600;margin-bottom:4px}
+  .kpi{font-size:26px;font-weight:700}
+  .pill{display:inline-block;font-size:12px;padding:1px 8px;border-radius:999px;border:1px solid var(--line);color:var(--muted);margin-left:6px;vertical-align:middle}
+  .P1{color:var(--bad);border-color:var(--bad)} .P2{color:var(--warn);border-color:var(--warn)} .P3{color:var(--p3);border-color:var(--p3)}
+  .P0{color:#fff;background:var(--bad);border-color:var(--bad)}
+  .fixed{color:var(--accent2);border-color:var(--accent2)}
+  table{width:100%;border-collapse:collapse;font-size:13.5px;background:var(--bg2);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  th,td{text-align:left;vertical-align:top;padding:9px 11px;border-bottom:1px solid var(--line)}
+  th{background:var(--bg3);color:var(--muted);font-size:12.5px;position:sticky;top:57px;z-index:5}
+  tbody tr:hover{background:var(--bg3)}
+  td code{white-space:nowrap}
+  .tablewrap{overflow-x:auto;border-radius:10px}
+  .hidden{display:none}
+  svg{max-width:100%;height:auto}
+  .note{border-left:3px solid var(--accent);background:var(--bg2);padding:10px 14px;border-radius:0 10px 10px 0;color:var(--muted);margin:14px 0}
+  .note b{color:var(--fg)}
+  footer{max-width:1180px;margin:0 auto;padding:0 20px 50px;color:var(--muted);font-size:13px}
+  ul.tight{margin:6px 0 6px 18px;padding:0} ul.tight li{margin:3px 0}
+  @media (max-width:860px){.wrap{grid-template-columns:1fr}nav.toc{display:none}th{position:static}}
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <div class="brand">代码审核报告 <small>p4-7b-fnos-monitor · 基线 cd608f1 · 2026-11-03</small></div>
+    <div class="chips" id="filters">
+      <button class="chip" data-f="all" aria-pressed="true">全部</button>
+      <button class="chip" data-f="P1" aria-pressed="false">P1</button>
+      <button class="chip" data-f="P2" aria-pressed="false">P2</button>
+      <button class="chip" data-f="P3" aria-pressed="false">P3</button>
+      <button class="chip" data-f="fixed" aria-pressed="false">已修</button>
+    </div>
+    <button id="theme" title="切换深浅色">☾ 主题</button>
+  </div>
+</header>
+
+<div class="wrap">
+  <nav class="toc" id="toc">
+    <a href="#s0">0 · 结论</a>
+    <a href="#s1">1 · 结构与数据流</a>
+    <a href="#s2">2 · 架构审核</a>
+    <a href="#s3">3 · Bug 清单</a>
+    <a href="#s4">4 · 未完成任务</a>
+    <a href="#s5">5 · 本次改动</a>
+    <a href="#s6">6 · 验证</a>
+    <a href="#s7">7 · 待确认问题</a>
+  </nav>
+
+  <main>
+    <h1>代码审核报告</h1>
+    <p class="lead">范围：固件组件与 <code>main</code>、<code>ui_kit</code>、NAS 侧 Python 与 FPK 打包、<code>tools</code> 工装与 CI 脚本。管理型依赖、构建产物与生成字体只核对边界。本页与 <a href="code-audit-2026-11-03.md">Markdown 主文档</a> 同源。</p>
+
+    <h2 id="s0">0. 结论</h2>
+    <div class="grid">
+      <div class="card"><b>已修并验证</b><div class="kpi">20 项</div><span class="muted">B01 / B02 / B03 / B06 / B08 / B10 / B11 / B15 / B16 / B17 / B18 / B19 / B20 / B22 / B24 / B25 / B26 / B29 / B30 / B31</span></div>
+      <div class="card"><b>P0</b><div class="kpi">0</div><span class="muted">未发现阻断级缺陷</span></div>
+      <div class="card"><b>待裁决</b><div class="kpi">12 项</div><span class="muted">P1 1 项；P2/P3 10 项；未确认 1 项</span></div>
+      <div class="card"><b>环境限制</b><div class="kpi">无 IDF</div><span class="muted">固件未编译、未上板</span></div>
+    </div>
+    <div class="note"><b>一句话：</b>分层与所有权模型是清楚的，主要风险集中在「单文件 UI 的时序细节」「两套计数/下标语义」「门禁只覆盖内层包」三类，且都能在不改架构的前提下收敛。</div>
+
+    <h2 id="s1">1. 结构与数据流</h2>
+    <p>四层执行环境：固件层（网络/数据/配对/配网，不画界面）→ 共享 UI 与快照层（LVGL 9.6，只有 LVGL 线程写界面）→ 主机工装层（预览、回归、拍屏，不替代实机）→ NAS 侧 Python（数据源，TCP 8798 TLS；明文引导 8799）。</p>
+    <div class="card">
+      <svg viewBox="0 0 900 300" role="img" aria-label="数据流：NAS 采集器经 TLS 进入固件轮询任务，解析成快照，UI 定时器读取后由 LVGL 渲染">
+        <defs>
+          <marker id="ar" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+            <path d="M0,0 L9,4.5 L0,9 z" fill="currentColor"/>
+          </marker>
+        </defs>
+        <g fill="none" stroke="var(--line)">
+          <rect x="18" y="96" width="176" height="96" rx="12" fill="var(--bg3)"/>
+          <rect x="252" y="40" width="196" height="88" rx="12" fill="var(--bg3)"/>
+          <rect x="252" y="160" width="196" height="88" rx="12" fill="var(--bg3)"/>
+          <rect x="506" y="40" width="180" height="88" rx="12" fill="var(--bg3)"/>
+          <rect x="506" y="160" width="180" height="88" rx="12" fill="var(--bg3)"/>
+          <rect x="742" y="96" width="140" height="96" rx="12" fill="var(--bg3)"/>
+        </g>
+        <g fill="var(--fg)" font-size="13" font-family="inherit">
+          <text x="106" y="128" text-anchor="middle" font-weight="600">NAS 侧服务</text>
+          <text x="106" y="148" text-anchor="middle" fill="var(--muted)">collector / 8798 TLS</text>
+          <text x="106" y="168" text-anchor="middle" fill="var(--muted)">identity 8799 明文</text>
+
+          <text x="350" y="72" text-anchor="middle" font-weight="600">fnos_data · poll 6 KiB</text>
+          <text x="350" y="92" text-anchor="middle" fill="var(--muted)">200 ms · 256 KiB 预算</text>
+          <text x="350" y="110" text-anchor="middle" fill="var(--muted)">HTTPS + /history 回填</text>
+
+          <text x="350" y="192" text-anchor="middle" font-weight="600">fnos_pair · 7 KiB</text>
+          <text x="350" y="212" text-anchor="middle" fill="var(--muted)">取证书 / 核对 / NVS 事务</text>
+
+          <text x="596" y="72" text-anchor="middle" font-weight="600">快照 fnos_snapshot</text>
+          <text x="596" y="92" text-anchor="middle" fill="var(--muted)">PSRAM · 引用计数 · 锁</text>
+          <text x="596" y="110" text-anchor="middle" fill="var(--muted)">status / history / config</text>
+
+          <text x="596" y="192" text-anchor="middle" font-weight="600">fnos_ui · tick 100 ms</text>
+          <text x="596" y="212" text-anchor="middle" fill="var(--muted)">copy / release · 当前页刷新</text>
+
+          <text x="812" y="128" text-anchor="middle" font-weight="600">LVGL 任务</text>
+          <text x="812" y="148" text-anchor="middle" fill="var(--muted)">12 KiB · PSRAM 栈</text>
+          <text x="812" y="168" text-anchor="middle" fill="var(--muted)">1024×600</text>
+        </g>
+        <g stroke="var(--accent)" stroke-width="1.6" fill="none" marker-end="url(#ar)" color="var(--accent)">
+          <path d="M194 130 C220 130 226 84 248 84"/>
+          <path d="M194 158 C220 158 226 200 248 200"/>
+          <path d="M448 84 C476 84 480 84 502 84"/>
+          <path d="M448 200 C476 200 480 200 502 200"/>
+          <path d="M596 128 L596 156"/>
+          <path d="M686 204 C714 204 724 150 738 148"/>
+        </g>
+        <text x="350" y="262" text-anchor="middle" fill="var(--muted)" font-size="12">写快照：持锁 copy → 发布；读快照：非阻塞，锁忙保留上一拍</text>
+        <text x="350" y="282" text-anchor="middle" fill="var(--muted)" font-size="12">主机预览以 stub 顶掉网络/配对，只编译同一批 UI 源，不替代实机验收</text>
+      </svg>
+    </div>
+
+    <h2 id="s2">2. 架构审核（12 条）</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th>编号</th><th>问题</th><th>依据</th><th>建议</th></tr></thead>
+      <tbody>
+    <tr data-sev="P1" data-state="fixed"><td>B01</td><td><span class="pill P1">P1</span></td><td><code>components/fnos_monitor/fnos_ui.c</code> 旧 5616</td><td>配对到非默认地址后，系统页「端点」仍显示 <code>nas.local:8799</code>，排障时指向错误设备</td><td>改为 <code>fnos_pair_view(&amp;ep)</code>，<code>ep.host[0]</code> 时显示 <code>host:port</code>，否则回退默认值</td></tr>
+    <tr data-sev="P2" data-state="fixed"><td>B02</td><td><span class="pill P2">P2</span></td><td><code>components/fnos_monitor/fnos_data.c:586-597</code></td><td>空 history / 404 / 坏 JSON 时每个轮询周期都补发 <code>/api/v1/history</code>，默认 200 ms 一次（≈5 次/秒），长期不止</td><td>增加 <code>hist_next_us</code>，失败后 1 s 内不再重试；端点变化时清零（仍为长期 1 Hz，退避到 60 s 见 Q11）</td></tr>
+    <tr data-sev="P2" data-state="fixed"><td>B03</td><td><span class="pill P2">P2</span></td><td><code>fnos_pair.c:659</code>（do_fetch）、<code>fnos_pair.c:319</code>（probe）、<code>cJSON.h:137</code></td><td>明文 identity 响应若是深层嵌套 JSON，解析递归可耗尽 7 KiB 配对栈，导致崩溃/重启</td><td>解析前括号深度预检（≤16）或限制 identity 长度</td></tr>
+    <tr data-sev="P2" data-state="open"><td>B04</td><td><span class="pill P2">P2</span></td><td><code>nas_companion_server.py:916-923</code></td><td>令牌可作为 <code>?token=</code> 传入</td><td>只在 debug 模式接受 query token</td></tr>
+    <tr data-sev="P3" data-state="open"><td>B05</td><td><span class="pill P3">P3</span></td><td><code>fnos_net.c:504-509</code> 与 <code>:521</code></td><td><code>esp_wifi_set_config</code> 失败时，界面/状态里的 SSID 已切到新值且 <code>s_configured=true</code>，radio 仍在旧配置；重启后才一致</td><td>把状态更新移到 <code>set_config</code> 成功之后（含 <code>current</code> 判定）</td></tr>
+    <tr data-sev="P1" data-state="fixed"><td>B06</td><td><span class="pill P1">P1</span></td><td><code>nas/fpk/verify_package_sources.py</code> 旧 43-45</td><td>只比 <code>app.tgz</code>；root 侧 <code>cmd/</code>、<code>wizard/</code>、图标改动不重新 fnpack 也能过门禁，发布包可能带旧启动脚本</td><td>增加外层双向比对（cmd/wizard/ICON，跳过 manifest 与生成文件），默认 <code>root=source.parent</code>；自测覆盖匹配/内容不同/缺失</td></tr>
+    <tr data-sev="P2" data-state="open"><td>B07</td><td><span class="pill P2">P2</span></td><td><code>nas/fpk/contract_check.py:208</code></td><td>字段改名可被裸赋值正则误认，契约检查假通过（如 <code>_volumes</code> 内局部 <code>pct</code>）</td><td>裸赋值只接受顶层缩进/已知前缀，或改用 AST 取快照键</td></tr>
+    <tr data-sev="P2" data-state="fixed"><td>B08</td><td><span class="pill P2">P2</span></td><td><code>nas_companion_server.py:1859-1860</code></td><td>退出收据目录未建，<code>finally</code> 里 <code>mkstemp</code> 抛异常会吞真实退出码且不留 <code>service-exit.json</code></td><td>写收据前 <code>mkdir -p</code>，异常不覆盖退出码</td></tr>
+    <tr data-sev="P2" data-state="open"><td>B09</td><td><span class="pill P2">P2</span></td><td><code>cmd/main:213-220</code>、<code>cmd/upgrade_init:43</code>、<code>cmd/config_callback:19-23</code></td><td>服务已被 KILL/非 0 退出仍判 stop 失败，升级/改配置被误拒</td><td>先判进程存在；KILL 后按预期终态放行</td></tr>
+    <tr data-sev="P2" data-state="fixed"><td>B10</td><td><span class="pill P2">P2</span></td><td><code>scripts/preflight.sh:37</code></td><td>macOS BSD <code>stat</code> 无 <code>-c</code>，`\</td><td>改 <code>wc -c &lt; "$f"</code> 并去空白</td></tr>
+    <tr data-sev="P2" data-state="fixed"><td>B11</td><td><span class="pill P2">P2</span></td><td><code>scripts/preflight.sh:44</code></td><td>按整行含 example/xxx/REDACTED 跳过，同行真密钥漏检</td><td>改为对命中 token 做占位符判定</td></tr>
+    <tr data-sev="P2" data-state="open"><td>B12</td><td><span class="pill P2">P2</span></td><td><code>fnos_collector.py:795-797</code></td><td>负温与 0 °C 通道被当「无传感器」丢弃，且无上限校验</td><td>只跳过读取失败；合法范围做上下限夹取</td></tr>
+    <tr data-sev="P2" data-state="open"><td>B13</td><td><span class="pill P2">P2</span></td><td><code>nas_companion_server.py:971/991/1119/1211</code></td><td>500 回显异常类型与文本、404 回显请求路径</td><td>统一通用错误文案，细节只进日志</td></tr>
+    <tr data-sev="P2" data-state="open"><td>B14</td><td><span class="pill P2">P2</span></td><td><code>nas_companion_server.py:767</code></td><td>501 只发 <code>Connection: close</code> 头、不置 <code>close_connection</code>，未读 body 被当下一请求解析</td><td>501 同时置 <code>close_connection</code></td></tr>
+    <tr data-sev="P2" data-state="fixed"><td>B15</td><td><span class="pill P2">P2</span></td><td><code>cmd/_common.sh:312</code></td><td>健康探针只匹配 <code>b'"ok"'</code> 子串，403 的 <code>{"ok":false}</code> 也判活</td><td>解析 JSON 并判 <code>ok is True</code></td></tr>
+    <tr data-sev="P1" data-state="fixed"><td>B16</td><td><span class="pill P1">P1</span></td><td><code>fnos_ui.c:1586</code></td><td>点行开详情时先 <code>page_motion_settle()</code>，它可能同步 <code>refresh()</code> 并在 <code>rows_sync()</code> 里删除该行；随后读 <code>row-&gt;name1</code> 等是 use-after-free</td><td>先取文本再 settle，或 settle 后不再触碰 <code>row</code>（不能只判 <code>row-&gt;row</code>，<code>row</code> 本身已释放）</td></tr>
+    <tr data-sev="P1" data-state="fixed"><td>B17</td><td><span class="pill P1">P1</span></td><td><code>fnos_ui.c:5666</code> 与 <code>5670-5676</code></td><td>告警行按 <code>total</code> 增删、按分组过滤后的 <code>k</code> 填充；两套计数口径不一致时多出的行保留上一拍旧文案</td><td>以过滤后实际条数为准建行，循环后清空剩余行</td></tr>
+    <tr data-sev="P1" data-state="fixed"><td>B18</td><td><span class="pill P1">P1</span></td><td><code>fnos_ui.c:3163</code> / <code>3295-3298</code></td><td>Wi-Fi 行用「建行时的 AP 下标」索引「点击瞬间重扫结果」；重扫完成到下一拍重填之间会点错网络</td><td>按 SSID 文本匹配新结果，失配提示「列表已更新」</td></tr>
+    <tr data-sev="P2" data-state="fixed"><td>B19</td><td><span class="pill P2">P2</span></td><td><code>ui_kit/uk.c:1290</code></td><td><code>trend_rebase</code> 未判空 <code>lv_chart_get_series_x_array</code>（同文件 <code>uk_trend_clear</code> 已判），图表未布局时解引用 NULL</td><td><code>if (!x) continue;</code></td></tr>
+    <tr data-sev="P2" data-state="fixed"><td>B20</td><td><span class="pill P2">P2</span></td><td><code>ui_kit/uk.c:1557</code></td><td><code>uk_anim_reveal</code> 缺空指针保护，构件分配失败后被调用即空指针写</td><td>首行 <code>if (!panel) return;</code></td></tr>
+    <tr data-sev="P2" data-state="open"><td>B21</td><td><span class="pill P2">P2</span></td><td><code>fnos_ui.c:3925-3929</code></td><td>温度页每帧对分组做 O(g²) 同名去重，且每组一次 <code>uk_alloc</code>；24 路通道即每 100 ms O(n²)+n 次分配，全在 LVGL 任务</td><td>按 <code>ntemps</code>/名字指纹缓存分组，或排序后相邻比较</td></tr>
+    <tr data-sev="P2" data-state="fixed"><td>B22</td><td><span class="pill P2">P2</span></td><td><code>fnos_ui.c:341-346</code></td><td>超长文本 <code>uk_alloc</code> 失败时无 else，label 静默保留旧文案（诊断页「最近错误」等）</td><td>失败时写「文本过长」或由 <code>inventory_notice()</code> 统一提示</td></tr>
+    <tr data-sev="P2" data-state="open"><td>B23</td><td><span class="pill P2">P2</span></td><td><code>fnos_ui.c:5541</code></td><td>温度块扩容失败直接降到已建块数，少显示设备但温度页无「还有 N 台未显示」说明</td><td>记录 <code>s_tgrp_n - nblk</code> 并写入页脚提示</td></tr>
+    <tr data-sev="P1" data-state="fixed"><td>B24</td><td><span class="pill P1">P1</span></td><td><code>fnos_net.c:442</code>（状态优先级）、<code>:241-247</code>、<code>:498-501</code>、<code>:665-667</code></td><td>提交失败（NVS 写失败或 30 s 超时）后状态置 FAILED；若旧连接仍在或 AP 迟到连上，<code>fnos_net_state()</code> 让 FAILED 压过 ONLINE，顶栏长期显示「Wi-Fi 未连接」，直到重启或再碰键盘</td><td>FAILED 仅在 <code>!s_online</code> 时返回；GOT_IP 对同代次 FAILED 也清回 IDLE</td></tr>
+    <tr data-sev="P2" data-state="fixed"><td>B25</td><td><span class="pill P2">P2</span></td><td><code>fnos_net.c:596</code></td><td>扫描结果 <code>calloc</code> 失败直接 return，未释放驱动侧 AP 列表，滞留到下次 <code>esp_wifi_scan_start</code></td><td>失败分支先清列表再置失败</td></tr>
+    <tr data-sev="P2" data-state="fixed"><td>B26</td><td><span class="pill P2">P2</span></td><td><code>fnos_pair.c:1064-1067</code>、<code>fnos_data.c:566</code></td><td>配对任务两次创建都失败后，每个轮询周期（200 ms）重试并打一条 ERROR，内存碎片化时持续刷屏</td><td>失败后 30 s 重试或置不可用，generation 变化时重开</td></tr>
+    <tr data-sev="P2" data-state="open"><td>B27</td><td><span class="pill P2">P2</span></td><td><code>fnos_pair.c:901-905</code>、<code>:1111</code>、<code>:1088</code></td><td>配对落盘在状态锁内做 NVS 写（含证书 1–2 KB、两次 commit），期间 LVGL 在 <code>fnos_pair_view</code> 上无限等锁、poll 在 generation 上等锁 → 整帧停顿、遥测停拍</td><td>锁外落盘，成功后短暂持锁发布；或给 view 加 0 超时版本</td></tr>
+    <tr data-sev="未确认" data-state="unknown"><td>B28</td><td><span class="pill 未确认">未确认</span></td><td><code>fnos_net.c:570</code>、<code>:628</code>、<code>:685</code></td><td>若扫描被连接中止时 ESP-Hosted 不上报 <code>SCAN_DONE</code>，<code>s_scan_busy</code> 永远为真，后续扫描请求全被挡</td><td>先取实机串口日志确认；确认后加 10 s 超时</td></tr>
+    <tr data-sev="P2" data-state="fixed"><td>B29</td><td><span class="pill P2">P2</span></td><td><code>nas_companion_server.py:1061</code>、<code>fnos_collector.py:199</code></td><td><code>/api/v1/history?n=-1</code> 会返回全量历史（最多 3600 行、约 151 KB），正是 1057-1060 行注释要防的「板子 32 KB 缓冲截断→解析失败→每秒重试」场景；负数把防护反转成放大</td><td><code>want = 0 if want &lt;= 0 else min(want, hist_len)</code></td></tr>
+    <tr data-sev="P2" data-state="fixed"><td>B30</td><td><span class="pill P2">P2</span></td><td><code>.github/workflows/ci.yml:135-136</code>、<code>:141</code></td><td>`cp artifacts/build/{flasher_args.json,…} release/</td><td>true` 改硬失败，或 FLASH.txt 条件生成</td></tr>
+    <tr data-sev="P2" data-state="fixed"><td>B31</td><td><span class="pill P2">P2</span></td><td><code>nas/fpk/nasscreencompanion/cmd/install_init:31</code></td><td><code>port_busy</code> 的三态（0 占用/1 空闲/2 未判定）被 <code>&amp;&amp;</code> 压成布尔，返回 2 时误印「检测到 8799 上有服务…可以并存」；无 /proc、lsof 不可用时触发，只影响提示</td><td><code>port_busy…; case $? in</code> 分别提示</td></tr>
+    <tr data-sev="P1" data-state="open"><td>B32</td><td><span class="pill P1">P1</span></td><td><code>fnos_ui.c:101</code>、<code>:3151</code>、<code>:3200</code></td><td>配网 AP 只建 7 行，超过 7 个不显示、不提示、不可滚动；提示行「共 %d 个网络」用的是截断后的 n，数字本身是错的。项目硬规则要求清单随数据自适应</td><td>行数随扫描结果自适应并池内滚动，提示用真实总数；需预览与实机回归</td></tr>
+  </tbody>
+    </table></div>
+
+    <h2 id="s3">3. Bug 清单</h2>
+    <p class="muted">点击顶部筛选按级别或状态过滤；<code>已修</code> 表示已改且通过对应验证。带「待确认」的条目在等行为裁决，不是已知可修未修。</p>
+    <div class="tablewrap"><table id="bugs">
+      <thead><tr><th>编号</th><th>级别</th><th>位置</th><th>现象</th><th>修复 / 状态</th></tr></thead>
+      <tbody>
+  </tbody>
+    </table></div>
+
+    <h2 id="s4">4. 未完成任务</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th>项</th><th>内容</th><th>状态</th><th>条件</th></tr></thead>
+      <tbody>
+        <tr><td>T01</td><td>帧距与尾帧</td><td>受阻</td><td>需实机长序列采集</td></tr>
+        <tr><td>T02</td><td>michka 迁移分段验证</td><td>受阻</td><td>无可用远程客户端</td></tr>
+        <tr><td>T03</td><td>物理屏与真实触控</td><td>受阻</td><td>需板子与 capture-board</td></tr>
+        <tr><td>T04</td><td>72 h 长测</td><td>受阻</td><td>需连续运行环境；现有心跳 1,262 条不足</td></tr>
+        <tr><td>T05</td><td>NVS 掉电/旧格式/耗尽</td><td>受阻</td><td>需可断电真机；事务屏障已核</td></tr>
+        <tr><td>T06</td><td>FPK 真实 NAS 升级</td><td>受阻</td><td>需真实 fnOS</td></tr>
+        <tr><td>T07</td><td>文档清理</td><td>已完成</td><td>入口收敛到当前待办表</td></tr>
+        <tr><td>T08</td><td>图标/渐变/详情定位</td><td>部分完成</td><td>物理验收部分受阻</td></tr>
+        <tr><td>T09</td><td>原版发行资产字节一致性</td><td>受阻</td><td>需原始发行物；去注释后相等</td></tr>
+        <tr><td>T10</td><td>数字动效肉眼体验</td><td>受阻</td><td>需人工确认</td></tr>
+  </tbody>
+    </table></div>
+
+    <h2 id="s5">5. 本次改动</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th>文件</th><th>改动</th><th>理由</th><th>风险</th></tr></thead>
+      <tbody>
+  </tbody>
+    </table></div>
+
+    <h2 id="s6">6. 验证</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th>检查</th><th>命令</th><th>结果</th></tr></thead>
+      <tbody>
+        <tr><td>主机预览 + 四项布局审计</td><td><code>bash tools/preview/run.sh &lt;新目录&gt;</code></td><td>EXIT=0；字形/标签/子对象/点击重叠、温度阈值全 PASS</td></tr>
+        <tr><td>历史解析回归</td><td><code>python3 tools/test_history.py</code></td><td>11 用例 + ASan/UBSan PASS</td></tr>
+        <tr><td>打包门禁自测 / 实包</td><td><code>verify_package_sources.py --self-test</code> / 无参</td><td>PASS；实包 26 files match</td></tr>
+        <tr><td>提交前闸门</td><td><code>bash scripts/preflight.sh</code></td><td>PASS；11 MB 文件判 flagged</td></tr>
+        <tr><td>固件构建 / 栈预算 / 实机</td><td><code>idf.sh build</code> · <code>stack_check.py</code> · <code>--flash --photo</code></td><td>未执行：本机无 ESP-IDF / 无设备</td></tr>
+  </tbody>
+    </table></div>
+    <div class="note"><b>诚实边界：</b><code>fnos_data.c</code> 与 <code>uk.c</code> 的改动没有经过固件编译器；预览构建覆盖了 UI 与 ui_kit，但覆盖不到数据层。建议在有 IDF 的机器上补 <code>idf.sh build</code> + <code>stack_check.py</code>。</div>
+
+    <h2 id="s7">7. 待确认问题</h2>
+    <ul class="tight">
+      <li><b>Q1</b> 深层 JSON 打崩配对任务是否纳入威胁模型（B03）。</li>
+      <li><b>Q2</b> <code>?token=</code> 是否还有调用方（B04）。</li>
+      <li><b>Q3</b> 是否现在调整 <code>s_configured</code> 更新顺序（B05）。</li>
+      <li><b>Q4</b> 是否接受 UI 线程落盘瞬间的短暂阻塞（A05）。</li>
+      <li><b>Q5</b> 是否把 A02（双清单对齐）纳入本轮。</li>
+      <li><b>Q6</b> 报告是否随提交入库。</li>
+      <li><b>Q7</b> 是否收紧 <code>contract_check.py</code> 的裸赋值兜底（B07）。</li>
+      <li><b>Q8</b> 是否改 <code>preflight.sh</code> 的凭据过滤（B11）。</li>
+      <li><b>Q9</b> B16–B18 三个 P1 交互缺陷是否纳入本轮（建议修 B16、B18，B17 需先对照计数口径）。</li>
+      <li><b>Q10</b> 已处理：配网失败不再压过在线（B24，已修）。</li>
+      <li><b>Q11</b> 历史回填长期 1 Hz 是否改成退避到 60 s（B02 残余）。</li>
+    </ul>
+    <p class="muted">本次未提交、未推送；按约定等待确认后再走 git 流程。</p>
+  </main>
+</div>
+<footer>生成于 2026-11-03 · 与 <a href="code-audit-2026-11-03.md">Markdown 主文档</a> 同步维护 · 严重度来自代码证据，非推测。</footer>
+<script>
+(function(){
+  const root=document.documentElement, btn=document.getElementById('theme');
+  const saved=localStorage.getItem('fnos-audit-theme');
+  if(saved) root.dataset.theme=saved;
+  const sync=()=>{btn.textContent=root.dataset.theme==='dark'?'☾ 主题':'☀ 主题';};
+  sync();
+  btn.addEventListener('click',()=>{root.dataset.theme=root.dataset.theme==='dark'?'light':'dark';localStorage.setItem('fnos-audit-theme',root.dataset.theme);sync();});
+
+  const rows=[...document.querySelectorAll('#bugs tbody tr')];
+  const chips=[...document.querySelectorAll('#filters .chip')];
+  chips.forEach(c=>c.addEventListener('click',()=>{
+    chips.forEach(x=>x.setAttribute('aria-pressed',String(x===c)));
+    const f=c.dataset.f;
+    rows.forEach(r=>{
+      const ok = f==='all' || (f==='fixed'? r.dataset.state==='fixed' : r.dataset.sev===f);
+      r.classList.toggle('hidden',!ok);
+    });
+  }));
+
+  const links=[...document.querySelectorAll('nav.toc a')];
+  const secs=links.map(a=>document.querySelector(a.getAttribute('href'))).filter(Boolean);
+  const io=new IntersectionObserver(es=>{
+    es.forEach(e=>{ if(e.isIntersecting){ links.forEach(a=>a.classList.toggle('active',a.getAttribute('href')==='#'+e.target.id)); }});
+  },{rootMargin:'-20% 0px -70% 0px'});
+  secs.forEach(s=>io.observe(s));
+})();
+</script>
+</body>
+</html>
