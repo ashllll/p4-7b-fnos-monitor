@@ -549,6 +549,7 @@ static void poll_task(void *arg)
     size_t buf_capacity = 0;
     static EXT_RAM_BSS_ATTR fnos_status_t tmp;   // 解析暂存（PSRAM）
     bool hist_done = false;
+    int64_t hist_next_us = 0;   // 失败后最早再试时刻；没有它每个轮询周期都会重发
     int backoff = 0;
     int log_div = 0;
 
@@ -568,6 +569,7 @@ static void poll_task(void *arg)
             apply_endpoint();               // 刚配对完 / 刚撤销：换到新端点
             history_reset();
             hist_done = false;
+            hist_next_us = 0;
         }
         if (!fnos_net_online()) {
             mark_link_down();
@@ -583,12 +585,15 @@ static void poll_task(void *arg)
             commit_status(&tmp, ms, status_code);
             adopt_nas_time();
             backoff = 0;
-            if (!hist_done) {               // 首次成功：回填开机前的曲线
+            // 失败时按「每秒一次」节流：否则空 history / 404 / 坏数据会让每个
+            // 轮询周期都补发一次 GET（默认 200ms，等于把请求量放大约 5 倍）。
+            if (!hist_done && esp_timer_get_time() >= hist_next_us) {
                 char *hbuf = NULL;
                 size_t hcap = 0;
                 int hs = 0, hl = 0, hm = 0;
                 if (http_get(s_url_hist, &hbuf, &hcap, HIST_BUF_SIZE, &hs, &hl, &hm) && hs == 200)
                     hist_done = parse_history(hbuf);
+                if (!hist_done) hist_next_us = esp_timer_get_time() + 1000 * 1000;
                 free(hbuf);
             }
             if (++log_div >= 30) {          // 每 30 秒一条，够串口核对

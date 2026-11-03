@@ -341,6 +341,9 @@ static void set_text_v(lv_obj_t *label, bool animate, const char *fmt, va_list a
         vsnprintf(text,(size_t)n+1,fmt,ap);
         uk_number_set_text(label,text,animate);
         lv_free(text);
+    } else {
+        /* 分配失败不能静默保留旧文案：屏上会显示上一拍的内容，看起来像新数据。 */
+        uk_number_set_text(label, "文本过长", animate);
     }
 }
 
@@ -1583,13 +1586,46 @@ static void detail_card_stop_cb(lv_event_t *e)
 static void entity_open_cb(lv_event_t *e)
 {
     uk_row_t *row = lv_event_get_user_data(e);
+    /* 先把行上的内容整段抄走：page_motion_settle() 可能同步跑 refresh()，
+       rows_sync() 会删掉当前行，之后再读 row 就是已释放内存。
+       不能用定长 snprintf——长名字会在 UTF-8 中间截断，屏上出现乱码。 */
+    const char *p1 = lv_label_get_text(row->name1);
+    const char *p2 = lv_label_get_text(row->name2);
+    const char *pv = lv_label_get_text(row->val);
+    const char *pu = lv_label_get_text(row->unit);
+    char *name1 = uk_alloc(strlen(p1) + 1);
+    char *name2 = uk_alloc(strlen(p2) + 1);
+    char *vv = uk_alloc(strlen(pv) + 1);
+    char *uu = uk_alloc(strlen(pu) + 1);
+    if (name1) memcpy(name1, p1, strlen(p1) + 1);
+    if (name2) memcpy(name2, p2, strlen(p2) + 1);
+    if (vv) memcpy(vv, pv, strlen(pv) + 1);
+    if (uu) memcpy(uu, pu, strlen(pu) + 1);
+    lv_color_t val_color = lv_obj_get_style_text_color(row->val, 0);
+    char freshness[64];
+    snprintf(freshness, sizeof freshness, "%s", s_st.online ? "采集在线" : "采集不可用，保留上次读数");
+    lv_obj_t *cards[] = {s_ui.vol_card, s_ui.raid_card, s_ui.disk_card,
+                        s_ui.net_card, s_ui.dock_card, s_ui.p3_temp_card};
+    for (lv_obj_t *parent = lv_obj_get_parent(row->row); parent; parent = lv_obj_get_parent(parent)) {
+        for (unsigned i = 0; i < sizeof cards / sizeof cards[0]; i++) {
+            if (parent == cards[i])
+                snprintf(freshness, sizeof freshness, "%s", lv_label_get_text(uk_card_note(parent)));
+        }
+    }
     page_motion_settle();
+    if (!name1 || !name2 || !vv || !uu) {
+        if (name1) lv_free(name1);
+        if (name2) lv_free(name2);
+        if (vv) lv_free(vv);
+        if (uu) lv_free(uu);
+        set_txt(s_ui.detail_name, "%s", "详情暂不可用");
+        set_txt(s_ui.detail_meta, "%s", "界面内存不足 · 返回列表后重试");
+        set_txt(s_ui.detail_value, "%s", "");
+        return;
+    }
     set_txt(s_ui.detail_name, "%s", ""); set_txt(s_ui.detail_meta, "%s", "");
     set_txt(s_ui.detail_value, "%s", "");
-    set_txt(s_ui.detail_name, "%s", lv_label_get_text(row->name1));
-    const char *n2 = lv_label_get_text(row->name2);
-    const char *vv = lv_label_get_text(row->val);
-    const char *uu = lv_label_get_text(row->unit);
+    set_txt(s_ui.detail_name, "%s", name1);
     char value[128];
     snprintf(value, sizeof value, "%s %s", vv, uu);
     size_t vl = strlen(value);
@@ -1598,29 +1634,22 @@ static void entity_open_cb(lv_event_t *e)
     while (*val_start == ' ') val_start++;
     /* 容器行 name2 的第一行与 val/unit 都是“上次运行中”，详情里会连印两遍；
        只去掉那第一行，name2 后面的 CPU/重启行仍要保留。 */
-    const char *meta = n2;
-    const char *nl = strchr(n2, '\n');
+    const char *meta = name2;
+    const char *nl = strchr(name2, '\n');
     char first_line[96];
     if (nl) {
-        size_t fl = (size_t)(nl - n2);
+        size_t fl = (size_t)(nl - name2);
         if (fl >= sizeof first_line) fl = sizeof first_line - 1;
-        memcpy(first_line, n2, fl); first_line[fl] = '\0';
+        memcpy(first_line, name2, fl); first_line[fl] = '\0';
     }
-    const char *n2_first = nl ? first_line : n2;
+    const char *n2_first = nl ? first_line : name2;
     if (!strcmp(n2_first, vv) || !strcmp(n2_first, uu) || !strcmp(n2_first, val_start))
         meta = nl ? nl + 1 : "";
     set_txt(s_ui.detail_meta, "%s", meta);
     set_txt(s_ui.detail_value, "%s", value);
-    lv_obj_set_style_text_color(s_ui.detail_value, lv_obj_get_style_text_color(row->val, 0), 0);
-    const char *freshness = s_st.online ? "采集在线" : "采集不可用，保留上次读数";
-    lv_obj_t *cards[] = {s_ui.vol_card, s_ui.raid_card, s_ui.disk_card,
-                        s_ui.net_card, s_ui.dock_card, s_ui.p3_temp_card};
-    for (lv_obj_t *parent = lv_obj_get_parent(row->row); parent; parent = lv_obj_get_parent(parent)) {
-        for (unsigned i = 0; i < sizeof cards / sizeof cards[0]; i++) {
-            if (parent == cards[i]) freshness = lv_label_get_text(uk_card_note(parent));
-        }
-    }
+    lv_obj_set_style_text_color(s_ui.detail_value, val_color, 0);
     set_txt(s_ui.detail_context, "%s · 打开时快照 · %s", NAV_TXT[s_page], freshness);
+    lv_free(name1); lv_free(name2); lv_free(vv); lv_free(uu);
     if (uk_alloc_failed()) {
         set_txt(s_ui.detail_name, "%s", "详情暂不可用");
         set_txt(s_ui.detail_meta, "%s", "界面内存不足 · 返回列表后重试");
@@ -3292,10 +3321,22 @@ static void wifi_pick(const fnos_ap_t *a)
 
 static void wifi_ap_cb(lv_event_t *e)
 {
-    int idx = (int)(intptr_t)lv_event_get_user_data(e);
+    int slot = (int)(intptr_t)lv_event_get_user_data(e);
+    if (slot < 0 || slot >= WIFI_AP_ROWS || !s_ui.wifi_ap_row[slot]) return;
+    /* 列表按扫描顺序填；扫描结果随时会重排，不能拿建行时的下标直接索引
+       重扫后的数组（中间那一小段时间会点错网络）。用行上当前的 SSID 找。 */
+    const char *want = lv_label_get_text(s_ui.wifi_ap_row[slot]->name1);
     fnos_ap_t aps[FNOS_AP_MAX];
     int n = fnos_net_scan_results(aps, FNOS_AP_MAX);
-    if (idx < 0 || idx >= n) return;
+    int idx = -1;
+    for (int i = 0; i < n; i++) {
+        if (want && want[0] && strcmp(aps[i].ssid, want) == 0) { idx = i; break; }
+    }
+    if (idx < 0) {
+        snprintf(s_wifi_err, sizeof s_wifi_err, "%s", "列表已更新，请重新选择网络");
+        wifi_refresh();
+        return;
+    }
     s_wifi_sel = idx;
     s_wifi_err[0] = 0;
     wifi_pick(&aps[idx]);
@@ -5613,7 +5654,12 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
 
     if (page == 3) {
     set_txt(s_ui.agent_detail[0], "%s", st->host[0] ? st->host : "-");
-    set_txt(s_ui.agent_detail[1], "%s:%d", FNOS_HOST, FNOS_PORT);
+    /* 端点显示板子实际在用的地址：配对保存后用快照里的 host/port，编译期默认值只兜底。
+       复用配对快照（同一把锁），不另存可能过期的副本。 */
+    fnos_pair_view_t ep;
+    fnos_pair_view(&ep);
+    if (ep.host[0]) set_txt(s_ui.agent_detail[1], "%s:%d", ep.host, ep.port);
+    else            set_txt(s_ui.agent_detail[1], "%s:%d", FNOS_HOST, FNOS_PORT);
     set_num(s_ui.agent_detail[2], "%d ms (状态 %d)", st->http_ms, st->last_status);
     set_txt(s_ui.agent_detail[3], "成功 %u · 失败 %u", (unsigned)st->ok_count, (unsigned)st->fail_count);
     set_txt(s_ui.agent_detail[4], "%s", st->last_err[0] ? st->last_err : "无");
@@ -5656,10 +5702,15 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
     if (page == 5) {
     if (s_ui.alert_page_note) {
         const int *cnt = health->alerts;
-        const int total = s_scope[5] ? cnt[s_scope[5] - 1] : st->nalerts;
+        /* 行数按“过滤后真正要显示的事件”算：之前用 total 增删、用 k 填充，
+           两套计数不同源时会多出旧行或漏填。 */
+        int shown = 0;
+        for (int i = 0; i < st->nalerts; i++) {
+            if (!s_scope[5] || alert_group_of(st->alerts[i].lv) == (int)s_scope[5] - 1) shown++;
+        }
         uint32_t have = lv_obj_get_child_count(s_ui.alert_list);
-        while (have < (uint32_t)total) { alert_row_make(s_ui.alert_list); have++; }
-        while (have > (uint32_t)total) { lv_obj_delete(lv_obj_get_child(s_ui.alert_list, have - 1)); have--; }
+        while (have < (uint32_t)shown) { alert_row_make(s_ui.alert_list); have++; }
+        while (have > (uint32_t)shown) { lv_obj_delete(lv_obj_get_child(s_ui.alert_list, have - 1)); have--; }
         int k = 0;
         for (int g = 0; g < 3; g++) {
             if (s_scope[5] && s_scope[5] != (unsigned)g + 1) continue;
@@ -5677,7 +5728,7 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
             set_txt(s_ui.alert_page_note, "%s · 采集端省略 %d 项 · 请检查采集限制",
                     !st->online ? "采集端离线" : "采集不完整", st->source_dropped);
         }
-        int matches = s_scope[5] ? cnt[s_scope[5] - 1] : st->nalerts;
+        int matches = shown;
         show(s_ui.alert_page_empty, matches == 0);
         lv_obj_t *empty_label = lv_obj_get_child(s_ui.alert_page_empty, 0);
         set_txt(empty_label, "%s", s_scope[5] && st->nalerts ? "此等级暂无事件 · 选择全部查看" : "暂无告警事件");

@@ -1288,6 +1288,7 @@ static void trend_rebase(lv_obj_t *chart)
     for (lv_chart_series_t *s = lv_chart_get_series_next(chart, NULL); s;
          s = lv_chart_get_series_next(chart, s)) {
         int32_t *x = lv_chart_get_series_x_array(chart, s);
+        if (!x) continue;
         for (uint32_t i = 0; i < count; i++) x[i] = LV_MAX((int64_t)x[i] - shift, -span);
     }
     t->from -= shift;
@@ -1554,6 +1555,7 @@ static void reveal_anim_cb(void *obj, int32_t value)
 
 void uk_anim_reveal(lv_obj_t *panel, uint32_t ms, uint32_t delay_ms)
 {
+    if (!panel) return;
     lv_anim_delete(panel, reveal_anim_cb);
     reveal_anim_cb(panel, 0);
     lv_anim_t a;

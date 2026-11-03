@@ -18,6 +18,7 @@
 #include "esp_log.h"
 #include "esp_attr.h"
 #include "esp_heap_caps.h"
+#include "esp_timer.h"
 #include "esp_http_client.h"
 #include "nvs.h"
 #include "cJSON.h"
@@ -105,6 +106,29 @@ static char s_pend_code[sizeof(s_code)];
 // 而且这几个都是 KB 级，不能占配对任务的栈。
 static EXT_RAM_BSS_ATTR char s_b64[FNOS_PAIR_PEM_MAX];
 static EXT_RAM_BSS_ATTR unsigned char s_der[1600];
+
+/* 收包上限 12 KB、cJSON 嵌套上限 1000；配对任务栈只有 7 KB，深层嵌套会在
+   递归解析时打穿栈。解析前先扫一遍括号深度，超过 16 层直接当坏数据。 */
+static cJSON *json_parse_bounded(const char *s)
+{
+    int depth = 0;
+    bool in_str = false, esc = false;
+    for (const unsigned char *p = (const unsigned char *)s; p && *p; p++) {
+        if (in_str) {
+            if (esc) esc = false;
+            else if (*p == '\\') esc = true;
+            else if (*p == '"') in_str = false;
+            continue;
+        }
+        if (*p == '"') in_str = true;
+        else if (*p == '{' || *p == '[') {
+            if (++depth > 16) return NULL;
+        } else if (*p == '}' || *p == ']') {
+            if (depth > 0) depth--;
+        }
+    }
+    return cJSON_Parse(s);
+}
 
 static bool has_cert(const char *pem)
 {
@@ -343,7 +367,7 @@ static bool tls_probe_body(char *out, size_t out_cap)
         return false;
     }
 
-    cJSON *root = cJSON_Parse(rx);
+    cJSON *root = json_parse_bounded(rx);
     const cJSON *jpem = root ? cJSON_GetObjectItemCaseSensitive(root, "cert_pem") : NULL;
     const cJSON *jtls = root ? cJSON_GetObjectItemCaseSensitive(root, "tls") : NULL;
     if (!cJSON_IsString(jpem) || !jpem->valuestring || !jpem->valuestring[0]) {
@@ -704,7 +728,7 @@ static void do_fetch(const char *code)
     }
 
     if (pair_cancelled()) { free(rx); return; }
-    cJSON *root = cJSON_Parse(rx);
+    cJSON *root = json_parse_bounded(rx);
     free(rx);
     if (!root) {
         set_view(FNOS_PAIR_FAILED, "NAS 返回的内容无法解析");
@@ -815,7 +839,7 @@ static void do_pair(void)
     /* 服务端在非 200 时也会给 {"ok":false,"error":"…"}（比如"配对码已过期，请重新生成"）。
        只在 ok 时才解析，屏幕上就永远只有一句"HTTP 403"——把可执行的话丢掉了。
        所以：只要收到了字节就解析。 */
-    cJSON *root = (ok || len > 0) ? cJSON_Parse(rx) : NULL;
+    cJSON *root = (ok || len > 0) ? json_parse_bounded(rx) : NULL;
     const cJSON *jtok = root ? cJSON_GetObjectItemCaseSensitive(root, "token") : NULL;
     const char *token = (jtok && cJSON_IsString(jtok) && jtok->valuestring) ? jtok->valuestring : NULL;
     /* 判定只有一份：pair_response_accept。下面三档只是"为什么失败"的文案分派。 */
@@ -1054,6 +1078,14 @@ void fnos_pair_init(void)
         s_view.tls = s_cfg.tls;
         s_loaded = true;
     }
+    /* 任务建失败时轮询任务每 200 ms 再来一次，日志会刷屏；失败后 30 s 再试。 */
+    static int64_t retry_us = 0;
+    int64_t now_us = esp_timer_get_time();
+    if (now_us < retry_us) {
+        xSemaphoreGive(lock);
+        atomic_flag_clear_explicit(&s_init_guard, memory_order_release);
+        return;
+    }
     TaskHandle_t task = NULL;
     BaseType_t rc = xTaskCreatePinnedToCoreWithCaps(pair_task, "fnos_pair", 7 * 1024, NULL, 4,
                                                  &task, tskNO_AFFINITY, MALLOC_CAP_SPIRAM);
@@ -1062,8 +1094,10 @@ void fnos_pair_init(void)
                                      tskNO_AFFINITY);
     }
     if (rc != pdPASS) {
-        ESP_LOGE(TAG, "pair task create failed");
+        retry_us = esp_timer_get_time() + 30LL * 1000 * 1000;
+        ESP_LOGE(TAG, "pair task create failed; retry in 30s");
     } else {
+        retry_us = 0;
         s_task = task;
     }
     xSemaphoreGive(lock);

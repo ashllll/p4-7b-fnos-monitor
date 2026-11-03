@@ -238,10 +238,12 @@ static void on_net_event(void *arg, esp_event_base_t base, int32_t id, void *dat
         portENTER_CRITICAL(&s_cfg_mux);
         s_reason[0] = 0;                    // 连上了，上一次的失败原因作废
         s_retry_due_us = 0;
-        if (s_submit_state == FNOS_WIFI_SUBMIT_PENDING &&
+        if ((s_submit_state == FNOS_WIFI_SUBMIT_PENDING ||
+             s_submit_state == FNOS_WIFI_SUBMIT_FAILED) &&
             s_submit_applied_generation == s_submit_generation &&
             s_submit_associated_generation == s_submit_generation) {
-            /* 本轮提交有结论了：成功。成功状态由 state==ONLINE 表达，这里回到日常态 */
+            /* 本轮提交有结论了：成功；超时判失败后迟到连上也在这里清掉，
+               否则 FAILED 会一直压过在线状态。成功由 state==ONLINE 表达。 */
             s_submit_state = FNOS_WIFI_SUBMIT_IDLE;
             s_submit_reason[0] = 0;
         }
@@ -357,7 +359,7 @@ void fnos_net_state_str_r(char *out, size_t cap)
     char full[WIFI_STATE_STR_MAX];
     if (sub == FNOS_WIFI_SUBMIT_PENDING) {
         snprintf(full, sizeof full, "正在按新凭据连接 %s…（口令或加密方式不合适会在这里失败）", ssid);
-    } else if (sub == FNOS_WIFI_SUBMIT_FAILED) {
+    } else if (sub == FNOS_WIFI_SUBMIT_FAILED && !s_online) {
         snprintf(full, sizeof full, "连不上 %s：%s（第 %u 次重试）", ssid,
                  sub_reason[0] ? sub_reason : "这一轮没连上", (unsigned)s_wifi_retry_count);
     } else if (!s_configured) {
@@ -439,7 +441,9 @@ fnos_net_state_t fnos_net_state(void)
     bool has_reason = s_reason[0] != 0;
     portEXIT_CRITICAL(&s_cfg_mux);
     if (sub == FNOS_WIFI_SUBMIT_PENDING) return FNOS_NET_CONNECTING;
-    if (sub == FNOS_WIFI_SUBMIT_FAILED)  return FNOS_NET_FAILED;
+    /* 失败只在本轮确实没连上时优先；旧连接仍在（保存失败）或超时后迟到连上时，
+       在线状态才是真的，不能让 FAILED 长期压住顶栏。 */
+    if (sub == FNOS_WIFI_SUBMIT_FAILED && !s_online) return FNOS_NET_FAILED;
     if (!configured)       return FNOS_NET_UNCONFIGURED;
     if (s_online)          return FNOS_NET_ONLINE;
     if (has_reason)        return FNOS_NET_FAILED;
@@ -593,7 +597,13 @@ static void scan_collect(void) {
     }
     if (num > 64) num = 64;                     // 驱动上限内收一批，再按信号筛
     wifi_ap_record_t *recs = calloc(num, sizeof *recs);
-    if (!recs) { s_scan_busy = false; s_scan_failed = true; return; }
+    if (!recs) {
+        /* 不释放驱动侧 AP 列表，下一次 scan_start 会报 busy/残留；清掉再失败。 */
+        esp_wifi_clear_ap_list();
+        s_scan_busy = false;
+        s_scan_failed = true;
+        return;
+    }
     uint16_t got = num;
     if (esp_wifi_scan_get_ap_records(&got, recs) != ESP_OK) {
         free(recs);
