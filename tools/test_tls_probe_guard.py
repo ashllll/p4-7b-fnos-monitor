@@ -119,7 +119,7 @@ assert 's_http_diag' not in http
 assert 'char *diag, size_t diag_cap' in http
 assert http.index('*out_len = 0') < http.index('esp_http_client_init')
 assert 'HTTP client allocation failed' in http
-probe = function('tls_probe_body')
+probe = function('json_parse_bounded') + '\n' + function('tls_probe_body')
 assert 's_cfg.' not in probe and 's_http_diag' not in probe
 assert 'http_oneshot(true' not in probe and 'PAIR_PATH' not in probe
 assert probe.count('diag, sizeof diag)') == 2

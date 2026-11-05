@@ -218,7 +218,8 @@ with tempfile.TemporaryDirectory(prefix='fnos-wifi-submit-') as tmp:
                     str(c), '-o', str(binary)], check=True)
     subprocess.run([str(binary)], check=True, cwd=tmp)
     # Reintroduce the reviewed bug: any old IP event clears the latest result.
-    guarded = """if (s_submit_state == FNOS_WIFI_SUBMIT_PENDING &&
+    guarded = """if ((s_submit_state == FNOS_WIFI_SUBMIT_PENDING ||
+             s_submit_state == FNOS_WIFI_SUBMIT_FAILED) &&
             s_submit_applied_generation == s_submit_generation &&
             s_submit_associated_generation == s_submit_generation)"""
     mutant = c.read_text().replace(guarded, "if (s_submit_state != FNOS_WIFI_SUBMIT_IDLE)")
@@ -378,6 +379,7 @@ static int s_ap_n, s_ap_mux, num_rc, records_rc;
 static bool s_scan_busy,s_scan_failed,oom;
 static uint16_t count;
 static int esp_wifi_scan_get_ap_num(uint16_t *num) {*num=count;return num_rc;}
+static void esp_wifi_clear_ap_list(void) {}
 static int esp_wifi_scan_get_ap_records(uint16_t *got,wifi_ap_record_t *out) {
     for(int i=0;i<*got;i++) {strcpy((char*)out[i].ssid,"same");out[i].rssi=-60+i;out[i].authmode=1;}
     return records_rc;

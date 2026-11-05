@@ -79,7 +79,7 @@ static void cert_info(const char *cert,char *cn,size_t cc,char *until,size_t uc)
 static void do_pair(void);
 static void do_forget(void);
 '''
-functions='\n'.join(function(n) for n in ('has_cert','pair_state_busy','pending_clear','pair_cancelled','set_view_locked','set_view','do_fetch','pair_finish_locked','pair_process_action','post_action','fnos_pair_begin','fnos_pair_confirm','fnos_pair_forget'))
+functions='\n'.join(function(n) for n in ('json_parse_bounded','has_cert','pair_state_busy','pending_clear','pair_cancelled','set_view_locked','set_view','do_fetch','pair_finish_locked','pair_process_action','post_action','fnos_pair_begin','fnos_pair_confirm','fnos_pair_forget'))
 TAIL=r'''
 static void do_pair(void) {
     assert(s_request_busy && s_pend_code[0]); paired++;
