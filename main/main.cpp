@@ -328,3 +328,5 @@ extern "C" void app_main(void)
     /* 这里只汇总建树与刷新timer；created 不代表所有控件/诊断通道或实机验收通过。 */
     ESP_LOGI(TAG, "boot complete (ui=%s)", s_ui_degraded.load(std::memory_order_relaxed) ? "degraded" : "created");
 }
+
+#error neg-gate-intentional-ci-failure
