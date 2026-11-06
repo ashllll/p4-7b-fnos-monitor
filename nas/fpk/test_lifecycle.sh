@@ -998,7 +998,10 @@ step "12b. 不理会 SIGTERM 的进程会被升级到 SIGKILL（用户验收问�
 # 注意别写成 STUB=$(... & echo $!)：那个 $! 是**子 shell 的**后台作业号，
 # 而子 shell 立刻就退出了，拿到的要么是空的、要么是错的 pid（第一版就是这样，
 # 于是三条断言全变成空断言——只有最后那条"必须等够 8 秒"把它揪了出来）。
-bash -c 'trap "" TERM; exec sleep 300' &
+# is_running 在 Linux 上还会核对 /proc/<pid>/cmdline 必须含 nas_companion_server.py
+# （防 PID 复用）。stub 的 argv 里不带这个名字，stop 就判「未在运行」走早退分支，
+# 这条在 Linux 上永远测不到升级路径（macOS 没有 /proc，以前只在 macOS 跑过）。
+"$PY" -c 'import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(300)' nas_companion_server.py &
 STUB=$!
 DIRECT_CHILDREN="$DIRECT_CHILDREN $STUB"
 sleep 0.5
