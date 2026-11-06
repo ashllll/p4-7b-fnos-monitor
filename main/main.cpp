@@ -173,7 +173,7 @@ static std::atomic_bool s_ui_degraded{false};
 static bool start_periodic_timer(const esp_timer_create_args_t *args, uint64_t period_us)
 {
     esp_timer_handle_t timer = NULL;
-    esp_err_t err = esp_timer_creat(args, &timer);
+    esp_err_t err = esp_timer_create(args, &timer);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "%s timer create failed: %s", args->name, esp_err_to_name(err));
         return false;
