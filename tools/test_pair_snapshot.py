@@ -52,6 +52,9 @@ static bool s_provisioned;
 static atomic_bool fail_take;
 static bool fail_alloc, fail_task, reenter_init, fail_load;
 static int load_count, held, drops;
+static int64_t fake_now_us;
+// 每次调用推进 31s，越过生产的 30s 建任务重试节流，使失败后的下一次 init 仍会重试。
+static int64_t esp_timer_get_time(void) { return (fake_now_us += 31000000LL); }
 static SemaphoreHandle_t xSemaphoreCreateMutex(void) { return fail_alloc ? NULL : &mutex; }
 static int xSemaphoreTake(SemaphoreHandle_t lock, int timeout) {
     (void)timeout;
