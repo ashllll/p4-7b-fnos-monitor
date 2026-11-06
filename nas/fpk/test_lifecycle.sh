@@ -309,7 +309,9 @@ wizard_port="$PORT" "$CMD/install_init" >/dev/null 2>&1
 check "$?" 0 "install_init 通过"
 wizard_port="$PORT" "$CMD/install_callback" >/dev/null 2>&1
 check "$?" 0 "install_callback 写出配置"
-check "$(stat -f '%Lp' "$TRIM_PKGVAR/config.json" 2>/dev/null || stat -c '%a' "$TRIM_PKGVAR/config.json")" 600 "config.json 权限 0600"
+# GNU stat 的 -f 是「文件系统」而不是格式串，在 Linux 上会成功并打印一大段 File: …，
+# 于是 stat -f 打头会永远拿不到权限位（本机 macOS 跑不出来，NAS/VM 上两条断言必假失败）。
+check "$(stat -c '%a' "$TRIM_PKGVAR/config.json" 2>/dev/null || stat -f '%Lp' "$TRIM_PKGVAR/config.json")" 600 "config.json 权限 0600"
 
 step "3b. 依赖故障：依赖的 Python 不在时，用户能看到原因"
 # 真机场景：install_dep_apps=python312 声明的依赖没装好（或装在了别处）。
@@ -343,7 +345,7 @@ check "$(http_code "https://127.0.0.1:$PORT/api/v1/health")" 200 "遥测面 /api
 step "4b. 传输加密（默认 HTTPS，指纹可核对，明文不静默通过）"
 [ -s "$CACERT" ] && ok "自签证书已生成：$CACERT" || bad "证书没有生成"
 [ -s "$STAGE/var/tls/server.key" ] && ok "私钥已生成" || bad "私钥没有生成"
-check "$(stat -f '%Lp' "$STAGE/var/tls/server.key" 2>/dev/null || stat -c '%a' "$STAGE/var/tls/server.key")" 600 "私钥权限 0600"
+check "$(stat -c '%a' "$STAGE/var/tls/server.key" 2>/dev/null || stat -f '%Lp' "$STAGE/var/tls/server.key")" 600 "私钥权限 0600"
 # 指纹必须和 openssl 算出来的一致——板子固定的是这个值，算错了等于信错证书
 FP_API=$(admin "http://x/app/nasscreencompanion/api/state" \
   | python3 -c 'import sys,json;print(json.load(sys.stdin)["tls"]["fingerprint"])' 2>/dev/null)
