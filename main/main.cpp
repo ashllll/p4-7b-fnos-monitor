@@ -328,3 +328,6 @@ extern "C" void app_main(void)
     /* 这里只汇总建树与刷新timer；created 不代表所有控件/诊断通道或实机验收通过。 */
     ESP_LOGI(TAG, "boot complete (ui=%s)", s_ui_degraded.load(std::memory_order_relaxed) ? "degraded" : "created");
 }
+
+// ponytail: 任务二演练用的故意构建故障，下一次提交立即 revert。
+#error "intentional pilot failure drill 20261106 (task-2 ci-fix acceptance)"
