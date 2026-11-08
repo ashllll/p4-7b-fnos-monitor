@@ -48,6 +48,9 @@ static void cmd_show(void) {}
 static void fnos_net_set_credentials(const char *a,const char *b) { sets++; snprintf(ssid,sizeof ssid,"%s",a); snprintf(pass,sizeof pass,"%s",b); }
 static void fnos_ui_request_page(int n) { page=n; }
 static void fnos_ui_request_temp_expand(int n) { expand=n; }
+static unsigned shots; static int overlay=-2;
+static void cmd_shot(void) { shots++; }
+static void fnos_ui_request_overlay(int kind) { overlay=kind; }
 static void fnos_pair_tls_probe_async(void) {}
 static bool fnos_wifi_store_clear(void) { clears++;return true; }
 static int benches;
@@ -105,6 +108,13 @@ int main(void) {
     for (unsigned i=0;i<sizeof bad/sizeof bad[0];i++) { page=expand=-1;run(bad[i]);assert(page==-1 && expand==-1); }
     run("page\t5"); assert(page==5);
     run("temp\t2147483647"); assert(page==4 && expand==INT_MAX);
+    /* shot 只认整词或空格后的 pair/detail；其余参数被拒且不截图 */
+    shots=0; overlay=-2;
+    run("shot"); assert(shots==1 && overlay==-2);
+    run("shot pair"); assert(shots==2 && overlay==0);
+    run("shot\tdetail"); assert(shots==3 && overlay==1);
+    run("shot pair extra"); run("shot bogus"); run("shotx");
+    assert(shots==3 && overlay==1);
     run("anonymous-marker-invalid-command");
     char line[192]; memset(line,'x',sizeof line); clear_line(line,sizeof line);
     for (unsigned i=0;i<sizeof line;i++) assert(line[i]==0);
