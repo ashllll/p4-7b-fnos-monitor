@@ -50,6 +50,16 @@ void fnos_ui_request_page(int idx);
 /* 串口 'temp n' 用：请求展开第 n 台设备的通道网格（只置标志，不负责切页）。
    加它是因为"展开态"必须先点一下才看得到，而实机验收时人不在板子跟前。 */
 void fnos_ui_request_temp_expand(int idx);
+/* 串口 'shot' 用：让 LVGL 线程把当前页渲染成 512x300 RGB565 快照（2x2 盒式降采样）。
+   实机验收要有像素证据，而板上没有快门、macOS 也未必给相机权限——这是本机唯一的
+   像素通道：fnos_ui_shot_done() 为真后 fnos_ui_shot_pixels() 拿 RGB565 小端、行优先数据。
+   失败（截不到）时 done 为真而 pixels 返回 NULL。 */
+void fnos_ui_request_shot(void);
+/* 串口 'shot pair|detail' 用：0 = 配对卡，1 = 当前页第一行的实体详情。
+   这两层覆盖物只能点开，板子上没有触摸自动化——不摊开就永远拍不到它们。 */
+void fnos_ui_request_overlay(int kind);
+bool fnos_ui_shot_done(void);
+const uint8_t *fnos_ui_shot_pixels(int *w, int *h);
 
 /* 测量台架（fnos_perf.c 的合成手势）专用：**只读**几何探针，屏幕坐标。
    加它们是因为"按下→首帧"必须打在真实控件上，而坐标只有 UI 自己知道；

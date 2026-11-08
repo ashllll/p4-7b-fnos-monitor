@@ -15,7 +15,7 @@ tools/preview/lv_kconfig_host.h
 *.ppm
 sdkconfig
 sdkconfig.old
-managed_components/
+managed_components
 *.bin
 *.elf
 *.map

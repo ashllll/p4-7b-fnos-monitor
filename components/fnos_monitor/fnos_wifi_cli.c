@@ -27,6 +27,54 @@
 static const char *TAG = "wifi_cli";
 #define CLI_LINE_MAX 192
 
+static void cmd_shot(void)
+{
+    /* 板上没有快门，相机权限也未必给：像素证据走"LVGL 渲染 → 串口"。
+       协议给 tools/shot_pull.py 用：SHOT-BEGIN <w> <h> / 若干行 base64 / SHOT-END。
+       512x300 RGB565 = 300 KB，base64 后 400 KB，115200 下约 35 秒——慢但一次能看清版面。 */
+    static const char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    fnos_ui_request_shot();
+    for (int i = 0; i < 300 && !fnos_ui_shot_done(); ++i) vTaskDelay(pdMS_TO_TICKS(10));
+    int w = 0, h = 0;
+    const uint8_t *px = fnos_ui_shot_pixels(&w, &h);
+    if (!px) {
+        printf("截图失败：UI 线程 3 秒内没给出快照（页面还没建起来？）\n");
+        return;
+    }
+    /* 一帧 400 KB 要吐 40 秒，期间任何一条日志都会插进 base64 行中间把行撕碎
+       （实测 66 行里 3 行；只静音几个 tag 后又换别的 tag 撕），主机那边只看到
+       "padding 错"。所以整段把根级别压到 NONE，吐完恢复根级别和运行时改过的那几个
+       tag（fnos_pair.c 会把 esp-tls/mbedtls/HTTP_CLIENT 抬到 DEBUG）。 */
+    const esp_log_level_t root = esp_log_level_get(NULL);
+    static const char *const keep[] = { "esp-tls", "mbedtls", "HTTP_CLIENT", "fnos_data", "fnos_ui" };
+    enum { KEEP_N = sizeof keep / sizeof keep[0] };
+    esp_log_level_t kept[KEEP_N];
+    for (int i = 0; i < KEEP_N; ++i) kept[i] = esp_log_level_get(keep[i]);
+    esp_log_level_set("*", ESP_LOG_NONE);
+    printf("SHOT-BEGIN %d %d\n", w, h);
+    const size_t total = (size_t)w * (size_t)h * 2;
+    char line[516];
+    for (size_t off = 0; off < total; off += 384) {
+        const size_t n = (total - off < 384) ? (total - off) : 384;
+        size_t o = 0;
+        for (size_t i = 0; i < n; i += 3) {
+            const uint32_t a = px[off + i];
+            const uint32_t b = (i + 1 < n) ? px[off + i + 1] : 0;
+            const uint32_t c = (i + 2 < n) ? px[off + i + 2] : 0;
+            const uint32_t v = (a << 16) | (b << 8) | c;
+            line[o++] = b64[(v >> 18) & 0x3F];
+            line[o++] = b64[(v >> 12) & 0x3F];
+            line[o++] = (i + 1 < n) ? b64[(v >> 6) & 0x3F] : '=';
+            line[o++] = (i + 2 < n) ? b64[v & 0x3F] : '=';
+        }
+        line[o] = '\0';
+        printf("%s\n", line);
+    }
+    printf("SHOT-END\n");
+    esp_log_level_set("*", root);
+    for (int i = 0; i < KEEP_N; ++i) esp_log_level_set(keep[i], kept[i]);
+}
+
 static void usage(void)
 {
     printf("\n串口命令：\n"
@@ -36,6 +84,8 @@ static void usage(void)
            "  wifi clear                    清掉保存的凭据（退回出厂默认）\n"
            "  page <0-5>                    切页：总览/存储/网络/系统/温度/告警（实机验收用）\n"
            "  temp <n>                      切到温度页并展开第 n 台设备（0 起）的通道网格\n"
+           "  shot [pair|detail]            截图：当前页渲染成 512x300 RGB565 经串口吐出；\n"
+           "                                pair 先摊开配对卡，detail 先开当前页第一行的详情\n"
            "  tls                           HTTPS 自检：明文取证书 + 用证书探一次 /health\n"
            "  bench help                    触控/渲染台架（合成手势 + 计数器；仅带台架的固件有）\n"
            "  help                          显示这段说明\n\n");
@@ -147,6 +197,28 @@ static void handle(char *line)
         fnos_ui_request_page(4);                 /* 4 = 温度页（页序见 fnos_ui.h） */
         fnos_ui_request_temp_expand(n);
         printf("温度页：展开第 %d 台设备（下一跳生效）\n", n);
+        return;
+    }
+    if (command_is(line, "shot")) {
+        /* 覆盖层（配对卡 / 实体详情）只能点开，板上没有触摸自动化：先摊开、
+           等淡入落定，再照旧截当前页。分两跳是因为截的是"落定后的那一帧"。 */
+        char *what = line + 4;
+        while (*what == ' ' || *what == '\t') what++;
+        int kind = -1;
+        if (*what == '\0') kind = -1;
+        else if (!strcmp(what, "pair")) kind = 0;
+        else if (!strcmp(what, "detail")) kind = 1;
+        else {
+            printf("用法：shot [pair|detail]（pair=配对卡，detail=当前页第一行的详情，"
+                   "先 page 1/2/3 选好页）\n");
+            return;
+        }
+        if (kind >= 0) {
+            fnos_ui_request_overlay(kind);
+            vTaskDelay(pdMS_TO_TICKS(800));      /* 覆盖层淡入 + 布局落定 */
+            printf("覆盖层已摊开（%s），开始截图…\n", what);
+        }
+        cmd_shot();
         return;
     }
     if (!strcmp(line, "tls")) {
