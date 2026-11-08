@@ -400,6 +400,8 @@ static void fill_live(fnos_status_t *s)
 #include "pair_msgs.h"   /* 由 pair_msgs.py 从 fnos_pair.c 生成 */
 
 static fnos_pair_state_t s_pair_state = FNOS_PAIR_UNPROVISIONED;
+/* 真机上过了重启、旧固件配过的板子：凭据还在、指纹没存 —— 卡片必须还有话说 */
+static bool s_pair_no_fp;
 static char s_pair_msg[112];
 static uint32_t s_pair_gen;
 
@@ -443,7 +445,7 @@ void fnos_pair_view(fnos_pair_view_t *out)
     }
     if (s_pair_state == FNOS_PAIR_CONFIRM || s_pair_state == FNOS_PAIR_PROVISIONED) {
         out->tls = true;
-        snprintf(out->fingerprint, sizeof out->fingerprint, "%s", FAKE_FP);
+        if (!s_pair_no_fp) snprintf(out->fingerprint, sizeof out->fingerprint, "%s", FAKE_FP);
         snprintf(out->subject, sizeof out->subject, "%s", "CN=fnos-nas.local");
         snprintf(out->not_after, sizeof out->not_after, "%s", "2035-10-03");
     }
@@ -724,6 +726,31 @@ static void audit_bounds(lv_obj_t *o)
                             (int)za.x1, (int)za.y1, (int)za.x2, (int)za.y2,
                             lv_obj_has_flag(zc, LV_OBJ_FLAG_HIDDEN),
                             lv_obj_has_class(zc, &lv_label_class) ? lv_label_get_text(zc) : "");
+                }
+                {
+                    lv_obj_t *card = lv_obj_get_parent(o);
+                    lv_obj_t *hd = card ? lv_obj_get_child(card, 0) : NULL;
+                    if (hd) {
+                        lv_area_t ha; lv_obj_get_coords(hd, &ha);
+                        fprintf(stderr, "  head [%d,%d]-[%d,%d] kids=%u\n", (int)ha.x1, (int)ha.y1,
+                                (int)ha.x2, (int)ha.y2, (unsigned)lv_obj_get_child_count(hd));
+                        for (uint32_t z = 0; z < lv_obj_get_child_count(hd); z++) {
+                            lv_obj_t *zc = lv_obj_get_child(hd, z);
+                            lv_area_t za; lv_obj_get_coords(zc, &za);
+                            fprintf(stderr, "    h[%u] %s [%d,%d]-[%d,%d] t=\"%.16s\"\n", (unsigned)z,
+                                    lv_obj_has_class(zc, &lv_label_class) ? "label" :
+                                    lv_obj_check_type(zc, &lv_button_class) ? "button" : "panel",
+                                    (int)za.x1, (int)za.y1, (int)za.x2, (int)za.y2,
+                                    lv_obj_has_class(zc, &lv_label_class) ? lv_label_get_text(zc) : "");
+                        }
+                    }
+                }
+                for (lv_obj_t *a = o; a; a = lv_obj_get_parent(a)) {   /* 从孩子往上数，谁把它撑成这样 */
+                    lv_area_t aa; lv_obj_get_coords(a, &aa);
+                    fprintf(stderr, "  lineage: %s [%d,%d]-[%d,%d]\n",
+                            lv_obj_has_class(a, &lv_label_class) ? "label" :
+                            lv_obj_check_type(a, &lv_button_class) ? "button" : "panel",
+                            (int)aa.x1, (int)aa.y1, (int)aa.x2, (int)aa.y2);
                 }
                 dump_near(lv_screen_active(), (ca.x1 + ca.x2) / 2, (ca.y1 + ca.y2) / 2, 0);
                 fprintf(stderr, "child out of parent: \"%s\" child=[%d,%d]-[%d,%d] parent=[%d,%d]-[%d,%d]\n",
@@ -1715,8 +1742,29 @@ static void verify_transitions(void)
     assert(visible_text(lv_screen_active(), "暂无告警事件"));
     assert(visible_text(lv_screen_active(), "存储容量"));
     assert(visible_text_containing(lv_screen_active(), "最高 "));
-    assert(visible_text_containing(lv_screen_active(), "°C\n"));
-    assert(visible_text_containing(lv_screen_active(), "在线\n"));
+    /* 一个瓦片里的两行是两个事实，颜色必须分开：容量高（红）不能顺带把健康的
+       "阵列 4/4" 也染红。以前两行挤在同一个标签里，只能共用一种颜色。 */
+    {
+        lv_obj_t *cap = visible_text_containing(lv_screen_active(), "最高 ");
+        assert(cap);
+        lv_obj_t *tile = lv_obj_get_parent(cap);
+        assert(tile);
+        lv_obj_t *arr = visible_text_containing(tile, "阵列 ");
+        assert(arr && arr != cap);
+        assert(!strncmp(lv_label_get_text(arr), "阵列 ", strlen("阵列 ")));
+        assert(lv_color_eq(lv_obj_get_style_text_color(arr, 0), uk_c(UK_T2)));
+
+        /* 2×2 瓦片要左右对称地填满容器：两列各 48% 时右缘会空出一条看到底的缝。 */
+        lv_obj_t *box = lv_obj_get_parent(tile);
+        assert(box && lv_obj_get_child_count(box) == 4);
+        lv_area_t ra, a0, a1;
+        lv_obj_get_coords(box, &ra);
+        lv_obj_get_coords(lv_obj_get_child(box, 0), &a0);
+        lv_obj_get_coords(lv_obj_get_child(box, 1), &a1);
+        assert(a0.x1 - ra.x1 <= 1);
+        assert(ra.x2 - a1.x2 <= 1);
+        assert(abs((a0.x2 - a0.x1) - (a1.x2 - a1.x1)) <= 1);
+    }
     snapshot("06-alerts-health");
     fnos_ui_set_page(0);
     assert(!visible_text(lv_screen_active(), "无采集告警"));
@@ -2021,26 +2069,31 @@ static void verify_module_freshness(void)
     fnos_status_text(&fixture, &fixture.mods[cpu].status, "denied");
     fnos_ui_set_page(0); regression_tick();
     value = visible_text(lv_screen_active(), "45.6");
-    assert(value && lv_color_eq(lv_obj_get_style_text_color(value, 0), uk_c(UK_T1)));
+    assert(value && lv_color_eq(lv_obj_get_style_text_color(value, 0), uk_c(UK_OK)));
     fnos_ui_set_page(5); regression_tick();
-    assert(visible_text(lv_screen_active(), "45.6°C\n无超限"));
+    assert(visible_text(lv_screen_active(), "45.6°C"));
+    assert(visible_text(lv_screen_active(), "无超限"));
     for (int i = 0; i < fixture.ntemps; i++) fixture.temps[i].c = 0;
     regression_tick();
-    assert(visible_text(lv_screen_active(), "0.0°C\n无超限"));
+    assert(visible_text(lv_screen_active(), "0.0°C"));
+    assert(visible_text(lv_screen_active(), "无超限"));
     for (int i = 0; i < fixture.ntemps; i++) fixture.temps[i].c = 45.6f;
     fnos_status_text(&fixture, &fixture.mods[cpu].status, "ok");
     fixture.cpu.temp_c = 85;
     regression_tick();
-    assert(visible_text(lv_screen_active(), "85.0°C\n关注 1 路"));
+    assert(visible_text(lv_screen_active(), "85.0°C"));
+    assert(visible_text(lv_screen_active(), "关注 1 路"));
     fnos_status_text(&fixture, &fixture.mods[cpu].status, "stale");
     regression_tick();
-    assert(visible_text(lv_screen_active(), "旧值 85.0°C\n关注 1 路 · 旧值"));
+    assert(visible_text(lv_screen_active(), "旧值 85.0°C"));
+    assert(visible_text(lv_screen_active(), "关注 1 路 · 旧值"));
     fnos_status_text(&fixture, &fixture.mods[cpu].status, "ok");
     fnos_status_text(&fixture, &fixture.mods[temps].status, "stale");
     for (int i = 0; i < fixture.ntemps; i++) fixture.temps[i].c = 80;
     regression_tick();
     char old_count[64];
-    snprintf(old_count, sizeof old_count, "85.0°C\n关注 %d 路 · 旧值", fixture.ntemps);
+    snprintf(old_count, sizeof old_count, "关注 %d 路 · 旧值", fixture.ntemps);
+    assert(visible_text(lv_screen_active(), "85.0°C"));
     assert(visible_text(lv_screen_active(), old_count));
     fnos_status_text(&fixture, &fixture.mods[temps].status, "denied");
     fnos_ui_set_page(4); regression_tick();
@@ -2228,7 +2281,7 @@ static void verify_overview_charts(void)
     assert(visible_text(overview_object("内存", &lv_obj_class), "0"));
     snapshot("10-overview-zero");
     lv_obj_t *temp_card = overview_object("最热温度", &lv_obj_class);
-    assert(visible_text(temp_card, "传感器历史"));
+    assert(visible_text(temp_card, "历史"));
     /* 150px row budget: p0 trend cards intentionally omit the per-card x-axis. */
 
     s_override_sample = (fnos_sample_t){ .cpu = 17, .mem = 42, .rx_kbs = 128, .tx_kbs = 64,
@@ -2276,7 +2329,7 @@ static void verify_overview_charts(void)
     fnos_ui_set_page(0); regression_tick();
     fnos_status_text(&fixture, &fixture.mods[3].status, "partial");
     regression_tick();
-    assert_overview_storage_neutral("部分可读");
+    assert_overview_storage_neutral("不完整");
     fnos_status_text(&fixture, &fixture.mods[3].status, "ok");
     regression_tick();
 
@@ -2290,6 +2343,15 @@ static void verify_overview_charts(void)
     lv_obj_t *net_card = lv_obj_get_parent(lv_obj_get_parent(detail));
     lv_obj_t *range_note = uk_card_note(net_card);
     assert(range_note && strstr(lv_label_get_text(range_note), "量程"));
+
+    /* 2026-11-08：KPI 注脚（累计流量 / 接口名 / P95）和图例（双向峰值）此前一直在算、
+       一直被 LV_OBJ_FLAG_HIDDEN 挡着；页头注释还写着"注脚已带累计 X 与接口名"。
+       露出来才算把这些数据交到读者手上。 */
+    lv_obj_t *sub = visible_text_containing(lv_screen_active(), "累计 ");
+    assert(sub && !lv_obj_has_flag(sub, LV_OBJ_FLAG_HIDDEN));
+    assert(visible_text_containing(lv_screen_active(), "P95 "));
+    assert(visible_text_containing(lv_screen_active(), " · 峰 "));
+    assert(visible_text(net_card, "上行") && visible_text(net_card, "下行"));
     assert(chart_values_equal(detail, 0, 64) == 1);
     assert(chart_values_equal(detail, 1, 128) == 1);
     size_t bytes = CONFIG_FNOS_CHART_WINDOW * sizeof(int32_t);
@@ -2402,7 +2464,22 @@ static void verify_overview_charts(void)
     assert(chart_values_equal(cpu, 0, LV_CHART_POINT_NONE) == CONFIG_FNOS_CHART_WINDOW);
     assert(chart_values_equal(mem, 0, LV_CHART_POINT_NONE) == CONFIG_FNOS_CHART_WINDOW);
     assert(chart_values_equal(temp, 0, LV_CHART_POINT_NONE) == CONFIG_FNOS_CHART_WINDOW);
-    snapshot("10-overview-reset");
+    /* 0 样本时趋势带不能只是两个空黑框：正文给一句占位，曲线回来后让位。 */
+    lv_obj_t *cpu_trend_card = overview_object("CPU趋势", &lv_obj_class);
+    assert(cpu_trend_card);
+    assert(visible_text(cpu_trend_card, "暂无采样"));
+    lv_obj_t *cpu_chart = overview_object("CPU趋势", &lv_chart_class);
+    assert(cpu_chart && effectively_hidden(cpu_chart));
+    snapshot("10-overview-waiting");
+    /* 在线但还没攒到采样：占位换成"等待采样…"，曲线仍然让位。 */
+    s_override_sample_enabled = false;
+    fixture.ever_ok = true; fixture.online = true;
+    regression_tick();
+    if (chart_values_equal(cpu, 0, LV_CHART_POINT_NONE) == CONFIG_FNOS_CHART_WINDOW) {
+        assert(visible_text(cpu_trend_card, "等待采样…"));
+        assert(effectively_hidden(cpu_chart));
+        snapshot("10-overview-live-waiting");
+    }
     s_override_sample_enabled = false;
     s_override_status = NULL;
     s_state = previous;
@@ -2645,6 +2722,67 @@ static void verify_unifi_views(void)
     puts("checks: UniFi filters, restore-all, selection persistence, detail pointer input and frozen identity PASS");
 }
 
+/* 清单行的两处"数据在、界面藏"：卷行的容量/文件系统副行，磁盘行的 SMART 圆点。
+   uk_row_create 的结构：row → [line1(led? + namebox{name1}), line2{name2, valbox}, bar?]，
+   所以 name1 往上三级是 row。 */
+/* 行内状态圆点：从名字标签往上找那个 8×8 的实心点（line1 里唯一这种尺寸的子对象）。
+   不写死层级，名字盒/行容器的嵌套深浅都不影响。 */
+static lv_obj_t *row_dot(lv_obj_t *name1)
+{
+    lv_obj_t *o = lv_obj_get_parent(name1);
+    for (int depth = 0; o && depth < 4; depth++, o = lv_obj_get_parent(o)) {
+        for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) {
+            lv_obj_t *c = lv_obj_get_child(o, (int32_t)i);
+            if (!lv_obj_has_class(c, &lv_label_class) &&
+                lv_obj_get_width(c) == UK_DOT && lv_obj_get_height(c) == UK_DOT)
+                return c;
+        }
+    }
+    return NULL;
+}
+
+static void verify_storage_rows(void)
+{
+    int saved = s_state; s_state = ST_LIVE;
+    fnos_status_t fixture = {0}; fill_live(&fixture);
+    int disks = -1;
+    for (int i = 0; i < fixture.nmods; i++)
+        if (!strcmp(fixture.mods[i].name, "disks")) disks = i;
+    assert(disks >= 0);
+    s_override_status = &fixture;
+    fnos_ui_set_page(1); regression_tick();
+    pointer_text("全部"); regression_tick();
+
+    /* ① 存储卷：容量/文件系统副行必须显示（数据层一直有 free_gb/total_gb/fs）。 */
+    lv_obj_t *card = overview_object("存储卷", &lv_obj_class);
+    assert(card);
+    assert(visible_text(card, "/vol1"));
+    assert(visible_text(card, "剩余 1.7 TB / 总计 3.6 TB · ext4"));
+    assert(visible_text(card, "剩余 1.9 TB / 总计 7.3 TB · btrfs"));
+
+    /* ② 磁盘活动：SMART 失败的盘不能和健康盘长得一模一样。 */
+    lv_obj_t *dcard = overview_object("磁盘活动", &lv_obj_class);
+    assert(dcard);
+    lv_obj_t *ok_disk = visible_text(dcard, "sda");
+    lv_obj_t *bad_disk = visible_text(dcard, "sdb");
+    assert(ok_disk && bad_disk);
+    lv_obj_t *ok_led = row_dot(ok_disk);
+    lv_obj_t *bad_led = row_dot(bad_disk);
+    assert(ok_led && bad_led);
+    assert(lv_color_eq(lv_obj_get_style_bg_color(ok_led, 0), uk_c(UK_OK)));
+    assert(lv_color_eq(lv_obj_get_style_bg_color(bad_led, 0), uk_c(UK_DANGER)));
+    snapshot("19-storage-rows-live");
+
+    /* 采集过期：圆点回到中性，不把旧结论当实时告警。 */
+    fnos_status_text(&fixture, &fixture.mods[disks].status, "stale");
+    regression_tick();
+    assert(lv_color_eq(lv_obj_get_style_bg_color(ok_led, 0), uk_c(UK_T3)));
+    assert(lv_color_eq(lv_obj_get_style_bg_color(bad_led, 0), uk_c(UK_T3)));
+
+    snapshot("19-storage-rows-stale");
+    s_override_status = NULL; s_state = saved;
+}
+
 static void verify_detail_freshness(void)
 {
     preview_state_t previous = s_state;
@@ -2694,12 +2832,23 @@ static void verify_detail_freshness(void)
             lv_obj_t *detail = lv_obj_get_parent(lv_obj_get_parent(heading));
             lv_obj_t *context = visible_text_containing(detail, "打开时快照");
             assert(context);
-            assert(strstr(lv_label_get_text(context), state == 0 ? "旧值" : "部分"));
+            assert(strstr(lv_label_get_text(context), state == 0 ? "旧值" : "不完整"));
             assert(visible_text(detail, identities[kind]));
             assert(visible_text(detail, readings[kind]));
             char shot[64];
             snprintf(shot, sizeof shot, "18-detail-%s-%s", modules[kind], states[state]);
             snapshot(shot);
+            /* 上下文胶囊是"这一页在看什么"的抬头，不是正文：它和底部的操作按钮
+               一样要贴齐卡片内容区右缘。留在滚动体里时，滚动条预留的 18px 会让它
+               比下面的按钮短一截（实测右缘 984 vs 1002）。 */
+            {
+                lv_area_t ca2, xa2;
+                lv_obj_get_coords(context, &ca2);
+                lv_obj_get_coords(lv_obj_get_parent(visible_text(detail, "返回列表")), &xa2);
+                if (ca2.x2 != xa2.x2)
+                    fprintf(stderr, "detail context right=%d button right=%d\n", (int)ca2.x2, (int)xa2.x2);
+                assert(ca2.x2 == xa2.x2);
+            }
             char captured_context[256];
             snprintf(captured_context, sizeof captured_context, "%s", lv_label_get_text(context));
             /* A later successful sample cannot upgrade the opened retained reading. */
@@ -2833,6 +2982,30 @@ static void verify_alert_text_preservation(void)
     puts("checks: long container alert identity is complete and unmatched templates remain verbatim PASS");
 }
 
+/* 折叠行的方向符号是唯一的"这里能点"的暗示：写死了文字配色与点击区，
+   却把暗示省掉时，块看起来只是个静态摘要。 */
+static void assert_expand_affordance(lv_obj_t *block, const char *word, const char *arrow)
+{
+    lv_obj_t *more = visible_text_containing(block, word);
+    if (!more) {
+        fprintf(stderr, "temperature block has no \"%s\" row\n", word);
+        abort();
+    }
+    const char *txt = lv_label_get_text(more);
+    const size_t n = strlen(txt), a = strlen(arrow);
+    if (n < a + 2 || strncmp(txt, word, strlen(word)) || strcmp(txt + n - a, arrow)) {
+        fprintf(stderr, "\"%s\" row lacks the %s affordance: \"%s\"\n", word, arrow, txt);
+        abort();
+    }
+}
+
+/* 卡头标题 → 卡片本身（标题的父是头行，头行的父才是卡片）。 */
+static lv_obj_t *card_of_label(lv_obj_t *root, const char *title)
+{
+    lv_obj_t *t = visible_text(root, title);
+    return t ? lv_obj_get_parent(lv_obj_get_parent(t)) : NULL;
+}
+
 static lv_obj_t *temperature_device_block(lv_obj_t *name)
 {
     /* Find the closest column container with a click handler: the semantic device block.
@@ -2856,6 +3029,32 @@ static unsigned assert_temperature_readings(lv_obj_t *object, const char *text, 
     for (uint32_t i = 0; i < lv_obj_get_child_count(object); i++)
         count += assert_temperature_readings(lv_obj_get_child(object, i), text, color);
     return count;
+}
+
+/* P4 hero 行 = 8x8 状态圆点 + 大数字 + "°C" + 结论，四兄弟同一行。
+   圆点没有文字，用"与大数字、°C 同父"定位；P0 的点在读数下方另一行，不会误命中。 */
+static bool find_hero_reading(lv_obj_t *o, lv_obj_t **dot, lv_obj_t **value)
+{
+    uint32_t n = lv_obj_get_child_count(o);
+    lv_obj_t *unit = NULL;
+    for (uint32_t i = 0; i < n; i++) {
+        lv_obj_t *c = lv_obj_get_child(o, i);
+        if (lv_obj_has_class(c, &lv_label_class) && !strcmp(lv_label_get_text(c), "°C")) unit = c;
+    }
+    if (unit) {
+        *dot = NULL; *value = NULL;
+        for (uint32_t i = 0; i < n; i++) {
+            lv_obj_t *c = lv_obj_get_child(o, i);
+            if (c == unit) continue;
+            if (lv_obj_get_width(c) == UK_DOT && lv_obj_get_height(c) == UK_DOT) *dot = c;
+            else if (lv_obj_has_class(c, &lv_label_class) &&
+                     lv_obj_get_style_text_font(c, 0) == UK_TYPE_METRIC) *value = c;
+        }
+        if (*dot && *value) return true;
+    }
+    for (uint32_t i = 0; i < n; i++)
+        if (find_hero_reading(lv_obj_get_child(o, i), dot, value)) return true;
+    return false;
 }
 
 static void verify_temperature_colors(void)
@@ -2928,6 +3127,41 @@ static void verify_temperature_colors(void)
         assert(mixed_block && assert_usage_bars(mixed_block, mixed_colors[i]) == 1);
     }
     snapshot("temperature-mixed");
+    /* 状态点要跟大数字的盒中心对齐。旧实现贴行底，看起来像 "85.0" 前面的绿色小数点。 */
+    {
+        lv_obj_t *hero_dot = NULL, *hero_value = NULL;
+        assert(find_hero_reading(lv_screen_active(), &hero_dot, &hero_value));
+        lv_area_t da, va;
+        lv_obj_get_coords(hero_dot, &da);
+        lv_obj_get_coords(hero_value, &va);
+        if (abs((da.y1 + da.y2) - (va.y1 + va.y2)) > 4)
+            fprintf(stderr, "hero dot y=%d..%d, value y=%d..%d\n",
+                    (int)da.y1, (int)da.y2, (int)va.y1, (int)va.y2);
+        assert(abs((da.y1 + da.y2) - (va.y1 + va.y2)) <= 4);
+    }
+    fnos_ui_set_page(3); regression_tick(); regression_tick();
+    lv_obj_t *p3_temps = overview_object("硬件温度", &lv_obj_class);
+    assert(p3_temps);
+    for (int i = 0; i < 3; i++) {
+        char device[64]; snprintf(device, sizeof device, "Temperature device %d", i);
+        lv_obj_t *p3_name = visible_text_containing(p3_temps, device);
+        assert(p3_name);
+        lv_obj_t *p3_dot = lv_obj_get_child(lv_obj_get_parent(lv_obj_get_parent(p3_name)), 0);
+        assert(p3_dot && lv_color_eq(lv_obj_get_style_bg_color(p3_dot, 0), uk_c(mixed_colors[i])));
+    }
+    fnos_ui_set_page(0); regression_tick(); regression_tick();
+    assert(assert_temperature_readings(lv_screen_active(), "85.0", UK_DANGER) == 1);
+    fixture.mods[0].status = "stale";
+    fnos_ui_set_page(0); regression_tick();
+    assert(assert_temperature_readings(lv_screen_active(), "85.0", UK_T3) == 1);
+    fnos_ui_set_page(3); regression_tick();
+    for (int i = 0; i < 3; i++) {
+        char device[64]; snprintf(device, sizeof device, "Temperature device %d", i);
+        lv_obj_t *p3_name = visible_text_containing(p3_temps, device);
+        assert(p3_name);
+        lv_obj_t *p3_dot = lv_obj_get_child(lv_obj_get_parent(lv_obj_get_parent(p3_name)), 0);
+        assert(p3_dot && lv_color_eq(lv_obj_get_style_bg_color(p3_dot, 0), uk_c(UK_T3)));
+    }
     fnos_ui_set_night(false);
     s_override_status = NULL; s_state = previous;
     fnos_ui_set_page(previous_page); regression_tick();
@@ -3073,6 +3307,141 @@ static void verify_docker_module_states(void)
     fnos_ui_set_page(previous_page);
     regression_tick();
     fnos_status_release(&fixture);     /* M17：句柄用完必须还 */
+}
+
+/* 顶栏时钟胶囊按内容收边：整条顶栏只有它既带 1px 边框又用 SURF_S1 底。
+   照现在写法（uk_col(h,1) 满铺）它会被拉到顶栏一半宽，右边空出一大块深色矩形。 */
+static lv_obj_t *find_header_pill(lv_obj_t *o)
+{
+    if (lv_obj_get_style_border_width(o, LV_PART_MAIN) == 1 &&
+        lv_color_eq(lv_obj_get_style_bg_color(o, LV_PART_MAIN), uk_c(UK_SURF_S1))) {
+        lv_area_t a;
+        lv_obj_get_coords(o, &a);
+        if (a.y1 < 60 && a.y2 < 90) return o;
+    }
+    for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) {
+        lv_obj_t *f = find_header_pill(lv_obj_get_child(o, i));
+        if (f) return f;
+    }
+    return NULL;
+}
+
+static void verify_header_clock_pill(void)
+{
+    preview_state_t old_state = s_state;
+    int old_page = fnos_ui_page();
+    fnos_status_t fixture = {0};
+    fill_live(&fixture);
+    s_override_status = &fixture;
+    fnos_ui_set_page(0);
+    regression_tick();
+
+    lv_obj_t *pill = find_header_pill(lv_screen_active());
+    assert(pill);
+    lv_obj_t *date = NULL, *clock = NULL;
+    for (uint32_t i = 0; i < lv_obj_get_child_count(pill); i++) {
+        lv_obj_t *c = lv_obj_get_child(pill, i);
+        if (!lv_obj_has_class(c, &lv_label_class)) continue;
+        if (lv_font_get_line_height(lv_obj_get_style_text_font(c, LV_PART_MAIN)) >= 30) clock = c;
+        else date = c;
+    }
+    assert(date && clock);
+    lv_point_t dsz, csz;
+    lv_text_get_size(&dsz, lv_label_get_text(date), lv_obj_get_style_text_font(date, LV_PART_MAIN),
+                     0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    lv_text_get_size(&csz, lv_label_get_text(clock), lv_obj_get_style_text_font(clock, LV_PART_MAIN),
+                     0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    const int32_t hug = LV_MAX(dsz.x, csz.x) + 2 * UK_S3 + 2;
+    if (lv_obj_get_width(pill) > hug) {
+        fprintf(stderr, "header pill width=%d content=%d\n", (int)lv_obj_get_width(pill), (int)hug);
+        snapshot("11-header-pill-wide");
+    }
+    assert(lv_obj_get_width(pill) <= hug);
+
+    /* 病态长主机名：胶囊收边有上限，不能长到把顶栏入口挤出去。 */
+    fnos_status_text(&fixture, &fixture.host, "%s",
+                     "nas-with-an-absurdly-long-host-name-that-no-dns-label-would-ever-allow-0123456789");
+    regression_tick();
+    pill = find_header_pill(lv_screen_active());
+    assert(pill && lv_obj_get_width(pill) <= 532);
+    /* 收边有上限，而且永远不许压到右侧入口。 */
+    lv_obj_t *ssid = visible_text_containing(lv_screen_active(), "Demo");
+    assert(ssid);
+    lv_area_t pa, sa;
+    lv_obj_get_coords(pill, &pa);
+    lv_obj_get_coords(lv_obj_get_parent(ssid), &sa);
+    assert(pa.x2 < sa.x1);
+    snapshot("11-host-pill-capped");
+
+    s_override_status = NULL;
+    s_state = old_state;
+    fnos_ui_set_page(old_page);
+    regression_tick();
+    fnos_status_release(&fixture);     /* M17：句柄用完必须还 */
+}
+
+/* 卡头是 [占位][帽][标题][帽][备注] 五个直接子对象（头行一条 1px 底线可认）。
+   占位与备注同为 grow 1，标题才真正居中；备注留在排版里（不浮动）所以窄卡上
+   也不会压住标题。旧结构 note 直接接在右帽后，标题整组左偏半个备注宽 —— 长备注
+   能偏出一百多像素。 */
+static void check_card_heads(lv_obj_t *o, int *checked, int *worst)
+{
+    if (lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return;
+    if (lv_obj_get_child_count(o) == 5 &&
+        lv_obj_get_style_border_width(o, LV_PART_MAIN) == 1 &&
+        lv_obj_get_style_border_side(o, LV_PART_MAIN) == LV_BORDER_SIDE_BOTTOM &&
+        lv_obj_has_class(lv_obj_get_child(o, 2), &lv_label_class) &&
+        lv_obj_has_class(lv_obj_get_child(o, 4), &lv_label_class)) {
+        lv_obj_t *title = lv_obj_get_child(o, 2), *cap2 = lv_obj_get_child(o, 3);
+        lv_obj_t *note = lv_obj_get_child(o, 4);
+        const char *nt = lv_label_get_text(note);
+        if (nt && nt[0]) {
+            /* 备注超出自己那半个头行就会被 LVGL 的 DOTS 改写成 "前缀..."，
+               占位区又不会回涨 —— 谁写长了谁自己看见。 */
+            assert(!strstr(nt, "..."));
+            lv_area_t ha, ta, na, ca;
+            lv_obj_get_coords(o, &ha);
+            lv_obj_get_coords(title, &ta);
+            lv_obj_get_coords(note, &na);
+            lv_obj_get_coords(cap2, &ca);
+            int off = LV_ABS((ta.x1 + ta.x2) - (ha.x1 + ha.x2));
+            if (off > *worst) *worst = off;
+            if (na.x1 <= ca.x2)
+                fprintf(stderr, "head '%s' note '%s': head %d..%d cap2 %d..%d note %d..%d\n",
+                        lv_label_get_text(title), nt, (int)ha.x1, (int)ha.x2, (int)ca.x1, (int)ca.x2,
+                        (int)na.x1, (int)na.x2);
+            assert(na.x1 > ca.x2);          /* 备注不许压住右帽/标题 */
+            (*checked)++;
+        }
+    }
+    for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++)
+        check_card_heads(lv_obj_get_child(o, i), checked, worst);
+}
+
+static void verify_card_header_alignment(void)
+{
+    preview_state_t old_state = s_state;
+    int old_page = fnos_ui_page();
+    fnos_status_t fixture = {0};
+    fill_live(&fixture);
+    s_override_status = &fixture;
+    int checked = 0, worst = 0;
+    for (int page = 0; page <= 5; page++) {
+        fnos_ui_set_page(page);
+        regression_tick();
+        check_card_heads(lv_screen_active(), &checked, &worst);
+    }
+    if (worst > 2) {
+        fprintf(stderr, "card title off-centre by %d px\n", worst);
+        snapshot("11-card-head-offcentre");
+    }
+    assert(worst <= 2);
+    assert(checked >= 6);                   /* 空备注不参与居中，别让用例空跑 */
+    s_override_status = NULL;
+    s_state = old_state;
+    fnos_ui_set_page(old_page);
+    regression_tick();
+    fnos_status_release(&fixture);
 }
 
 static void verify_ui_regressions(void)
@@ -3277,12 +3646,15 @@ static void verify_temperature_protocol_limit(void)
     assert(lv_obj_get_height(cpu) == compact);
     snapshot("12-cpu-max-channels-collapsed");
 
+    /* 展开行只有文字、没有方向符号时，用户看不出这一行可点（也没有"点了会往下长"的暗示）。 */
+    assert_expand_affordance(cpu, "展开", "↓");
     /* 串口 'temp n' 的落地点（fnos_ui_request_temp_expand）必须与手指点一下等效：
        板上没有触摸自动化，实机的"展开态"照片只有走这条路才拍得到。 */
     fnos_ui_request_temp_expand(0);
     regression_tick();
     assert(visible_text(lv_screen_active(), last_name));
     assert(lv_obj_get_height(cpu) > compact);
+    assert_expand_affordance(cpu, "收起", "↑");
     fnos_ui_request_temp_expand(99);     /* 越界索引：吞掉，不许崩也不许乱展开 */
     regression_tick();
     assert(lv_obj_get_height(cpu) > compact);
@@ -3590,6 +3962,43 @@ static void verify_wifi_keyboard(void)
            "all keyboard rows must be fully visible on entry");
 }
 
+/* 顶栏信号条没有文字可找：4 根宽 5px、高 7/11/15/19 的竖条装在一个行盒里。
+   按这组独有尺寸定位；找不到直接失败，不静默跳过 —— 静默跳过等于永不检查。 */
+static lv_obj_t *signal_bar_row(lv_obj_t *o)
+{
+    static const int32_t heights[4] = { 7, 11, 15, 19 };
+    if (lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return NULL;
+    if (lv_obj_get_child_count(o) == 4) {
+        bool match = true;
+        for (int i = 0; i < 4 && match; i++) {
+            lv_area_t a; lv_obj_get_coords(lv_obj_get_child(o, i), &a);
+            if (a.x2 - a.x1 + 1 != 5 || a.y2 - a.y1 + 1 != heights[i]) match = false;
+        }
+        if (match) return o;
+    }
+    for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) {
+        lv_obj_t *found = signal_bar_row(lv_obj_get_child(o, i));
+        if (found) return found;
+    }
+    return NULL;
+}
+
+/* lit = 亮起的格数；未点亮必须是 UK_SURF_S3（与 signal_set 同一套判据）。 */
+static void assert_signal_bars(const char *what, int expect_lit)
+{
+    lv_obj_t *row = signal_bar_row(lv_screen_active());
+    assert(row);
+    for (int i = 0; i < 4; i++) {
+        lv_color_t got = lv_obj_get_style_bg_color(lv_obj_get_child(row, i), 0);
+        lv_color_t want = uk_c(i < expect_lit ? UK_T1 : UK_SURF_S3);
+        if (!lv_color_eq(got, want)) {
+            fprintf(stderr, "signal bars [%s]: bar %d #%02X%02X%02X, want #%02X%02X%02X\n",
+                    what, i, got.red, got.green, got.blue, want.red, want.green, want.blue);
+            abort();
+        }
+    }
+}
+
 static void verify_wifi(void)
 {
     /* 配对卡现在是模态的；上一个用例可能留着它，先显式关掉再走配网流程。 */
@@ -3599,6 +4008,9 @@ static void verify_wifi(void)
     wifi_stub(false, false, "", "");
     vtick_advance(500); lv_timer_handler();
     assert(visible_text(lv_screen_active(), "Wi-Fi 未配置"));
+    /* 没配网就没有信号：4 格必须全暗。以前只看 rssi，未配置时 rssi 是 0 或残留值，
+       顶栏一边写"Wi-Fi 未配置"一边亮着 4 格满格。 */
+    assert_signal_bars("unconfigured", 0);
     wifi_click("Wi-Fi 未配置");                    /* 顶栏入口（真机首次开机由 ui_tick 自动弹） */
     vtick_advance(500); lv_timer_handler();
     assert(visible_text(lv_screen_active(), "接入 Wi-Fi"));
@@ -3669,6 +4081,7 @@ static void verify_wifi(void)
            "已连接 Demo（192.0.2.42） · 信号 -54 dBm\n"
            "板子已经记住这个网络，下次开机自动连。"));
     snapshot("10-wifi-linked");
+    assert_signal_bars("linked", 4);                /* -54 dBm → 满格 */
     verify_wifi_footer("关闭");
 
     /* 连不上：标题与原因都要说人话（不能一直写"正在连接…"） */
@@ -3679,6 +4092,7 @@ static void verify_wifi(void)
     assert(visible_text(lv_screen_active(), "修改密码"));
     assert(!visible_text(lv_screen_active(), "完成"));
     assert(visible_text(lv_screen_active(), "Wi-Fi 未连接"));
+    assert_signal_bars("failed", 0);                /* 断了就没有信号，哪怕记得住 SSID */
     snapshot("10-wifi-failed");
     verify_wifi_footer("关闭");
     wifi_stub(true, false, "Demo", "凭据保存失败（NVS 写入错误）");
@@ -3879,6 +4293,26 @@ static void verify_pairing(void)
        两者叠在一起过一次（"未配对：用编译期默认地址"盖在"三步完成配对"上）。 */
     assert(!visible_text(lv_screen_active(), "未配对：用编译期默认地址"));
     snapshot("07-pair-code");
+    /* 同排两张卡必须等高：flex 没有 cross 轴 stretch，各自按内容定高时短的那张
+       只画到一半，右下方露出整块底色（"三步完成配对"旁边那张高卡就是这样）。 */
+    {
+        lv_obj_t *steps_card = card_of_label(lv_screen_active(), "三步完成配对");
+        lv_obj_t *code_card  = card_of_label(lv_screen_active(), "配对码");
+        lv_area_t pair_l, pair_r;
+        assert(steps_card && code_card);
+        lv_obj_get_coords(steps_card, &pair_l);
+        lv_obj_get_coords(code_card, &pair_r);
+        assert(LV_ABS(pair_l.y1 - pair_r.y1) <= 1);       /* 真的在同一排 */
+        if (lv_obj_get_height(steps_card) != lv_obj_get_height(code_card))
+            fprintf(stderr, "pair cards unequal: %d vs %d\n",
+                    (int)lv_obj_get_height(steps_card), (int)lv_obj_get_height(code_card));
+        assert(lv_obj_get_height(steps_card) == lv_obj_get_height(code_card));
+        /* 底栏按钮是主操作，触控宽度至少两倍行高（现在只有一个字宽的胶囊）。 */
+        lv_obj_t *foot_close = lv_obj_get_parent(visible_text_clickable(lv_screen_active(), "关闭"));
+        if (lv_obj_get_width(foot_close) < 2 * UK_ROW_H)
+            fprintf(stderr, "pair close button width=%d\n", (int)lv_obj_get_width(foot_close));
+        assert(lv_obj_get_width(foot_close) >= 2 * UK_ROW_H);
+    }
     /* Actions and all four keypad rows are visible together without scrolling. */
     lv_obj_t *close = lv_obj_get_parent(visible_text_clickable(lv_screen_active(), "关闭"));
     lv_obj_t *code_title = visible_text(lv_screen_active(), "配对码");
@@ -3946,6 +4380,30 @@ static void verify_pairing(void)
     assert(visible_text(lv_screen_active(), "<NAS_IP>:8798 · HTTPS · CN=fnos-nas.local"));
     assert(visible_text(lv_screen_active(), "解除配对"));
     snapshot("07-pair-done");
+    /* 已配对态的卡片内容很矮：铺不到容器底部就在底栏上方留一大块空底
+       （实机取样：卡底 y≈165，容器到 y≈230）。这里量的是"铺满"。 */
+    {
+        lv_obj_t *fp_card  = card_of_label(lv_screen_active(), "证书指纹");
+        lv_obj_t *msg_card = card_of_label(lv_screen_active(), "连接状态");
+        assert(fp_card && msg_card);
+        lv_obj_t *grid = lv_obj_get_parent(msg_card);
+        lv_area_t ga, ca;
+        lv_obj_get_content_coords(grid, &ga);
+        lv_obj_get_coords(fp_card, &ca);
+        assert(lv_obj_get_scroll_bottom(grid) == 0);   /* 单排、没有滚动余量 */
+        if (LV_ABS(ca.y2 - ga.y2) > 1)
+            fprintf(stderr, "pair card bottom %d vs container %d\n", (int)ca.y2, (int)ga.y2);
+        assert(LV_ABS(ca.y2 - ga.y2) <= 1);
+    }
+    /* 凭据还在、指纹没存（旧固件配过 / 重启后）时，卡里必须有话说，不能只剩标题 */
+    s_pair_no_fp = true;
+    vtick_advance(500); lv_timer_handler();
+    assert(visible_text_containing(lv_screen_active(), "未保存证书指纹"));
+    assert(!visible_text(lv_screen_active(), "3F:1A:9C:04:E7:52:BB:6D"));
+    snapshot("07-pair-done-no-fp");
+    s_pair_no_fp = false;
+    vtick_advance(500); lv_timer_handler();
+    assert(visible_text(lv_screen_active(), "3F:1A:9C:04:E7:52:BB:6D"));
 
     /* 解除要按两次：第一次只换文案，绝不直接清掉凭据 */
     click_text("解除配对");
@@ -5908,6 +6366,7 @@ int main(int argc, char **argv)
     verify_navigation_hit_targets();
     verify_enhanced_metrics();
     verify_unifi_views();
+    verify_storage_rows();
     verify_detail_freshness();
     verify_diagnostic_freshness();
     verify_alert_text_preservation();
@@ -5916,6 +6375,8 @@ int main(int argc, char **argv)
     verify_pair_messages();
     verify_wifi();
     verify_ui_regressions();
+    verify_header_clock_pill();
+    verify_card_header_alignment();
     verify_docker_module_states();
     verify_temperature_protocol_limit();
     verify_overview_charts();

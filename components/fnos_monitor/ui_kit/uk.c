@@ -245,6 +245,20 @@ void uk_grid_equalize(lv_obj_t *row)
     }
 }
 
+/* 卡头左侧的透明占位：grow 1、基准宽 0，与右侧备注标签对半分余量。 */
+static lv_obj_t *head_lead(lv_obj_t *head)
+{
+    lv_obj_t *z = lv_obj_create(head);
+    lv_obj_set_height(z, lv_font_get_line_height(UK_TYPE_CAPTION));   /* 跨轴定高：别被头行撑 */
+    lv_obj_set_flex_grow(z, 1);
+    lv_obj_set_style_min_width(z, 0, 0);
+    lv_obj_set_style_bg_opa(z, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(z, 0, 0);
+    lv_obj_set_style_pad_all(z, 0, 0);
+    lv_obj_remove_flag(z, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    return z;
+}
+
 /* ── 卡片 ─────────────────────────────────────────────────────────── */
 lv_obj_t *uk_card(lv_obj_t *parent, const char *title, const char *note)
 {
@@ -277,8 +291,11 @@ lv_obj_t *uk_card(lv_obj_t *parent, const char *title, const char *note)
     lv_obj_set_flex_align(head, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
     /* michka 的卡头：居中的大字距标签，两侧各一个 4px 白方块帽（CSS ::before/::after）。
-       帽子仍是头行的直接子对象，标题保持"头行第 2 个孩子"的既有结构契约；
-       note 用一个不参与排版的浮动标签钉在右上角，免得把居中算偏。 */
+       头行 = [占位][帽][标题][帽][备注]：占位与备注同为 grow 1、基准宽 0，
+       余量对半分，于是 [帽][标题][帽] 恒居中、备注贴右缘。
+       备注必须是排版里的直接孩子：给它套一层面板再按百分比定宽，百分比在首趟布局
+       会先算成 0，LVGL 的 DOTS 模式当场把文本改写成 "传感..."（改完不还原）。 */
+    head_lead(head);                 /* 左占位 */
     uk_cap(head);
     lv_obj_t *tl = mk_label_raw(head, UK_TYPE_CAPTION, UK_T3);
     lv_obj_set_style_text_letter_space(tl, 1, 0);
@@ -288,12 +305,12 @@ lv_obj_t *uk_card(lv_obj_t *parent, const char *title, const char *note)
     lv_label_set_text(tl, title ? title : "");   /* 不给就空着，别留 LVGL 默认的 "Text" */
     uk_cap(head);
 
-    /* note 留在排版里而不是浮在右上角：浮动标签会和居中的标题压在一起
-       （预览审计按像素查重叠，压了就是错）。michka 本来是"帽·标题·帽"整组居中，
-       这里把右上角说明接在右帽之后，整组仍然居中。 */
+    /* 备注始终占位（空的也建）：备注从空变非空时标题不会跳一下。
+       单行定高，太长就靠 DOTS 在自己的半区里省略号收尾。 */
     lv_obj_t *nt = mk_label_raw(head, UK_TYPE_CAPTION, UK_T4);
+    lv_obj_set_height(nt, lv_font_get_line_height(UK_TYPE_CAPTION));
+    lv_obj_set_flex_grow(nt, 1);      /* 余量的另一半，宽度由头行的 flex 定死 */
     lv_obj_set_style_text_align(nt, LV_TEXT_ALIGN_RIGHT, 0);
-    lv_obj_set_flex_grow(nt, 0);
     lv_label_set_text(nt, note ? note : "");
 
     /* 头行连一个字都没有（title/note 都空）时整行收起：空 label 也有字体行高，
@@ -320,12 +337,12 @@ lv_obj_t *uk_card_body(lv_obj_t *card) { return (lv_obj_t *)lv_obj_get_user_data
 lv_obj_t *uk_card_title(lv_obj_t *card)
 {
     lv_obj_t *h = lv_obj_get_child(card, 0);
-    return h ? lv_obj_get_child(h, 1) : NULL;   /* 0=左帽 1=标题 2=右帽 3=note */
+    return h ? lv_obj_get_child(h, 2) : NULL;   /* 0=占位 1=左帽 2=标题 3=右帽 4=备注 */
 }
 lv_obj_t *uk_card_note(lv_obj_t *card)
 {
     lv_obj_t *h = lv_obj_get_child(card, 0);
-    return h ? lv_obj_get_child(h, 3) : NULL;
+    return h ? lv_obj_get_child(h, 4) : NULL;
 }
 
 void uk_card_flex(lv_obj_t *card, int32_t grow)

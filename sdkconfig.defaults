@@ -74,6 +74,11 @@ CONFIG_LV_BUILD_EXAMPLES=n
 # （官方 11_esp_brookesia_phone 示例自带的 2 在真机上起不来，其 README 也承认
 #   CI 只验证编译、运行时行为需真机验证。）
 CONFIG_BSP_LCD_DPI_BUFFER_NUMS=3
+# 板载 C6 走 SDIO（复位脚 GPIO54），不是 SPI。旧 sdkconfig 喂给新 IDF 时，
+# choice ESP_HOSTED_HOST_INTERFACE 的依赖在首轮求值短暂为假，confgen 会静默
+# 退回 SPI 默认值并写回 sdkconfig：C6 从此完全不回话，app_main 卡在 esp_wifi_init
+# （2026-11-08 实测，串口只有每 11 秒一条 "Not able to connect with ESP-Hosted slave"）。
+CONFIG_ESP_HOSTED_SDIO_HOST_INTERFACE=y
 # TLS 缓冲默认吃内部 RAM —— 本板内部 RAM 还要养 LVGL/显示/ESP-Hosted(SDIO)：
 # 实测跑约 170 秒后内部 DMA 内存耗尽（esp-aes 分配 DMA 描述符失败 → mbedtls 握手
 # 失败 → 所有 GET 失败），紧接着 LVGL 任务卡死（界面冻结 + 触摸失效）。
