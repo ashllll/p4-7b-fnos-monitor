@@ -309,7 +309,9 @@ wizard_port="$PORT" "$CMD/install_init" >/dev/null 2>&1
 check "$?" 0 "install_init 通过"
 wizard_port="$PORT" "$CMD/install_callback" >/dev/null 2>&1
 check "$?" 0 "install_callback 写出配置"
-check "$(stat -f '%Lp' "$TRIM_PKGVAR/config.json" 2>/dev/null || stat -c '%a' "$TRIM_PKGVAR/config.json")" 600 "config.json 权限 0600"
+# GNU stat 的 -f 是「文件系统」而不是格式串，在 Linux 上会成功并打印一大段 File: …，
+# 于是 stat -f 打头会永远拿不到权限位（本机 macOS 跑不出来，NAS/VM 上两条断言必假失败）。
+check "$(stat -c '%a' "$TRIM_PKGVAR/config.json" 2>/dev/null || stat -f '%Lp' "$TRIM_PKGVAR/config.json")" 600 "config.json 权限 0600"
 
 step "3b. 依赖故障：依赖的 Python 不在时，用户能看到原因"
 # 真机场景：install_dep_apps=python312 声明的依赖没装好（或装在了别处）。
@@ -343,7 +345,7 @@ check "$(http_code "https://127.0.0.1:$PORT/api/v1/health")" 200 "遥测面 /api
 step "4b. 传输加密（默认 HTTPS，指纹可核对，明文不静默通过）"
 [ -s "$CACERT" ] && ok "自签证书已生成：$CACERT" || bad "证书没有生成"
 [ -s "$STAGE/var/tls/server.key" ] && ok "私钥已生成" || bad "私钥没有生成"
-check "$(stat -f '%Lp' "$STAGE/var/tls/server.key" 2>/dev/null || stat -c '%a' "$STAGE/var/tls/server.key")" 600 "私钥权限 0600"
+check "$(stat -c '%a' "$STAGE/var/tls/server.key" 2>/dev/null || stat -f '%Lp' "$STAGE/var/tls/server.key")" 600 "私钥权限 0600"
 # 指纹必须和 openssl 算出来的一致——板子固定的是这个值，算错了等于信错证书
 FP_API=$(admin "http://x/app/nasscreencompanion/api/state" \
   | python3 -c 'import sys,json;print(json.load(sys.stdin)["tls"]["fingerprint"])' 2>/dev/null)
@@ -996,7 +998,10 @@ step "12b. 不理会 SIGTERM 的进程会被升级到 SIGKILL（用户验收问�
 # 注意别写成 STUB=$(... & echo $!)：那个 $! 是**子 shell 的**后台作业号，
 # 而子 shell 立刻就退出了，拿到的要么是空的、要么是错的 pid（第一版就是这样，
 # 于是三条断言全变成空断言——只有最后那条"必须等够 8 秒"把它揪了出来）。
-bash -c 'trap "" TERM; exec sleep 300' &
+# is_running 在 Linux 上还会核对 /proc/<pid>/cmdline 必须含 nas_companion_server.py
+# （防 PID 复用）。stub 的 argv 里不带这个名字，stop 就判「未在运行」走早退分支，
+# 这条在 Linux 上永远测不到升级路径（macOS 没有 /proc，以前只在 macOS 跑过）。
+"$PY" -c 'import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(300)' nas_companion_server.py &
 STUB=$!
 DIRECT_CHILDREN="$DIRECT_CHILDREN $STUB"
 sleep 0.5

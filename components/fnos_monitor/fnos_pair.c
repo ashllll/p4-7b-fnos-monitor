@@ -248,7 +248,10 @@ static void set_view_locked(fnos_pair_state_t state, const char *msg)
 {
     s_view.state = state;
     snprintf(s_view.msg, sizeof(s_view.msg), "%s", msg ? msg : "");
-    snprintf(s_view.fingerprint, sizeof(s_view.fingerprint), "%s", s_pend_fp);
+    /* 重启之后 s_pend_fp 是空的，但 NVS 里的 s_cfg.fingerprint 还在 —— 不回落到它，
+       "证书指纹"卡片在已配对态就只剩一个标题和一个地址（实机取样如此）。 */
+    snprintf(s_view.fingerprint, sizeof(s_view.fingerprint), "%s",
+             s_pend_fp[0] ? s_pend_fp : s_cfg.fingerprint);
     snprintf(s_view.subject, sizeof(s_view.subject), "%s", s_pend_cn);
     snprintf(s_view.not_after, sizeof(s_view.not_after), "%s", s_pend_until);
     snprintf(s_view.host, sizeof(s_view.host), "%s", s_cfg.host);
