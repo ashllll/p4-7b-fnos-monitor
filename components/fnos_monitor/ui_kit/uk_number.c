@@ -143,11 +143,16 @@ static void number_destroy(const lv_obj_class_t *cls, lv_obj_t *obj)
 {
     (void)cls; clear_layers(obj);
 }
-static void sample_layers(number_label_t *n, uint32_t elapsed)
+static bool sample_layers(number_label_t *n, uint32_t elapsed, bool *settled)
 {
     uint32_t sampled=UINT32_MAX;
     uk_spring_response_t response={0};
+    bool changed=false, done=true;
+    float radius=n->font ? (float)lv_font_get_line_height(n->font)*UK_NUMBER_BLUR_PCT/100 : 0.f;
     for (glyph_layer_t *g=n->layers;g;g=g->next) {
+        int32_t ox=(int32_t)lroundf(g->x), oy=(int32_t)lroundf(g->y);
+        int32_t oa=(int32_t)(LV_OPA_COVER*LV_CLAMP(0.f,g->alpha,1.f));
+        int32_t ob=(int32_t)lroundf(radius*(1.f-LV_CLAMP(0.f,g->alpha,1.f)));
         uint32_t local=elapsed<=g->delay ? 0 : elapsed-g->delay;
         /* With the default zero stagger, one exponential serves all glyphs. */
         if (local!=sampled) { response=local>=n->duration ? (uk_spring_response_t){0} : uk_spring_response(local,n->duration); sampled=local; }
@@ -155,7 +160,17 @@ static void sample_layers(number_label_t *n, uint32_t elapsed)
         g->y=uk_spring_value(g->from_y,g->from_vy,g->to_y,response,&g->vy);
         g->alpha=uk_spring_value(g->from_alpha,g->from_va,g->to_alpha,response,&g->va);
         if (g->alpha<0 || g->alpha>1) { g->alpha=LV_CLAMP(0,g->alpha,1); g->va=0; }
+        int32_t nx=(int32_t)lroundf(g->x), ny=(int32_t)lroundf(g->y);
+        int32_t na=(int32_t)(LV_OPA_COVER*LV_CLAMP(0.f,g->alpha,1.f));
+        int32_t nb=(int32_t)lroundf(radius*(1.f-LV_CLAMP(0.f,g->alpha,1.f)));
+        if (nx!=ox || ny!=oy || na!=oa || nb!=ob) changed=true;
+        int32_t tx=(int32_t)lroundf(g->to_x), ty=(int32_t)lroundf(g->to_y);
+        int32_t ta=(int32_t)(LV_OPA_COVER*LV_CLAMP(0.f,g->to_alpha,1.f));
+        if (local<=g->delay || nx!=tx || ny!=ty || na!=ta ||
+            fabsf(g->vx)>.02f || fabsf(g->vy)>.02f || fabsf(g->va)>.001f) done=false;
     }
+    if (settled) *settled=done;
+    return changed;
 }
 static void number_step(void *obj, int32_t elapsed)
 {
@@ -164,9 +179,10 @@ static void number_step(void *obj, int32_t elapsed)
         return;
     }
     number_label_t *n=obj;
-    sample_layers(n,(uint32_t)elapsed);
-    if ((uint32_t)elapsed>=n->span) clear_layers(obj);
-    else lv_obj_invalidate(obj);
+    bool settled=false;
+    bool changed=sample_layers(n,(uint32_t)elapsed,&settled);
+    if ((uint32_t)elapsed>=n->span || settled) clear_layers(obj);
+    else if (changed) lv_obj_invalidate(obj);
 }
 static int char_count(const char *text)
 {
@@ -261,7 +277,7 @@ void uk_number_set_text(lv_obj_t *obj, const char *text, bool animate)
     int32_t old_origin=old_content.x1+(alignment==LV_TEXT_ALIGN_RIGHT ?
         lv_area_get_width(&old_content)-old_size.x : alignment==LV_TEXT_ALIGN_CENTER ?
         (lv_area_get_width(&old_content)-old_size.x)/2 : 0);
-    if (n->active) sample_layers(n,lv_tick_elaps(n->started));
+    if (n->active) sample_layers(n,lv_tick_elaps(n->started),NULL);
     else if (!seed_layers(obj,old)) { clear_layers(obj); lv_label_set_text(obj,text); return; }
     lv_anim_delete(obj,number_step);
     glyph_layer_t **slot=&n->layers;
@@ -425,7 +441,7 @@ void uk_number_selfcheck(lv_obj_t *parent)
     number_label_t *n=(number_label_t *)o;
     assert(n->active);
     assert(n->duration==UK_NUMBER_MS);
-    sample_layers(n,n->duration/3);
+    sample_layers(n,n->duration/3,NULL);
     n->started=lv_tick_get()-n->duration/3;
     glyph_layer_t *before=n->layers;
     float y=before->y,alpha=before->alpha,vy=before->vy;

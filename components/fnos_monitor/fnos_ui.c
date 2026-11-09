@@ -753,9 +753,11 @@ static void p3_overlay_sync(void)
     const lv_font_t *clock_font = any ? UK_FONT_NUM_20 : UK_FONT_NUM_32;
     lv_obj_set_style_text_font(s_ui.h_clock, clock_font, 0);
     lv_obj_set_height(s_ui.h_clock, lv_font_get_line_height(clock_font));
-    lv_obj_set_style_pad_ver(lv_obj_get_parent(s_ui.h_clock), any ? 0 : UK_S1 + UK_S1 / 2, 0);
+    /* 与 build_header 的气泡保持同一份上下留白：收起时覆盖层不占位、上下各 0。 */
+    lv_obj_set_style_pad_top(lv_obj_get_parent(s_ui.h_clock), any ? 0 : UK_S1 * 2, 0);
+    lv_obj_set_style_pad_bottom(lv_obj_get_parent(s_ui.h_clock), any ? 0 : UK_S1, 0);
     lv_obj_t *body[] = { s_ui.p3_note, s_ui.p3_cols, s_ui.scope_bar[3] };
-    for (unsigned i = 0; i < sizeof body / sizeof body[0]; i++) overlay_target(body[i], !any);
+    for (unsigned i = 0; i < sizeof body / sizeof body[0]; i++) show(body[i], !any);
     overlay_target(s_ui.diagnostics, s_diagnostics);
     overlay_target(s_ui.pair_card, s_pair_open);
     overlay_target(s_ui.wifi_card, s_wifi_open);
@@ -1184,25 +1186,32 @@ static void build_header(lv_obj_t *h)
     /* Controls take their text width; the host column uses the actual remaining width. */
     lv_obj_t *hostcol = uk_col(h, 1);
     lv_obj_set_style_min_width(hostcol, 0, 0);
-    /* Native Slate clock bubble; content height follows the selected fonts.
-       Keep the host column flexible so long names never displace device controls. */
-    lv_obj_set_style_pad_row(hostcol, 0, 0);
-    lv_obj_set_style_pad_hor(hostcol, UK_S3, 0);
-    lv_obj_set_style_pad_ver(hostcol, UK_S1 + UK_S1 / 2, 0);
-    lv_obj_set_style_bg_color(hostcol, uk_c(UK_SURF_S1), 0);
-    lv_obj_set_style_bg_grad_dir(hostcol, LV_GRAD_DIR_NONE, 0);
-    lv_obj_set_style_bg_opa(hostcol, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(hostcol, UK_RADIUS_SM + UK_S1, 0);
-    lv_obj_set_style_border_width(hostcol, 1, 0);
-    lv_obj_set_style_border_color(hostcol, uk_c(UK_T1), 0);
-    lv_obj_set_style_border_opa(hostcol, 28, 0);
-    s_ui.h_date = uk_label(hostcol, UK_FONT_CJK_12, UK_T4, "fnOS");
-    lv_obj_set_width(s_ui.h_date, LV_PCT(100));
+    /* 时钟气泡贴着数字走（顶栏任务栏样式）；外层列只负责把右侧控件顶到边上，
+       所以它保持 flex-grow，真正的深色卡片是里面按内容宽度的这一圈。 */
+    lv_obj_t *bubble = lv_obj_create(hostcol);
+    lv_obj_set_size(bubble, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_style_pad_row(bubble, 0, 0);
+    lv_obj_set_style_pad_hor(bubble, UK_S3, 0);
+    /* 行盒比墨迹高：CJK 首行上方与数字字体下沿的空档不一样，上下等 padding 时
+       墨迹会偏上 2px。多给顶部、少给底部，让墨迹在气泡里中心对称。 */
+    lv_obj_set_style_pad_top(bubble, UK_S1 * 2, 0);
+    lv_obj_set_style_pad_bottom(bubble, UK_S1, 0);
+    lv_obj_set_style_bg_color(bubble, uk_c(UK_SURF_S1), 0);
+    lv_obj_set_style_bg_grad_dir(bubble, LV_GRAD_DIR_NONE, 0);
+    lv_obj_set_style_bg_opa(bubble, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(bubble, UK_RADIUS_SM + UK_S1, 0);
+    lv_obj_set_style_border_width(bubble, 1, 0);
+    lv_obj_set_style_border_color(bubble, uk_c(UK_T1), 0);
+    lv_obj_set_style_border_opa(bubble, 28, 0);
+    lv_obj_set_flex_flow(bubble, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(bubble, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_remove_flag(bubble, LV_OBJ_FLAG_SCROLLABLE);
+    s_ui.h_date = uk_label(bubble, UK_FONT_CJK_12, UK_T4, "fnOS");
     lv_obj_set_height(s_ui.h_date, lv_font_get_line_height(UK_FONT_CJK_12));
-    s_ui.h_clock = uk_label(hostcol, UK_FONT_NUM_32, UK_T1, "--:--");
-    lv_obj_set_width(s_ui.h_clock, LV_PCT(100));
+    s_ui.h_clock = uk_label(bubble, UK_FONT_NUM_32, UK_T1, "--:--");
     lv_obj_set_height(s_ui.h_clock, lv_font_get_line_height(UK_FONT_NUM_32));
     lv_obj_set_style_text_letter_space(s_ui.h_clock, 1, 0);
+    not_clickable(bubble);
     not_clickable(hostcol);
 
     /* Measure actionable labels with the same body font used by the buttons. */
@@ -5925,7 +5934,7 @@ static void ui_tick(lv_timer_t *t)
 
     /* Short live batches share one continuous travel to the newest window.
        Backfill (including its final partial batch) and long gaps settle at once. */
-    if (history_syncing || batch_ms > UK_TREND_SCROLL_MS || motion_busy()) {
+    if (history_syncing || batch_ms > UK_TREND_SCROLL_MS) {
         uk_trend_settle(s_ui.overview_resource[0].chart);
         uk_trend_settle(s_ui.overview_resource[1].chart);
         uk_trend_settle(s_ui.tr_net);
@@ -6367,16 +6376,18 @@ static void motion_paint(void)
     /* Setters defer layout, so resolve it before balancing this counter. This
        preserves pending invalidations and avoids a later full-page repaint. */
     lv_display_enable_invalidation(display, false);
-    lv_obj_set_size(from_clip, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_pos(from_clip, 0, 0);
-    lv_obj_set_pos(from, 0, 0);
     int32_t height = lv_obj_get_content_height(s_ui.viewport);
-    lv_obj_set_size(from, s_motion.width, height);
-    lv_obj_set_size(to, s_motion.width, height);
+    if (s_motion.painted == INT32_MIN) {
+        lv_obj_set_size(from_clip, LV_PCT(100), LV_PCT(100));
+        lv_obj_set_pos(from_clip, 0, 0);
+        lv_obj_set_pos(from, 0, 0);
+        lv_obj_set_size(from, s_motion.width, height);
+        lv_obj_set_size(to, s_motion.width, height);
+        lv_obj_move_to_index(to_clip, -1);
+    }
     lv_obj_set_size(to_clip, travel, height);
     lv_obj_set_pos(to_clip, left, 0);
     lv_obj_set_pos(to, -left, 0);
-    lv_obj_move_to_index(to_clip, -1);
     lv_obj_update_layout(s_ui.viewport);
     lv_display_enable_invalidation(display, true);
     s_motion.painted = travel;
@@ -6420,9 +6431,14 @@ static void motion_finish(void)
                  (unsigned long)lv_tick_elaps(s_motion_stats.started));
     }
 #endif
+    bool settled_edge = s_motion.active &&
+        ((s_page == s_motion.to && s_motion.painted == s_motion.width) ||
+         (s_page == s_motion.from && s_motion.painted == 0));
     s_motion.active = false;
     s_motion.velocity = 0;
     uk_number_motion_enable(s_st.online);
+    lv_display_t *display = lv_obj_get_display(s_ui.viewport);
+    if (settled_edge) lv_display_enable_invalidation(display, false);
     for (int i = 0; i < FNOS_UI_PAGE_COUNT; i++) {
         show(s_ui.page[i], i == s_page);
         lv_obj_set_style_translate_x(s_ui.page[i], 0, 0);
@@ -6433,7 +6449,12 @@ static void motion_finish(void)
         lv_obj_set_size(clip, LV_PCT(100), LV_PCT(100));
         lv_obj_set_pos(clip, 0, 0);
     }
-    lv_obj_invalidate(s_ui.viewport);
+    if (settled_edge) {
+        lv_obj_update_layout(s_ui.viewport);
+        lv_display_enable_invalidation(display, true);
+    } else {
+        lv_obj_invalidate(s_ui.viewport);
+    }
     refresh_soon();
     if (s_refresh_pending) {
         s_refresh_pending = false;
@@ -6588,7 +6609,7 @@ void fnos_ui_set_page(int idx)
         motion_prepare(from, idx, idx > from ? 1 : -1);
         motion_snap(true);
     }
-    lv_obj_invalidate(s_ui.viewport);
+    if (!s_motion.active) lv_obj_invalidate(s_ui.viewport);
     refresh_soon();     /* 切页的第一帧立刻出，不等刷新周期 */
 }
 
@@ -6667,7 +6688,9 @@ static void motion_tick(lv_timer_t *timer)
     }
     uint32_t elapsed = lv_tick_elaps(s_motion.last_tick);
     if (elapsed && point.x != s_motion.last.x) {
-        s_motion.velocity = (point.x - s_motion.last.x) * 1000 / (int32_t)elapsed;
+        int32_t inst = (point.x - s_motion.last.x) * 1000 / (int32_t)elapsed;
+        s_motion.velocity = s_motion.velocity && (s_motion.velocity ^ inst) >= 0 ?
+            (s_motion.velocity + inst * 2) / 3 : inst;
         s_motion.last = point; s_motion.last_tick = lv_tick_get();
     }
     int32_t offset = s_motion.press_offset + point.x - s_motion.press.x;

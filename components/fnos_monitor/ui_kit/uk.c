@@ -1169,8 +1169,11 @@ static int32_t trend_span(lv_obj_t *chart)
 static void trend_window(lv_obj_t *chart, int32_t right)
 {
     trend_t *t = (trend_t *)chart;
+    int32_t left = right - trend_span(chart);
+    lv_chart_t *c = (lv_chart_t *)chart;
     t->right = right;
-    lv_chart_set_axis_range(chart, LV_CHART_AXIS_PRIMARY_X, right - trend_span(chart), right);
+    if (c->xmin[0] == left && c->xmax[0] == right) return;
+    lv_chart_set_axis_range(chart, LV_CHART_AXIS_PRIMARY_X, left, right);
 }
 static void trend_step(void *obj, int32_t progress)
 {
@@ -1203,6 +1206,7 @@ static void trend_range_announce(lv_obj_t *chart)
 static void trend_range_snap(lv_obj_t *chart)
 {
     trend_t *t = (trend_t *)chart;
+    bool was_active = t->range_active;
     lv_anim_delete(chart, trend_range_step);
     t->range_pending = t->range_active = false;
     if (!t->range_valid) return;
@@ -1210,7 +1214,11 @@ static void trend_range_snap(lv_obj_t *chart)
         t->range_value[i] = t->range_from[i] = t->range_target[i];
         t->range_velocity[i] = t->range_from_velocity[i] = 0;
     }
-    lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, t->range_target[0], t->range_target[1]);
+    lv_chart_t *c = (lv_chart_t *)chart;
+    if (c->ymin[0] != t->range_target[0] || c->ymax[0] != t->range_target[1])
+        lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, t->range_target[0], t->range_target[1]);
+    else if (was_active)
+        lv_obj_invalidate(chart);
     trend_range_announce(chart);
 }
 
