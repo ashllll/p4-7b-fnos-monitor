@@ -503,25 +503,133 @@ void uk_number_selfcheck(lv_obj_t *parent)
     lv_obj_delete(o); assert(layer_bytes<used); /* Destructor must remove in-flight callbacks and layers. */
     uk_test_alloc_fail_after(0);
     assert(!uk_kpi_create(parent,"rate") && uk_alloc_failed());
-    uk_kpi_set(NULL,"9.9","MB/s","",-1);
+    uk_kpi_set(NULL,"9.9","MB/s","",-1,true);
     uk_test_alloc_fail_after(-1); uk_alloc_reset();
     uk_kpi_t *k=uk_kpi_create(parent,"rate");
+    assert(k);
     lv_obj_set_width(k->box,LV_PCT(100)); lv_obj_set_height(k->box,LV_SIZE_CONTENT);
     lv_obj_set_flex_grow(k->box,0);
-    uk_kpi_set(k,"9.9","MB/s","",-1); lv_obj_update_layout(parent);
-    uk_kpi_set(k,"10.0","MB/s","",-1);
+    uk_kpi_set(k,"9.9","MB/s","",-1,true); lv_obj_update_layout(parent);
+    uk_kpi_set(k,"10.0","MB/s","",-1,true);
     assert(((number_label_t *)k->val)->active);
-    uk_kpi_set(k,"1.0","GB/s","",-1); assert(!((number_label_t *)k->val)->active);
-    lv_obj_delete(k->box); lv_free(k);
+    uk_kpi_set(k,"1.0","GB/s","",-1,true); assert(!((number_label_t *)k->val)->active);
     /* 行内读数（存储页的卷/阵列/磁盘形态）：第二行是每秒都在变的**数据**，
        它既不能挡住 val 的过渡，自己也要能滑（见 uk_row_set 的 same_reading）。 */
     uk_row_t *r=uk_row_create(parent,false,true);
-    uk_row_set(r,"/vol1","已用 5.4 TB / 总计 7.3 TB · btrfs","75%",NULL,75,0);
+    assert(r);
+    uk_row_set(r,"/vol1","已用 5.4 TB / 总计 7.3 TB · btrfs","75%",NULL,75,0,true);
     lv_obj_update_layout(parent);
-    uk_row_set(r,"/vol1","已用 5.5 TB / 总计 7.3 TB · btrfs","76%",NULL,76,0);
+    uk_row_set(r,"/vol1","已用 5.5 TB / 总计 7.3 TB · btrfs","76%",NULL,76,0,true);
     assert(((number_label_t *)r->val)->active);
     assert(((number_label_t *)r->name2)->active);
+    if (UK_NUMBER_PRESENT_MS>0) {
+        /* Zero explicitly opts out of the gate; the reduced profile returns above. */
+        LV_LOG_USER("row/KPI retained regression: non-reduced motion and positive presentation beat required");
+        assert(!UK_NUMBER_REDUCED && UK_NUMBER_MS>0 && UK_NUMBER_PRESENT_MS>0 && !uk_motion_reduced());
+        bool saved_batch_open=presentation_batch_open;
+        presentation_gate_enabled=true;
+        presentation_batch_open=true;
+        lv_obj_t *readings[]={r->name2,r->val,k->sub,k->val};
+        uk_row_set(r,"/vol1","11","11","MB/s",11,0,false);
+        uk_kpi_set(k,"11","MB/s","11",11,false);
+        lv_obj_update_layout(parent);
+        for (unsigned i=0;i<sizeof readings/sizeof *readings;i++)
+            assert(lv_obj_is_visible(readings[i]));
+        assert(lv_obj_is_visible(r->bar) && lv_obj_is_visible(k->bar));
+        /* Prime meter state before measuring; no global timer or business tick advances. */
+        uk_row_set(r,"/vol1","11","11","MB/s",11,0,true);
+        uk_kpi_set(k,"11","MB/s","11",11,true);
+        uint32_t idle_anims=lv_anim_count_running();
+        /* Growing glyph widths avoid the content-sized mask's deliberate static fallback. */
+        uk_row_set(r,"/vol1","12","12","MB/s",12,0,true);
+        uk_kpi_set(k,"12","MB/s","12",12,true);
+        for (unsigned i=0;i<sizeof readings/sizeof *readings;i++)
+            assert(((number_label_t *)readings[i])->active);
+        assert(lv_anim_count_running()==idle_anims+6); /* Four labels and two private meters. */
+        presentation_batch_open=false;
+        assert(!uk_number_presentation_open());
+        uk_row_set(r,"/vol1","13","13","MB/s",13,0,false);
+        uk_kpi_set(k,"13","MB/s","13",13,false);
+        for (unsigned i=0;i<sizeof readings/sizeof *readings;i++) {
+            number_label_t *label=(number_label_t *)readings[i];
+            assert(!strcmp(lv_label_get_text(readings[i]),"13") && !label->active && !label->layers);
+        }
+        assert(!strcmp(lv_label_get_text(r->unit),"MB/s") && !strcmp(lv_label_get_text(k->unit),"MB/s"));
+        assert(lv_bar_get_value(r->bar)==13*UK_METER_SCALE && lv_bar_get_value(k->bar)==13*UK_METER_SCALE);
+        assert(lv_anim_count_running()==idle_anims);
+        /* Retained -> live consumes one bypass, then repeated and newer targets obey the beat. */
+        uk_row_set(r,"/vol1","14","14","MB/s",14,0,true);
+        uk_kpi_set(k,"14","MB/s","14",14,true);
+        uint32_t resumed_at=lv_tick_get()-1;
+        glyph_layer_t *resumed_layers[4];
+        for (unsigned i=0;i<sizeof readings/sizeof *readings;i++) {
+            number_label_t *label=(number_label_t *)readings[i];
+            assert(!strcmp(lv_label_get_text(readings[i]),"14") && label->active);
+            label->started=resumed_at;
+            resumed_layers[i]=label->layers;
+        }
+        assert(lv_anim_count_running()==idle_anims+6);
+        uk_row_set(r,"/vol1","14","14","MB/s",14,0,true);
+        uk_kpi_set(k,"14","MB/s","14",14,true);
+        uk_row_set(r,"/vol1","15","15","MB/s",15,0,true);
+        uk_kpi_set(k,"15","MB/s","15",15,true);
+        for (unsigned i=0;i<sizeof readings/sizeof *readings;i++) {
+            number_label_t *label=(number_label_t *)readings[i];
+            assert(!strcmp(lv_label_get_text(readings[i]),"14") && label->active);
+            assert(label->started==resumed_at && label->layers==resumed_layers[i]);
+        }
+        assert(lv_anim_count_running()==idle_anims+6);
+        uk_anim_settle(r->row); uk_anim_settle(k->box);
+        assert(lv_bar_get_value(r->bar)==14*UK_METER_SCALE && lv_bar_get_value(k->bar)==14*UK_METER_SCALE);
+        /* Unit changes during retention publish all fields synchronously, too. */
+        uk_row_set(r,"/vol1","15","15","GB/s",15,0,false);
+        uk_kpi_set(k,"15","GB/s","15",15,false);
+        for (unsigned i=0;i<sizeof readings/sizeof *readings;i++)
+            assert(!strcmp(lv_label_get_text(readings[i]),"15") && !((number_label_t *)readings[i])->active);
+        assert(!strcmp(lv_label_get_text(r->unit),"GB/s") && !strcmp(lv_label_get_text(k->unit),"GB/s"));
+        assert(lv_bar_get_value(r->bar)==15*UK_METER_SCALE && lv_bar_get_value(k->bar)==15*UK_METER_SCALE);
+        assert(lv_anim_count_running()==idle_anims);
+        uk_row_set(r,"/vol1","16","16","GB/s",16,0,true);
+        uk_kpi_set(k,"16","GB/s","16",16,true);
+        assert(lv_anim_count_running()==idle_anims+6);
+        /* Hiding an in-flight bar must also settle it; NULL fields still clear text. */
+        uk_row_set(r,"/vol1",NULL,NULL,NULL,-1,0,false);
+        uk_kpi_set(k,NULL,NULL,NULL,-1,false);
+        uk_row_set(NULL,NULL,NULL,NULL,NULL,-1,0,false);
+        uk_kpi_set(NULL,NULL,NULL,NULL,-1,false);
+        for (unsigned i=0;i<sizeof readings/sizeof *readings;i++)
+            assert(!*lv_label_get_text(readings[i]) && !((number_label_t *)readings[i])->active);
+        assert(!*lv_label_get_text(r->unit) && !*lv_label_get_text(k->unit));
+        assert(lv_obj_has_flag(r->bar,LV_OBJ_FLAG_HIDDEN) && lv_obj_has_flag(k->bar,LV_OBJ_FLAG_HIDDEN));
+        assert(lv_bar_get_value(r->bar)==16*UK_METER_SCALE && lv_bar_get_value(k->bar)==16*UK_METER_SCALE);
+        assert(lv_anim_count_running()==idle_anims);
+        uk_row_set(r,"/vol1","17","17","GB/s",17,0,false);
+        uk_kpi_set(k,"17","GB/s","17",17,false);
+        lv_obj_update_layout(parent);
+        assert(lv_obj_is_visible(r->bar) && lv_obj_is_visible(k->bar));
+        assert(lv_bar_get_value(r->bar)==17*UK_METER_SCALE && lv_bar_get_value(k->bar)==17*UK_METER_SCALE);
+        /* Missing readings recover immediately; the next sample cannot spend a second bypass. */
+        uk_row_set(r,"/vol1","--","--","GB/s",0,0,false);
+        uk_kpi_set(k,"--","GB/s","--",0,false);
+        for (unsigned i=0;i<sizeof readings/sizeof *readings;i++)
+            assert(!strcmp(lv_label_get_text(readings[i]),"--") && !((number_label_t *)readings[i])->active);
+        assert(lv_bar_get_value(r->bar)==0 && lv_bar_get_value(k->bar)==0);
+        assert(lv_anim_count_running()==idle_anims);
+        uk_row_set(r,"/vol1","18","18","GB/s",18,0,true);
+        uk_kpi_set(k,"18","GB/s","18",18,true);
+        uk_row_set(r,"/vol1","19","19","GB/s",19,0,true);
+        uk_kpi_set(k,"19","GB/s","19",19,true);
+        for (unsigned i=0;i<sizeof readings/sizeof *readings;i++)
+            assert(!strcmp(lv_label_get_text(readings[i]),"18"));
+        uk_anim_settle(r->row); uk_anim_settle(k->box);
+        assert(lv_bar_get_value(r->bar)==18*UK_METER_SCALE && lv_bar_get_value(k->bar)==18*UK_METER_SCALE);
+        uk_row_set(r,"/vol1","18","18","GB/s",18,0,true);
+        uk_kpi_set(k,"18","GB/s","18",18,true);
+        assert(lv_anim_count_running()==idle_anims); /* A settled target must not restart either meter. */
+        presentation_batch_open=saved_batch_open;
+    } else LV_LOG_USER("row/KPI closed-gate regression not applicable: presentation beat disabled");
     lv_obj_delete(r->row); lv_free(r);
+    lv_obj_delete(k->box); lv_free(k);
     presentation_gate_enabled=saved_gate;
     if (saved_gate && UK_NUMBER_PRESENT_MS>0) {
         bool saved_batch_open=presentation_batch_open;
@@ -613,11 +721,11 @@ void uk_number_selfcheck(lv_obj_t *parent)
         assert(lv_bar_get_value(bar)==30*UK_METER_SCALE);
         assert(lv_arc_get_value(arc)==30*UK_METER_SCALE);
         uk_row_t *row=uk_row_create(parent,false,true);
-        uk_row_set(row,"device A",NULL,"11",NULL,11,0);
+        uk_row_set(row,"device A",NULL,"11",NULL,11,0,true);
         lv_obj_update_layout(parent);
         assert(lv_obj_is_visible(row->bar));
-        uk_row_set(row,"device A",NULL,"11",NULL,11,0);
-        uk_row_set(row,"device B",NULL,"12",NULL,12,0);
+        uk_row_set(row,"device A",NULL,"11",NULL,11,0,true);
+        uk_row_set(row,"device B",NULL,"12",NULL,12,0,true);
         uk_anim_settle(row->row);
         assert(!strcmp(lv_label_get_text(row->val),"12"));
         assert(lv_bar_get_value(row->bar)==12*UK_METER_SCALE);
