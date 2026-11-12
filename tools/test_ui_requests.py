@@ -147,8 +147,9 @@ motion_prefix = r"""
 #define UK_MOTION_DAMPING 10
 #define ESP_LOGE(...) ((void)0)
 typedef int lv_obj_t;
+typedef int lv_display_t;
 typedef struct {int unused;} lv_anim_t;
-static struct {int from,to,direction;int32_t offset,start,end,width,velocity,spring_b;bool active,tracking,dragging;uint32_t duration;float phase_velocity,start_velocity;} s_motion;
+static struct {int from,to,direction;int32_t offset,start,end,width,velocity,painted,spring_b;bool active,tracking,dragging;uint32_t duration;float phase_velocity,start_velocity;} s_motion;
 static struct {lv_obj_t *page[6],*viewport,*diagnostics_button;} s_ui;
 static bool s_refresh_pending, fail_anim, reduced;
 static struct {bool online;} s_st;
@@ -158,6 +159,10 @@ static lv_anim_t animation;
 static void show(lv_obj_t *o,bool on){(void)o;(void)on;}
 static void lv_obj_set_style_translate_x(lv_obj_t *o,int x,int part){(void)o;assert(!x && !part);}
 static void lv_obj_invalidate(lv_obj_t *o){(void)o;}
+static lv_display_t display;
+static lv_display_t *lv_obj_get_display(lv_obj_t *o){(void)o;return &display;}
+static void lv_display_enable_invalidation(lv_display_t *d,bool en){(void)d;(void)en;}
+static void lv_obj_update_layout(lv_obj_t *o){(void)o;}
 #define LV_PCT(x) (x)
 static bool s_created=true;
 static int s_motion_pending=-1;

@@ -114,7 +114,8 @@ static void meter_step(void *var, int32_t elapsed)
     meter_sample(m, (uint32_t)elapsed);
     /* Keep the tiny tail until sub-tick position AND speed are at rest.
        The 2x response deadline is a bounded emergency finish, not a queue. */
-    if (fabsf(m->value-m->target)<1.f && fabsf(m->velocity)<.01f) meter_snap(m);
+    if ((int32_t)lroundf(m->value)==m->target &&
+        fabsf(m->value-m->target)<.5f && fabsf(m->velocity)<.05f) meter_snap(m);
 }
 void uk_meter_motion_enable(bool enabled) { motion_enabled = enabled; }
 void uk_meter_settle(lv_obj_t *obj)

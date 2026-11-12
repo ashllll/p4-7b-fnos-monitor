@@ -542,7 +542,7 @@ uk_row_t *uk_row_create(lv_obj_t *parent, bool with_led, bool with_bar)
 }
 
 void uk_row_set(uk_row_t *r, const char *l1, const char *l2,
-                const char *val, const char *unit, int32_t pct, uint32_t led_hex)
+                const char *val, const char *unit, int32_t pct, uint32_t led_hex, bool animate)
 {
     if (!r) return;
     const bool two = (l2 && l2[0]);
@@ -556,8 +556,8 @@ void uk_row_set(uk_row_t *r, const char *l1, const char *l2,
     uk_set_text(r->name1, "%s", l1 ? l1 : "");
     /* 第二行同样是 number label（mk_label_raw），没理由比 val 少一层动效：
        卷容量、阵列成员、磁盘读写速率都要逐字符滑动。 */
-    uk_number_set_text(r->name2, two ? l2 : "", true);
-    uk_number_set_text(r->val,val ? val : "",same_reading);
+    uk_number_set_text(r->name2, two ? l2 : "", animate);
+    uk_number_set_text(r->val,val ? val : "",animate && same_reading);
     uk_set_text(r->unit, "%s", unit ? unit : "");
 
     /* Identity and value share the first line; metadata always occupies the next. */
@@ -576,10 +576,11 @@ void uk_row_set(uk_row_t *r, const char *l1, const char *l2,
         if (pct < 0) lv_obj_add_flag(r->bar, LV_OBJ_FLAG_HIDDEN);
         else {
             lv_obj_remove_flag(r->bar, LV_OBJ_FLAG_HIDDEN);
-            uk_meter_set(r->bar, LV_CLAMP(0, pct, 100) * UK_METER_SCALE, same_reading);
+            uk_meter_set(r->bar, LV_CLAMP(0, pct, 100) * UK_METER_SCALE, animate && same_reading);
             lv_obj_set_style_bg_color(r->bar, uk_c(uk_pct_color(pct)), LV_PART_INDICATOR);
         }
     }
+    if (!animate) uk_anim_settle(r->row);
 }
 
 void uk_row_show(uk_row_t *r, bool show)
@@ -913,20 +914,21 @@ uk_kpi_t *uk_kpi_create(lv_obj_t *parent, const char *label)
     return k;
 }
 
-void uk_kpi_set(uk_kpi_t *k, const char *val, const char *unit, const char *sub, int32_t pct)
+void uk_kpi_set(uk_kpi_t *k, const char *val, const char *unit, const char *sub, int32_t pct, bool animate)
 {
     if (!k) return;
     const bool same_unit = !strcmp(lv_label_get_text(k->unit),unit ? unit : "");
-    uk_number_set_reading(k->val, k->unit, val, unit, true);
-    uk_number_set_text(k->sub,sub ? sub : "",same_unit);
+    uk_number_set_reading(k->val, k->unit, val, unit, animate);
+    uk_number_set_text(k->sub,sub ? sub : "",animate && same_unit);
     if (k->bar) {
         if (pct < 0) lv_obj_add_flag(k->bar, LV_OBJ_FLAG_HIDDEN);
         else {
             lv_obj_remove_flag(k->bar, LV_OBJ_FLAG_HIDDEN);
-            uk_bar_set(k->bar, pct);
+            uk_meter_set(k->bar, LV_CLAMP(0, pct, 100) * UK_METER_SCALE, animate);
             lv_obj_set_style_bg_color(k->bar, uk_c(uk_pct_color(pct)), LV_PART_INDICATOR);
         }
     }
+    if (!animate) uk_anim_settle(k->box);
 }
 
 /* ── 原生控件封装 ─────────────────────────────────────────────────── */
@@ -1186,8 +1188,11 @@ static int32_t trend_span(lv_obj_t *chart)
 static void trend_window(lv_obj_t *chart, int32_t right)
 {
     trend_t *t = (trend_t *)chart;
+    int32_t left = right - trend_span(chart);
+    lv_chart_t *c = (lv_chart_t *)chart;
     t->right = right;
-    lv_chart_set_axis_range(chart, LV_CHART_AXIS_PRIMARY_X, right - trend_span(chart), right);
+    if (c->xmin[0] == left && c->xmax[0] == right) return;
+    lv_chart_set_axis_range(chart, LV_CHART_AXIS_PRIMARY_X, left, right);
 }
 static void trend_step(void *obj, int32_t progress)
 {
@@ -1220,6 +1225,7 @@ static void trend_range_announce(lv_obj_t *chart)
 static void trend_range_snap(lv_obj_t *chart)
 {
     trend_t *t = (trend_t *)chart;
+    bool was_active = t->range_active;
     lv_anim_delete(chart, trend_range_step);
     t->range_pending = t->range_active = false;
     if (!t->range_valid) return;
@@ -1227,7 +1233,11 @@ static void trend_range_snap(lv_obj_t *chart)
         t->range_value[i] = t->range_from[i] = t->range_target[i];
         t->range_velocity[i] = t->range_from_velocity[i] = 0;
     }
-    lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, t->range_target[0], t->range_target[1]);
+    lv_chart_t *c = (lv_chart_t *)chart;
+    if (c->ymin[0] != t->range_target[0] || c->ymax[0] != t->range_target[1])
+        lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, t->range_target[0], t->range_target[1]);
+    else if (was_active)
+        lv_obj_invalidate(chart);
     trend_range_announce(chart);
 }
 

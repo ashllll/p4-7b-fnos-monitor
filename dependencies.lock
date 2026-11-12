@@ -363,7 +363,6 @@ dependencies:
     version: 9.6.0
 direct_dependencies:
 - espressif/cjson
-- espressif/esp32_p4_wifi6_touch_lcd_7b
 - espressif/esp_codec_dev
 - espressif/esp_hosted
 - espressif/esp_lcd_ek79007
@@ -372,6 +371,6 @@ direct_dependencies:
 - espressif/esp_wifi_remote
 - idf
 - lvgl/lvgl
-manifest_hash: 12a82441a307f62d6f0b8f700e9dc449731c4d0fccac45fcf39d99b5ff91b9ff
+manifest_hash: b140144c9e44527f82ce8d173181c5d047f3e41c690ff94a026fc96d7ee7d72c
 target: esp32p4
 version: 2.0.0

@@ -149,9 +149,10 @@ typedef struct {
 /* 建一行。with_led/with_bar 决定行内是否带状态点与阈值条。
    行本身 flex-grow 1（余量长进行高时不压缩内容：内部两侧都居中）。 */
 uk_row_t *uk_row_create(lv_obj_t *parent, bool with_led, bool with_bar);
-/* 填一行；pct < 0 表示不画条；led_hex = 0 表示点用 UK_OFF。 */
+/* 填一行；pct < 0 表示不画条；led_hex = 0 表示点用 UK_OFF。
+   animate=false 立即发布全部读数并停止动效；true 仍遵守身份/单位与呈现门规则。 */
 void uk_row_set(uk_row_t *r, const char *l1, const char *l2,
-                const char *val, const char *unit, int32_t pct, uint32_t led_hex);
+                const char *val, const char *unit, int32_t pct, uint32_t led_hex, bool animate);
 void uk_row_show(uk_row_t *r, bool show);   /* 显式显示/隐藏（不销毁）；清单适配不靠隐藏尾项。 */
 
 /* ── 自适应池（核心） ─────────────────────────────────────────────── */
@@ -202,7 +203,8 @@ typedef struct {
     lv_obj_t *box, *label, *val, *unit, *sub, *bar;
 } uk_kpi_t;
 uk_kpi_t *uk_kpi_create(lv_obj_t *parent, const char *label);
-void uk_kpi_set(uk_kpi_t *k, const char *val, const char *unit, const char *sub, int32_t pct);
+/* animate 的发布语义与 uk_row_set 相同。 */
+void uk_kpi_set(uk_kpi_t *k, const char *val, const char *unit, const char *sub, int32_t pct, bool animate);
 
 /* ── 原生控件的轻封装（自适应尺寸交给 flex，动画交给 LVGL） ───────── */
 /* Native line segments on a continuously advancing time axis. Displayed values

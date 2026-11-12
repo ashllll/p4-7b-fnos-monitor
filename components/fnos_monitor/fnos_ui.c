@@ -776,9 +776,11 @@ static void p3_overlay_sync(void)
     const lv_font_t *clock_font = any ? UK_FONT_NUM_20 : UK_FONT_NUM_32;
     lv_obj_set_style_text_font(s_ui.h_clock, clock_font, 0);
     lv_obj_set_height(s_ui.h_clock, lv_font_get_line_height(clock_font));
-    lv_obj_set_style_pad_ver(lv_obj_get_parent(s_ui.h_clock), any ? 0 : UK_S1 + UK_S1 / 2, 0);
+    /* 与 build_header 的气泡保持同一份上下留白：收起时覆盖层不占位、上下各 0。 */
+    lv_obj_set_style_pad_top(lv_obj_get_parent(s_ui.h_clock), any ? 0 : UK_S1 * 2, 0);
+    lv_obj_set_style_pad_bottom(lv_obj_get_parent(s_ui.h_clock), any ? 0 : UK_S1, 0);
     lv_obj_t *body[] = { s_ui.p3_note, s_ui.p3_cols, s_ui.scope_bar[3] };
-    for (unsigned i = 0; i < sizeof body / sizeof body[0]; i++) overlay_target(body[i], !any);
+    for (unsigned i = 0; i < sizeof body / sizeof body[0]; i++) show(body[i], !any);
     overlay_target(s_ui.diagnostics, s_diagnostics);
     overlay_target(s_ui.pair_card, s_pair_open);
     overlay_target(s_ui.wifi_card, s_wifi_open);
@@ -1213,7 +1215,10 @@ static void build_header(lv_obj_t *h)
     /* Native Slate clock bubble; content height follows the selected fonts. */
     lv_obj_set_style_pad_row(bubble, 0, 0);
     lv_obj_set_style_pad_hor(bubble, UK_S3, 0);
-    lv_obj_set_style_pad_ver(bubble, UK_S1 + UK_S1 / 2, 0);
+    /* 行盒比墨迹高：CJK 首行上方与数字字体下沿的空档不一样，上下等 padding 时
+       墨迹会偏上 2px。多给顶部、少给底部，让墨迹在气泡里中心对称。 */
+    lv_obj_set_style_pad_top(bubble, UK_S1 * 2, 0);
+    lv_obj_set_style_pad_bottom(bubble, UK_S1, 0);
     lv_obj_set_style_bg_color(bubble, uk_c(UK_SURF_S1), 0);
     lv_obj_set_style_bg_grad_dir(bubble, LV_GRAD_DIR_NONE, 0);
     lv_obj_set_style_bg_opa(bubble, LV_OPA_COVER, 0);
@@ -1229,8 +1234,8 @@ static void build_header(lv_obj_t *h)
     s_ui.h_clock = uk_label(bubble, UK_FONT_NUM_32, UK_T1, "--:--");
     lv_obj_set_height(s_ui.h_clock, lv_font_get_line_height(UK_FONT_NUM_32));
     lv_obj_set_style_text_letter_space(s_ui.h_clock, 1, 0);
-    not_clickable(hostcol);
     not_clickable(bubble);
+    not_clickable(hostcol);
 
     /* Measure actionable labels with the same body font used by the buttons. */
     lv_point_t wifi_size, diagnostics_size;
@@ -3279,7 +3284,7 @@ static void wifi_fill_list(void)
         snprintf(meta, sizeof meta, "%d 格 · %d dBm · %s", bars, (int)a->rssi,
                  a->secure ? "加密" : "开放");
         /* 颜色之外还有"格数 + dBm"两种说法，色弱也读得出（版面合同第 9 条） */
-        uk_row_set(s_ui.wifi_ap_row[i], a->ssid, NULL, meta, NULL, -1, col);
+        uk_row_set(s_ui.wifi_ap_row[i], a->ssid, NULL, meta, NULL, -1, col, true);
         lv_obj_set_style_text_color(s_ui.wifi_ap_row[i]->val, uk_c(col), 0);
         /* 从输密码页退回来时，让用户一眼看到刚才点的是哪一条 */
         bool sel = (s_wifi_sel == i);
@@ -5372,12 +5377,7 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
            "54%" 这个**整串**在屏幕上，拆成两个 label 就找不到了。 */
         /* 副行交给 uk_row_set（它会把 name2 也走数字过渡）；再 set_txt 覆盖一遍
            会把这层动效按静态文本写掉。 */
-        uk_row_set(row, v->mnt, b, c1, NULL, gauge_value(v->pct), 0);
-        if (!vols_live) {
-            set_txt(row->name2, "%s", b); set_txt(row->val, "%s", c1);
-            uk_meter_set(row->bar, gauge_value(v->pct) * UK_METER_SCALE, false);
-            uk_anim_settle(row->row);
-        }
+        uk_row_set(row, v->mnt, b, c1, NULL, gauge_value(v->pct), 0, vols_live);
         lv_obj_set_style_text_color(row->val, uk_c(vols_live ? UK_T1 : UK_T3), 0);
         lv_obj_set_style_bg_color(row->bar, uk_c(vols_live ? uk_pct_color(v->pct) : UK_OFF), LV_PART_INDICATOR);
     }
@@ -5414,11 +5414,7 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
             col = r->ok ? UK_WARN : UK_DANGER;
         }
         if (!raid_live) col = UK_T3;
-        uk_row_set(row,r->dev,b,vtxt,NULL,-1,col);
-        if (!raid_live) {
-            set_txt(row->name2, "%s", b); set_txt(row->val, "%s", vtxt);
-            uk_anim_settle(row->row);
-        }
+        uk_row_set(row,r->dev,b,vtxt,NULL,-1,col,raid_live);
         /* 右侧那列默认是等宽数字字体；写中文（正常/降级）时必须换回 CJK，
            否则预览直接报缺字（num 字体里没有汉字）。 */
         /* All four status cells share one line height: a lone NUM_20 sync
@@ -5444,7 +5440,7 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
         const uint32_t smart_led = !disks_live ? UK_T3
             : !strcmp(d->smart, "failed") ? UK_DANGER
             : !strcmp(d->smart, "passed") ? UK_OK : UK_T3;
-        uk_row_set(row, d->dev, " ", NULL, NULL, -1, smart_led);
+        uk_row_set(row, d->dev, " ", NULL, NULL, -1, smart_led, true);
         char read_ms[64], write_ms[64];
         if (d->has_read_ms) snprintf(read_ms,sizeof read_ms,"%.2f ms",d->read_ms);
         else snprintf(read_ms,sizeof read_ms,"--");
@@ -5489,28 +5485,21 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
         snprintf(nb, sizeof nb, "%s", fmt_rate_window(b, sizeof b, st->net.tx_kbs, rate_peak));
         rate_split(nb, &v, &u);
         snprintf(sb, sizeof sb, "累计 %s", fmt_cap(c1, sizeof c1, st->net.tx_total_gb));
-        uk_kpi_set(s_ui.kpi2[0], v, u, sb, -1);
+        uk_kpi_set(s_ui.kpi2[0], net_readable ? v : "--", net_readable ? u : "", sb, -1, net_live);
 
         snprintf(nb, sizeof nb, "%s", fmt_rate_window(b, sizeof b, st->net.rx_kbs, rate_peak));
         rate_split(nb, &v, &u);
         snprintf(sb, sizeof sb, "累计 %s", fmt_cap(c1, sizeof c1, st->net.rx_total_gb));
-        uk_kpi_set(s_ui.kpi2[1], v, u, sb, -1);
+        uk_kpi_set(s_ui.kpi2[1], net_readable ? v : "--", net_readable ? u : "", sb, -1, net_live);
 
         snprintf(nb, sizeof nb, "%s", fmt_rate_window(b, sizeof b, st->net.rx_kbs + st->net.tx_kbs, rate_peak));
         rate_split(nb, &v, &u);
-        uk_kpi_set(s_ui.kpi2[2], v, u, st->net.ifname[0] ? st->net.ifname : "—", -1);
+        uk_kpi_set(s_ui.kpi2[2], net_readable ? v : "--", net_readable ? u : "",
+                   st->net.ifname[0] ? st->net.ifname : "—", -1, net_live);
 
         for (int i = 0; i < 3; i++) {
             uk_kpi_t *k = s_ui.kpi2[i];
             if (!k) continue;
-            if (!net_live) {
-                /* Publish stale/unavailable semantics even between numeric beats. */
-                double rate = i == 0 ? st->net.tx_kbs : i == 1 ? st->net.rx_kbs : st->net.tx_kbs + st->net.rx_kbs;
-                snprintf(nb, sizeof nb, "%s", fmt_rate_window(b, sizeof b, rate, rate_peak));
-                rate_split(nb, &v, &u);
-                uk_number_set_reading(k->val, k->unit, net_readable ? v : "--", net_readable ? u : "", false);
-                uk_anim_settle(k->box);
-            }
             lv_obj_set_style_text_color(k->val, uk_c(net_live ? UK_T1 : UK_T3), 0);
         }
 
@@ -5520,7 +5509,7 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
         fnos_data_diag(&diag);
         if (diag.ok_count || diag.fail_count) snprintf(sb,sizeof sb,"P95 %d ms · 最近至多 64 次",diag.p95_ms);
         else snprintf(sb,sizeof sb,"P95 等待采样");
-        uk_kpi_set(s_ui.kpi2[3], v, u, sb, -1);
+        uk_kpi_set(s_ui.kpi2[3], v, u, sb, -1, true);
     }
 
     /* Both lines share a scale. Peaks use the original window, independently
@@ -5553,7 +5542,7 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
         uint32_t led = net_live && (!net->state[0] || !strcmp(net->state,"up")) ? UK_OK : UK_T3;
         /* Reset on identity/link changes; retain the presented rate on ordinary refresh. */
         if (strcmp(lv_label_get_text(row->name1),b))
-            uk_row_set(row,b,"","","",-1,led);
+            uk_row_set(row,b,"","","",-1,led,true);
         else if (row->led) lv_obj_set_style_bg_color(row->led,uk_c(led),0);
         (net_live ? set_num : set_txt)(row->name2, "%s下行 %s · 上行 %s", net_live ? "" : "上次 · ", fmt_rate(c1,sizeof c1,net->rx_kbs),
                                                   fmt_rate(c2,sizeof c2,net->tx_kbs));
@@ -5623,7 +5612,7 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
     }
     if (!st->ever_ok) {
         if (page == 2) {
-            for (int i = 0; i < 4; i++) uk_kpi_set(s_ui.kpi2[i], "-", "", "等待数据", -1);
+            for (int i = 0; i < 4; i++) uk_kpi_set(s_ui.kpi2[i], "-", "", "等待数据", -1, true);
             set_num(s_ui.tr_tx_lbl, "等待数据");
             set_num(s_ui.tr_rx_lbl, "等待数据");
             set_txt(s_ui.net_axis, "无数据");
@@ -5655,7 +5644,7 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
            变成静态占位 —— 旧写法正是传 " " 再 set_txt 覆盖，白丢一层动效。 */
         char sub[80];
         snprintf(sub, sizeof sub, "%s%s", prefix, d->up ? "运行中" : d->s);
-        uk_row_set(r, d->n, sub[0] ? sub : " ", "", NULL, -1, 0);
+        uk_row_set(r, d->n, sub[0] ? sub : " ", "", NULL, -1, 0, true);
         char cpu[64], mem[64], restarts[32];
         if (d->has_cpu && d->up) snprintf(cpu,sizeof cpu,"%.1f%%",d->cpu_pct); else snprintf(cpu,sizeof cpu,"--");
         if (d->has_mem && d->up) snprintf(mem,sizeof mem,"%.0f MB",d->mem_mb); else snprintf(mem,sizeof mem,"--");
@@ -5702,12 +5691,7 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
         const char *nm = g0->dn[0] ? g0->dn : g0->dev;
         snprintf(vb, sizeof vb, "%.1f", g->max_c);
         uint32_t tc = temps_live ? uk_temp_color(g->max_c) : UK_T3;
-        uk_row_set(r, nm, sub, vb, "°C", gauge_value(g->max_c), tc);
-        if (!temps_live) {
-            set_txt(r->name2, "%s", sub); set_txt(r->val, "%s", vb);
-            uk_meter_set(r->bar, gauge_value(g->max_c) * UK_METER_SCALE, false);
-            uk_anim_settle(r->row);
-        }
+        uk_row_set(r, nm, sub, vb, "°C", gauge_value(g->max_c), tc, temps_live);
         /* 原来这里再 set_txt(name2, 与 sub 同文) 覆盖一遍：文本一样，却把
            uk_row_set 里刚起的数字过渡清掉，副行永远是静态的。删掉即可。 */
         lv_obj_set_style_text_color(r->val, uk_c(tc), 0);
@@ -6135,7 +6119,7 @@ static void ui_tick(lv_timer_t *t)
 
     /* Short live batches share one continuous travel to the newest window.
        Backfill (including its final partial batch) and long gaps settle at once. */
-    if (history_syncing || batch_ms > UK_TREND_SCROLL_MS || motion_busy()) {
+    if (history_syncing || batch_ms > UK_TREND_SCROLL_MS) {
         uk_trend_settle(s_ui.overview_resource[0].chart);
         uk_trend_settle(s_ui.overview_resource[1].chart);
         uk_trend_settle(s_ui.tr_net);
@@ -6579,16 +6563,18 @@ static void motion_paint(void)
     /* Setters defer layout, so resolve it before balancing this counter. This
        preserves pending invalidations and avoids a later full-page repaint. */
     lv_display_enable_invalidation(display, false);
-    lv_obj_set_size(from_clip, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_pos(from_clip, 0, 0);
-    lv_obj_set_pos(from, 0, 0);
     int32_t height = lv_obj_get_content_height(s_ui.viewport);
-    lv_obj_set_size(from, s_motion.width, height);
-    lv_obj_set_size(to, s_motion.width, height);
+    if (s_motion.painted == INT32_MIN) {
+        lv_obj_set_size(from_clip, LV_PCT(100), LV_PCT(100));
+        lv_obj_set_pos(from_clip, 0, 0);
+        lv_obj_set_pos(from, 0, 0);
+        lv_obj_set_size(from, s_motion.width, height);
+        lv_obj_set_size(to, s_motion.width, height);
+        lv_obj_move_to_index(to_clip, -1);
+    }
     lv_obj_set_size(to_clip, travel, height);
     lv_obj_set_pos(to_clip, left, 0);
     lv_obj_set_pos(to, -left, 0);
-    lv_obj_move_to_index(to_clip, -1);
     lv_obj_update_layout(s_ui.viewport);
     lv_display_enable_invalidation(display, true);
     s_motion.painted = travel;
@@ -6632,9 +6618,14 @@ static void motion_finish(void)
                  (unsigned long)lv_tick_elaps(s_motion_stats.started));
     }
 #endif
+    bool settled_edge = s_motion.active &&
+        ((s_page == s_motion.to && s_motion.painted == s_motion.width) ||
+         (s_page == s_motion.from && s_motion.painted == 0));
     s_motion.active = false;
     s_motion.velocity = 0;
     uk_number_motion_enable(s_st.online);
+    lv_display_t *display = lv_obj_get_display(s_ui.viewport);
+    if (settled_edge) lv_display_enable_invalidation(display, false);
     for (int i = 0; i < FNOS_UI_PAGE_COUNT; i++) {
         show(s_ui.page[i], i == s_page);
         lv_obj_set_style_translate_x(s_ui.page[i], 0, 0);
@@ -6645,7 +6636,12 @@ static void motion_finish(void)
         lv_obj_set_size(clip, LV_PCT(100), LV_PCT(100));
         lv_obj_set_pos(clip, 0, 0);
     }
-    lv_obj_invalidate(s_ui.viewport);
+    if (settled_edge) {
+        lv_obj_update_layout(s_ui.viewport);
+        lv_display_enable_invalidation(display, true);
+    } else {
+        lv_obj_invalidate(s_ui.viewport);
+    }
     refresh_soon();
     if (s_refresh_pending) {
         s_refresh_pending = false;
@@ -6800,7 +6796,7 @@ void fnos_ui_set_page(int idx)
         motion_prepare(from, idx, idx > from ? 1 : -1);
         motion_snap(true);
     }
-    lv_obj_invalidate(s_ui.viewport);
+    if (!s_motion.active) lv_obj_invalidate(s_ui.viewport);
     refresh_soon();     /* 切页的第一帧立刻出，不等刷新周期 */
 }
 
@@ -6879,7 +6875,9 @@ static void motion_tick(lv_timer_t *timer)
     }
     uint32_t elapsed = lv_tick_elaps(s_motion.last_tick);
     if (elapsed && point.x != s_motion.last.x) {
-        s_motion.velocity = (point.x - s_motion.last.x) * 1000 / (int32_t)elapsed;
+        int32_t inst = (point.x - s_motion.last.x) * 1000 / (int32_t)elapsed;
+        s_motion.velocity = s_motion.velocity && (s_motion.velocity ^ inst) >= 0 ?
+            (s_motion.velocity + inst * 2) / 3 : inst;
         s_motion.last = point; s_motion.last_tick = lv_tick_get();
     }
     int32_t offset = s_motion.press_offset + point.x - s_motion.press.x;
