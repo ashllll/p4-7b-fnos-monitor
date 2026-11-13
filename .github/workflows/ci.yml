@@ -74,6 +74,16 @@ jobs:
           . "$IDF_PATH/export.sh" > /dev/null
           VERIFY_OUT="$RUNNER_TEMP/fnos-verify" bash tools/verify_all.sh --ci 2>&1 | tee "$RUNNER_TEMP/verify.log"
 
+      # A build that re-solves the lock silently ships dependencies nobody reviewed.
+      - name: Lockfile stayed pinned
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet -- dependencies.lock; then
+            git diff -- dependencies.lock
+            echo "::error::dependencies.lock changed during build; commit the intended lock update"
+            exit 1
+          fi
+
       # A multi-path artifact keeps absolute runner segments (__w/...), which the
       # release job cannot address; stage everything under one root instead.
       - name: Collect build outputs

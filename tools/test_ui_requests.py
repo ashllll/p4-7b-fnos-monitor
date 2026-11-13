@@ -212,13 +212,13 @@ with tempfile.TemporaryDirectory(prefix='fnos-motion-oom-') as d:
     c,exe=Path(d)/'motion.c',Path(d)/'motion'
     flags=['clang','-std=c11','-fsanitize=address,undefined','-fno-sanitize-recover=all',str(c),'-lm','-o',str(exe)]
     c.write_text(motion_prefix+motion_body+motion_checks)
-    subprocess.run(flags,check=True,capture_output=True)
+    subprocess.run(flags,check=True)
     r=subprocess.run([str(exe)],capture_output=True,timeout=15)
     assert r.returncode==0,r.stderr.decode(errors='replace')
     if 'if (!lv_anim_start(&a))' in motion_body:
         a=motion_body.index('    if (!lv_anim_start(&a))');b=motion_body.index('\n    }',a)+6
         bad=motion_body[:a]+'    lv_anim_start(&a);'+motion_body[b:]
-        c.write_text(motion_prefix+bad+motion_checks);subprocess.run(flags,check=True,capture_output=True)
+        c.write_text(motion_prefix+bad+motion_checks);subprocess.run(flags,check=True)
         r=subprocess.run([str(exe)],capture_output=True,timeout=15)
         assert r.returncode and b'!s_motion.active && !s_refresh_pending' in r.stderr,r.stderr
 print('PASS: production page motion allocation failure commits/cancels immediately, flushes pending refresh; normal/reduced paths and old unchecked-start negative')
@@ -263,7 +263,7 @@ with tempfile.TemporaryDirectory(prefix='fnos-gesture-timer-') as d:
   body=poll_body.replace('if (s_motion_poll) return;','') if old else poll_body
   if old:assert body!=poll_body
   c.write_text(poll_prefix+body+poll_main)
-  subprocess.run(['clang','-std=c11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined',str(c),'-o',str(exe)],check=True,capture_output=True)
+  subprocess.run(['clang','-std=c11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined',str(c),'-o',str(exe)],check=True)
   r=subprocess.run([str(exe)],capture_output=True,timeout=15)
   if old:assert r.returncode and b'pauses==1 && attempts==3' in r.stderr,r.stderr
   else:assert not r.returncode,r.stderr
