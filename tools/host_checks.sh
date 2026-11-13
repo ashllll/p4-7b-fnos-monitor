@@ -2,14 +2,17 @@
 # Host-only checks. Callback receives a description followed by an argv vector.
 fnos_host_checks() {
   export PYTHONDONTWRITEBYTECODE=1
+  # Default to a fresh directory: tools/preview/out usually holds a previous run,
+  # and run.sh refuses to overwrite output it does not own.
+  local preview_out="${FNOS_PREVIEW_OUT:-out/verify-$(date +%Y%m%d-%H%M%S)-$$}"
   "$@" "字段契约（板子读的字段 NAS 是否都在）" python3 nas/fpk/contract_check.py
   "$@" "向导表单 schema" python3 nas/fpk/wizard_check.py nas/fpk/nasscreencompanion
   "$@" "证书指纹三方一致（固件 / 服务端 / openssl）" bash tools/certcheck/run.sh
   "$@" "连接失败原因标签跨文件契约" python3 tools/reason_check.py
   "$@" "管理页 ↔ 服务端接口字段名" python3 nas/fpk/api_check.py
   "$@" "权限分类器（矩阵的每一格都来自它）" python3 nas/fpk/perm_check.py
-  "$@" "主机预览（四条版面审计 + 配对流程断言）" bash tools/preview/run.sh "${FNOS_PREVIEW_OUT:-out}"
-  "$@" "滚动条与卡片间距" node tools/preview/scroll_gap.js "tools/preview/${FNOS_PREVIEW_OUT:-out}"
+  "$@" "主机预览（四条版面审计 + 配对流程断言）" bash tools/preview/run.sh "$preview_out"
+  "$@" "滚动条与卡片间距" node tools/preview/scroll_gap.js "tools/preview/$preview_out"
   "$@" "渲染失败按字形/几何分诊（无设备）" bash tools/preview/test_render_diagnosis.sh
   "$@" "Python 开发模式零警告（未关闭的 socket/文件）" python3 nas/fpk/devmode_check.py 30
   "$@" "截断真的发生了（六段各喂 50 条）" python3 nas/fpk/collector_check.py

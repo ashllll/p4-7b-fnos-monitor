@@ -20,7 +20,7 @@
 - NAS 硬件清单必须随实际数据自适应：不得按型号、设备数量或名称长度裁剪卷、阵列、磁盘、网口、容器、温度通道。清单增减、长名称换行、卡片重排和滚动可达都需验证，在 1024×600 横屏上覆盖不同硬件数据组合，不能只检查默认样例。
 - 快照含动态清单与借用字符串；句柄用 `{0}` 初始化，跨刷新保留时使用 `fnos_status_copy`，结束用 `fnos_status_release`，禁止裸结构体复制。传输与快照使用 Kconfig 字节预算，超预算或 UI 内存不足必须明确提示，不能静默少显示设备。
 - 硬件矩阵、分配失败及字库配置命令见 `tools/preview/README.md`，最新完整记录见 `docs/ui-hardware-adaptive-audit-2026-10-08.md`。测试 fixture 的数量不是生产上限。
-- 物理屏幕验收按上级约定使用 `capture-board`，不能将主机预览/构建通过等同于实机验收。
+- 物理屏幕验收按上级约定使用 `capture-board`，不能将主机预览/构建通过等同于实机验收。没有 `capture-board` 时按 [设备验收降级记录](docs/agents/device-acceptance.md) 处理：主机预览、固件 `shot`、串口 `page` 都不是实屏/触摸证据；未执行就记未执行。
 
 ## Agent skills
 

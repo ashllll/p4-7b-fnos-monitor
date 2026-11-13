@@ -48,7 +48,9 @@ esac
                 file=root/'bin/mktemp';file.write_text('#!/bin/sh\nexit 1\n');file.chmod(0o700)
             if options.pop('write_fail',False):
                 (root/'docs/fnos-companion-test-report.md').mkdir()
-            env=dict(os.environ,PATH=str(root/'bin')+os.pathsep+os.environ['PATH'],REAL_PYTHON=sys.executable,TMPDIR=str(root))
+            # test_report.sh prepends $HOME/.local/bin; a real python3 there would
+            # shadow the stub and make this test depend on the host's user installs.
+            env=dict(os.environ,PATH=str(root/'bin')+os.pathsep+os.environ['PATH'],REAL_PYTHON=sys.executable,TMPDIR=str(root),HOME=str(root))
             env.update({('FIXTURE_'+key if key in ('SUITE_RC','SOAK_RC') else key):str(value) for key,value in options.items()})
             result=subprocess.run([BASH,str(root/'tools/test_report.sh'),*args],env=env,capture_output=True,text=True,timeout=30)
             report=root/'docs/fnos-companion-test-report.md'
