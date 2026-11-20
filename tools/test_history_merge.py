@@ -296,12 +296,14 @@ int main(void){int32_t x,a,b,c,d,want;int n=0;
   result=subprocess.run([str(exe)],input=data,text=True,capture_output=True,env=env,timeout=15)
   assert result.returncode!=0 and 'signed integer overflow' in result.stderr,result.stderr
  with tempfile.TemporaryDirectory(prefix='fnos-chart-cmake-') as d:
-  p=Path(d);(p/'src/widgets/chart').mkdir(parents=True);(p/'src/draw').mkdir(parents=True)
+  p=Path(d);(p/'src/widgets/chart').mkdir(parents=True);(p/'src/draw/sw').mkdir(parents=True)
   (p/'src/widgets/chart/lv_chart.c').write_text('int fixture;\n')
   (p/'src/draw/lv_draw_line.c').write_text((ROOT/'managed_components/lvgl__lvgl/src/draw/lv_draw_line.c').read_text())
+  for name in ('lv_draw_sw_line.c','lv_draw_sw_fill.c'):
+   (p/'src/draw/sw'/name).write_text((ROOT/'managed_components/lvgl__lvgl/src/draw/sw'/name).read_text())
   header='cmake_minimum_required(VERSION 3.18)\nproject(chart_hook C)\n'
   include='include("'+str(ROOT/'components/fnos_monitor/cmake/fnos_chart_math.cmake')+'")\n'
-  good=header+'add_library(fixture STATIC "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/chart/lv_chart.c" "${CMAKE_CURRENT_SOURCE_DIR}/src/draw/lv_draw_line.c")\n'+include+'fnos_use_safe_chart_map(fixture)\n'
+  good=header+'add_library(fixture STATIC "${CMAKE_CURRENT_SOURCE_DIR}/src/widgets/chart/lv_chart.c" "${CMAKE_CURRENT_SOURCE_DIR}/src/draw/lv_draw_line.c" "${CMAKE_CURRENT_SOURCE_DIR}/src/draw/sw/lv_draw_sw_line.c" "${CMAKE_CURRENT_SOURCE_DIR}/src/draw/sw/lv_draw_sw_fill.c")\n'+include+'fnos_use_safe_chart_map(fixture)\n'
   (p/'CMakeLists.txt').write_text(good)
   r=subprocess.run(['cmake','-S',str(p),'-B',str(p/'build')],capture_output=True,text=True,timeout=30)
   assert r.returncode==0,r.stderr

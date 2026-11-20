@@ -168,6 +168,8 @@ void       uk_pool_stretch(lv_obj_t *pool, bool on);   /* 兼容旧调用；当�
 void uk_pool_add(lv_obj_t *pool, lv_obj_t *child);
 int32_t uk_pool_shown(lv_obj_t *pool);
 int32_t uk_pool_cols(lv_obj_t *pool);
+/* Initial columns from resolved content widths, before fitting rows to height. */
+int32_t uk_pool_width_cols(lv_obj_t *pool);
 /* 视口行对齐：容器纵向溢出时把"半行"赶出视口 —— 只调行距、不动行高、不藏数据
    （容器装得下时行距回到 base_gap）。base_gap = 本来要用的那个行距。 */
 void uk_viewport_snap(lv_obj_t *box, int32_t base_gap);
@@ -222,6 +224,11 @@ void uk_trend_range_live(lv_obj_t *chart, bool live); /* Stale/unavailable range
 void uk_trend_push(lv_obj_t *chart, int32_t series_idx, int32_t v, uint32_t interval_ms);
 void uk_trend_clear(lv_obj_t *chart);  /* Reset both rings and presentation time. */
 void uk_trend_settle(lv_obj_t *chart);
+/* Page motion (drag/tap/reveal) active: keep real-time travel; optional cap on
+   chart repaint (0 = full rate) never above TREND_FPS. */
+void uk_trend_set_page_motion(bool active);
+void uk_trend_set_gesture_fps(uint32_t fps);   /* bench A/B; 0 = uncapped */
+uint32_t uk_trend_gesture_fps(void);
 /** 历史曲线启用平滑与流动：只改绘制几何，不动采样数据。 */
 void uk_trend_enable_flow(lv_obj_t *chart); /* Snap a history batch/hidden view to newest. */
 

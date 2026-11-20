@@ -380,6 +380,14 @@ static void set_num(lv_obj_t *label, const char *fmt, ...)
 {
     va_list ap; va_start(ap,fmt); set_text_v(label,true,fmt,ap); va_end(ap);
 }
+/* A local style may already resolve to the same color without being pinned
+   locally; a theme switch would then change it. Only skip when the local
+   property itself already holds the target. */
+static bool local_color_is(lv_obj_t *obj, lv_style_prop_t prop, lv_color_t c)
+{
+    lv_style_value_t v;
+    return lv_obj_get_local_style_prop(obj, prop, &v, 0) == LV_STYLE_RES_FOUND && lv_color_eq(v.color, c);
+}
 
 
 
@@ -403,6 +411,14 @@ static void chip_set_glow(lv_obj_t *chip, const char *txt, uint32_t rgb,
 
 
 
+static bool s_motion_clip_resize;
+
+static void page_clip_size_cb(lv_event_t *e)
+{
+    /* During reveal, fixed-size page contents do not depend on the clip width. */
+    if (s_motion_clip_resize) lv_event_stop_processing(e);
+}
+
 static lv_obj_t *mk_page(lv_obj_t *content)
 {
     /* 一页就是内容区的全部：宽高都跟父容器走（外壳底栏出现后，内容区高度变小，
@@ -414,6 +430,7 @@ static lv_obj_t *mk_page(lv_obj_t *content)
     lv_obj_add_flag(clip, LV_OBJ_FLAG_IGNORE_LAYOUT);
     lv_obj_set_size(clip, LV_PCT(100), LV_PCT(100));
     lv_obj_remove_flag(clip, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(clip, page_clip_size_cb, LV_EVENT_SIZE_CHANGED | LV_EVENT_PREPROCESS, NULL);
     lv_obj_t *p = lv_obj_create(clip);
     lv_obj_set_size(p, LV_PCT(100), LV_PCT(100));
     lv_obj_set_style_bg_color(p, uk_c(UK_BG), 0);
@@ -1406,6 +1423,7 @@ static lv_obj_t *trend_card(lv_obj_t *page, const char *title, int32_t series,
     if (out_note) *out_note = uk_card_note(card);
     /* 复刻 michka：趋势卡就是一条线，没有文字时间轴、没有 Y 刻度。 */
     lv_obj_t *chart = uk_trend_create(uk_card_body(card), UI_HIST, series);
+    fnos_perf_track_chart(chart);
     return chart;
 }
 
@@ -1529,6 +1547,7 @@ static lv_obj_t *overview_resource_create(lv_obj_t *parent, lv_obj_t *history_pa
     lv_obj_set_style_text_color(uk_card_note(r->chart_card), uk_c(identity), 0);
     body = uk_card_body(r->chart_card);
     r->chart = uk_trend_create(body, UI_HIST, 1);
+    fnos_perf_track_chart(r->chart);
     uk_trend_enable_flow(r->chart);
     uk_trend_set_range(r->chart, 0, 100);
     lv_chart_set_series_color(r->chart, uk_trend_series(r->chart, 0), uk_c(identity));
@@ -1973,6 +1992,7 @@ static void build_p0(lv_obj_t *page)
     lv_label_set_long_mode(s_ui.overview_note, LV_LABEL_LONG_MODE_WRAP);
 
     s_ui.overview_temp_history = uk_trend_create(body, UI_HIST, 1);
+    fnos_perf_track_chart(s_ui.overview_temp_history);
     uk_trend_enable_flow(s_ui.overview_temp_history);
     lv_chart_set_series_color(s_ui.overview_temp_history,
             uk_trend_series(s_ui.overview_temp_history, 0), uk_c(UK_S_TEMP));
@@ -2111,6 +2131,7 @@ static void build_p2(lv_obj_t *page)
     for (int i = 0; i < 4; i++) {
         s_ui.kpi2[i] = uk_kpi_create(krow, title[i]);
         if (!s_ui.kpi2[i]) continue;
+        lv_obj_set_flex_grow(s_ui.kpi2[i]->box, 0);
         if (s_ui.ncards < UI_CARDS) s_ui.cards[s_ui.ncards++] = s_ui.kpi2[i]->box;
         /* White readings stay primary; labels and edges identify each history. */
         lv_obj_set_style_text_color(s_ui.kpi2[i]->val, uk_c(UK_T1), 0);
@@ -2174,10 +2195,7 @@ static void network_layout(void)
     int32_t lines = ((int32_t)count + cols - 1) / cols;
     cols = ((int32_t)count + lines - 1) / lines;
     int32_t card_width = (width - (cols - 1) * gap) / cols;
-    for (unsigned i = 0; i < count; i++) {
-        lv_obj_set_flex_grow(s_ui.kpi2[i]->box, 0);
-        lv_obj_set_width(s_ui.kpi2[i]->box, card_width);
-    }
+    for (unsigned i = 0; i < count; i++) lv_obj_set_width(s_ui.kpi2[i]->box, card_width);
     lv_obj_update_layout(row);
     int32_t height = 0;
     for (unsigned i = 0; i < count; i++) {
@@ -3259,6 +3277,7 @@ static void wifi_fill_list(void)
             uk_row_t *r = uk_row_create(s_ui.wifi_ap_pool, true, false);
             if (!r) { n = i; break; }
             /* 右侧说明是"3 格 · -54 dBm · 加密"，不是数字，得换 CJK 字体的 16px */
+            if (lv_obj_get_style_text_font(r->val, 0) != UK_FONT_CJK_16)
             lv_obj_set_style_text_font(r->val, UK_FONT_CJK_16, 0);
             /* 点的是整行：行本身必须留着 CLICKABLE，行里的字必须清掉
                （LVGL 9 命中测试会停在可点的子对象上，事件就传不到行了） */
@@ -4359,8 +4378,8 @@ static uint64_t inventory_shape_object(uint64_t shape, lv_obj_t *obj)
     return inventory_shape_mix(shape, lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN));
 }
 
-/* Compare resolved geometry, including wrapped identities and content-sized
-   value boxes. Counts alone cannot detect longer names or wider readings. */
+/* Row heights and width-driven columns determine reflow; changes within the
+   same column budget do not invalidate the inventory geometry. */
 static uint64_t inventory_shape(lv_obj_t *container, lv_obj_t **cards,
                                 lv_obj_t **pools, const int *counts, int n)
 {
@@ -4376,6 +4395,8 @@ static uint64_t inventory_shape(lv_obj_t *container, lv_obj_t **cards,
         lv_obj_t *pool = pools[i];
         shape = inventory_shape_object(shape, pool);
         if (!pool) continue;
+        if (lv_obj_has_flag(pool, LV_OBJ_FLAG_USER_2))
+            shape = inventory_shape_mix(shape, uk_pool_width_cols(pool));
         shape = inventory_shape_mix(shape, lv_obj_get_style_pad_row(pool, 0));
         shape = inventory_shape_mix(shape, lv_obj_get_style_pad_column(pool, 0));
         for (uint32_t j = 0; j < lv_obj_get_child_count(pool); j++) {
@@ -4384,8 +4405,12 @@ static uint64_t inventory_shape(lv_obj_t *container, lv_obj_t **cards,
             for (uint32_t k = 0; k < lv_obj_get_child_count(row); k++) {
                 lv_obj_t *line = lv_obj_get_child(row, k);
                 shape = inventory_shape_object(shape, line);
-                for (uint32_t p = 0; p < lv_obj_get_child_count(line); p++)
-                    shape = inventory_shape_object(shape, lv_obj_get_child(line, p));
+                for (uint32_t p = 0; p < lv_obj_get_child_count(line); p++) {
+                    lv_obj_t *part = lv_obj_get_child(line, p);
+                    shape = inventory_shape_mix(shape, lv_obj_get_height(part));
+                    shape = inventory_shape_mix(shape, lv_obj_get_child_count(part));
+                    shape = inventory_shape_mix(shape, lv_obj_has_flag(part, LV_OBJ_FLAG_HIDDEN));
+                }
             }
         }
     }
@@ -5378,7 +5403,8 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
         /* 副行交给 uk_row_set（它会把 name2 也走数字过渡）；再 set_txt 覆盖一遍
            会把这层动效按静态文本写掉。 */
         uk_row_set(row, v->mnt, b, c1, NULL, gauge_value(v->pct), 0, vols_live);
-        lv_obj_set_style_text_color(row->val, uk_c(vols_live ? UK_T1 : UK_T3), 0);
+        if (!local_color_is(row->val, LV_STYLE_TEXT_COLOR, uk_c(vols_live ? UK_T1 : UK_T3)))
+            lv_obj_set_style_text_color(row->val, uk_c(vols_live ? UK_T1 : UK_T3), 0);
         lv_obj_set_style_bg_color(row->bar, uk_c(vols_live ? uk_pct_color(v->pct) : UK_OFF), LV_PART_INDICATOR);
     }
     pool_layout(&s_p1_vol_n, &s_p1_vol_w, &s_p1_vol_h, nvol, s_ui.vol_pool, UK_ENTITY_MIN_WIDTH, false, NULL);
@@ -5420,8 +5446,10 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
         /* All four status cells share one line height: a lone NUM_20 sync
            percentage made that row 2px taller, which the list floor then
            charged to every promised row (p1 audit 112 vs 116). */
-        lv_obj_set_style_text_font(row->val, UK_FONT_CJK_16, 0);
-        lv_obj_set_style_text_color(row->val, uk_c(col), 0);
+        if (lv_obj_get_style_text_font(row->val, 0) != UK_FONT_CJK_16)
+            lv_obj_set_style_text_font(row->val, UK_FONT_CJK_16, 0);
+        if (!local_color_is(row->val, LV_STYLE_TEXT_COLOR, uk_c(col)))
+            lv_obj_set_style_text_color(row->val, uk_c(col), 0);
         /* RAID rows otherwise land on 51 or 52 depending on the status text
            themselves; pin the item height so the list floor is deterministic. */
         lv_obj_set_style_min_height(row->row, 52, 0);
@@ -5440,32 +5468,39 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
         const uint32_t smart_led = !disks_live ? UK_T3
             : !strcmp(d->smart, "failed") ? UK_DANGER
             : !strcmp(d->smart, "passed") ? UK_OK : UK_T3;
-        uk_row_set(row, d->dev, " ", NULL, NULL, -1, smart_led, true);
         char read_ms[64], write_ms[64];
         if (d->has_read_ms) snprintf(read_ms,sizeof read_ms,"%.2f ms",d->read_ms);
         else snprintf(read_ms,sizeof read_ms,"--");
         if (d->has_write_ms) snprintf(write_ms,sizeof write_ms,"%.2f ms",d->write_ms);
         else snprintf(write_ms,sizeof write_ms,"--");
-        set_txt(row->name2,"读 %s · 写 %s\n平均延迟 %s / %s\nSMART %s%s",
-                fmt_rate(c1,sizeof c1,d->rd_kbs),fmt_rate(c2,sizeof c2,d->wr_kbs),
-                read_ms,write_ms,smart_note(d->smart),overview_live(st,"disks") ? "" : " · 旧值");
         if (d->smart_ts>0 && st->source_ts>=d->smart_ts) {
             set_txt(row->name2,"读 %s · 写 %s\n平均延迟 %s / %s\nSMART %s · %lld 秒前%s",
                 fmt_rate(c1,sizeof c1,d->rd_kbs),fmt_rate(c2,sizeof c2,d->wr_kbs),
                 read_ms,write_ms,smart_note(d->smart),(long long)(st->source_ts-d->smart_ts),
                 overview_live(st,"disks") ? "" : " · 旧值");
+        } else {
+            set_txt(row->name2,"读 %s · 写 %s\n平均延迟 %s / %s\nSMART %s%s",
+                fmt_rate(c1,sizeof c1,d->rd_kbs),fmt_rate(c2,sizeof c2,d->wr_kbs),
+                read_ms,write_ms,smart_note(d->smart),overview_live(st,"disks") ? "" : " · 旧值");
         }
-        lv_obj_set_style_text_color(row->name2,uk_c(!strcmp(d->smart,"failed") && overview_live(st,"disks") ? UK_DANGER : UK_T3),0);
-        /* Full diagnostics remain in name2 for entity_open_cb. */
-        show(row->name2, false);
-        lv_obj_set_style_text_font(row->val, UK_FONT_CJK_16, 0);
+        if (!local_color_is(row->name2, LV_STYLE_TEXT_COLOR,
+                            uk_c(!strcmp(d->smart,"failed") && overview_live(st,"disks") ? UK_DANGER : UK_T3)))
+            lv_obj_set_style_text_color(row->name2,uk_c(!strcmp(d->smart,"failed") && overview_live(st,"disks") ? UK_DANGER : UK_T3),0);
+        if (lv_obj_get_style_text_font(row->val, 0) != UK_FONT_CJK_16)
+            lv_obj_set_style_text_font(row->val, UK_FONT_CJK_16, 0);
         /* 行里只放速率：卡头的 "· 旧值" 与圆点已经说明新鲜度，再带 5 个字前缀会把
            设备名挤出第一行（nvme0n1 只剩 "nv"）。 */
-        set_txt(row->val, "↓ %s  ↑ %s",
-                fmt_rate(c1,sizeof c1,d->rd_kbs), fmt_rate(c2,sizeof c2,d->wr_kbs));
         if (!strcmp(d->smart,"failed")) set_txt(row->val, "SMART 异常");
-        lv_obj_set_style_text_color(row->val, uk_c(!overview_live(st,"disks") ? UK_T3 :
-                !strcmp(d->smart,"failed") ? UK_DANGER : UK_T1), 0);
+        else set_txt(row->val, "↓ %s  ↑ %s",
+                fmt_rate(c1,sizeof c1,d->rd_kbs), fmt_rate(c2,sizeof c2,d->wr_kbs));
+        if (!local_color_is(row->val, LV_STYLE_TEXT_COLOR,
+                            uk_c(!overview_live(st,"disks") ? UK_T3 :
+                                 !strcmp(d->smart,"failed") ? UK_DANGER : UK_T1)))
+            lv_obj_set_style_text_color(row->val, uk_c(!overview_live(st,"disks") ? UK_T3 :
+                    !strcmp(d->smart,"failed") ? UK_DANGER : UK_T1), 0);
+        uk_row_set(row, d->dev, lv_label_get_text(row->name2), lv_label_get_text(row->val),
+                   NULL, -1, smart_led, true);
+        show(row->name2, false); /* Full diagnostics remain available to details. */
     }
     pool_layout(&s_p1_disk_n, &s_p1_disk_w, &s_p1_disk_h, ndisk, s_ui.disk_pool, UK_ENTITY_MIN_WIDTH, false, NULL);
     }   /* (page == 1)：卷 / 阵列 / 硬盘清单 */
@@ -5639,27 +5674,25 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
         uk_row_t *r = s_ui.dock_row[i];
         const char *prefix = dock_live ? "" : (dock_partial ? "部分可读 · " : "上次");
         if (strcmp(lv_label_get_text(r->name1), d->n)) s_p3_dock_n = -1;
-        /* Name and state each own a line; a long raw Docker status cannot erase identity.
-           状态文本交给 uk_row_set（第二行也走数字过渡）。这里传 " " 只会让第二行
-           变成静态占位 —— 旧写法正是传 " " 再 set_txt 覆盖，白丢一层动效。 */
-        char sub[80];
-        snprintf(sub, sizeof sub, "%s%s", prefix, d->up ? "运行中" : d->s);
-        uk_row_set(r, d->n, sub[0] ? sub : " ", "", NULL, -1, 0, true);
         char cpu[64], mem[64], restarts[32];
         if (d->has_cpu && d->up) snprintf(cpu,sizeof cpu,"%.1f%%",d->cpu_pct); else snprintf(cpu,sizeof cpu,"--");
         if (d->has_mem && d->up) snprintf(mem,sizeof mem,"%.0f MB",d->mem_mb); else snprintf(mem,sizeof mem,"--");
         if (d->has_restarts) snprintf(restarts,sizeof restarts,"%u",(unsigned)d->restarts); else snprintf(restarts,sizeof restarts,"--");
-        set_txt(r->name2,"%s%s\nCPU %s · 内存 %s\n重启 %s · %s",prefix,d->up ? "运行中" : d->s,
-                cpu,mem,restarts,d->metrics_ts>0 ? "资源已采集" : "资源未采集");
         if (d->metrics_ts>0 && st->source_ts>=d->metrics_ts)
             set_txt(r->name2,"%s%s\nCPU %s · 内存 %s\n重启 %s · %lld 秒前",prefix,d->up ? "运行中" : d->s,
                 cpu,mem,restarts,(long long)(st->source_ts-d->metrics_ts));
-        lv_obj_set_style_text_color(r->name2, uk_c(dock_live ? UK_T2 : UK_T3), 0);
-        show(r->name2, false);
-        lv_obj_set_style_text_font(r->val, UK_FONT_CJK_16, 0);
+        else set_txt(r->name2,"%s%s\nCPU %s · 内存 %s\n重启 %s · %s",prefix,d->up ? "运行中" : d->s,
+                cpu,mem,restarts,d->metrics_ts>0 ? "资源已采集" : "资源未采集");
+        if (!local_color_is(r->name2, LV_STYLE_TEXT_COLOR, uk_c(dock_live ? UK_T2 : UK_T3)))
+            lv_obj_set_style_text_color(r->name2, uk_c(dock_live ? UK_T2 : UK_T3), 0);
+        if (lv_obj_get_style_text_font(r->val, 0) != UK_FONT_CJK_16)
+            lv_obj_set_style_text_font(r->val, UK_FONT_CJK_16, 0);
         set_txt(r->val, "%s%s", prefix, d->up ? "运行中" : "已停止");
-        lv_obj_set_style_text_color(r->val, uk_c(dock_live ? UK_T2 : UK_T3), 0);
-        lv_obj_set_style_bg_color(r->led, uk_c(!dock_live ? UK_OFF : d->up ? UK_OK : UK_WARN), 0);
+        if (!local_color_is(r->val, LV_STYLE_TEXT_COLOR, uk_c(dock_live ? UK_T2 : UK_T3)))
+            lv_obj_set_style_text_color(r->val, uk_c(dock_live ? UK_T2 : UK_T3), 0);
+        uk_row_set(r, d->n, lv_label_get_text(r->name2), lv_label_get_text(r->val),
+                   NULL, -1, !dock_live ? UK_OFF : d->up ? UK_OK : UK_WARN, true);
+        show(r->name2, false);
     }
     pool_layout(&s_p3_dock_n, &s_p3_dock_w, &s_p3_dock_h, ndock,
                 s_ui.dock_pool, UK_ENTITY_MIN_WIDTH, false, NULL);
@@ -6136,7 +6169,7 @@ static void ui_tick(lv_timer_t *t)
            或者滑回这一页，page_layout 会按脏位补刷。 */
         s_refresh_pending = true;
         if (s_page >= 0 && s_page < FNOS_UI_PAGE_COUNT) s_page_dirty[s_page] = true;
-        fnos_perf_note_tick((uint32_t)(esp_timer_get_time() - t_bench));
+        fnos_perf_note_tick((uint32_t)(esp_timer_get_time() - t_bench), true);
         return;
     }
     s_refresh_pending = false;
@@ -6158,7 +6191,7 @@ static void ui_tick(lv_timer_t *t)
     pair_refresh();
     pages_warm();
     inventory_notice();
-    fnos_perf_note_tick((uint32_t)(esp_timer_get_time() - t_bench));
+    fnos_perf_note_tick((uint32_t)(esp_timer_get_time() - t_bench), false);
 #ifdef CONFIG_FNOS_SOAK_DIAG
     rate_note(t_bench);
 #endif
@@ -6482,6 +6515,9 @@ static void page_layout(int idx)
     /* 设备端 -Werror=array-bounds：s_motion.to 的取值范围 GCC 推不出来（调用点都归一化
        过，内联后它只看到"可能 -1"）。越界直接放弃，不做无依据的索引。 */
     if (idx < 0 || idx >= FNOS_UI_PAGE_COUNT) return;
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    int64_t layout_us = esp_timer_get_time();
+#endif
     /* All pages already hold the latest snapshot. Navigation only has to resolve
        the incoming geometry, never format and relayout the entire application. */
     /* 这一拍没刷到它就先补刷正文，再解几何：页露出来之前必须是最新数据。
@@ -6506,6 +6542,9 @@ static void page_layout(int idx)
     for (int i = 0; i < s_ui.temp_blk_made; i++) temp_grid_relayout(&s_ui.temp_blk[i]);
     }
     lv_obj_update_layout(s_ui.page[idx]);
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    fnos_perf_note_ui_stage(FNOS_PERF_PAGE_LAYOUT, (uint32_t)(esp_timer_get_time() - layout_us));
+#endif
 }
 
 static void pages_warm(void)
@@ -6548,13 +6587,16 @@ static void pages_warm(void)
 static void refresh_soon(void)
 {
     lv_timer_t *t = lv_display_get_refr_timer(lv_display_get_default());
-    if (t) lv_timer_ready(t);
+    if (t) { lv_timer_resume(t); lv_timer_ready(t); }
 }
 
 static void motion_paint(void)
 {
     int32_t travel = LV_CLAMP(0, -s_motion.offset * s_motion.direction, s_motion.width);
     if (travel == s_motion.painted) return;
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    int64_t paint_us = esp_timer_get_time();
+#endif
     int32_t previous = s_motion.painted == INT32_MIN ? 0 : s_motion.painted;
     int32_t left = s_motion.direction > 0 ? s_motion.width - travel : 0;
     lv_obj_t *from = s_ui.page[s_motion.from], *to = s_ui.page[s_motion.to];
@@ -6564,6 +6606,8 @@ static void motion_paint(void)
        preserves pending invalidations and avoids a later full-page repaint. */
     lv_display_enable_invalidation(display, false);
     int32_t height = lv_obj_get_content_height(s_ui.viewport);
+    bool fixed_pages = s_motion.painted != INT32_MIN;
+    if (fixed_pages) lv_obj_enable_style_refresh(false);
     if (s_motion.painted == INT32_MIN) {
         lv_obj_set_size(from_clip, LV_PCT(100), LV_PCT(100));
         lv_obj_set_pos(from_clip, 0, 0);
@@ -6572,9 +6616,25 @@ static void motion_paint(void)
         lv_obj_set_size(to, s_motion.width, height);
         lv_obj_move_to_index(to_clip, -1);
     }
+    /* Both pages are opaque: the covered outgoing area needs no drawing. */
+    int32_t from_left = s_motion.direction > 0 ? 0 : travel;
+    lv_obj_set_size(from_clip, s_motion.width - travel, height);
+    lv_obj_set_pos(from_clip, from_left, 0);
+    lv_obj_set_pos(from, -from_left, 0);
     lv_obj_set_size(to_clip, travel, height);
     lv_obj_set_pos(to_clip, left, 0);
     lv_obj_set_pos(to, -left, 0);
+    if (fixed_pages) {
+        lv_obj_enable_style_refresh(true);
+        s_motion_clip_resize = true;
+        lv_obj_refr_size(from_clip);
+        lv_obj_refr_size(to_clip);
+        s_motion_clip_resize = false;
+        lv_obj_refr_pos(from_clip);
+        lv_obj_refr_pos(to_clip);
+        lv_obj_refr_pos(from);
+        lv_obj_refr_pos(to);
+    }
     lv_obj_update_layout(s_ui.viewport);
     lv_display_enable_invalidation(display, true);
     s_motion.painted = travel;
@@ -6586,8 +6646,17 @@ static void motion_paint(void)
         area.x2 = area.x1 + (s_motion.direction > 0 ? s_motion.width - lo : hi) - 1;
         area.x1 += s_motion.direction > 0 ? s_motion.width - hi : lo;
         lv_obj_invalidate_area(s_ui.viewport, &area);
-        refresh_soon();
     }
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    fnos_perf_note_ui_stage(FNOS_PERF_PAGE_PAINT, (uint32_t)(esp_timer_get_time() - paint_us));
+#endif
+}
+
+/* Coalesce input samples before LVGL resolves layout and collects dirty areas. */
+static void motion_refresh_cb(lv_event_t *e)
+{
+    (void)e;
+    if (s_motion.active) motion_paint();
 }
 
 static void motion_exec(void *unused, int32_t value)
@@ -6603,7 +6672,7 @@ static void motion_exec(void *unused, int32_t value)
     if (value == 1024) { offset = s_motion.end; s_motion.velocity = 0; }
     if (offset == s_motion.offset) return;
     s_motion.offset = offset;
-    motion_paint();
+    refresh_soon();
 }
 
 static void motion_finish(void)
@@ -6623,6 +6692,7 @@ static void motion_finish(void)
          (s_page == s_motion.from && s_motion.painted == 0));
     s_motion.active = false;
     s_motion.velocity = 0;
+    uk_trend_set_page_motion(false);
     uk_number_motion_enable(s_st.online);
     lv_display_t *display = lv_obj_get_display(s_ui.viewport);
     if (settled_edge) lv_display_enable_invalidation(display, false);
@@ -6635,6 +6705,7 @@ static void motion_finish(void)
         lv_obj_move_to_index(clip, i);
         lv_obj_set_size(clip, LV_PCT(100), LV_PCT(100));
         lv_obj_set_pos(clip, 0, 0);
+        lv_obj_refr_size(clip);
     }
     if (settled_edge) {
         lv_obj_update_layout(s_ui.viewport);
@@ -6657,7 +6728,7 @@ static void motion_complete(void)
     if (pending >= 0 && pending != s_page) fnos_ui_set_page(pending);
 }
 
-static void motion_done(lv_anim_t *a) { (void)a; motion_complete(); }
+static void motion_done(lv_anim_t *a) { (void)a; motion_paint(); motion_complete(); }
 
 static void page_motion_settle(void)
 {
@@ -6732,12 +6803,28 @@ static void motion_prepare(int from, int to, int direction)
     s_motion.painted = INT32_MIN;   /* 首帧必须画出来 */
     s_motion.velocity = 0;
     s_motion.active = true;
+    uk_trend_set_page_motion(true);
+    /* Clip the target side to zero width before it becomes visible; otherwise
+       showing the page queues its whole (still full-width) body for redraw. */
+    motion_paint();
     for (int i = 0; i < FNOS_UI_PAGE_COUNT; i++) show(s_ui.page[i], i == from || i == to);
+    /* A snapshot may have arrived since the last ui_tick. Pull the latest
+       published generation before the target is revealed; zero-wait and leave
+       s_st untouched if the lock is busy, so it can never go backwards. */
+    int64_t snapshot_seq = s_st.source_seq;
+    int64_t snapshot_recv = s_st.recv_ms;
+    uint32_t snapshot_ok = s_st.ok_count, snapshot_fail = s_st.fail_count;
+    bool snapshot_online = s_st.online, snapshot_ever = s_st.ever_ok;
+    fnos_data_get(&s_st);
+    if (s_st.source_seq != snapshot_seq || s_st.recv_ms != snapshot_recv ||
+        s_st.ok_count != snapshot_ok || s_st.fail_count != snapshot_fail ||
+        s_st.online != snapshot_online || s_st.ever_ok != snapshot_ever) {
+        s_page_dirty[to] = true;
+    }
     /* Idle warming creates inventory rows before touch. Refresh only this
        target before revealing it; an old empty/offline page must not flash. */
     page_layout(to);
     s_refresh_pending = true;
-    motion_paint();
 #ifdef CONFIG_FNOS_UI_MOTION_STATS
     s_motion_stats.prepared = esp_timer_get_time() - prepared_at;
 #endif
@@ -6888,7 +6975,7 @@ static void motion_tick(lv_timer_t *timer)
     offset = -travel * s_motion.direction;
     if (offset == s_motion.offset) return;
     s_motion.offset = offset;
-    motion_paint();
+    refresh_soon();
 }
 
 /* Consume a fresh pointer sample in the same LVGL timer pass. Independent read
@@ -6917,6 +7004,7 @@ static void motion_poll_start(void)
 
 static void motion_init(void)
 {
+    lv_display_add_event_cb(lv_display_get_default(), motion_refresh_cb, LV_EVENT_REFR_START, NULL);
 #ifdef CONFIG_FNOS_UI_MOTION_STATS
     lv_display_add_event_cb(lv_display_get_default(), motion_render_cb, LV_EVENT_RENDER_START, NULL);
     lv_display_add_event_cb(lv_display_get_default(), motion_render_cb, LV_EVENT_RENDER_READY, NULL);

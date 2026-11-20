@@ -19,7 +19,7 @@ DEVICE_CONFIG=${FNOS_UI_DEVICE_CONFIG:-$REPO/build/config/sdkconfig.h}
 PREVIEW_BRANCH_VARS="PREVIEW_ALLOC_FAIL_AT PREVIEW_ALLOC_SEED_ONE PREVIEW_AUDIT_ALL
 PREVIEW_BANDS_AT PREVIEW_BARMAP PREVIEW_CARDLIST PREVIEW_CARDMAP PREVIEW_CARDMAP_AT PREVIEW_CARD_OVERLAP
 PREVIEW_CHART_MAP PREVIEW_DATA_MOTION PREVIEW_ENTER_MID PREVIEW_HARDWARE_FIXTURE PREVIEW_MOTION
-PREVIEW_MOTION_FIRST_ENTRY PREVIEW_MOTION_INPUT PREVIEW_MOTION_REPEAT_TARGET
+PREVIEW_GESTURE_FPS PREVIEW_MOTION_CPU_BUDGET_US PREVIEW_MOTION_FIRST_ENTRY PREVIEW_MOTION_INPUT PREVIEW_MOTION_REPEAT_TARGET
 PREVIEW_MOTION_RESPONSIVENESS PREVIEW_MOTION_SCROLL PREVIEW_NUMBERS PREVIEW_OVERLAP_TRACE
 PREVIEW_PAGE_CARDS PREVIEW_PAIR_FIRST_ENTRY PREVIEW_PARTIAL PREVIEW_POLL_MS PREVIEW_PROBE PREVIEW_REFRESH_WORK PREVIEW_SIZE
 PREVIEW_TRACE_CARDS PREVIEW_WHO PREVIEW_WHOALL"
@@ -88,10 +88,8 @@ fi
 
 # 主机 LVGL 用设备端真实 Kconfig（含 CONFIG_LV_CONF_SKIP=1，于是全靠 CONFIG_LV_*）
 grep -E '^#define CONFIG_LV_' "$DEVICE_CONFIG" > lv_kconfig_host.h
-# 只有三处必须偏离设备：LVGL 9.6 的 lv_conf_kconfig.h 会把 CONFIG_LV_OS_FREERTOS 翻成
-# LV_OS_FREERTOS、把 CONFIG_LV_USE_CUSTOM_MALLOC 翻成 LV_STDLIB_CUSTOM（设备那边由
-# esp_lvgl_port 提供 lv_malloc_core，主机上没有 → 落到 LVGL 的 weak 桩，永远返回 NULL）。
-# 主机改成 LV_OS_NONE + libc malloc，语义等价（设备是 FreeRTOS 任务 + esp 堆）。
+# 主机使用单线程、libc 分配器与软件绘制；设备使用 FreeRTOS、项目 PSRAM 分配器和 PPA。
+# 断言在主机上直接报错退出，避免默认处理器无限等待。
 cat >> lv_kconfig_host.h <<'EOF'
 
 /* ---- host-only overrides (见 run.sh 注释) ---- */
@@ -103,6 +101,7 @@ cat >> lv_kconfig_host.h <<'EOF'
 #define LV_USE_STDLIB_STRING 1     /* 设备端 CONFIG_LV_USE_CLIB_STRING  */
 #define LV_USE_STDLIB_SPRINTF 1    /* 设备端 CONFIG_LV_USE_CLIB_SPRINTF */
 #define LV_DRAW_SW_DRAW_UNIT_CNT 1 /* 主机单线程；设备使用两个工作线程，>1 会要求 LV_USE_OS */
+#define LV_USE_PPA 0              /* 主机无 ESP32 PPA；硬件加速由实机对照验证。 */
 
 /* LVGL 默认 LV_ASSERT_HANDLER 是 while(1); —— 断言失败 = 无声 100% CPU 死循环。
    主机上改成打 stderr 再 abort（stderr 无缓冲，重定向到文件也立刻可见）。 */
@@ -182,11 +181,14 @@ fi
 echo "hardware inventory allocation failure and retry: PASS"
 
 # Native UI motion contracts: actual inputs, frozen telemetry and stable end frames.
-for mode in overlays boot-wifi reduced range; do
+for mode in overlays boot-wifi reduced range narrow; do
   env $(preview_env_args) PREVIEW_DATA_MOTION="$mode" ./build/preview "$OUT_REAL/$mode"
   python3 ppm2png.py "$OUT_REAL/$mode"
   python3 motion_view.py "$OUT_REAL/$mode"
 done
+# Gesture trend continuity and repaint cap; CPU stays opt-in for calibrated hosts.
+env $(preview_env_args) PREVIEW_DATA_MOTION=motion-scroll-cost \
+  PREVIEW_GESTURE_FPS="${PREVIEW_GESTURE_FPS:-0}" ./build/preview "$OUT_REAL/motion-scroll-cost"
 env $(preview_env_args) PREVIEW_PARTIAL=1 PREVIEW_MOTION=0,1,0 PREVIEW_MOTION_INPUT=api \
   PREVIEW_MOTION_FIRST_ENTRY=1 PREVIEW_MOTION_REPEAT_TARGET=1 PREVIEW_MOTION_RESPONSIVENESS=1 \
   ./build/preview "$OUT_REAL/motion"

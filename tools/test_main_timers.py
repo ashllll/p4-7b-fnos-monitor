@@ -56,6 +56,8 @@ static void auto_page_cb(void *) {}
 static void *lv_timer_create(void (*)(void *), int, void *) {
     ++lv_created; return lv_ok ? reinterpret_cast<void *>(1) : nullptr;
 }
+static void *lv_display_get_default() { return nullptr; }
+static void lv_display_set_tile_cnt(void *, int) {}
 '''
 checks = r'''
 int main() {

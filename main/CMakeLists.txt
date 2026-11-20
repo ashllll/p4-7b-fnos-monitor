@@ -5,7 +5,7 @@ idf_component_register(
     # 诊断心跳（CONFIG_FNOS_SOAK_DIAG）用 esp_app_get_elf_sha256 报固件哈希；
     # IDF 5.5 要求显式声明提供 esp_app_desc.h 的组件，否则构建报
     # "esp_app_format component(s) is not in the requirements list of main"。
-    PRIV_REQUIRES esp_app_format
+    PRIV_REQUIRES esp_app_format esp_mm
 )
 
 target_compile_options(${COMPONENT_LIB} PUBLIC -Wno-missing-field-initializers)
@@ -36,5 +36,20 @@ if("lvgl__lvgl" IN_LIST build_components)
     idf_component_get_property(LVGL_LIB lvgl__lvgl COMPONENT_LIB)
     if(TARGET ${LVGL_LIB})
         target_compile_options(${LVGL_LIB} PRIVATE -Wno-error=attributes -Wno-error=cpp)
+        # IDF 5.5 lacks esp_cache_get_line_size_by_addr(); LVGL 9.6 PPA calls it.
+        # Force-include a version-guarded shim only for LVGL, not globally.
+        target_compile_options(${LVGL_LIB} PRIVATE
+            "SHELL:-include \"${CMAKE_CURRENT_LIST_DIR}/ppa_idf55_compat.h\"")
+    endif()
+endif()
+
+# esp_lv_decoder includes lvgl_private.h, which exposes the PPA driver header
+# when LV_USE_PPA is enabled. The decoder does not depend on esp_driver_ppa itself.
+if("espressif__esp_lv_decoder" IN_LIST build_components)
+    idf_component_get_property(DECODER_LIB espressif__esp_lv_decoder COMPONENT_LIB)
+    if(TARGET lvgl_docoder_lib AND "esp_driver_ppa" IN_LIST build_components)
+        target_link_libraries(lvgl_docoder_lib PRIVATE idf::esp_driver_ppa)
+    elseif(TARGET ${DECODER_LIB} AND "esp_driver_ppa" IN_LIST build_components)
+        target_link_libraries(${DECODER_LIB} PRIVATE idf::esp_driver_ppa)
     endif()
 endif()

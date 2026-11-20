@@ -68,6 +68,7 @@
 #endif
 #define UK_TREND_SCROLL_MS CONFIG_FNOS_UI_TREND_SCROLL_MS
 #define UK_TREND_FPS CONFIG_FNOS_UI_TREND_FPS
+/* Page-motion cadence cap is runtime-only (uk_trend_set_gesture_fps); 0 = full rate. */
 #define UK_TREND_STROKE 2
 #define UK_ENTITY_MIN_WIDTH (3 * UK_LIST_MIN_WIDTH / 2) /* Identity + metric comparison columns */
 #define UK_DETAIL_WIDTH (2 * UK_LIST_MIN_WIDTH)

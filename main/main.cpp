@@ -12,6 +12,7 @@
 #include <string.h>
 #include <time.h>
 #include <atomic>
+#include <assert.h>
 
 #include "bsp/esp-bsp.h"
 #include "esp_log.h"
@@ -25,6 +26,7 @@
 #include "fnos_net.h"
 #include "fnos_data.h"
 #include "fnos_ui.h"
+#include "ppa_idf55_compat.h"  /* CONFIG_FNOS_SOAK_DIAG 自检：PPA 缓存行分类 */
 #include "ui_kit/uk_theme.h"   /* fnos_ui_theme_use/name：调色板切在 ui_kit 里 */
 #include "ui_kit/uk.h"         /* optional diagnostic number-cache statistics */
 #if __has_include("fnos_config.h")
@@ -200,6 +202,7 @@ static bool ui_build_locked(void)
             vTaskDelay(pdMS_TO_TICKS(300));
             continue;
         }
+        lv_display_set_tile_cnt(lv_display_get_default(), 1);
         fnos_ui_create();
         if (!fnos_ui_ready()) {
             bsp_display_unlock();
@@ -257,6 +260,16 @@ extern "C" void app_main(void)
     ESP_LOGI(TAG, "fnOS NAS dashboard booting (agent http://%s:%d)", FNOS_HOST, FNOS_PORT);
     log_heap("boot");
 
+#if CONFIG_FNOS_SOAK_DIAG && ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(6, 0, 0) && CONFIG_LV_USE_PPA
+    /* PSRAM 地址必须返回 L2 行大小，避免 PPA 跳过必要的缓存同步。 */
+    {
+        void *ppa_probe = heap_caps_malloc(4, MALLOC_CAP_SPIRAM);
+        assert(ppa_probe != NULL);
+        assert(esp_cache_get_line_size_by_addr(ppa_probe) == CONFIG_CACHE_L2_CACHE_LINE_SIZE);
+        heap_caps_free(ppa_probe);
+    }
+#endif
+
     // Wi-Fi 先起：数据层要等联网，UI 不需要等
     fnos_net_start();
 
@@ -275,8 +288,7 @@ extern "C" void app_main(void)
         //  · NONE：flush 只按脏区 draw_bitmap（面积成正比、没有整帧 blit），但适配器
         //    明确拒绝旋转："rotation not supported under TEAR_AVOID_MODE_NONE"，
         //    本板要 ROTATE_180。
-        // TRIPLE_PARTIAL 每帧固定成本 = 局部区拷进中间缓冲 + 整帧 blit（1024×600×2B ×2），
-        // 实测约 8ms/帧且与内容无关（轻页 22.6ms vs 重页 26.5ms，tick 差 8 倍而帧成本只差 17%）。
+        // TRIPLE_PARTIAL 旋转脏区并修补目标缓冲中缺少的区域；flush 还包含等待空闲缓冲。
         .tear_avoid_mode = ESP_LV_ADAPTER_TEAR_AVOID_MODE_DEFAULT_MIPI_DSI,
         // 触摸不做任何镜像：adapter 只旋转 framebuffer，输入路径没有坐标变换，
         // 官方示例的 mirror_x/mirror_y 在本板 + ROTATE_180 下等于再做一次 180° 翻转。

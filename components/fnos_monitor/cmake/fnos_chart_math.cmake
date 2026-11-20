@@ -1,6 +1,6 @@
 # Scope the redirection to LVGL's chart translation unit. Other widgets and
 # lv_math.c keep the original lv_map; no managed source is modified.
-# The polyline source copy also fixes cumulative stroke padding in LVGL 9.5.
+# The polyline source copy also fixes cumulative stroke padding in LVGL 9.6.
 set(FNOS_CHART_MATH_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../fnos_chart_math.c")
 function(fnos_use_safe_chart_map lvgl_target)
     if(CMAKE_VERSION VERSION_LESS 3.18)
@@ -15,7 +15,7 @@ function(fnos_use_safe_chart_map lvgl_target)
     if(NOT EXISTS "${chart_source}" OR NOT "${chart_source}" IN_LIST lvgl_sources)
         message(FATAL_ERROR "LVGL chart source layout changed; mapping hook needs review")
     endif()
-    # LVGL 9.5 expands the polyline bounds inside the point loop, then once
+    # LVGL 9.6 expands the polyline bounds inside the point loop, then once
     # again afterwards. Keep only the final expansion so unrelated lines can
     # render in parallel; pixels, stroke width and control points stay native.
     set(line_source "${lvgl_dir}/src/draw/lv_draw_line.c")
@@ -40,18 +40,98 @@ function(fnos_use_safe_chart_map lvgl_target)
         endif()
         string(REPLACE "${before}" "${after}" line_code "${line_code}")
     endforeach()
+    # Software strokes only touch their clip area; exclude invisible dependencies.
+    string(REPLACE "#include \"lv_draw_private.h\""
+                   "#include \"lv_draw_private.h\"\n#include \"../misc/lv_area_private.h\""
+                   line_code "${line_code}")
+    set(before "    lv_draw_task_t * t = lv_draw_add_task(layer, &a, LV_DRAW_TASK_TYPE_LINE);")
+    string(FIND "${line_code}" "${before}" position)
+    if(position LESS 0)
+        message(FATAL_ERROR "LVGL line task creation changed; clipping fix needs review")
+    endif()
+    set(after "    if(!lv_area_intersect(&a, &a, &layer->_clip_area)) {\n        lv_free(new_points);\n        LV_PROFILER_DRAW_END;\n        return;\n    }\n${before}")
+    string(REPLACE "${before}" "${after}" line_code "${line_code}")
+
+    # Every visible segment and round cap mallocs a tiny mask scratch buffer
+    # through the PSRAM-backed lv_malloc. Keep the common widths on the stack:
+    # same bytes, same blend calls, only the allocation disappears.
+    set(sw_line_source "${lvgl_dir}/src/draw/sw/lv_draw_sw_line.c")
+    set(sw_fill_source "${lvgl_dir}/src/draw/sw/lv_draw_sw_fill.c")
+    foreach(sw_source "${sw_line_source}" "${sw_fill_source}")
+        if(NOT EXISTS "${sw_source}" OR NOT "${sw_source}" IN_LIST lvgl_sources)
+            message(FATAL_ERROR "LVGL software draw source layout changed; scratch fix needs review")
+        endif()
+    endforeach()
+
+    file(READ "${sw_fill_source}" sw_fill_code)
+    set(before "    lv_opa_t * mask_buf = NULL;")
+    string(FIND "${sw_fill_code}" "${before}" position)
+    if(position LESS 0)
+        message(FATAL_ERROR "LVGL fill mask buffer changed; scratch fix needs review")
+    endif()
+    string(REPLACE "${before}" "    lv_opa_t mask_stack[64];\n${before}" sw_fill_code "${sw_fill_code}")
+    set(before "        mask_buf = lv_malloc(clipped_w);")
+    string(FIND "${sw_fill_code}" "${before}" position)
+    if(position LESS 0)
+        message(FATAL_ERROR "LVGL fill mask allocation changed; scratch fix needs review")
+    endif()
+    string(REPLACE "${before}"
+        "        mask_buf = clipped_w <= (int32_t)sizeof(mask_stack) ? mask_stack : lv_malloc((size_t)clipped_w);"
+        sw_fill_code "${sw_fill_code}")
+    set(before "    if(mask_buf) {\n        lv_free(mask_buf);\n        lv_draw_sw_mask_free_param(&mask_rout_param);\n    }")
+    string(FIND "${sw_fill_code}" "${before}" position)
+    if(position LESS 0)
+        message(FATAL_ERROR "LVGL fill mask release changed; scratch fix needs review")
+    endif()
+    string(REPLACE "${before}"
+        "    if(mask_buf) {\n        if(mask_buf != mask_stack) lv_free(mask_buf);\n        lv_draw_sw_mask_free_param(&mask_rout_param);\n    }"
+        sw_fill_code "${sw_fill_code}")
+
+    file(READ "${sw_line_source}" sw_line_code)
+    set(before "    lv_opa_t * mask_buf = lv_malloc(mask_buf_size);")
+    string(FIND "${sw_line_code}" "${before}" position)
+    if(position LESS 0)
+        message(FATAL_ERROR "LVGL line mask allocation changed; scratch fix needs review")
+    endif()
+    string(REPLACE "${before}"
+        "    lv_opa_t mask_stack[64];\n    lv_opa_t * mask_buf = mask_buf_size <= sizeof(mask_stack) ? mask_stack : lv_malloc(mask_buf_size);"
+        sw_line_code "${sw_line_code}")
+    set(before "    lv_free(mask_buf);\n\n    lv_draw_sw_mask_free_param(&mask_left_param);")
+    string(FIND "${sw_line_code}" "${before}" position)
+    if(position LESS 0)
+        message(FATAL_ERROR "LVGL line mask release changed; scratch fix needs review")
+    endif()
+    string(REPLACE "${before}"
+        "    if(mask_buf != mask_stack) lv_free(mask_buf);\n\n    lv_draw_sw_mask_free_param(&mask_left_param);"
+        sw_line_code "${sw_line_code}")
+
     set(fixed_line "${CMAKE_CURRENT_BINARY_DIR}/fnos_lvgl_line.c")
+    set(fixed_sw_line "${CMAKE_CURRENT_BINARY_DIR}/fnos_lvgl_sw_line.c")
+    set(fixed_sw_fill "${CMAKE_CURRENT_BINARY_DIR}/fnos_lvgl_sw_fill.c")
     if(EXISTS "${fixed_line}")
         file(READ "${fixed_line}" previous_line_code)
     endif()
     if(NOT previous_line_code STREQUAL line_code)
         file(WRITE "${fixed_line}" "${line_code}")
     endif()
-    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${line_source}")
-    list(REMOVE_ITEM lvgl_sources "${line_source}")
+    if(EXISTS "${fixed_sw_line}")
+        file(READ "${fixed_sw_line}" previous_sw_line_code)
+    endif()
+    if(NOT previous_sw_line_code STREQUAL sw_line_code)
+        file(WRITE "${fixed_sw_line}" "${sw_line_code}")
+    endif()
+    if(EXISTS "${fixed_sw_fill}")
+        file(READ "${fixed_sw_fill}" previous_sw_fill_code)
+    endif()
+    if(NOT previous_sw_fill_code STREQUAL sw_fill_code)
+        file(WRITE "${fixed_sw_fill}" "${sw_fill_code}")
+    endif()
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                 "${line_source}" "${sw_line_source}" "${sw_fill_source}")
+    list(REMOVE_ITEM lvgl_sources "${line_source}" "${sw_line_source}" "${sw_fill_source}")
     set_property(TARGET ${lvgl_target} PROPERTY SOURCES "${lvgl_sources}")
-    target_include_directories(${lvgl_target} PRIVATE "${lvgl_dir}/src/draw")
-    target_sources(${lvgl_target} PRIVATE "${fixed_line}")
+    target_include_directories(${lvgl_target} PRIVATE "${lvgl_dir}/src/draw" "${lvgl_dir}/src/draw/sw")
+    target_sources(${lvgl_target} PRIVATE "${fixed_line}" "${fixed_sw_line}" "${fixed_sw_fill}")
     target_sources(${lvgl_target} PRIVATE "${FNOS_CHART_MATH_SOURCE}")
     set_property(SOURCE "${chart_source}" DIRECTORY "${lvgl_dir}"
                  APPEND PROPERTY COMPILE_DEFINITIONS "lv_map=fnos_chart_map")

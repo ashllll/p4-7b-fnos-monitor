@@ -230,6 +230,17 @@ void uk_number_set_reading(lv_obj_t *value, lv_obj_t *unit, const char *text,
     if (!same_unit) uk_number_set_text(unit, unit_text, false);
 }
 
+/* 换字后内容区还能有多宽。SIZE_CONTENT 的盒子若被 min_width 托住
+   （KPI 的固定读数宽度），盒子不会随文字收窄，退场字形仍放得下。 */
+static int32_t content_width_after(lv_obj_t *obj, const lv_point_t *new_size)
+{
+    if (lv_obj_get_style_width(obj,0)!=LV_SIZE_CONTENT) return lv_obj_get_content_width(obj);
+    int32_t chrome=lv_obj_get_style_pad_left(obj,0)+lv_obj_get_style_pad_right(obj,0)+
+                   2*lv_obj_get_style_border_width(obj,0);
+    int32_t min_width=lv_obj_get_style_min_width(obj,0);
+    if (min_width<0) min_width=0;
+    return LV_MAX(min_width,new_size->x+chrome)-chrome;
+}
 void uk_number_set_text(lv_obj_t *obj, const char *text, bool animate)
 {
     if (!obj) return;
@@ -263,9 +274,10 @@ void uk_number_set_text(lv_obj_t *obj, const char *text, bool animate)
     int32_t spacing=lv_obj_get_style_text_letter_space(obj,0);
     lv_text_get_size(&old_size,old,font,spacing,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
     lv_text_get_size(&new_size,text,font,spacing,0,LV_COORD_MAX,LV_TEXT_FLAG_NONE);
-    /* Wrapped/ellipsized text and shrinking content-sized masks use native text.
+    /* Wrapped/ellipsized text and masks that really shrink use native text.
        A smaller mask cannot retain all outgoing digits without painting over units. */
-    if ((lv_obj_get_style_width(obj,0)==LV_SIZE_CONTENT && new_size.x<old_size.x) ||
+    if ((lv_obj_get_style_width(obj,0)==LV_SIZE_CONTENT &&
+         content_width_after(obj,&new_size)<old_size.x) ||
         old_size.x>lv_obj_get_content_width(obj) || old_size.y>lv_font_get_line_height(font) ||
         (lv_obj_get_style_width(obj,0)!=LV_SIZE_CONTENT && !obj->w_layout &&
          new_size.x>lv_obj_get_content_width(obj))) {
@@ -327,7 +339,11 @@ void uk_number_set_text(lv_obj_t *obj, const char *text, bool animate)
     n->duration=motion_period_ms;
     n->span=n->duration+max_delay; n->started=lv_tick_get(); n->active=true;
     lv_label_set_text(obj,text); /* Public text is always the actual latest reading. */
-    lv_obj_update_layout(obj);
+    /* Resolve layout only when the box can actually move: min_width keeps the mask
+       at the same width across most digit changes even though extents differ. */
+    int32_t cw_after=content_width_after(obj,&new_size);
+    bool resized=cw_after!=lv_obj_get_content_width(obj) || old_size.y!=new_size.y;
+    if (resized) lv_obj_update_layout(obj);
     lv_area_t new_content; lv_obj_get_content_coords(obj,&new_content);
     int32_t new_origin=new_content.x1+(alignment==LV_TEXT_ALIGN_RIGHT ?
         lv_area_get_width(&new_content)-new_size.x : alignment==LV_TEXT_ALIGN_CENTER ?
@@ -512,6 +528,12 @@ void uk_number_selfcheck(lv_obj_t *parent)
     uk_kpi_set(k,"9.9","MB/s","",-1,true); lv_obj_update_layout(parent);
     uk_kpi_set(k,"10.0","MB/s","",-1,true);
     assert(((number_label_t *)k->val)->active);
+    /* min_width 托住的读数盒子不随文字变窄，换字后遮罩仍放得下退场字形。 */
+    uk_number_settle(k->val);
+    uint32_t mask_before=stats.mask_fallbacks;
+    uk_kpi_set(k,"9.9","MB/s","",-1,true);
+    assert(((number_label_t *)k->val)->active && stats.mask_fallbacks==mask_before);
+    uk_number_settle(k->val);
     uk_kpi_set(k,"1.0","GB/s","",-1,true); assert(!((number_label_t *)k->val)->active);
     /* 行内读数（存储页的卷/阵列/磁盘形态）：第二行是每秒都在变的**数据**，
        它既不能挡住 val 的过渡，自己也要能滑（见 uk_row_set 的 same_reading）。 */
