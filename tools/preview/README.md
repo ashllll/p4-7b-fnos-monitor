@@ -199,11 +199,15 @@ PREVIEW_REFRESH_WORK=1 PREVIEW_PARTIAL=1 tools/preview/build/preview /tmp/fnos-r
 同时用 200 ms 间隔的 15 个匿名读数检查快速更新：输出实际换值次数和最短间隔，验证配置的共享呈现节拍、取最新目标及缺失值即时发布。`number-stream-*` 为实际控件渲染帧；主机时钟和换值次数不代表开发板呈现 FPS。
 `PREVIEW_DATA_MOTION=1` 录制全部六页，含仪表尾段与数字/单位锚点检查。仍使用真实 UI 代码和匿名夹具。
 数字、圆环和条形共用呈现门；`PREVIEW_NUMBERS` 同时检查闭门、首次有效值、缺失恢复和设备换名，完整流程另检查真实卷／温度旧值的即时发布。规则、实机结果和边界见[动画技能复核](../../docs/ui-small-screen-anim-2026-10-24.md)。
+`PREVIEW_DATA_MOTION=narrow`（已进入默认 `run.sh`）录制 KPI 读数由 `100.0` 收窄到 `9.9`（读数盒被 `min_width` 托住时必须继续播字形动画）以及 `1023 KB/s → 1.0 MB/s` 单位阈值立即发布，并复用曲线量程回归帧；断言 `mask_fallbacks` 不增加。
+`PREVIEW_DATA_MOTION=motion-scroll-cost`（已进入默认 `run.sh`）在 page2 按住拖动时注入 5 个 live 样本，断言趋势窗口按真实时间连续移动、原始环保留全部样本，并要求 66 个 15 ms 帧内 chart 主绘制至少 50 次（默认全速）。同一探针加 `PREVIEW_GESTURE_FPS=30` 可复现 30FPS 对照：断言重绘次数落在 `66*cap/60` 附近。它验证主机上的重绘节奏与窗口连续性，不把主机耗时当设备帧率。`PREVIEW_MOTION_CPU_BUDGET_US=300` 只在已校准主机上作为额外的中位帧耗时门控。
 `PREVIEW_CHART_MAP=1`（已进入默认 `run.sh`）还验证曲线游标随最新样本、滚动与尺寸变化保持附着，隐藏、缺失和清空时消失。
 
 ```bash
 PREVIEW_NUMBERS=1 tools/preview/build/preview /tmp/fnos-numbers
 PREVIEW_DATA_MOTION=1 tools/preview/build/preview /tmp/fnos-data-motion
+PREVIEW_DATA_MOTION=narrow tools/preview/build/preview /tmp/fnos-narrow
+PREVIEW_GESTURE_FPS=30 PREVIEW_DATA_MOTION=motion-scroll-cost PREVIEW_MOTION_CPU_BUDGET_US=0 tools/preview/build/preview /tmp/fnos-cap30
 python3 tools/preview/ppm2png.py /tmp/fnos-data-motion
 python3 tools/preview/motion_view.py /tmp/fnos-data-motion
 ```

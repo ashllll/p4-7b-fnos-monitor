@@ -39,6 +39,9 @@ CONFIG_LV_OBJ_STYLE_CACHE=y
 # Batched curves avoid dispatching one task per segment. Two software workers
 # retain the better native-page drag result measured in docs/ui-fps-2026-10-23.md.
 CONFIG_LV_DRAW_SW_DRAW_UNIT_CNT=2
+# Native PPA requires cache-line-aligned buffers on ESP32-P4.
+CONFIG_LV_USE_PPA=y
+CONFIG_LV_DRAW_BUF_ALIGN=128
 # 关掉 LVGL 内部日志：每次 lv_refr / indev 都会走 printf 格式化，手势帧上的
 # 固定开销。调试时再本地改回 y。
 CONFIG_LV_USE_LOG=n

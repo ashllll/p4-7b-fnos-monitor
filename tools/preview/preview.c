@@ -880,7 +880,8 @@ static bool is_ancestor(lv_obj_t *a, lv_obj_t *b)          /* a 是 b 的祖先�
 static void collect_tappable(lv_obj_t *o)
 {
     if (lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return;
-    if (lv_obj_get_event_count(o) > 0 && s_tap_n < MAX_TAPPABLE) s_tap[s_tap_n++] = o;
+    if (lv_obj_is_clickable(o) && lv_obj_get_event_count(o) > 0 && s_tap_n < MAX_TAPPABLE)
+        s_tap[s_tap_n++] = o;
     for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) collect_tappable(lv_obj_get_child(o, i));
 }
 
@@ -1941,6 +1942,10 @@ static void verify_usage_colors(void)
             int32_t inner = lv_obj_get_width(arc) - 2 * lv_obj_get_style_arc_width(arc, LV_PART_MAIN);
             assert(inner >= lv_obj_get_width(digits) + 2 * UK_S2 &&
                    "gauge must reserve room for three digits and inner clearance");
+            /* Red test for the static same-target publish after an animated layer:
+               a global set_text_v early-return leaves the stale digit layer visible. */
+            assert(lv_obj_get_child_count(digits) == 0 &&
+                   "stale animated digits must not survive a static same-target publish");
             assert(lv_obj_get_width(arc) == lv_obj_get_height(arc));
             lv_obj_t *chart = overview_object(j == 0 ? "CPU趋势" : "内存趋势", &lv_chart_class);
             assert(chart && lv_color_eq(lv_chart_get_series_color(chart, uk_trend_series(chart, 0)), uk_c(j == 0 ? UK_S_CPU : UK_S_MEM)));
@@ -4659,6 +4664,11 @@ static int motion_visible_width(lv_obj_t *page)
     return effectively_hidden(page) || !visible_click_area(page, &area) ? 0 : lv_area_get_width(&area);
 }
 
+static void count_page_layout(lv_event_t *e)
+{
+    (*(unsigned *)lv_event_get_user_data(e))++;
+}
+
 static void motion_reveal_probe(motion_record_t *record, int base, int target)
 {
     assert(target == (base + 1) % FNOS_UI_PAGE_COUNT);
@@ -4679,6 +4689,10 @@ static void motion_reveal_probe(motion_record_t *record, int base, int target)
     lv_obj_get_coords(incoming, &b);
     assert(!memcmp(&a, &original, sizeof a) && !memcmp(&b, &original, sizeof b) &&
            "reveal must keep both pages' content stationary under the moving boundary");
+    lv_obj_get_coords(lv_obj_get_parent(outgoing), &a);
+    lv_obj_get_coords(lv_obj_get_parent(incoming), &b);
+    assert(a.x1 == original.x1 && a.x2 + 1 == b.x1 && b.x2 == original.x2 &&
+           "opaque pages must partition the viewport without drawing covered content");
     lv_point_t hit_points[] = {
         { original.x1 + width / 4, y }, { original.x1 + width * 7 / 8, y },
     };
@@ -4695,9 +4709,15 @@ static void motion_reveal_probe(motion_record_t *record, int base, int target)
     assert(before);
     memcpy(before, s_frame, bytes);
     uint64_t flushed = s_flushed_pixels;
+    unsigned page_layouts = 0;
+    lv_obj_add_event_cb(outgoing, count_page_layout, LV_EVENT_LAYOUT_CHANGED, &page_layouts);
+    lv_obj_add_event_cb(incoming, count_page_layout, LV_EVENT_LAYOUT_CHANGED, &page_layouts);
     motion_pointer(record, x - width / 4 - width / 100, y, true);
     motion_wait(record, record->step, "reveal-step", false);
     motion_frame(record, "reveal-step", false);
+    lv_obj_remove_event_cb_with_user_data(outgoing, count_page_layout, &page_layouts);
+    lv_obj_remove_event_cb_with_user_data(incoming, count_page_layout, &page_layouts);
+    assert(page_layouts == 0 && "clip-only movement must not relayout fixed-size page contents");
     uint64_t pixels = s_flushed_pixels - flushed;
     uint64_t viewport_pixels = (uint64_t)width * lv_area_get_height(&original);
     printf("reveal: small-step flushed=%llu viewport=%llu pixels\n",
@@ -4746,6 +4766,27 @@ static bool motion_page_at_rest(lv_obj_t *page, lv_obj_t *other)
            lv_obj_get_style_translate_x(page, 0) == 0;
 }
 
+/* A one-pixel jitter on a clickable row is a legitimate tap, so the response
+   probe must start where the page itself receives the press. Keep a fifth of
+   the width to the left for the widest case. */
+static void motion_inert_start(lv_obj_t *page, int *x, int *y)
+{
+    lv_area_t area;
+    assert(visible_click_area(page, &area));
+    int left = area.x1 + lv_area_get_width(&area) / 5;
+    for (int yy = area.y1 + 2; yy < area.y2; yy += 4) {
+        for (int xx = area.x2 - 2; xx >= left; xx -= 4) {
+            lv_point_t p = { xx, yy };
+            if (lv_indev_search_obj(lv_screen_active(), &p) == page) {
+                *x = xx;
+                *y = yy;
+                return;
+            }
+        }
+    }
+    assert(0 && "response probe needs a visible page start point");
+}
+
 static void motion_response_probe(motion_record_t *record, int base, int target,
                                   const uint16_t *base_pixels, const uint16_t *target_pixels,
                                   size_t bytes)
@@ -4765,13 +4806,13 @@ static void motion_response_probe(motion_record_t *record, int base, int target,
     lv_area_t area;
     assert(visible_click_area(viewport, &area));
     int width = lv_obj_get_content_width(viewport);
-    int x = area.x1 + lv_area_get_width(&area) * 3 / 4;
-    int y = area.y1 + lv_area_get_height(&area) / 2;
+    int x = 0, y = 0;
     int64_t history_before = s_seq;
     fnos_sample_t sample_before = s_override_sample;
 
     fnos_ui_set_page(base);
     motion_wait(record, record->hold, "response-ready", false);
+    motion_inert_start(motion_native_page(base), &x, &y);
     fnos_ui_set_page(target);
     int first_move = -1, page_complete = -1, content_complete = -1;
     motion_frame(record, "response-api-start", false);
@@ -5522,6 +5563,51 @@ static void record_numbers(void)
          "checks: damped telemetry, meter/glyph velocity continuity, carry, repeat, missing, allocation and deletion PASS");
 }
 
+static void verify_chart_range_continuity(void);
+/* 数字变窄与单位阈值的前后帧：KPI 读数由 min_width 托住，同单位收窄时盒子不缩，
+   必须播字形动画；跨单位（1023 KB/s → 1.0 MB/s）按 ADR 0005 立即发布。 */
+static void record_narrowing(void)
+{
+    FILE *timeline=number_timeline();
+    lv_obj_t *root=lv_screen_active();
+    lv_obj_set_style_bg_color(root,uk_c(UK_BG),0);
+    uk_kpi_t *k=uk_kpi_create(root,"实时下载");
+    assert(k);
+    lv_obj_set_width(k->box,240);
+    lv_obj_set_flex_grow(k->box,0);
+    uk_kpi_set(k,"100.0","MB/s","",-1,true);
+    lv_obj_update_layout(root);
+    uk_number_stats_t stats; uk_number_stats(&stats);
+    uint32_t masks=stats.mask_fallbacks;
+    number_frame(timeline,"narrow-before",0,"before");
+    uk_kpi_set(k,"9.9","MB/s","",-1,true);
+    assert(!strcmp(lv_label_get_text(k->val),"9.9"));
+    uk_number_stats(&stats);
+    assert(stats.mask_fallbacks==masks && "min-width mask still fits the outgoing digits");
+    s_no_settle=true;
+    for (unsigned elapsed=0;elapsed<=UK_NUMBER_MS+UK_NUMBER_MAX_STAGGER_MS+100;elapsed+=25) {
+        char name[64]; snprintf(name,sizeof name,"narrow-%03u",elapsed);
+        number_frame(timeline,name,0,"transition"); vtick_advance(25); lv_timer_handler();
+    }
+    s_no_settle=false;
+    number_frame(timeline,"narrow-after",0,"after");
+    assert(!strcmp(lv_label_get_text(k->val),"9.9"));
+    uk_kpi_set(k,"1023","KB/s","",-1,true);
+    lv_obj_update_layout(root);
+    number_frame(timeline,"unit-before",0,"before");
+    uk_number_stats(&stats); masks=stats.mask_fallbacks;
+    uk_kpi_set(k,"1.0","MB/s","",-1,true);
+    uk_number_stats(&stats);
+    assert(!strcmp(lv_label_get_text(k->val),"1.0") &&
+           !strcmp(lv_label_get_text(k->unit),"MB/s") && stats.mask_fallbacks==masks);
+    number_frame(timeline,"unit-after",0,"after");
+    printf("checks: narrow masks animate (mask_fallbacks=%u), unit threshold publishes in place PASS\n",
+           (unsigned)masks);
+    lv_obj_delete(k->box); lv_free(k);
+    evidence_close(timeline, "numeric narrowing motion.csv");
+    verify_chart_range_continuity();
+}
+
 /* Check the actual product rows, including separate units, across digit carry. */
 static unsigned verify_numeric_unit_positions(lv_obj_t *root)
 {
@@ -5716,6 +5802,204 @@ static void record_streaming(void)
     puts("checks: all three trend views, independent input/render cadence and stable units PASS");
 }
 
+static double motion_proc_us(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &ts);
+    return (double)ts.tv_sec * 1e6 + (double)ts.tv_nsec / 1e3;
+}
+
+static int motion_cmp_double(const void *a, const void *b)
+{
+    double d = *(const double *)a - *(const double *)b;
+    return (d > 0) - (d < 0);
+}
+
+/* The network card carries more than one chart; tr_net is the two-series one. */
+static lv_obj_t *motion_trend_chart_two_series(lv_obj_t *root)
+{
+    if (lv_obj_has_class(root, &lv_chart_class) &&
+        uk_trend_raw_series(root, 0) && uk_trend_raw_series(root, 1)) return root;
+    for (uint32_t i = 0; i < lv_obj_get_child_count(root); i++) {
+        lv_obj_t *found = motion_trend_chart_two_series(lv_obj_get_child(root, i));
+        if (found) return found;
+    }
+    return NULL;
+}
+
+static int motion_trend_id_with_value(lv_obj_t *chart, lv_chart_series_t *ser, int32_t value)
+{
+    uint32_t points = lv_chart_get_point_count(chart);
+    uint32_t start = lv_chart_get_x_start_point(chart, ser);
+    int32_t *y = lv_chart_get_series_y_array(chart, ser);
+    for (uint32_t i = 0; i < points; i++) {
+        uint32_t id = (start + i) % points;
+        if (y[id] == value) return (int)id;
+    }
+    return -1;
+}
+
+static int motion_trend_count_value(lv_obj_t *chart, lv_chart_series_t *ser, int32_t value)
+{
+    uint32_t points = lv_chart_get_point_count(chart);
+    uint32_t start = lv_chart_get_x_start_point(chart, ser);
+    int32_t *y = lv_chart_get_series_y_array(chart, ser);
+    int count = 0;
+    for (uint32_t i = 0; i < points; i++) {
+        uint32_t id = (start + i) % points;
+        if (y[id] == value) count++;
+    }
+    return count;
+}
+
+static unsigned s_motion_chart_draws;
+
+static void motion_chart_draw_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) == LV_EVENT_DRAW_MAIN_BEGIN) s_motion_chart_draws++;
+}
+
+/* Drive one live trend batch while a drag owns the frame. The assertion is on
+   the chart's rendered point geometry and draw count, not on an animation
+   object: a sample arriving during the gesture must make the existing point
+   travel across the plot over real time, not jump to its final window and
+   freeze. Host CPU time is reported only as a relative cost signal, never as
+   device FPS. */
+static void verify_motion_scroll_cost(lv_indev_t *touch)
+{
+    motion_record_t record = { .pointer = touch };
+    fnos_ui_set_page(2);
+    for (int i = 0; i < 6; i++) { vtick_advance(120); lv_timer_handler(); }
+    fnos_ui_motion_settle();
+    uk_anim_settle(lv_screen_active());
+
+    lv_obj_t *chart = motion_trend_chart_two_series(lv_screen_active());
+    assert(chart && "network trend chart must be on page 2");
+    lv_chart_series_t *raw0 = uk_trend_raw_series(chart, 0);
+    lv_chart_series_t *raw1 = uk_trend_raw_series(chart, 1);
+    assert(raw0 && raw1);
+    if (UK_TREND_FPS == 0 || 5 * 200 > UK_TREND_SCROLL_MS) {
+        printf("motion-scroll-cost: skipped (TREND_FPS=%d, scroll=%d)\n",
+               (int)UK_TREND_FPS, (int)UK_TREND_SCROLL_MS);
+        return;
+    }
+    uint32_t points = lv_chart_get_point_count(chart);
+    int32_t content_w = lv_obj_get_content_width(chart);
+    int32_t px_sample = points > 2 ? content_w / (int32_t)(points - 2) : 0;
+    assert(px_sample > 0 && "chart must expose a horizontal travel scale");
+    /* 默认全速；PREVIEW_GESTURE_FPS=30 走同一探针的可复现对照。 */
+    const char *cap_env = getenv("PREVIEW_GESTURE_FPS");
+    uint32_t cap = cap_env && *cap_env ? (uint32_t)strtoul(cap_env, NULL, 10) : 0;
+    uk_trend_set_gesture_fps(cap);
+    lv_obj_add_event_cb(chart, motion_chart_draw_cb, LV_EVENT_DRAW_MAIN_BEGIN, NULL);
+
+    int seen2 = 0, seen1 = 0;
+    lv_obj_t *page = motion_page_by_index(lv_screen_active(), 2, &seen2);
+    lv_obj_t *other = motion_page_by_index(lv_screen_active(), 1, &seen1);
+    assert(page && other && motion_page_at_rest(page, other));
+
+    lv_area_t plot;
+    lv_obj_get_coords(chart, &plot);
+    int x = (plot.x1 + plot.x2) / 2, y = (plot.y1 + plot.y2) / 2;
+
+    /* Settle a distinctive older sample at the right edge. */
+    const int32_t a = 4321, b = 4400;
+    s_override_sample_enabled = true;
+    s_override_sample = (fnos_sample_t){
+        .cpu = 37, .mem = 48, .tx_kbs = (float)a, .rx_kbs = 8765,
+        .temp_max = 61, .interval_ms = 200,
+    };
+    s_seq++;
+    for (int i = 0; i < 30; i++) { vtick_advance(15); lv_timer_handler(); }
+    assert(motion_trend_id_with_value(chart, raw0, a) >= 0);
+
+    /* Hold a drag on page 2, then inject a five-sample live batch. */
+    motion_pointer(&record, x, y, true);
+    vtick_advance(16); lv_timer_handler();
+    for (int i = 1; i <= 6; i++) {
+        motion_pointer(&record, x + i * 20, y, true);
+        vtick_advance(16); lv_timer_handler();
+    }
+    assert(!motion_page_at_rest(page, other));
+
+    int id = motion_trend_id_with_value(chart, raw0, a);
+    assert(id >= 0);
+    lv_point_t before;
+    lv_chart_get_point_pos_by_id(chart, raw0, (uint32_t)id, &before);
+
+    s_override_sample.tx_kbs = (float)b;
+    s_seq += 5;
+    bool consumed = false;
+    for (int i = 0; i < 20; i++) {
+        vtick_advance(15); lv_timer_handler();
+        if (motion_trend_id_with_value(chart, raw0, b) >= 0) { consumed = true; break; }
+    }
+    assert(consumed && "live batch must be consumed during the drag");
+
+    lv_point_t after;
+    lv_chart_get_point_pos_by_id(chart, raw0, (uint32_t)id, &after);
+    int jump = before.x - after.x;
+    int previous = after.x, moved = 0, max_step = 0, still = 0, back = 0;
+    double cpu[80]; int n = 0;
+    s_motion_chart_draws = 0;
+    for (int frame = 0; frame < 66; frame++) {
+        double t0 = motion_proc_us();
+        vtick_advance(15); lv_timer_handler();
+        cpu[n++] = motion_proc_us() - t0;
+        lv_point_t p;
+        lv_chart_get_point_pos_by_id(chart, raw0, (uint32_t)id, &p);
+        int step = previous - p.x;
+        if (step > 0) { moved++; if (step > max_step) max_step = step; }
+        else if (step < 0) back++;
+        else still++;
+        previous = p.x;
+    }
+    qsort(cpu, (size_t)n, sizeof cpu[0], motion_cmp_double);
+    double p50 = cpu[n / 2], p95 = cpu[(n * 95) / 100];
+    long budget = getenv("PREVIEW_MOTION_CPU_BUDGET_US")
+        ? atol(getenv("PREVIEW_MOTION_CPU_BUDGET_US")) : 0;
+    printf("motion-scroll-cost: jump=%d moved=%d still=%d back=%d max_step=%d draws=%u "
+           "gesture_fps=%u cpu_p50_us=%.1f cpu_p95_us=%.1f cpu_budget_us=%ld\n",
+           jump, moved, still, back, max_step, s_motion_chart_draws,
+           uk_trend_gesture_fps(), p50, p95, budget);
+
+    assert(jump >= 0 && jump <= 3 && "live batch must not teleport the trend window");
+    assert(moved >= (5 * px_sample) / 2 &&
+           "trend window must keep travelling over real time during the drag");
+    assert(max_step <= px_sample / 4 + 1 &&
+           "trend window must not move in one large step");
+    assert(back == 0 && "trend window must not step backwards");
+    /* 66 个 15 ms 帧：全速至少重绘 50 次；限速对照应落在 66*cap/60 附近。 */
+    if (cap == 0) {
+        assert(s_motion_chart_draws >= 50 &&
+               "full-rate gesture must repaint the chart on at least 50 of 66 frames");
+    } else {
+        uint32_t expect = 66u * cap / 60u;
+        assert(s_motion_chart_draws <= expect + 4 && s_motion_chart_draws >= expect / 2 &&
+               "gesture cap must reduce chart repaints to the configured rate");
+    }
+    assert(motion_trend_count_value(chart, raw0, b) >= 5 &&
+           "all five live samples must stay in raw history");
+    assert(budget <= 0 || p50 <= (double)budget &&
+           "median frame must stay under the host CPU budget");
+
+    for (int i = 0; i < 40 && lv_anim_get(chart, NULL); i++) {
+        vtick_advance(15); lv_timer_handler();
+    }
+    assert(!lv_anim_get(chart, NULL) &&
+           "trend window animation must finish while the drag remains held");
+    uint32_t latest = (lv_chart_get_x_start_point(chart, raw0) +
+                       lv_chart_get_point_count(chart) - 1) % lv_chart_get_point_count(chart);
+    int32_t *rawy = lv_chart_get_series_y_array(chart, raw0);
+    assert(rawy[latest] == b && "latest raw sample must be the injected batch");
+    lv_point_t final_point;
+    lv_chart_get_point_pos_by_id(chart, raw0, latest, &final_point);
+    assert(final_point.x >= content_w - 3 &&
+           "latest raw sample must land at the right edge");
+    lv_obj_remove_event_cb(chart, motion_chart_draw_cb);
+    puts("checks: live trend batch travels continuously during drag PASS");
+}
+
 /* Dedicated production-LVGL coordinate check, before building the FNOS tree. */
 static void verify_attached_cursors(void)
 {
@@ -5772,6 +6056,7 @@ static void verify_attached_cursors(void)
 }
 
 static unsigned s_trend_line_tasks;
+static unsigned s_trend_clipped_tasks;
 static int32_t s_trend_gap_x = INT32_MIN;
 static void count_trend_tasks(lv_event_t *e)
 {
@@ -5787,11 +6072,18 @@ static void count_trend_tasks(lv_event_t *e)
             bounds.y2 = LV_MAX(bounds.y2, line->points[i].y);
         }
         lv_area_increase(&bounds, line->width, line->width);
+        lv_area_t clip = line->base.layer->_clip_area;
+        if (bounds.x1 < clip.x1 || bounds.y1 < clip.y1 ||
+            bounds.x2 > clip.x2 || bounds.y2 > clip.y2) s_trend_clipped_tasks++;
+        bounds.x1 = LV_MAX(bounds.x1, clip.x1);
+        bounds.y1 = LV_MAX(bounds.y1, clip.y1);
+        bounds.x2 = LV_MIN(bounds.x2, clip.x2);
+        bounds.y2 = LV_MIN(bounds.y2, clip.y2);
         lv_area_t area;
         lv_draw_task_get_area(lv_event_get_draw_task(e), &area);
         assert(area.x1 == bounds.x1 && area.y1 == bounds.y1 &&
                area.x2 == bounds.x2 && area.y2 == bounds.y2 &&
-               "polyline bounds must add stroke padding once");
+               "polyline bounds must add stroke padding once and respect clipping");
     }
     if (line->points) for (uint32_t i = 1; i < line->point_cnt; i++) {
         assert(line->points[i].x >= line->points[i-1].x);
@@ -5813,12 +6105,14 @@ static void verify_trend_draw_budget(void)
     lv_obj_add_flag(chart, LV_OBJ_FLAG_SEND_DRAW_TASK_EVENTS);
     lv_obj_add_event_cb(chart, count_trend_tasks, LV_EVENT_DRAW_TASK_ADDED, NULL);
     s_trend_line_tasks = 0;
+    s_trend_clipped_tasks = 0;
     int64_t started = esp_timer_get_time();
     lv_refr_now(lv_display_get_default());
     printf("trend draw: 180 points x 2, tasks=%u render_us=%lld\n",
            s_trend_line_tasks, (long long)(esp_timer_get_time() - started));
     /* Keep continuous histories within a small draw-task budget per frame. */
     assert(s_trend_line_tasks > 0 && s_trend_line_tasks <= 40);
+    assert(s_trend_clipped_tasks > 0 && "exercise clipped polyline task bounds");
     lv_chart_hide_series(chart, uk_trend_series(chart, 1), true);
     lv_chart_series_t *series = uk_trend_series(chart, 0);
     lv_point_t gap;
@@ -6003,6 +6297,9 @@ static unsigned s_refresh_size_changes, s_refresh_nav_styles, s_refresh_home_sty
 
 static void refresh_work_event(lv_event_t *e)
 {
+    if (lv_event_get_code(e) == LV_EVENT_GET_SELF_SIZE &&
+        !lv_label_get_text(lv_event_get_target(e))[0])
+        (*(unsigned *)lv_event_get_user_data(e))++;
     if (lv_event_get_code(e) == LV_EVENT_SIZE_CHANGED) s_refresh_size_changes++;
     if (lv_event_get_code(e) == LV_EVENT_STYLE_CHANGED) {
         unsigned *count = lv_event_get_user_data(e);
@@ -6162,11 +6459,25 @@ static void verify_refresh_work(void)
         for (int settle = 0; settle < 4; settle++) regression_tick();
         lv_refr_now(display);
         lv_obj_t *inventory = NULL;
+        lv_obj_t *steady_value = NULL;
+        unsigned text_measures = 0;
         if (page == 1) {
             lv_obj_t *title = visible_text(lv_screen_active(), "存储卷");
             assert(title);
             inventory = lv_obj_get_parent(lv_obj_get_parent(lv_obj_get_parent(title)));
             lv_obj_add_event_cb(inventory, refresh_work_event, LV_EVENT_SIZE_CHANGED, NULL);
+        }
+        if (page == 1 || page == 3) {
+            lv_obj_t *card = overview_object(page == 1 ? "磁盘活动" : "容器服务", &lv_obj_class);
+            lv_obj_t *pool = lv_obj_get_child(uk_card_body(card), -1);
+            assert(lv_obj_has_flag(pool, LV_OBJ_FLAG_USER_2) && lv_obj_get_child_count(pool));
+            lv_obj_t *line = lv_obj_get_child(lv_obj_get_child(pool, 0), 0);
+            assert(line && lv_obj_get_child_count(line) >= 2);   /* 真实行：名字列 + 读数盒 */
+            steady_value = lv_obj_get_child(lv_obj_get_child(line, -1), 0);
+            assert(steady_value && lv_label_get_text(steady_value)[0] &&
+                   "steady reading must be a real, non-empty value cell");
+            lv_obj_add_event_cb(steady_value, refresh_work_event, LV_EVENT_GET_SELF_SIZE, &text_measures);
+            lv_obj_add_event_cb(steady_value, refresh_work_event, LV_EVENT_STYLE_CHANGED, &text_measures);
         }
         unsigned network_styles = 0;
         lv_obj_t *network_row = NULL;
@@ -6193,9 +6504,25 @@ static void verify_refresh_work(void)
         assert(s_refresh_nav_styles == 0);
         assert(s_refresh_size_changes == 0);
         assert(s_refresh_home_styles == 0);
+        if (steady_value) {
+            printf("refresh work: page=%d unchanged reading clears/restyles=%u\n", page, text_measures);
+            assert(text_measures == 0 && "unchanged readings must not be cleared or restyled");
+            /* Removes both registrations (GET_SELF_SIZE + STYLE_CHANGED). */
+            lv_obj_remove_event_cb(steady_value, refresh_work_event);
+        }
         if (network_row) {
             printf("refresh work: unchanged network row style changes=%u\n", network_styles);
             assert(network_styles == 0 && "stable network telemetry must not reset row geometry");
+            fnos_netif_t *net = s_motion_fixture.nnets ? &s_motion_fixture.nets[0] : &s_motion_fixture.net;
+            float rx = net->rx_kbs, tx = net->tx_kbs;
+            for (int sample = 0; sample < 4; sample++) {
+                net->rx_kbs = sample % 2 ? 1234 : 9234;
+                net->tx_kbs = sample % 2 ? 2345 : 8234;
+                regression_tick();
+            }
+            printf("refresh work: changing short network readings row styles=%u\n", network_styles);
+            assert(network_styles == 0 && "short readings must not reset unchanged row geometry");
+            net->rx_kbs = rx; net->tx_kbs = tx;
             lv_obj_remove_event_cb(network_row, refresh_work_event);
         }
         /* Four unchanged home ticks must paint less than one entire frame.
@@ -6204,6 +6531,28 @@ static void verify_refresh_work(void)
             assert(s_flushed_pixels < (uint64_t)s_scr_w * s_scr_h);
         if (home_card) lv_obj_remove_event_cb(home_card, refresh_work_event);
         if (inventory) lv_obj_remove_event_cb(inventory, refresh_work_event);
+        if (page == 1) {
+            lv_obj_t *card = overview_object("存储卷", &lv_obj_class);
+            lv_obj_t *pool = lv_obj_get_child(uk_card_body(card), -1);
+            assert(lv_obj_has_flag(pool, LV_OBJ_FLAG_USER_2) && lv_obj_get_child_count(pool));
+            lv_obj_t *row = lv_obj_get_child(pool, 0);
+            unsigned styles = 0;
+            float pct = s_motion_fixture.vols[0].pct;
+            assert(s_motion_fixture.ndisks);
+            float rd = s_motion_fixture.disks[0].rd_kbs, wr = s_motion_fixture.disks[0].wr_kbs;
+            lv_obj_add_event_cb(row, refresh_work_event, LV_EVENT_STYLE_CHANGED, &styles);
+            for (int sample = 0; sample < 4; sample++) {
+                s_motion_fixture.vols[0].pct = sample % 2 ? 9 : 24;
+                s_motion_fixture.disks[0].rd_kbs = sample % 2 ? 1024 : 999;
+                s_motion_fixture.disks[0].wr_kbs = sample % 2 ? 0 : 24;
+                regression_tick();
+            }
+            printf("refresh work: changing short volume readings row styles=%u\n", styles);
+            assert(styles == 0 && "short readings must not reset unchanged row geometry");
+            lv_obj_remove_event_cb(row, refresh_work_event);
+            s_motion_fixture.vols[0].pct = pct;
+            s_motion_fixture.disks[0].rd_kbs = rd; s_motion_fixture.disks[0].wr_kbs = wr;
+        }
         s_refresh_nav_styles = 0;
         fnos_ui_set_page(page);
         assert(s_refresh_nav_styles == 0);
@@ -6306,6 +6655,9 @@ int main(int argc, char **argv)
         }
     }
 
+    if (getenv("PREVIEW_DATA_MOTION") && !strcmp(getenv("PREVIEW_DATA_MOTION"), "narrow")) {
+        record_narrowing(); return preview_finish();
+    }
     if (getenv("PREVIEW_NUMBERS")) { record_numbers(); return preview_finish(); }
     fnos_ui_create();
     if (getenv("PREVIEW_REFRESH_WORK")) { verify_refresh_work(); return preview_finish(); }
@@ -6317,6 +6669,7 @@ int main(int argc, char **argv)
         else if (!strcmp(getenv("PREVIEW_DATA_MOTION"), "overlays")) verify_overlay_motion(touch);
         else if (!strcmp(getenv("PREVIEW_DATA_MOTION"), "reduced")) verify_runtime_reduced_motion(touch);
         else if (!strcmp(getenv("PREVIEW_DATA_MOTION"), "stream")) record_streaming();
+        else if (!strcmp(getenv("PREVIEW_DATA_MOTION"), "motion-scroll-cost")) verify_motion_scroll_cost(touch);
         else record_data_numbers();
         return preview_finish();
     }

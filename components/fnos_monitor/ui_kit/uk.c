@@ -17,6 +17,10 @@
 static bool s_alloc_failed;
 /* 运行时精简动效；编译期 Kconfig 在 fnos_ui.c 侧叠加，不在这里覆盖。 */
 static bool s_motion_reduced;
+/* Page transition/drag active: cap trend repaint sampling, never data time. */
+static bool s_trend_page_motion;
+/* 0 = uncapped. Runtime knob so one bench firmware can A/B 30 vs full rate. */
+static uint32_t s_trend_gesture_fps;
 void uk_motion_set_reduced(bool reduced) { s_motion_reduced = reduced; }
 bool uk_motion_reduced(void) { return s_motion_reduced; }
 #ifdef FNOS_UI_TESTING
@@ -749,23 +753,14 @@ void uk_viewport_snap(lv_obj_t *box, int32_t base_gap)
     }
 }
 
-/* Row-major cards wrap at the available width. Counts and heights are data,
-   and every item remains reachable through one vertical viewport. */
-void uk_pool_relayout(lv_obj_t *pool, int32_t min_col_w, bool data_fit, lv_obj_t *note)
+/* Resolved width constraints shared by layout and its geometry cache. */
+int32_t uk_pool_width_cols(lv_obj_t *pool)
 {
-    (void)data_fit; /* Inventory views never omit the tail to fill one screen. */
     uk_pool_t *st=lv_obj_get_user_data(pool);
-    if (!st) return;
-    if (min_col_w>0) st->min_col_w=min_col_w;
-    int32_t base_gap=UK_ITEM_GAP;
-    /* 行距可能被上一次的行对齐撑大过（uk_viewport_snap）：先回到基准，
-       下面的"几行装得下"必须按基准行距算，否则列数会越算越少。 */
-    if (lv_obj_get_style_pad_row(pool,0)!=base_gap)
-        lv_obj_set_style_pad_row(pool,base_gap,0);
-    lv_obj_update_layout(pool);
+    if (!st) return 0;
     int32_t n=(int32_t)lv_obj_get_child_count(pool);
     int32_t w=lv_obj_get_content_width(pool);
-    if (w<=0) return;
+    if (w<=0) return 0;
     int32_t gap=lv_obj_get_style_pad_column(pool,0);
     int32_t preferred=st->min_col_w;
     /* Unbroken numeric text must fit alongside a readable identity fragment.
@@ -787,6 +782,28 @@ void uk_pool_relayout(lv_obj_t *pool, int32_t min_col_w, bool data_fit, lv_obj_t
     int32_t cols=(w+gap)/(preferred+gap);
     if (cols<1) cols=1;
     if (n && cols>n) cols=n;
+    return cols;
+}
+
+/* Row-major cards wrap at the available width. Counts and heights are data,
+   and every item remains reachable through one vertical viewport. */
+void uk_pool_relayout(lv_obj_t *pool, int32_t min_col_w, bool data_fit, lv_obj_t *note)
+{
+    (void)data_fit; /* Inventory views never omit the tail to fill one screen. */
+    uk_pool_t *st=lv_obj_get_user_data(pool);
+    if (!st) return;
+    if (min_col_w>0) st->min_col_w=min_col_w;
+    int32_t base_gap=UK_ITEM_GAP;
+    /* 行距可能被上一次的行对齐撑大过（uk_viewport_snap）：先回到基准，
+       下面的"几行装得下"必须按基准行距算，否则列数会越算越少。 */
+    if (lv_obj_get_style_pad_row(pool,0)!=base_gap)
+        lv_obj_set_style_pad_row(pool,base_gap,0);
+    lv_obj_update_layout(pool);
+    int32_t n=(int32_t)lv_obj_get_child_count(pool);
+    int32_t w=lv_obj_get_content_width(pool);
+    if (w<=0) return;
+    int32_t gap=lv_obj_get_style_pad_column(pool,0);
+    int32_t cols=uk_pool_width_cols(pool);
     /* 宽度允许的最多列数：每列至少 min_col_w 宽（再宽就不好读了）。 */
     int32_t cols_max=(w+gap)/(st->min_col_w+gap);
     if (cols_max<1) cols_max=1;
@@ -1025,6 +1042,15 @@ static void trend_batch_point(trend_batch_t *batch, d3_basis_point_t p)
     lv_point_precise_t point = {lroundf(p.x), lroundf(p.y)};
     unsigned n = batch->count;
     if (n && batch->points[n-1].x == point.x && batch->points[n-1].y == point.y) return;
+    /* Consecutive horizontal strokes have identical pixels; keep their endpoints. */
+    if (n >= 2 && !(batch->line.dash_width && batch->line.dash_gap) &&
+        (batch->line.opa == LV_OPA_COVER ||
+                  (!batch->line.round_start && !batch->line.round_end)) &&
+        batch->points[n-2].y == point.y && batch->points[n-1].y == point.y &&
+        batch->points[n-2].x <= batch->points[n-1].x && batch->points[n-1].x <= point.x) {
+        batch->points[n-1] = point;
+        return;
+    }
     if (n == TREND_DRAW_POINTS) {
         lv_point_precise_t tail = batch->points[n-1];
         trend_batch_flush(batch);
@@ -1052,7 +1078,10 @@ static void trend_draw_series(lv_obj_t *obj, lv_layer_t *layer, lv_chart_series_
         if (have_a && have_b) {
             d3_basis_segment_t c = d3_basis_segment(have_previous ? previous : a,
                                                    a, b, have_next ? next : b);
-            if (!have_previous) trend_batch_point(&batch, a);
+            if (!have_previous) {
+                trend_batch_point(&batch, a);
+                trend_batch_point(&batch, c.p[0]);
+            }
             float bend = 0;
             for (unsigned i = 0; i < 2; i++) {
                 bend = fmaxf(bend, fabsf(c.p[i].x - 2*c.p[i+1].x + c.p[i+2].x));
@@ -1061,8 +1090,10 @@ static void trend_draw_series(lv_obj_t *obj, lv_layer_t *layer, lv_chart_series_
             /* Original 1/4-pixel chord bound, also during page transitions. */
             unsigned steps = (unsigned)fmaxf(1, ceilf(sqrtf(3*bend)));
             steps = LV_MIN(steps, max_steps);
-            for (unsigned j = 0; j <= steps; j++)
+            /* Adjacent cubics share endpoints; only interior points need evaluation. */
+            for (unsigned j = 1; j < steps; j++)
                 trend_batch_point(&batch, d3_basis_at(c, (float)j/steps));
+            trend_batch_point(&batch, c.p[3]);
             if (!have_next) trend_batch_point(&batch, b);
         } else trend_batch_flush(&batch); /* Missing samples never bridge. */
         previous = a; a = b; b = next;
@@ -1206,9 +1237,11 @@ static void trend_step(void *obj, int32_t progress)
     }
     /* Use fixed time slots: restarting a 33/16 ms wait at each paint would
        quantize a 15 ms LVGL cadence down to 22/33 FPS. */
-    if (progress != TREND_PROGRESS && UK_TREND_FPS > 0 &&
-        (uint64_t)now * UK_TREND_FPS / 1000U ==
-        (uint64_t)t->last_paint * UK_TREND_FPS / 1000U) return;
+    uint32_t fps = UK_TREND_FPS;
+    if (s_trend_page_motion && s_trend_gesture_fps && s_trend_gesture_fps < fps) fps = s_trend_gesture_fps;
+    if (progress != TREND_PROGRESS && fps > 0 &&
+        (uint64_t)now * fps / 1000U ==
+        (uint64_t)t->last_paint * fps / 1000U) return;
     t->last_paint = now;
     trend_window(obj, t->from + (int32_t)((int64_t)(t->target - t->from) * progress / TREND_PROGRESS));
     if (progress == TREND_PROGRESS) t->duration = 0;
@@ -1288,6 +1321,22 @@ void uk_trend_settle(lv_obj_t *chart)
     t->duration = 0;
     trend_range_snap(chart);
 }
+
+void uk_trend_set_page_motion(bool active)
+{
+    s_trend_page_motion = active;
+}
+
+void uk_trend_set_gesture_fps(uint32_t fps)
+{
+    s_trend_gesture_fps = fps;
+}
+
+uint32_t uk_trend_gesture_fps(void)
+{
+    return s_trend_gesture_fps;
+}
+
 void uk_trend_clear(lv_obj_t *chart)
 {
     if (!chart) return;

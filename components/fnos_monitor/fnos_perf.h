@@ -1,29 +1,44 @@
 #pragma once
+
 #include <stdbool.h>
 #include <stdint.h>
-
-// 触控/渲染台架（CONFIG_FNOS_UI_PERF_BENCH）。
-//
-// 为什么要有它：屏幕"跟不跟手、点一下多久有反应"此前只能靠肉眼描述，而宿主的
-// 32ms/180ms 预算是**虚拟时间**（docs 明确写了不能当设备帧率证据）。这里把两件事
-// 变成可复现的数字：按下→首帧（P1）与拖动期帧间隔（P2），外加 ui_tick 耗时与各任务
-// CPU 占比；串口命令为 `bench` 与 `prof`（后者控制 LVGL profiler，见 fnos_perf.c）。
-//
-// 关掉配置时下面的台架函数都是空实现：生产固件里不建定时器、不注册回调、不读计数器 ——
-// 仪表必须能证明自己没改变被测对象。
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-void fnos_perf_init(void);                 // 幂等；在 LVGL 任务里、持有显示锁时调
-void fnos_perf_note_tick(uint32_t us);     // ui_tick 一次的总耗时
-/* Bench-only linker probes. Values are wall time, including blocking waits. */
-typedef enum { FNOS_PERF_PPA, FNOS_PERF_DMA2D, FNOS_PERF_SUBMIT,
-               FNOS_PERF_FREE_BUFFER, FNOS_PERF_TASK_CREATE, FNOS_PERF_TASK_PICK,
-               FNOS_PERF_BLEND, FNOS_PERF_TEXT, FNOS_PERF_STAGE_COUNT } fnos_perf_stage_t;
+/* 串口台架（CONFIG_FNOS_UI_PERF_BENCH）：默认构建里全是空实现，不进生产路径。 */
+
+void fnos_perf_init(void);
+
+/* ui_tick 一次的总耗时；motion 表示这次 tick 落在页面运动里（与整刷 tick 分开看）。 */
+void fnos_perf_note_tick(uint32_t us, bool motion);
+
+typedef enum {
+    FNOS_PERF_PPA,          /* flush 子阶段：PPA 缩放/旋转 */
+    FNOS_PERF_DMA2D,        /* flush 子阶段：DMA2D 拷贝 */
+    FNOS_PERF_SUBMIT,       /* flush 子阶段：panel draw_bitmap 提交 */
+    FNOS_PERF_FREE_BUFFER,  /* flush 子阶段：等空闲缓冲 */
+    FNOS_PERF_TASK_CREATE,  /* 绘制任务：创建 */
+    FNOS_PERF_TASK_PICK,    /* 绘制任务：取任务 */
+    FNOS_PERF_BLEND,        /* 绘制任务：软件混合（含 text） */
+    FNOS_PERF_TEXT,         /* 绘制任务：文字（含 blend） */
+    FNOS_PERF_PAGE_PAINT,   /* UI：页面揭示一帧（motion_paint） */
+    FNOS_PERF_PAGE_LAYOUT,  /* UI：页面布局（page_layout） */
+    FNOS_PERF_CHART_DRAW,   /* UI：一张 trend chart 的绘制 */
+    FNOS_PERF_STAGE_COUNT
+} fnos_perf_stage_t;
+
 void fnos_perf_note_stage(fnos_perf_stage_t stage, uint32_t us);
-bool fnos_perf_cli(char *line);            // 串口命令 hook；就地分词改写 line；没认出来返回 false
+
+/* 帧间阶段（动画 exec / ui_tick）不走 RENDER_START..READY 门，单独累计；
+   chart_draw 另受 frame_arm 窗口约束，以便与 chart_frames 对齐。 */
+void fnos_perf_note_ui_stage(fnos_perf_stage_t stage, uint32_t us);
+
+/* 给 trend chart 挂绘制计时；void* 是为了让本头不依赖 lvgl.h。生产构建里是空操作。 */
+void fnos_perf_track_chart(void *chart);
+
+bool fnos_perf_cli(char *line);
 
 #ifdef __cplusplus
 }

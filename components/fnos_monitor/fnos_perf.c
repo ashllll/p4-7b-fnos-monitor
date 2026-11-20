@@ -22,6 +22,7 @@
 #endif
 
 #include "fnos_ui.h"
+#include "ui_kit/uk.h"
 
 static const char *TAG = "perf";
 
@@ -55,13 +56,18 @@ static void pf_prof_arm(void)
 #define PF_TAP_HOLD_MS    60      /* 按住时长：短于读周期就可能一次都没报按下 */
 #define PF_ARM_TIMEOUT_MS 300     /* 置了按下却等不到 indev 上报，判 miss */
 #define PF_RELEASE_MS     80      /* 松开后等 indev 把 RELEASED 读走 */
+#define PF_TAP_RELEASE_MS 200     /* tap 松开后再等到页面落定附近（80–160 ms 转场） */
 #define PF_TAIL_MS        500     /* 松手后收尾：吸附动画 + 一帧静止 */
 #define PF_DRAG_STEPS     15      /* 15 步 × 8ms ≈ 120ms 的横滑 */
+#define PF_DRAG_MIN_MS    200     /* bench drag 最短保持时间 */
+#define PF_DRAG_MAX_MS    10000   /* bench drag 最长保持时间 */
+#define PF_DRAG_MAX_SPAN  700     /* 1024 宽屏内，从 72%/28% 起点留出安全行程 */
 #define PF_MAX_INDEVS     4
 #define PF_TASKS          24
 #define PF_REQ_POLL_MS    100
+#define PF_LONG_FRAME_US  33300   /* 验收长帧阈值：≥33.3 ms */
 
-typedef enum { PF_NONE = 0, PF_TAP, PF_SWIPE, PF_IDLE } pf_kind_t;
+typedef enum { PF_NONE = 0, PF_TAP, PF_SWIPE, PF_DRAG, PF_IDLE } pf_kind_t;
 typedef enum { PH_IDLE = 0, PH_SETTLE, PH_HOLD, PH_DRAG, PH_RELEASE, PH_TAIL } pf_phase_t;
 
 /* 串口任务写、LVGL 任务读：只有 valid 一个字的交接，够用且不用锁
@@ -69,13 +75,19 @@ typedef enum { PH_IDLE = 0, PH_SETTLE, PH_HOLD, PH_DRAG, PH_RELEASE, PH_TAIL } p
 static struct {
     volatile bool valid;
     pf_kind_t kind;
-    int page, px, cycles, seconds;
+    int page, px, cycles, seconds, drag_ms;
 } s_req;
+
+/* cap/probe 也由串口任务置请求、LVGL 任务执行：uk 的全局变量与 s_ui 都归 LVGL 线程。 */
+static volatile bool s_cap_req_valid;
+static volatile int s_cap_req;
+static volatile bool s_probe_req_valid;
+static volatile int s_probe_req;
 
 static struct {
     bool active;
     pf_kind_t kind;
-    int page, px, cycles, done, misses, idle_ms;
+    int page, px, cycles, done, misses, idle_ms, drag_ms;
     pf_phase_t phase;
     int64_t phase_us, run_us;
     int32_t x0, y0, x, y, span;
@@ -84,11 +96,16 @@ static struct {
     bool wait_first, wait_rel, frame_arm, wait_p2rs;
     int64_t press_us, release_us;
     uint32_t frames;
+    uint32_t hold_ms;   /* drag：press_seen 到脚本释放的实际墙钟时长 */
 } s_run;
+static bool s_release_pending;  /* 取消时欠 LVGL 一次合成的 RELEASED */
+static int s_drag_dir = -1;     /* A 段连续拖动左右交替 */
 
 static uint32_t s_p2f[PF_SAMPLES];   /* 按下 → 首帧：有没有触控反馈、反馈多快 */
 static uint32_t s_r2f[PF_SAMPLES];   /* 松手 → 首帧：点一下多久有反应（换页那一帧） */
 static uint32_t s_iv[PF_SAMPLES];    /* 相邻帧间隔：拖动跟手 / 稳态帧率 */
+/* 全段计数：数组只是前 PF_SAMPLES 个样本，长段/长按不能拿它冒充整段。 */
+static uint32_t s_niv_total, s_niv_long, s_iv_max_all;
 static uint32_t s_tick[PF_SAMPLES];  /* ui_tick 总耗时（数据刷新 + 图表 + 行重建） */
 static int s_np2f, s_nr2f, s_niv, s_ntick;
 
@@ -115,6 +132,22 @@ static struct {
     struct { uint64_t us; uint32_t calls, max_us; } stage[FNOS_PERF_STAGE_COUNT];
 } s_parts;
 
+/* 帧间阶段（动画 exec / ui_tick）在 RENDER_START..READY 门外，用独立累计器，
+   不与 flush 子阶段或绘制任务相加。 */
+typedef struct {
+    uint64_t us[FNOS_PERF_STAGE_COUNT];
+    uint32_t calls[FNOS_PERF_STAGE_COUNT];
+    uint32_t max_us[FNOS_PERF_STAGE_COUNT];
+} pf_ui_acc_t;
+static pf_ui_acc_t s_ui;
+static bool s_probe_mode;   /* bench probe：只测探针自身，不污染 s_ui */
+static uint32_t s_chart_frames;   /* frame_arm 帧中至少绘过一次 chart 的帧数 */
+static bool s_chart_drew;         /* 本帧已发生 chart 绘制；RENDER_START 清零 */
+
+static uint32_t s_tick_motion[PF_SAMPLES];   /* 页面运动期的 ui_tick */
+static uint32_t s_tick_full[PF_SAMPLES];    /* 整刷期 ui_tick（motion_busy()==false；含空 tick） */
+static int s_ntick_motion, s_ntick_full;
+
 static void pf_stage_gate(bool open)
 {
     portENTER_CRITICAL(&s_stage_lock);
@@ -137,6 +170,17 @@ void fnos_perf_note_stage(fnos_perf_stage_t stage, uint32_t us)
         if (us > s_parts.stage[stage].max_us) s_parts.stage[stage].max_us = us;
     }
     portEXIT_CRITICAL(&s_stage_lock);
+}
+
+void fnos_perf_note_ui_stage(fnos_perf_stage_t stage, uint32_t us)
+{
+    if (stage < FNOS_PERF_PAGE_PAINT || stage >= FNOS_PERF_STAGE_COUNT) return;
+    /* 整个 bench 运行窗口都算，不要求 frame_arm：换页布局与吸附发生在手势帧之外；
+       分母按阶段取（活动帧 / 调用次数 / 带图帧），chart 的帧门在 chart 回调里。 */
+    if (!s_probe_mode && !s_run.active) return;
+    s_ui.us[stage] += us;
+    s_ui.calls[stage]++;
+    if (us > s_ui.max_us[stage]) s_ui.max_us[stage] = us;
 }
 
 static void pf_parts_cb(lv_event_t *e)
@@ -182,9 +226,45 @@ static uint32_t pf_max(const uint32_t *src, int n)
     return m;
 }
 
-static void pf_push(uint32_t *buf, int *n, uint32_t v)
+static bool pf_push(uint32_t *buf, int *n, uint32_t v)
 {
-    if (*n < PF_SAMPLES) buf[(*n)++] = v;
+    if (*n >= PF_SAMPLES) return false;
+    buf[(*n)++] = v;
+    return true;
+}
+
+/* ----------------------------------------------------- chart 绘制追踪 */
+
+#define PF_CHARTS 8
+static struct { int64_t start; } s_chart[PF_CHARTS];
+static int s_nchart;
+
+static void pf_chart_begin(lv_event_t *e)
+{
+    if (!s_run.active) return;
+    if (s_run.frame_arm) s_chart_drew = true;
+    *(int64_t *)lv_event_get_user_data(e) = esp_timer_get_time();
+}
+
+static void pf_chart_end(lv_event_t *e)
+{
+    int64_t *start = lv_event_get_user_data(e);
+    if (!s_run.active || !*start) return;
+    int64_t dt = esp_timer_get_time() - *start;
+    *start = 0;
+    /* chart_frames 只数 frame_arm 帧，所以绘制耗时也只收同一窗口。 */
+    if (s_run.frame_arm) fnos_perf_note_ui_stage(FNOS_PERF_CHART_DRAW, (uint32_t)dt);
+}
+
+void fnos_perf_track_chart(void *chart)
+{
+    if (!chart) return;
+    /* UI 重建（分配失败重试）会把旧 chart 全销毁；槽满即视作新一代，重头挂。 */
+    if (s_nchart >= PF_CHARTS) s_nchart = 0;
+    lv_obj_t *obj = chart;
+    int64_t *start = &s_chart[s_nchart++].start;
+    lv_obj_add_event_cb(obj, pf_chart_begin, LV_EVENT_DRAW_MAIN_BEGIN, start);
+    lv_obj_add_event_cb(obj, pf_chart_end, LV_EVENT_DRAW_MAIN_END, start);
 }
 
 /* ------------------------------------------------------- 各任务 CPU 占比 */
@@ -238,11 +318,22 @@ static struct {
 } s_real[PF_MAX_INDEVS];
 static int s_nreal;
 
+static void pf_detach(void);
+
 static void pf_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
 {
     /* 先照常问真实面板：adapter 靠这次调用做触摸握手与记账，跳过它就改变了被测对象。 */
     for (int i = 0; i < s_nreal; i++) {
         if (s_real[i].indev == indev && s_real[i].cb) { s_real[i].cb(indev, data); break; }
+    }
+    if (s_release_pending) {
+        /* 取消发生在按住期间：先把 RELEASED 送到 LVGL 再摘回调，避免旧合成按下悬空。 */
+        data->point.x = s_run.x;
+        data->point.y = s_run.y;
+        data->state   = LV_INDEV_STATE_RELEASED;
+        s_release_pending = false;
+        pf_detach();
+        return;
     }
     if (!s_run.active || s_run.kind == PF_IDLE) return;
 
@@ -283,6 +374,7 @@ static void pf_start_cb(lv_event_t *e)
     s_frame_start_us = now;
     pf_stage_gate(s_run.active && s_run.frame_arm);
     if (!s_run.active) { s_last_ready_us = 0; s_have_ready = false; return; }
+    if (s_run.frame_arm) s_chart_drew = false;
     if (s_run.frame_arm && s_have_ready && s_last_ready_us) {
         pf_push(s_rr2rs, &s_nrr2rs, (uint32_t)(now - s_last_ready_us));   /* 与 iv 同一批样本 */
     }
@@ -300,7 +392,13 @@ static void pf_render_cb(lv_event_t *e)
     s_run.frames++;
     if (s_run.wait_first) { s_run.wait_first = false; pf_push(s_p2f, &s_np2f, (uint32_t)(now - s_run.press_us)); }
     if (s_run.wait_rel)   { s_run.wait_rel   = false; pf_push(s_r2f, &s_nr2f, (uint32_t)(now - s_run.release_us)); }
-    if (s_run.frame_arm && s_last_frame_us) pf_push(s_iv, &s_niv, (uint32_t)(now - s_last_frame_us));
+    if (s_run.frame_arm && s_last_frame_us) {
+        uint32_t iv = (uint32_t)(now - s_last_frame_us);
+        s_niv_total++;
+        if (iv >= PF_LONG_FRAME_US) s_niv_long++;
+        if (iv > s_iv_max_all) s_iv_max_all = iv;
+        pf_push(s_iv, &s_niv, iv);
+    }
     if (s_frame_start_us) {
         if (s_run.frame_arm) {
             s_parts.frames++;
@@ -309,6 +407,7 @@ static void pf_render_cb(lv_event_t *e)
         if (s_run.frame_arm) pf_push(s_rs2rr, &s_nrs2rr, (uint32_t)(now - s_frame_start_us));
         s_frame_start_us = 0;
     }
+    if (s_run.frame_arm && s_chart_drew) s_chart_frames++;
     s_last_frame_us = now;
     s_last_ready_us = now;
     s_have_ready    = true;
@@ -318,6 +417,12 @@ static void pf_render_cb(lv_event_t *e)
 
 static bool s_reported;   /* 本轮是否已经落过 [bench] 行（兜底上报用） */
 
+static const char *pf_kind_name(void)
+{
+    return s_run.kind == PF_IDLE ? "idle" : s_run.kind == PF_SWIPE ? "swipe"
+         : s_run.kind == PF_DRAG ? "drag" : "tap";
+}
+
 static void pf_report(void)
 {
     uint32_t wall_ms = (uint32_t)((esp_timer_get_time() - s_run.run_us) / 1000);
@@ -325,11 +430,12 @@ static void pf_report(void)
     uint32_t total = 0, lvgl = 0, idle = 0, worker = 0;
     pf_cpu_delta(&total, &lvgl, &idle, &worker);
     uint32_t iv50 = pf_pct(s_iv, s_niv, 50);
+    uint32_t iv99 = pf_pct(s_iv, s_niv, 99);
+    uint32_t iv_long_n = s_niv_long;
 
     /* Nested probes are subsets of flush_us, not additional frame time. */
     printf("[bench_parts] kind=%s page=%d frames=%" PRIu32 " frame_us=%llu flush_us=%llu flush_wait_us=%llu",
-           s_run.kind == PF_IDLE ? "idle" : s_run.kind == PF_SWIPE ? "swipe" : "tap",
-           s_run.page, s_parts.frames, (unsigned long long)s_parts.frame_us,
+           pf_kind_name(), s_run.page, s_parts.frames, (unsigned long long)s_parts.frame_us,
            (unsigned long long)s_parts.flush_us, (unsigned long long)s_parts.flush_wait_us);
     static const char *const names[] = {"ppa", "dma2d", "submit", "freebuf"};
     for (unsigned i = 0; i < FNOS_PERF_TASK_CREATE; i++)
@@ -338,38 +444,68 @@ static void pf_report(void)
                names[i], s_parts.stage[i].max_us);
     printf("\n");
 
-    /* Text contains blend time; these are inclusive probes, never summed. */
+    /* Text contains blend time; these are inclusive probes, never summed.
+       With the draw probes compiled out these counters stay zero, so do not
+       print the row at all: a missing row means "not measured", never 0. */
+#ifdef CONFIG_FNOS_UI_PERF_DRAW
     printf("[bench_draw] kind=%s page=%d frames=%" PRIu32 " units=%" PRIu32 " worker_n=%" PRIu32 " cpu_worker=%.1f",
-           s_run.kind == PF_IDLE ? "idle" : s_run.kind == PF_SWIPE ? "swipe" : "tap",
-           s_run.page, s_parts.frames, (uint32_t)lv_draw_get_unit_count(), s_parts.worker_calls,
+           pf_kind_name(), s_run.page, s_parts.frames, (uint32_t)lv_draw_get_unit_count(), s_parts.worker_calls,
            total ? 100.0 * worker / total : 0.0);
     static const char *const draw_names[] = {"create", "pick", "blend", "text"};
-    for (unsigned i = FNOS_PERF_TASK_CREATE; i < FNOS_PERF_STAGE_COUNT; i++) {
+    for (unsigned i = FNOS_PERF_TASK_CREATE; i <= FNOS_PERF_TEXT; i++) {
         const char *name = draw_names[i - FNOS_PERF_TASK_CREATE];
         printf(" %s_us=%llu %s_n=%" PRIu32 " %s_max_us=%" PRIu32, name,
                (unsigned long long)s_parts.stage[i].us, name, s_parts.stage[i].calls,
                name, s_parts.stage[i].max_us);
     }
     printf("\n");
+#else
+    (void)total;
+    (void)worker;
+#endif
+
+    /* UI 阶段：page_paint 用活动帧数，page_layout 用调用次数，chart 用带图帧数。 */
+    static const char *const ui_names[] = {"page_paint", "page_layout", "chart_draw"};
+    printf("[bench_ui] kind=%s page=%d frames=%" PRIu32 " gesture_frames=%" PRIu32 " gesture_fps=%" PRIu32 " chart_frames=%" PRIu32 " draw_stages=%d",
+           pf_kind_name(), s_run.page, s_run.frames, s_parts.frames, uk_trend_gesture_fps(), s_chart_frames,
+#ifdef CONFIG_FNOS_UI_PERF_DRAW
+           1
+#else
+           0
+#endif
+           );
+    for (unsigned i = FNOS_PERF_PAGE_PAINT; i <= FNOS_PERF_CHART_DRAW; i++) {
+        const char *name = ui_names[i - FNOS_PERF_PAGE_PAINT];
+        printf(" %s_us=%llu %s_n=%" PRIu32 " %s_max_us=%" PRIu32, name,
+               (unsigned long long)s_ui.us[i], name, s_ui.calls[i], name, s_ui.max_us[i]);
+    }
+    printf("\n");
+
+    printf("[bench_tick] kind=%s page=%d motion_n=%d motion_p50_us=%" PRIu32 " motion_p95_us=%" PRIu32 " motion_max_us=%" PRIu32
+           " full_n=%d full_p50_us=%" PRIu32 " full_p95_us=%" PRIu32 " full_max_us=%" PRIu32 "\n",
+           pf_kind_name(), s_run.page,
+           s_ntick_motion, pf_pct(s_tick_motion, s_ntick_motion, 50),
+           pf_pct(s_tick_motion, s_ntick_motion, 95), pf_max(s_tick_motion, s_ntick_motion),
+           s_ntick_full, pf_pct(s_tick_full, s_ntick_full, 50),
+           pf_pct(s_tick_full, s_ntick_full, 95), pf_max(s_tick_full, s_ntick_full));
 
     printf("[bench] kind=%s page=%d cycles=%d misses=%d p2f_n=%d p2f_p50_us=%" PRIu32 " p2f_p95_us=%" PRIu32 " p2f_max_us=%" PRIu32
            " r2f_n=%d r2f_p50_us=%" PRIu32 " r2f_p95_us=%" PRIu32 " r2f_max_us=%" PRIu32
-           " iv_n=%d iv_p50_us=%" PRIu32 " iv_p95_us=%" PRIu32 " iv_max_us=%" PRIu32 " frames=%" PRIu32 " wall_ms=%" PRIu32 " fps_avg=%.1f fps_p50=%.1f"
+           " iv_n=%" PRIu32 " iv_sampled=%d iv_capped=%d iv_p50_us=%" PRIu32 " iv_p95_us=%" PRIu32 " iv_max_us=%" PRIu32 " frames=%" PRIu32 " wall_ms=%" PRIu32 " fps_avg=%.1f fps_p50=%.1f"
            " p2rs_n=%d p2rs_p50_us=%" PRIu32 " rs2rr_n=%d rs2rr_p50_us=%" PRIu32 " rs2rr_p95_us=%" PRIu32
            " rr2rs_n=%d rr2rs_p50_us=%" PRIu32 " rr2rs_p95_us=%" PRIu32
-           " tick_n=%d tick_p50_us=%" PRIu32 " tick_p95_us=%" PRIu32 " tick_max_us=%" PRIu32 " cpu_lvgl=%.1f cpu_idle=%.1f\n",
-           s_run.kind == PF_TAP ? "tap" : (s_run.kind == PF_SWIPE ? "swipe" : "idle"),
-           s_run.page, s_run.cycles, s_run.misses,
+           " tick_n=%d tick_p50_us=%" PRIu32 " tick_p95_us=%" PRIu32 " tick_max_us=%" PRIu32 " cpu_lvgl=%.1f cpu_idle=%.1f iv_p99_us=%" PRIu32 " iv_long_n=%" PRIu32 " drag_hold_ms=%" PRIu32 "\n",
+           pf_kind_name(), s_run.page, s_run.cycles, s_run.misses,
            s_np2f, pf_pct(s_p2f, s_np2f, 50), pf_pct(s_p2f, s_np2f, 95), pf_max(s_p2f, s_np2f),
            s_nr2f, pf_pct(s_r2f, s_nr2f, 50), pf_pct(s_r2f, s_nr2f, 95), pf_max(s_r2f, s_nr2f),
-           s_niv, iv50, pf_pct(s_iv, s_niv, 95), pf_max(s_iv, s_niv),
+           s_niv_total, s_niv, s_niv < (int)s_niv_total, iv50, pf_pct(s_iv, s_niv, 95), s_iv_max_all,
            s_run.frames, wall_ms, wall_ms ? 1000.0 * s_run.frames / wall_ms : 0.0,
            iv50 ? 1000000.0 / iv50 : 0.0,
            s_np2rs, pf_pct(s_p2rs, s_np2rs, 50),
            s_nrs2rr, pf_pct(s_rs2rr, s_nrs2rr, 50), pf_pct(s_rs2rr, s_nrs2rr, 95),
            s_nrr2rs, pf_pct(s_rr2rs, s_nrr2rs, 50), pf_pct(s_rr2rs, s_nrr2rs, 95),
            s_ntick, pf_pct(s_tick, s_ntick, 50), pf_pct(s_tick, s_ntick, 95), pf_max(s_tick, s_ntick),
-           total ? 100.0 * lvgl / total : 0.0, total ? 100.0 * idle / total : 0.0);
+           total ? 100.0 * lvgl / total : 0.0, total ? 100.0 * idle / total : 0.0, iv99, iv_long_n, s_run.hold_ms);
     fflush(stdout);
     s_reported = true;
 }
@@ -384,11 +520,25 @@ static void pf_stop(void)
        （调用点就在 UI 文件里），定时器从未创建，CLI 只回 "已排队" 就再无输出。 */
     if (s_run.active && !s_reported) pf_report();
     s_run.active = false;
-    pf_detach();
+    if (s_run.pressed) {
+        /* 让下一次 indev 读先发合成的 RELEASED；此后才摘回调。 */
+        s_run.pressed = false;
+        s_release_pending = true;
+    } else if (!s_release_pending) {
+        pf_detach();
+    }
     if (s_script_timer) lv_timer_pause(s_script_timer);
 }
 
 /* ------------------------------------------------------------ 脚本状态机 */
+
+/* 以按下时刻为原点的墙钟位置：渲染慢时直接跳过中间位置，不在每个 timer tick
+   上累积步数（旧实现把 2 s 拖成 7–10 s，且位置与时间脱钩）。 */
+static int32_t pf_drag_pos(int32_t x0, int32_t span, int dir, uint32_t elapsed_ms, uint32_t drag_ms)
+{
+    if (drag_ms == 0 || elapsed_ms >= drag_ms) return x0 + dir * span;
+    return x0 + (int32_t)((int64_t)dir * span * elapsed_ms / drag_ms);
+}
 
 static void pf_arm(int64_t now)
 {
@@ -398,10 +548,12 @@ static void pf_arm(int64_t now)
     s_run.wait_first = s_run.wait_rel = s_run.wait_p2rs = false;
     s_run.frame_arm = false;
     s_run.step = 0;
+    s_run.hold_ms = 0;
+    s_run.press_us = s_run.release_us = 0;
     s_last_frame_us = s_last_ready_us = s_frame_start_us = 0;
     s_have_ready = false;
-    if (s_run.kind == PF_SWIPE) {
-        /* 左右交替，免得连着同方向滑把页面滑到边上。 */
+    if (s_run.kind == PF_SWIPE || s_run.kind == PF_DRAG) {
+        /* 每次起滑都从整屏 72%/28% 的滑动起点；drag 方向跨轮左右交替，不靠固定坐标长按。 */
         if (!fnos_ui_swipe_point(s_run.dir, &s_run.x0, &s_run.y0)) {
             printf("[bench] arm failed: swipe point unavailable (page=%d dir=%d)\n", s_run.page, s_run.dir);
             fflush(stdout);
@@ -411,8 +563,9 @@ static void pf_arm(int64_t now)
             lv_display_t *d = lv_display_get_default();
             s_run.px = d ? lv_display_get_horizontal_resolution(d) / 2 : 512;
         }
+        if (s_run.px > PF_DRAG_MAX_SPAN) s_run.px = PF_DRAG_MAX_SPAN;
         s_run.span  = s_run.px;
-        s_run.steps = PF_DRAG_STEPS;
+        s_run.steps = s_run.kind == PF_SWIPE ? PF_DRAG_STEPS : 0;
         s_run.x = s_run.x0;
         s_run.y = s_run.y0;
     } else {
@@ -427,7 +580,7 @@ static void pf_arm(int64_t now)
         s_run.steps = 0;
     }
     s_run.pressed = true;
-    s_run.phase = (s_run.kind == PF_SWIPE) ? PH_DRAG : PH_HOLD;
+    s_run.phase = (s_run.kind == PF_SWIPE || s_run.kind == PF_DRAG) ? PH_DRAG : PH_HOLD;
     s_run.phase_us = now;
 }
 
@@ -443,7 +596,7 @@ static void pf_next_cycle(int64_t now)
         int alt = (s_run.page + 1 + s_run.done) % FNOS_UI_PAGE_COUNT;
         if (alt == s_run.page) alt = (alt + 1) % FNOS_UI_PAGE_COUNT;
         fnos_ui_set_page(alt);
-    } else if (s_run.kind == PF_SWIPE) {
+    } else if (s_run.kind == PF_SWIPE || s_run.kind == PF_DRAG) {
         fnos_ui_set_page(s_run.page);   /* 滑完停在别页：先回到目标页，起点一致 */
         s_run.dir = -s_run.dir;
     }
@@ -483,14 +636,30 @@ static void pf_script_tick(lv_timer_t *t)
             break;
         }
         if (s_run.press_seen) {
-            s_run.step++;
-            s_run.x = s_run.x0 + (int32_t)((int64_t)s_run.dir * s_run.span * s_run.step / s_run.steps);
-            if (s_run.step >= s_run.steps) { s_run.pressed = false; s_run.phase = PH_RELEASE; s_run.phase_us = now; }
+            if (s_run.kind == PF_DRAG) {
+                uint32_t elapsed_ms = (uint32_t)((now - s_run.press_us) / 1000);
+                s_run.x = pf_drag_pos(s_run.x0, s_run.span, s_run.dir, elapsed_ms, (uint32_t)s_run.drag_ms);
+                if (elapsed_ms >= (uint32_t)s_run.drag_ms) {
+                    s_run.hold_ms = elapsed_ms;
+                    s_run.pressed = false;
+                    s_run.phase = PH_RELEASE;
+                    s_run.phase_us = now;
+                }
+            } else {
+                s_run.step++;
+                s_run.x = s_run.x0 + (int32_t)((int64_t)s_run.dir * s_run.span * s_run.step / s_run.steps);
+                if (s_run.step >= s_run.steps) { s_run.pressed = false; s_run.phase = PH_RELEASE; s_run.phase_us = now; }
+            }
         }
         break;
 
     case PH_RELEASE:
-        if (el >= PF_RELEASE_MS) { s_run.frame_arm = false; s_run.phase = PH_TAIL; s_run.phase_us = now; }
+        /* tap 的转场在松开后才开始；窗口留到落定附近，swipe 仍按原 80 ms。 */
+        if (el >= (s_run.kind == PF_TAP ? PF_TAP_RELEASE_MS : PF_RELEASE_MS)) {
+            s_run.frame_arm = false;
+            s_run.phase = PH_TAIL;
+            s_run.phase_us = now;
+        }
         break;
 
     case PH_TAIL:
@@ -511,7 +680,11 @@ static void pf_start(void)
     memset(s_r2f, 0, sizeof s_r2f);
     memset(s_iv, 0, sizeof s_iv);
     memset(s_tick, 0, sizeof s_tick);
+    memset(s_tick_motion, 0, sizeof s_tick_motion);
+    memset(s_tick_full, 0, sizeof s_tick_full);
     s_np2f = s_nr2f = s_niv = s_ntick = 0;
+    s_niv_total = s_niv_long = s_iv_max_all = 0;
+    s_ntick_motion = s_ntick_full = 0;
     s_np2rs = s_nrs2rr = s_nrr2rs = 0;
     s_frame_start_us = 0;
     s_last_ready_us = 0;
@@ -519,8 +692,12 @@ static void pf_start(void)
     s_last_frame_us = 0;
     s_reported = false;
     memset(&s_parts, 0, sizeof s_parts);
+    memset(&s_ui, 0, sizeof s_ui);
+    s_chart_frames = 0;
+    s_chart_drew = false;
 
     pf_detach();   /* 上一轮留下的挂载先摘干净，否则会把 pf_read_cb 当成"真实回调"套娃 */
+    s_release_pending = false;
     s_nreal = 0;
     for (lv_indev_t *i = lv_indev_get_next(NULL); i && s_nreal < PF_MAX_INDEVS; i = lv_indev_get_next(i)) {
         if (lv_indev_get_type(i) != LV_INDEV_TYPE_POINTER) continue;
@@ -538,9 +715,11 @@ static void pf_start(void)
     s_run.kind   = kind;
     s_run.page   = s_req.page;
     s_run.px     = s_req.px;
-    s_run.dir    = -1;
+    s_run.dir    = kind == PF_DRAG ? s_drag_dir : -1;
+    if (kind == PF_DRAG) s_drag_dir = -s_drag_dir;   /* 连续 A 段左右交替，两端都覆盖 */
     s_run.cycles = kind == PF_IDLE ? 1 : (s_req.cycles > 0 ? s_req.cycles : 3);
     s_run.idle_ms = (s_req.seconds > 0 ? s_req.seconds : 5) * 1000;
+    s_run.drag_ms = s_req.drag_ms > 0 ? s_req.drag_ms : 2000;
     s_run.run_us = now;
     s_ncpu0 = pf_snap_tasks(s_cpu0);
 
@@ -562,23 +741,63 @@ static void pf_start(void)
 }
 
 /* 串口任务只置请求：lv_timer 只能在 LVGL 任务里建/改，所以由本定时器接手。 */
+static void pf_probe(int n)
+{
+    if (s_run.active) { printf("bench probe: 本轮采样进行中，结束后再量\n"); return; }
+    pf_ui_acc_t save = s_ui;
+    memset(&s_ui, 0, sizeof s_ui);
+    s_probe_mode = true;
+    int64_t t0 = esp_timer_get_time();
+    for (int i = 0; i < n; i++) {
+        int64_t p0 = esp_timer_get_time();
+        int64_t p1 = esp_timer_get_time();
+        fnos_perf_note_ui_stage(FNOS_PERF_PAGE_PAINT, (uint32_t)(p1 - p0));
+    }
+    int64_t t1 = esp_timer_get_time();
+    s_probe_mode = false;
+    s_ui = save;
+    printf("[bench_probe] n=%d ns_per_probe=%lld\n", n, (long long)((t1 - t0) * 1000 / n));
+}
+
 static void pf_req_poll(lv_timer_t *t)
 {
     (void)t;
+    if (s_cap_req_valid) {
+        s_cap_req_valid = false;
+        uk_trend_set_gesture_fps((uint32_t)s_cap_req);
+    }
+    if (s_probe_req_valid) {
+        s_probe_req_valid = false;
+        pf_probe(s_probe_req);
+    }
+    /* 取消的 RELEASED 还没送进 LVGL 时不开新 run，否则新按下会被当成旧手势的移动。 */
+    if (s_release_pending) return;
     if (!s_req.valid) return;
     pf_kind_t kind = s_req.kind;
     int page = s_req.page, px = s_req.px, cycles = s_req.cycles, sec = s_req.seconds;
+    int drag_ms = s_req.drag_ms;
     s_req.valid = false;
-    if (s_run.active) pf_stop();          /* 新命令顶掉旧运行 */
+    if (s_run.active) {
+        pf_stop();                        /* 新命令顶掉旧运行 */
+        if (s_release_pending) {          /* 先把合成的 RELEASED 送进 LVGL，下一轮再启动 */
+            s_req.valid = true;
+            return;
+        }
+    }
     s_req.kind = kind; s_req.page = page; s_req.px = px; s_req.cycles = cycles; s_req.seconds = sec;
+    s_req.drag_ms = drag_ms;
     pf_start();
 }
 
 /* ---------------------------------------------------------------- 公开 API */
 
-void fnos_perf_note_tick(uint32_t us)
+void fnos_perf_note_tick(uint32_t us, bool motion)
 {
-    if (s_run.active) pf_push(s_tick, &s_ntick, us);
+    if (!s_run.active) return;
+    /* 主缓冲拒收后，分相也不能继续收：否则运动期与整刷期的并集会超过主行样本数。 */
+    if (!pf_push(s_tick, &s_ntick, us)) return;
+    pf_push(motion ? s_tick_motion : s_tick_full,
+            motion ? &s_ntick_motion : &s_ntick_full, us);
 }
 
 static int pf_int(const char *s, int def)
@@ -637,14 +856,38 @@ bool fnos_perf_cli(char *line)
     char *a4 = strtok(NULL, " \t");
     if (!a1 || strcmp(a1, "help") == 0) {
         printf("bench tap <page 0-5> [cycles]            按下→首帧 / 松手→首帧（合成点按导航键）\n"
-               "bench swipe <page 0-5> [px] [cycles]     拖动期帧间隔（合成横滑，左右交替；px 0 = 半个显示宽）\n"
+               "bench swipe <page 0-5> [px] [cycles]     120ms 合成横滑（左右交替；px 0=半宽，上限 700）\n"
+               "bench drag <page 0-5> [px] [ms]          连续单向拖动（px 0=半宽，上限 700；ms 200-10000，默认 2000）\n"
                "bench idle <page 0-5> [seconds]          稳态帧间隔 / ui_tick / 各任务 CPU\n"
+               "bench cap [fps|off]                     页面运动期趋势重绘上限（默认 0 = 不设限）\n"
+               "bench probe [n]                         量一次 UI 探针自身的 ns 开销\n"
                "prof once <ms>                           LVGL 官方 profiler：采 ms 毫秒的 FTrace 文本\n"
                "结束打印一行 [bench] kind=… 供 tools/perf_bench.py 解析\n");
         return true;
     }
+    if (strcmp(a1, "cap") == 0) {
+        if (!a2) {
+            printf("bench cap: 当前值看 [bench_ui] gesture_fps；设置用 bench cap <fps|off>\n");
+            return true;
+        }
+        int fps = strcmp(a2, "off") == 0 ? 0 : pf_int(a2, -1);
+        if (fps < 0 || fps > 1000) { printf("bench cap: 认不出 '%s'（0/off 或 1-1000）\n", a2); return true; }
+        s_cap_req = fps;
+        s_cap_req_valid = true;
+        printf("bench cap: 已排队 gesture_fps=%d（LVGL 任务应用）\n", fps);
+        return true;
+    }
+    if (strcmp(a1, "probe") == 0) {
+        int n = pf_int(a2, 2000);
+        if (n < 1 || n > 100000) n = 2000;
+        s_probe_req = n;
+        s_probe_req_valid = true;
+        printf("bench probe: 已排队 n=%d（LVGL 任务执行）\n", n);
+        return true;
+    }
     if (strcmp(a1, "tap") == 0)        s_req.kind = PF_TAP;
     else if (strcmp(a1, "swipe") == 0) s_req.kind = PF_SWIPE;
+    else if (strcmp(a1, "drag") == 0)  s_req.kind = PF_DRAG;
     else if (strcmp(a1, "idle") == 0)  s_req.kind = PF_IDLE;
     else { printf("bench: 认不出 '%s'（试 bench help）\n", a1); return true; }
 
@@ -654,12 +897,23 @@ bool fnos_perf_cli(char *line)
     s_req.px = 0;
     s_req.cycles = 0;
     s_req.seconds = 0;
+    s_req.drag_ms = 0;
     if (s_req.kind == PF_SWIPE)    { s_req.px = pf_int(a3, 0); s_req.cycles = pf_int(a4, 3); }
+    else if (s_req.kind == PF_DRAG) {
+        s_req.px = pf_int(a3, 600);
+        s_req.drag_ms = pf_int(a4, 2000);
+        if (s_req.drag_ms < PF_DRAG_MIN_MS) s_req.drag_ms = PF_DRAG_MIN_MS;
+        if (s_req.drag_ms > PF_DRAG_MAX_MS) s_req.drag_ms = PF_DRAG_MAX_MS;
+        s_req.cycles = 1;
+    }
     else if (s_req.kind == PF_TAP) s_req.cycles = pf_int(a3, 3);
-    else                           s_req.seconds = pf_int(a3, 5);
+    else {
+        s_req.seconds = pf_int(a3, 5);
+        if (s_req.seconds > 3600) s_req.seconds = 3600;  /* 毫秒乘法不溢出 */
+    }
     s_req.valid = true;
-    printf("bench: 已排队 %s page=%d px=%d cycles=%d seconds=%d\n",
-           a1, s_req.page, s_req.px, s_req.cycles, s_req.seconds);
+    printf("bench: 已排队 %s page=%d px=%d cycles=%d seconds=%d drag_ms=%d\n",
+           a1, s_req.page, s_req.px, s_req.cycles, s_req.seconds, s_req.drag_ms);
     return true;
 }
 
@@ -684,8 +938,10 @@ void fnos_perf_init(void)
 #else  /* !CONFIG_FNOS_UI_PERF_BENCH */
 
 void fnos_perf_init(void) {}
-void fnos_perf_note_tick(uint32_t us) { (void)us; }
+void fnos_perf_note_tick(uint32_t us, bool motion) { (void)us; (void)motion; }
 void fnos_perf_note_stage(fnos_perf_stage_t stage, uint32_t us) { (void)stage; (void)us; }
+void fnos_perf_note_ui_stage(fnos_perf_stage_t stage, uint32_t us) { (void)stage; (void)us; }
+void fnos_perf_track_chart(void *chart) { (void)chart; }
 bool fnos_perf_cli(char *line) { (void)line; return false; }
 
 #endif

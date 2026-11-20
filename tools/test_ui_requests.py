@@ -163,6 +163,8 @@ static lv_display_t display;
 static lv_display_t *lv_obj_get_display(lv_obj_t *o){(void)o;return &display;}
 static void lv_display_enable_invalidation(lv_display_t *d,bool en){(void)d;(void)en;}
 static void lv_obj_update_layout(lv_obj_t *o){(void)o;}
+static void lv_obj_refr_size(lv_obj_t *o){(void)o;}
+static void uk_trend_set_page_motion(bool on){assert(!on);}
 #define LV_PCT(x) (x)
 static bool s_created=true;
 static int s_motion_pending=-1;
