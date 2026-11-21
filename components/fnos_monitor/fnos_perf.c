@@ -12,6 +12,7 @@
 #include <string.h>
 
 #include "esp_timer.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -96,6 +97,8 @@ static struct {
     bool wait_first, wait_rel, frame_arm, wait_p2rs;
     int64_t press_us, release_us;
     uint32_t frames;
+    uint32_t rel_frames;   /* 松手→落定之间渲染完成的帧数（独立于 frame_arm 80ms 窗口） */
+    uint32_t rel_gen;      /* 松手时的 motion 代数：只有之后新起的手势动画才算本次落定 */
     uint32_t hold_ms;   /* drag：press_seen 到脚本释放的实际墙钟时长 */
 } s_run;
 static bool s_release_pending;  /* 取消时欠 LVGL 一次合成的 RELEASED */
@@ -106,6 +109,35 @@ static uint32_t s_r2f[PF_SAMPLES];   /* 松手 → 首帧：点一下多久有�
 static uint32_t s_iv[PF_SAMPLES];    /* 相邻帧间隔：拖动跟手 / 稳态帧率 */
 /* 全段计数：数组只是前 PF_SAMPLES 个样本，长段/长按不能拿它冒充整段。 */
 static uint32_t s_niv_total, s_niv_long, s_iv_max_all;
+/* 松手→落定：motion_finish 由 UI 通过 fnos_perf_note_motion_settle 打点。
+   frame_arm 80ms 之后才落定的动画，iv 窗口看不到；这两个数独立记整段。 */
+static uint32_t s_rel_settle_us, s_rel_frames;
+static int s_rel_page = -1;
+static bool s_rel_settled;
+/* 松手→落定这一段自己的帧间隔（frame_arm 的 iv 只看 80ms，落定帧与释放长帧都在窗外）。 */
+static uint32_t s_rel_iv[PF_SAMPLES], s_rel_iv_max, s_rel_nlong;
+static int s_nrel_iv;
+static uint32_t s_final_us;    /* 落定 → 下一帧 READY：最终画面真正呈现的时刻 */
+static uint32_t s_final_rs_us; /* 落定 → 该帧 RENDER_START（处理器内耗时） */
+static uint32_t s_fin_skip;
+static uint32_t s_fin_fix_us, s_fin_layout_us, s_fin_refresh_us, s_prep_page_us, s_prep_refresh_us;
+static uint32_t s_ref_health_us, s_ref_shell_us, s_ref_body_us;
+static uint32_t s_p1_vol_us, s_p1_raid_us, s_p1_disk_us, s_p1_inv_us;
+static uint32_t s_rel_seq; static bool s_rel_new;
+static uint32_t s_pair_us;
+static uint32_t s_ref_prep_us;
+static uint32_t s_pool_rl_mask;
+/* 布局归因：3 个时序窗口 × 3 个布局点，各记调用数/总耗时/最大耗时/真实重排数。 */
+typedef struct { uint32_t n, us, max_us, relayouts; } pf_lay_t;
+static pf_lay_t s_lay[4][3];
+static int s_lay_win;
+static uint32_t s_shape_mask, s_shape_hits;
+/* 原生自测高开销与整屏脏位观测 */
+static uint32_t s_self_n, s_self_chg, s_self_us, s_scr_calls, s_scr_dirty;
+static int64_t s_finish_us;
+static bool s_final_pending;
+/* motion_prepare 会先起动画再回头刷数据；用代数把"本次手势的动画"和进页前的 settle 分开。 */
+static uint32_t s_motion_gen;
 static uint32_t s_tick[PF_SAMPLES];  /* ui_tick 总耗时（数据刷新 + 图表 + 行重建） */
 static int s_np2f, s_nr2f, s_niv, s_ntick;
 
@@ -352,6 +384,7 @@ static void pf_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
     } else if (!s_run.pressed && s_run.press_seen && !s_run.rel_seen) {
         s_run.rel_seen   = true;
         s_run.release_us = esp_timer_get_time();
+        s_run.rel_gen    = s_motion_gen;
         s_run.wait_rel   = true;
     }
 }
@@ -374,6 +407,7 @@ static void pf_start_cb(lv_event_t *e)
     s_frame_start_us = now;
     pf_stage_gate(s_run.active && s_run.frame_arm);
     if (!s_run.active) { s_last_ready_us = 0; s_have_ready = false; return; }
+    if (s_final_pending && !s_final_rs_us) s_final_rs_us = (uint32_t)(now - s_finish_us);
     if (s_run.frame_arm) s_chart_drew = false;
     if (s_run.frame_arm && s_have_ready && s_last_ready_us) {
         pf_push(s_rr2rs, &s_nrr2rs, (uint32_t)(now - s_last_ready_us));   /* 与 iv 同一批样本 */
@@ -390,6 +424,16 @@ static void pf_render_cb(lv_event_t *e)
     if (!s_run.active) { s_last_frame_us = now; s_frame_start_us = 0; return; }
 
     s_run.frames++;
+    if (s_run.rel_seen && !s_rel_settled) {
+        s_run.rel_frames++;
+        if (s_last_frame_us) {          /* 释放后动画自己的帧间隔，含 80ms 窗外的落定帧 */
+            uint32_t d = (uint32_t)(now - s_last_frame_us);
+            if (d > s_rel_iv_max) s_rel_iv_max = d;
+            if (d >= PF_LONG_FRAME_US) s_rel_nlong++;
+            pf_push(s_rel_iv, &s_nrel_iv, d);
+        }
+    }
+    if (s_final_pending) { s_final_us = (uint32_t)(now - s_finish_us); s_final_pending = false; }
     if (s_run.wait_first) { s_run.wait_first = false; pf_push(s_p2f, &s_np2f, (uint32_t)(now - s_run.press_us)); }
     if (s_run.wait_rel)   { s_run.wait_rel   = false; pf_push(s_r2f, &s_nr2f, (uint32_t)(now - s_run.release_us)); }
     if (s_run.frame_arm && s_last_frame_us) {
@@ -481,6 +525,15 @@ static void pf_report(void)
     }
     printf("\n");
 
+    printf("[bench_lay] kind=%s page=%d", pf_kind_name(), s_run.page);
+    for (int w = 1; w <= 3; w++)
+        for (int k = 0; k < 3; k++)
+            printf(" w%d_k%d_n=%" PRIu32 " us=%" PRIu32 " max=%" PRIu32 " rl=%" PRIu32,
+                   w, k, s_lay[w][k].n, s_lay[w][k].us, s_lay[w][k].max_us, s_lay[w][k].relayouts);
+    printf(" pool_rl_mask=%" PRIu32 " shape_hits=%" PRIu32 " shape_mask=%" PRIu32 " selfh_n=%" PRIu32 " selfh_chg=%" PRIu32
+           " selfh_us=%" PRIu32 " scr_n=%" PRIu32 " scr_dirty=%" PRIu32 "\n",
+           s_pool_rl_mask, s_shape_hits, s_shape_mask, s_self_n, s_self_chg, s_self_us, s_scr_calls, s_scr_dirty);
+
     printf("[bench_tick] kind=%s page=%d motion_n=%d motion_p50_us=%" PRIu32 " motion_p95_us=%" PRIu32 " motion_max_us=%" PRIu32
            " full_n=%d full_p50_us=%" PRIu32 " full_p95_us=%" PRIu32 " full_max_us=%" PRIu32 "\n",
            pf_kind_name(), s_run.page,
@@ -494,7 +547,10 @@ static void pf_report(void)
            " iv_n=%" PRIu32 " iv_sampled=%d iv_capped=%d iv_p50_us=%" PRIu32 " iv_p95_us=%" PRIu32 " iv_max_us=%" PRIu32 " frames=%" PRIu32 " wall_ms=%" PRIu32 " fps_avg=%.1f fps_p50=%.1f"
            " p2rs_n=%d p2rs_p50_us=%" PRIu32 " rs2rr_n=%d rs2rr_p50_us=%" PRIu32 " rs2rr_p95_us=%" PRIu32
            " rr2rs_n=%d rr2rs_p50_us=%" PRIu32 " rr2rs_p95_us=%" PRIu32
-           " tick_n=%d tick_p50_us=%" PRIu32 " tick_p95_us=%" PRIu32 " tick_max_us=%" PRIu32 " cpu_lvgl=%.1f cpu_idle=%.1f iv_p99_us=%" PRIu32 " iv_long_n=%" PRIu32 " drag_hold_ms=%" PRIu32 "\n",
+           " tick_n=%d tick_p50_us=%" PRIu32 " tick_p95_us=%" PRIu32 " tick_max_us=%" PRIu32 " cpu_lvgl=%.1f cpu_idle=%.1f iv_p99_us=%" PRIu32 " iv_long_n=%" PRIu32 " drag_hold_ms=%" PRIu32 " dir=%u span=%" PRIu32 " rel_settle_us=%" PRIu32 " rel_frames=%" PRIu32
+           " rel_page=%d rel_iv_max_us=%" PRIu32 " rel_long_n=%" PRIu32 " final_us=%" PRIu32 " final_rs_us=%" PRIu32 " fin_skip=%" PRIu32
+           " fin_fix_us=%" PRIu32 " fin_layout_us=%" PRIu32 " fin_refresh_us=%" PRIu32 " prep_page_us=%" PRIu32 " prep_refresh_us=%" PRIu32
+           " ref_health_us=%" PRIu32 " ref_shell_us=%" PRIu32 " ref_body_us=%" PRIu32 " pair_us=%" PRIu32 " ref_prep_us=%" PRIu32 " p1_vol_us=%" PRIu32 " p1_raid_us=%" PRIu32 " p1_disk_us=%" PRIu32 " p1_inv_us=%" PRIu32 " rel_seq=%" PRIu32 " rel_new=%d\n",
            pf_kind_name(), s_run.page, s_run.cycles, s_run.misses,
            s_np2f, pf_pct(s_p2f, s_np2f, 50), pf_pct(s_p2f, s_np2f, 95), pf_max(s_p2f, s_np2f),
            s_nr2f, pf_pct(s_r2f, s_nr2f, 50), pf_pct(s_r2f, s_nr2f, 95), pf_max(s_r2f, s_nr2f),
@@ -505,7 +561,12 @@ static void pf_report(void)
            s_nrs2rr, pf_pct(s_rs2rr, s_nrs2rr, 50), pf_pct(s_rs2rr, s_nrs2rr, 95),
            s_nrr2rs, pf_pct(s_rr2rs, s_nrr2rs, 50), pf_pct(s_rr2rs, s_nrr2rs, 95),
            s_ntick, pf_pct(s_tick, s_ntick, 50), pf_pct(s_tick, s_ntick, 95), pf_max(s_tick, s_ntick),
-           total ? 100.0 * lvgl / total : 0.0, total ? 100.0 * idle / total : 0.0, iv99, iv_long_n, s_run.hold_ms);
+           total ? 100.0 * lvgl / total : 0.0, total ? 100.0 * idle / total : 0.0, iv99, iv_long_n, s_run.hold_ms,
+           (unsigned)(s_run.kind == PF_DRAG ? (s_run.dir < 0 ? 0u : 1u) : 2u), (uint32_t)s_run.span,
+           s_rel_settle_us, s_rel_frames, s_rel_page, s_rel_iv_max, s_rel_nlong, s_final_us, s_final_rs_us, s_fin_skip,
+           s_fin_fix_us, s_fin_layout_us, s_fin_refresh_us, s_prep_page_us, s_prep_refresh_us,
+           s_ref_health_us, s_ref_shell_us, s_ref_body_us, s_pair_us, s_ref_prep_us,
+           s_p1_vol_us, s_p1_raid_us, s_p1_disk_us, s_p1_inv_us, s_rel_seq, s_rel_new ? 1 : 0);
     fflush(stdout);
     s_reported = true;
 }
@@ -691,6 +752,30 @@ static void pf_start(void)
     s_have_ready = false;
     s_last_frame_us = 0;
     s_reported = false;
+    s_run.rel_frames = 0;
+    s_run.rel_gen = 0;
+    s_rel_settle_us = 0;
+    s_rel_frames = 0;
+    s_rel_settled = false;
+    s_rel_page = -1;
+    s_nrel_iv = 0;
+    s_rel_iv_max = 0;
+    s_rel_nlong = 0;
+    s_final_us = 0;
+    s_final_rs_us = 0;
+    s_fin_skip = 0;
+    s_ref_health_us = s_ref_shell_us = s_ref_body_us = 0;
+    s_p1_vol_us = s_p1_raid_us = s_p1_disk_us = s_p1_inv_us = 0;
+    s_rel_seq = 0; s_rel_new = false;
+    s_pair_us = 0;
+    s_ref_prep_us = 0;
+    s_final_pending = false;
+    s_fin_fix_us = s_fin_layout_us = s_fin_refresh_us = s_prep_page_us = s_prep_refresh_us = 0;
+    s_pool_rl_mask = 0;
+    memset(s_lay, 0, sizeof s_lay);
+    s_lay_win = 0;
+    s_shape_mask = s_shape_hits = 0;
+    s_self_n = s_self_chg = s_self_us = s_scr_calls = s_scr_dirty = 0;
     memset(&s_parts, 0, sizeof s_parts);
     memset(&s_ui, 0, sizeof s_ui);
     s_chart_frames = 0;
@@ -791,6 +876,121 @@ static void pf_req_poll(lv_timer_t *t)
 
 /* ---------------------------------------------------------------- 公开 API */
 
+/* 松手→motion_finish：动画落定的真实时长与窗口内帧数。只读，不改 UI 时序。 */
+void fnos_perf_note_refresh_prep(uint32_t us)
+{
+    if (s_run.active && s_lay_win == 2) s_ref_prep_us = us;
+}
+
+void fnos_perf_note_pair(uint32_t us)
+{
+    if (s_run.active) s_pair_us = us;
+}
+
+void fnos_perf_note_refresh_parts(uint32_t health_us, uint32_t shell_us, uint32_t body_us)
+{
+    if (!s_run.active || s_lay_win != 2) return;
+    s_ref_health_us = health_us;
+    s_ref_shell_us = shell_us;
+    s_ref_body_us = body_us;
+}
+
+void fnos_perf_note_fin_skip(void)
+{
+    if (s_run.active) s_fin_skip++;
+}
+
+void fnos_perf_note_motion_settle(int page)
+{
+    if (!s_run.active || !s_run.rel_seen || s_rel_settled) return;
+    /* 只有松手之后新起的动画才算本次落定；进页前的 page_motion_settle 不算呈现。 */
+    if (s_motion_gen == s_run.rel_gen) return;
+    int64_t now = esp_timer_get_time();
+    s_rel_settle_us = (uint32_t)(now - s_run.release_us);
+    s_rel_frames    = s_run.rel_frames;
+    s_rel_page      = page;
+    s_finish_us     = now;
+    s_final_pending = true;
+    s_rel_settled   = true;
+}
+
+void fnos_perf_note_motion_start(void)
+{
+    s_motion_gen++;
+}
+
+/* 落定帧的三段成本；每轮只记最大值，退出时不留运行期串口输出。 */
+void fnos_perf_note_settle_parts(uint32_t fix_us, uint32_t layout_us, uint32_t refresh_us)
+{
+    if (!s_run.active) return;
+    if (fix_us > s_fin_fix_us) s_fin_fix_us = fix_us;
+    if (layout_us > s_fin_layout_us) s_fin_layout_us = layout_us;
+    if (refresh_us > s_fin_refresh_us) s_fin_refresh_us = refresh_us;
+}
+
+void fnos_perf_note_prep_refresh(uint32_t us)
+{
+    if (s_run.active && us > s_prep_refresh_us) s_prep_refresh_us = us;
+}
+
+void fnos_perf_note_pool_relayout(uint32_t mask)
+{
+    if (s_run.active) s_pool_rl_mask |= mask;
+}
+
+void fnos_perf_note_p1_parts(uint32_t vol_us, uint32_t raid_us, uint32_t disk_us, uint32_t inv_us)
+{
+    if (s_lay_win != 2) return; /* only accept parts from the settle refresh itself */
+    s_p1_vol_us = vol_us; s_p1_raid_us = raid_us; s_p1_disk_us = disk_us; s_p1_inv_us = inv_us;
+}
+
+void fnos_perf_note_settle_snapshot(uint32_t seq, bool new_snapshot)
+{
+    s_rel_seq = seq; s_rel_new = new_snapshot;
+}
+
+void fnos_perf_note_prep_page(uint32_t us)
+{
+    if (s_run.active && us > s_prep_page_us) s_prep_page_us = us;
+}
+
+void fnos_perf_layout_window(int win)
+{
+    s_lay_win = (win >= 0 && win <= 3) ? win : 0;
+}
+
+void fnos_perf_note_layout(int kind, uint32_t us, bool relayout)
+{
+    if (!s_run.active || s_lay_win <= 0 || kind < 0 || kind > 2) return;
+    pf_lay_t *l = &s_lay[s_lay_win][kind];
+    l->n++;
+    l->us += us;
+    if (us > l->max_us) l->max_us = us;
+    if (relayout) l->relayouts++;
+}
+
+void fnos_perf_note_selfsize(uint32_t us, bool changed)
+{
+    if (!s_run.active) return;
+    s_self_n++;
+    s_self_us += us;
+    if (changed) s_self_chg++;
+}
+
+void fnos_perf_note_scr_dirty(bool dirty)
+{
+    if (!s_run.active) return;
+    s_scr_calls++;
+    if (dirty) s_scr_dirty++;
+}
+
+void fnos_perf_note_shape_mismatch(uint32_t mask)
+{
+    if (!s_run.active) return;
+    s_shape_mask |= mask;
+    s_shape_hits++;
+}
+
 void fnos_perf_note_tick(uint32_t us, bool motion)
 {
     if (!s_run.active) return;
@@ -798,6 +998,24 @@ void fnos_perf_note_tick(uint32_t us, bool motion)
     if (!pf_push(s_tick, &s_ntick, us)) return;
     pf_push(motion ? s_tick_motion : s_tick_full,
             motion ? &s_ntick_motion : &s_ntick_full, us);
+}
+
+/* 一次内存快照：free 是当前量，min 是开机以来的最低水位，largest 是最大连续块。
+   三条线分开是因为内部 RAM / DMA / PSRAM 的用途和失败后果完全不同。 */
+static void pf_mem_line(void)
+{
+    printf("[mem] internal free=%u min=%u largest=%u dma free=%u min=%u largest=%u "
+           "psram free=%u min=%u largest=%u\n",
+           (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+           (unsigned)(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024),
+           (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024),
+           (unsigned)(heap_caps_get_free_size(MALLOC_CAP_DMA) / 1024),
+           (unsigned)(heap_caps_get_minimum_free_size(MALLOC_CAP_DMA) / 1024),
+           (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_DMA) / 1024),
+           (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024),
+           (unsigned)(heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM) / 1024),
+           (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024));
+    fflush(stdout);
 }
 
 static int pf_int(const char *s, int def)
@@ -861,6 +1079,7 @@ bool fnos_perf_cli(char *line)
                "bench idle <page 0-5> [seconds]          稳态帧间隔 / ui_tick / 各任务 CPU\n"
                "bench cap [fps|off]                     页面运动期趋势重绘上限（默认 0 = 不设限）\n"
                "bench probe [n]                         量一次 UI 探针自身的 ns 开销\n"
+               "bench mem                               internal/dma/psram 的 free/min/largest（KB）\n"
                "prof once <ms>                           LVGL 官方 profiler：采 ms 毫秒的 FTrace 文本\n"
                "结束打印一行 [bench] kind=… 供 tools/perf_bench.py 解析\n");
         return true;
@@ -875,6 +1094,10 @@ bool fnos_perf_cli(char *line)
         s_cap_req = fps;
         s_cap_req_valid = true;
         printf("bench cap: 已排队 gesture_fps=%d（LVGL 任务应用）\n", fps);
+        return true;
+    }
+    if (strcmp(a1, "mem") == 0) {
+        pf_mem_line();
         return true;
     }
     if (strcmp(a1, "probe") == 0) {
@@ -938,6 +1161,23 @@ void fnos_perf_init(void)
 #else  /* !CONFIG_FNOS_UI_PERF_BENCH */
 
 void fnos_perf_init(void) {}
+void fnos_perf_note_refresh_prep(uint32_t us) { (void)us; }
+void fnos_perf_note_pair(uint32_t us) { (void)us; }
+void fnos_perf_note_refresh_parts(uint32_t a, uint32_t b, uint32_t c) { (void)a; (void)b; (void)c; }
+void fnos_perf_note_fin_skip(void) {}
+
+void fnos_perf_note_motion_settle(int page) { (void)page; }
+void fnos_perf_note_settle_parts(uint32_t a, uint32_t b, uint32_t c) { (void)a; (void)b; (void)c; }
+void fnos_perf_note_prep_page(uint32_t us) { (void)us; }
+void fnos_perf_note_p1_parts(uint32_t a, uint32_t b, uint32_t c, uint32_t d) { (void)a; (void)b; (void)c; (void)d; }
+void fnos_perf_note_settle_snapshot(uint32_t seq, bool n) { (void)seq; (void)n; }
+void fnos_perf_note_prep_refresh(uint32_t us) { (void)us; }
+void fnos_perf_note_pool_relayout(uint32_t mask) { (void)mask; }
+void fnos_perf_layout_window(int w) { (void)w; }
+void fnos_perf_note_layout(int k, uint32_t us, bool r) { (void)k; (void)us; (void)r; }
+void fnos_perf_note_shape_mismatch(uint32_t m) { (void)m; }
+void fnos_perf_note_selfsize(uint32_t us, bool c) { (void)us; (void)c; }
+void fnos_perf_note_scr_dirty(bool d) { (void)d; }
 void fnos_perf_note_tick(uint32_t us, bool motion) { (void)us; (void)motion; }
 void fnos_perf_note_stage(fnos_perf_stage_t stage, uint32_t us) { (void)stage; (void)us; }
 void fnos_perf_note_ui_stage(fnos_perf_stage_t stage, uint32_t us) { (void)stage; (void)us; }

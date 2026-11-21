@@ -288,11 +288,6 @@ static int64_t       s_seq;
 /* 各页自适应池的"上次解"：条数与池尺寸都没变就不重排（照 p4 的 s_p4_* 写法）。
    放在文件作用域而不是 refresh() 里的 static：同一个页面有多张池卡，
    函数内 static 会互相看不见谁是谁。 */
-static int s_p1_vol_n  = -1, s_p1_vol_w,  s_p1_vol_h;
-static int s_p1_raid_n = -1, s_p1_raid_w, s_p1_raid_h;
-static int s_p1_disk_n = -1, s_p1_disk_w, s_p1_disk_h;
-static int s_p3_dock_n = -1, s_p3_dock_w, s_p3_dock_h;
-static int s_p3_temp_n = -1, s_p3_temp_w, s_p3_temp_h;
 static int s_p4_n      = -1, s_p4_w,      s_p4_h;
 static int s_wifi_ap_n = -1, s_wifi_ap_w, s_wifi_ap_h;
 
@@ -319,6 +314,7 @@ static void motion_init(void);
 static void motion_poll_start(void);
 static lv_timer_t *s_motion_poll;   /* 8ms 手势轮询：只在按下期间跑，空闲即暂停 */
 static bool motion_busy(void);
+static bool motion_pointer_busy(void);
 static void page_motion_settle(void);
 static void theme_apply(void);
 static bool overview_live(const fnos_status_t *st, const char *module);
@@ -383,10 +379,21 @@ static void set_num(lv_obj_t *label, const char *fmt, ...)
 /* A local style may already resolve to the same color without being pinned
    locally; a theme switch would then change it. Only skip when the local
    property itself already holds the target. */
-static bool local_color_is(lv_obj_t *obj, lv_style_prop_t prop, lv_color_t c)
+static bool local_color_is_part(lv_obj_t *obj, lv_style_prop_t prop, lv_color_t c, uint32_t part)
 {
     lv_style_value_t v;
-    return lv_obj_get_local_style_prop(obj, prop, &v, 0) == LV_STYLE_RES_FOUND && lv_color_eq(v.color, c);
+    return lv_obj_get_local_style_prop(obj, prop, &v, part) == LV_STYLE_RES_FOUND && lv_color_eq(v.color, c);
+}
+static bool local_color_is(lv_obj_t *obj, lv_style_prop_t prop, lv_color_t c)
+{
+    return local_color_is_part(obj, prop, c, 0);
+}
+/* A repeated local int write still dirties style+layout even when the value is
+   identical; skip it when the local property already holds the target. */
+static bool local_i32_is(lv_obj_t *obj, lv_style_prop_t prop, int32_t value)
+{
+    lv_style_value_t v;
+    return lv_obj_get_local_style_prop(obj, prop, &v, 0) == LV_STYLE_RES_FOUND && v.num == value;
 }
 
 
@@ -612,10 +619,26 @@ static void pool_layout(int *n0, int *w0, int *h0, int n, lv_obj_t *pool,
     if (!pool) return;
     lv_obj_update_layout(pool);
     int w = lv_obj_get_width(pool), h = lv_obj_get_height(pool);
-    if (n == *n0 && w == *w0 && h == *h0 && uk_pool_cols(pool) > 0) return;
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    int64_t lay_at = esp_timer_get_time();
+    bool did_relayout = false;
+#endif
+    if (n == *n0 && w == *w0 && h == *h0 && uk_pool_cols(pool) > 0) {
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+        fnos_perf_note_layout(2, (uint32_t)(esp_timer_get_time() - lay_at), false);
+#endif
+        return;
+    }
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    fnos_perf_note_pool_relayout((n != *n0 ? 1u : 0u) | (w != *w0 ? 2u : 0u) | (h != *h0 ? 4u : 0u));
+#endif
     *n0 = n; *w0 = w; *h0 = h;
     if (w < 32 || h < 32) return;          /* 还没布局出来，下次刷新再试 */
     uk_pool_relayout(pool, min_col_w, data_fit, note);
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    did_relayout = true;
+    fnos_perf_note_layout(2, (uint32_t)(esp_timer_get_time() - lay_at), did_relayout);
+#endif
     if (getenv("UK_POOL_TRACE"))
         fprintf(stderr, "[pool] n=%d W=%d H=%d cols=%d shown=%d\n",
                 n, w, h, (int)uk_pool_cols(pool), (int)uk_pool_shown(pool));
@@ -4364,6 +4387,24 @@ static void temp_blk_fill(int i)
 typedef struct { uint64_t shape; bool ready; } inventory_layout_cache_t;
 static inventory_layout_cache_t s_storage_layout, s_system_layout, s_network_pool_layout;
 
+/* 网口行壳：page2 从未显示过时它的 flex 尺寸还是 0，先在离屏布局里解一次，
+   之后隐藏页也能结算行几何。创建与列宽结算放进空闲 tick，入页只改文本。 */
+static bool s_net_geom_warm;
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+static uint32_t s_motion_seq0;
+static uint32_t s_motion_recv0;
+#endif
+static bool s_net_ready;               /* 壳齐、几何已结算 */
+static bool s_net_layout_pending;       /* 池已挂回卡片，还差一次 page2 结算 */
+static int32_t s_net_unbound = -1;      /* 已建壳、还没绑文本的行；建和量分两个 tick 做 */
+static int32_t s_net_col_w;            /* 池内容宽解出的单列宽 */
+static lv_obj_t *s_net_stage;          /* 预建母体：不激活的 screen，布局只算这棵子树 */
+static lv_obj_t *s_net_staged;         /* 母体上的新池；挂回成功才替换正式池 */
+static lv_obj_t *s_net_home;           /* 池的正式父对象（网口卡片 body） */
+static void network_pool_layout(void);
+static void network_prep_settle(void);
+
+
 static uint64_t inventory_shape_mix(uint64_t shape, uint32_t value)
 {
     return (shape ^ value) * UINT64_C(1099511628211);
@@ -4418,26 +4459,222 @@ static uint64_t inventory_shape(lv_obj_t *container, lv_obj_t **cards,
 }
 
 /* Reuse resolved row geometry; changed wrapping or topology must still reflow. */
+/* 池挂回卡片后还差这一下：整页布局一次，再按真实几何写 shape 缓存。
+   放到单独的空闲 tick，避免和建行/挂回叠成超一帧的 tick。 */
+static void network_layout_pending_finish(void)
+{
+    if (!s_net_layout_pending || !s_ui.net_pool) return;
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    int64_t t0 = esp_timer_get_time();
+#endif
+    /* 行宽/行高在母体上已按正式池的列宽量好，这里只差一次整页布局把池摆回卡片里的位置；
+       再来一次 uk_pool_relayout 要 61ms，没有必要。 */
+    lv_obj_update_layout(s_ui.page[2]);
+    uk_viewport_snap(s_ui.net_pool, UK_ITEM_GAP);
+    int64_t t1 = esp_timer_get_time();
+    lv_obj_t *cards[] = {s_ui.net_card}, *pools[] = {s_ui.net_pool};
+    const int counts[] = {s_ui.net_made};
+    s_network_pool_layout.shape = inventory_shape(s_ui.net_pool, cards, pools, counts, 1);
+    s_network_pool_layout.ready = true;
+    s_net_ready = true;
+    s_net_layout_pending = false;
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    ESP_LOGI(TAG, "netprep layout rows=%d snap=%u cache=%u us=%u", s_ui.net_made,
+             (unsigned)(t1 - t0), (unsigned)(esp_timer_get_time() - t1),
+             (unsigned)(esp_timer_get_time() - t0));
+#endif
+}
+
+/* 每次缓存 shape 时顺手记下关键几何，用于指出本轮为什么重排。 */
+typedef struct { int32_t pool_w, card_w, counts, pad_row, row0_h, part_h; } net_shape_dbg_t;
+static net_shape_dbg_t s_net_shape_dbg;
+
+static void net_shape_dbg_read(net_shape_dbg_t *d)
+{
+    memset(d, 0, sizeof *d);
+    if (!s_ui.net_pool) return;
+    d->pool_w = lv_obj_get_content_width(s_ui.net_pool);
+    d->card_w = lv_obj_get_content_width(s_ui.net_card);
+    d->counts = s_ui.net_made;
+    d->pad_row = lv_obj_get_style_pad_row(s_ui.net_pool, 0);
+    lv_obj_t *row = lv_obj_get_child_count(s_ui.net_pool) ? lv_obj_get_child(s_ui.net_pool, 0) : NULL;
+    d->row0_h = row ? lv_obj_get_height(row) : 0;
+    d->part_h = 0;
+    if (row && lv_obj_get_child_count(row)) {
+        lv_obj_t *line = lv_obj_get_child(row, 0);
+        d->part_h = lv_obj_get_height(line);
+    }
+}
+
+static uint32_t net_shape_dbg_diff(const net_shape_dbg_t *a, const net_shape_dbg_t *b)
+{
+    uint32_t m = 0;
+    if (a->pool_w != b->pool_w) m |= 1u;
+    if (a->card_w != b->card_w) m |= 2u;
+    if (a->counts != b->counts) m |= 4u;
+    if (a->pad_row != b->pad_row) m |= 8u;
+    if (a->row0_h != b->row0_h) m |= 16u;
+    if (a->part_h != b->part_h) m |= 32u;
+    return m;
+}
+
 static void network_pool_layout(void)
 {
-    if (!s_ui.net_pool || !s_ui.net_card || lv_obj_has_flag(s_ui.page[2], LV_OBJ_FLAG_HIDDEN)) return;
+    /* 挂回后差的那一次整页布局：空闲时由 network_prep 推进，隐藏页不在这里做。 */
+    if (s_net_layout_pending) {
+        if (lv_obj_has_flag(s_ui.page[2], LV_OBJ_FLAG_HIDDEN)) return;
+        network_layout_pending_finish();
+    }
+    if (!s_ui.net_pool || !s_ui.net_card) return;
+    if (s_net_stage) {
+        /* 预建中池在母体上；真要用这页时先整池挂回卡片，别让页面引用一个不在卡片里的池。 */
+        if (lv_obj_has_flag(s_ui.page[2], LV_OBJ_FLAG_HIDDEN)) return;
+        network_prep_settle();
+    }
+    /* 隐藏页在预热前不布局；预热后行壳的几何必须在入页前就解出来。 */
+    if (!s_net_geom_warm && lv_obj_has_flag(s_ui.page[2], LV_OBJ_FLAG_HIDDEN)) return;
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    int64_t t0 = esp_timer_get_time();
+#endif
     lv_obj_update_layout(s_ui.net_pool);
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    /* 第二次布局是“还有没有脏布局”的探针：空趟只有几微秒，仍脏会再花一次整屏。 */
+    int64_t sd0 = esp_timer_get_time();
+    lv_obj_update_layout(s_ui.net_pool);
+    fnos_perf_note_scr_dirty((esp_timer_get_time() - sd0) > 500);
+#endif
     lv_obj_t *cards[] = {s_ui.net_card}, *pools[] = {s_ui.net_pool};
     const int counts[] = {s_ui.net_made};
     uint64_t shape = inventory_shape(s_ui.net_pool, cards, pools, counts, 1);
-    if (s_network_pool_layout.ready && s_network_pool_layout.shape == shape) return;
-    uk_pool_relayout(s_ui.net_pool, UK_ENTITY_MIN_WIDTH, false, NULL);
-    lv_obj_update_layout(s_ui.net_pool);
-    s_network_pool_layout.shape = inventory_shape(s_ui.net_pool, cards, pools, counts, 1);
-    s_network_pool_layout.ready = uk_pool_cols(s_ui.net_pool) > 0;
+    bool relayout = false;
+    if (!s_network_pool_layout.ready || s_network_pool_layout.shape != shape) {
+        net_shape_dbg_t now, prev = s_net_shape_dbg;
+        net_shape_dbg_read(&now);
+        if (s_network_pool_layout.ready)
+            fnos_perf_note_shape_mismatch(net_shape_dbg_diff(&prev, &now));
+        uk_pool_relayout(s_ui.net_pool, UK_ENTITY_MIN_WIDTH, false, NULL);
+        lv_obj_update_layout(s_ui.net_pool);
+        s_network_pool_layout.shape = inventory_shape(s_ui.net_pool, cards, pools, counts, 1);
+        s_network_pool_layout.ready = uk_pool_cols(s_ui.net_pool) > 0;
+        net_shape_dbg_read(&s_net_shape_dbg);
+        relayout = true;
+    }
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    fnos_perf_note_layout(0, (uint32_t)(esp_timer_get_time() - t0), relayout);
+#endif
 }
 
+/* 行直接建在正式池里时，LVGL 渲染前对 act_scr 的 full layout 会让每加一行都整屏重排
+   （实测 tick ~23ms）。所以预建期间在一张不激活的 screen 上建一个新池，逐行只解母体
+   子树；壳齐后整池解成正式两列宽高，再把池本身一次挂回卡片：act_scr 只需摆一个尺寸
+   已定的对象。逐行挂回会把 20 行的首次测量攒到挂回那一刻（实测 122ms），所以只挂池。
+   正式池在新池挂回成功前不动它：万一挂回失败，继续用原池按入页路径重建。 */
+static void network_prep_settle(void)
+{
+    if (!s_net_stage || !s_net_staged || !s_ui.net_pool || !s_net_home) return;
+    lv_obj_t *stage = s_net_stage, *staged = s_net_staged, *old = s_ui.net_pool;
+    s_net_stage = NULL;
+    s_net_staged = NULL;
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    int64_t t0 = esp_timer_get_time();
+#endif
+    /* 母体上只把现有几何解干净（子标签位置跟着内容走），列宽/等高留给挂回后的
+       那一次正式结算：那里量的才是卡片 body 的真实宽度。 */
+    lv_obj_update_layout(stage);
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    int64_t t1 = esp_timer_get_time();
+#endif
+    const int32_t idx = lv_obj_get_index(old);
+    lv_obj_set_parent(staged, s_net_home);
+    if (lv_obj_get_parent(staged) == s_net_home) {
+        lv_obj_move_to_index(staged, idx);          /* 保持卡片 body 里的原顺序 */
+        lv_obj_set_flex_grow(staged, 0);
+        lv_obj_set_height(staged, LV_SIZE_CONTENT);
+        s_ui.net_pool = staged;                    /* 登记表已经指向新池里的行 */
+        lv_obj_delete(old);                        /* 旧池预建期间一直是空的 */
+        s_net_ready = false;
+        /* 这次 page2 布局实测 13.8ms：单独放到下一个空闲 tick，别和建行/挂回挤同一帧。 */
+        s_net_layout_pending = true;
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+        int64_t t2 = esp_timer_get_time();
+        ESP_LOGI(TAG, "netprep parts equalize=%u attach=%u", (unsigned)(t1 - t0), (unsigned)(t2 - t1));
+#endif
+    } else {
+        /* 挂回失败：按行登记释放新池的壳，再删新池，原池保持可用。 */
+        rows_sync(&s_ui.net_rows, &s_ui.net_made, 0, staged, true, false);
+        lv_obj_delete(staged);
+        s_net_ready = false;
+    }
+    lv_obj_delete(stage);
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    ESP_LOGI(TAG, "netprep settle rows=%d us=%u", s_ui.net_made,
+             (unsigned)(esp_timer_get_time() - t0));
+#endif
+}
+
+/* 一行正文只在这里拼一次：入页刷新与空闲预建必须写出同一份文本（行高由它决定），
+   否则预建出来的行高和入页后不一致，入页仍要重排。 */
+static void network_row_bind(uk_row_t *row, const fnos_netif_t *net, bool live, bool animate)
+{
+    /* 与原 refresh_body 的 b[256]/c1[32]/c2[32] 同等容量：长名/长状态不截短，
+       否则不同网口可能比较出同一 identity、详情也会串。 */
+    char id[256], l2[256], rx[32], tx[32];
+    if (net->state[0] && net->speed_mbps > 0)
+        snprintf(id, sizeof id, "%s · %s · %d Mbps", net->ifname, net->state, net->speed_mbps);
+    else if (net->state[0]) snprintf(id, sizeof id, "%s · %s", net->ifname, net->state);
+    else snprintf(id, sizeof id, "%s", net->ifname);
+    uint32_t led = live && (!net->state[0] || !strcmp(net->state, "up")) ? UK_OK : UK_T3;
+    /* Reset on identity/link changes; retain the presented rate on ordinary refresh. */
+    if (strcmp(lv_label_get_text(row->name1), id)) {
+        uk_row_set(row, id, "", "", "", -1, led, animate);
+    }
+    else if (row->led && !local_color_is(row->led, LV_STYLE_BG_COLOR, uk_c(led)))
+        lv_obj_set_style_bg_color(row->led, uk_c(led), 0);
+    const char *rxs = fmt_rate(rx, sizeof rx, net->rx_kbs);
+    const char *txs = fmt_rate(tx, sizeof tx, net->tx_kbs);
+    const bool occupancy = net->physical && net->speed_mbps > 0 && !strcmp(net->state, "up");
+    if (occupancy)
+        snprintf(l2, sizeof l2, "%s下行 %s · 上行 %s\n链路占用 收 %.1f%% / 发 %.1f%%",
+                 live ? "" : "上次 · ", rxs, txs,
+                 net->rx_kbs * 1024.0 * 8 / (net->speed_mbps * 1000000.0) * 100,
+                 net->tx_kbs * 1024.0 * 8 / (net->speed_mbps * 1000000.0) * 100);
+    else
+        snprintf(l2, sizeof l2, "%s下行 %s · 上行 %s", live ? "" : "上次 · ", rxs, txs);
+    /* 原生自测高：新文本在当前宽度下是否改行高，用 LVGL 自己的测量（不进整屏布局）。 */
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    int64_t sh0 = esp_timer_get_time();
+    int32_t h_old = lv_obj_get_self_height(row->name2);
+#endif
+    /* 占用行本来就走 set_txt（原实现第二笔覆盖第一笔），保留同样的节拍。 */
+    if (live && animate && !occupancy) set_num(row->name2, "%s", l2);
+    else set_txt(row->name2, "%s", l2);
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    int32_t h_new = lv_obj_get_self_height(row->name2);
+    fnos_perf_note_selfsize((uint32_t)(esp_timer_get_time() - sh0), h_old != h_new);
+#endif
+    show(lv_obj_get_parent(row->name2), true);
+    /* 同值写入会重标样式脏位：颜色没变就不写。 */
+    if (!local_color_is(row->name2, LV_STYLE_TEXT_COLOR, uk_c(live ? UK_T2 : UK_T3)))
+        lv_obj_set_style_text_color(row->name2, uk_c(live ? UK_T2 : UK_T3), 0);
+}
+
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+static uint32_t s_sec_relayouts;
+#endif
 static void inventory_sections_layout(inventory_layout_cache_t *cache, lv_obj_t *container,
                                lv_obj_t **cards, lv_obj_t **pools, const int *counts, int n,
                                int32_t min_col_w)
 {
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    int64_t lay_at = esp_timer_get_time();
+#endif
     lv_obj_update_layout(container);
-    if (cache->ready && cache->shape == inventory_shape(container, cards, pools, counts, n)) return;
+    if (cache->ready && cache->shape == inventory_shape(container, cards, pools, counts, n)) {
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+        fnos_perf_note_layout(1, (uint32_t)(esp_timer_get_time() - lay_at), false);
+#endif
+        return;
+    }
     lv_obj_set_height(container,0);
     lv_obj_set_flex_grow(container,1);
     lv_obj_update_layout(container);
@@ -4472,8 +4709,12 @@ static void inventory_sections_layout(inventory_layout_cache_t *cache, lv_obj_t 
         int32_t content=lv_font_get_line_height(UK_FONT_CJK_16);
         int32_t item_min=content, readable=0;
         if (pools[i] && counts[i]) {
-            if (lv_obj_has_flag(pools[i],LV_OBJ_FLAG_USER_2))
+            if (lv_obj_has_flag(pools[i],LV_OBJ_FLAG_USER_2)) {
                 uk_pool_relayout(pools[i],UK_ENTITY_MIN_WIDTH,false,NULL);
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+                s_sec_relayouts++;
+#endif
+            }
             lv_obj_update_layout(pools[i]);
             /* 行距先回到基准再量。uk_viewport_snap 会把行距撑满池高，而池高又是
                "卡按内容定高"从上一轮量出来的 —— 拿撑大后的行距回算内容高就是正反馈：
@@ -4569,6 +4810,10 @@ static void inventory_sections_layout(inventory_layout_cache_t *cache, lv_obj_t 
     lv_free(floorw);
     cache->shape = inventory_shape(container, cards, pools, counts, n);
     cache->ready = true;
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    fnos_perf_note_layout(1, (uint32_t)(esp_timer_get_time() - lay_at), s_sec_relayouts > 0);
+    s_sec_relayouts = 0;
+#endif
 }
 
 static void inventory_sections(inventory_layout_cache_t *cache, lv_obj_t *container,
@@ -5265,6 +5510,7 @@ static void refresh_shell(const fnos_status_t *st)
 static void refresh_body(int page, const fnos_status_t *st, const health_summary_t *health)
 {
     char b[256], c1[32], c2[32];
+    uint32_t p1_vol = 0, p1_raid = 0, p1_disk = 0, p1_inv = 0;
     /* 首页温度磁贴同一时间只讲一件事：要么给迷你趋势，要么给"为什么没有趋势"。 */
     bool home_temp_note = false, home_temp_long = false;
     const int running = health->running;
@@ -5376,6 +5622,7 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
     module_note(s_ui.raid_card,st,"raid");
     module_note(s_ui.disk_card,st,"disks");
     const bool vols_live = overview_live(st, "vols");
+    uint32_t p1_t0 = (uint32_t)esp_timer_get_time();
     int nvol = overview_readable(st, "vols") ? st->nvols : 0;
     nvol = rows_sync(&s_ui.vol_row, &s_ui.vol_made, nvol, s_ui.vol_pool, false, true);
     for (int i = 0; i < nvol; i++) {
@@ -5405,9 +5652,11 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
         uk_row_set(row, v->mnt, b, c1, NULL, gauge_value(v->pct), 0, vols_live);
         if (!local_color_is(row->val, LV_STYLE_TEXT_COLOR, uk_c(vols_live ? UK_T1 : UK_T3)))
             lv_obj_set_style_text_color(row->val, uk_c(vols_live ? UK_T1 : UK_T3), 0);
-        lv_obj_set_style_bg_color(row->bar, uk_c(vols_live ? uk_pct_color(v->pct) : UK_OFF), LV_PART_INDICATOR);
+        if (!local_color_is_part(row->bar, LV_STYLE_BG_COLOR,
+                                 uk_c(vols_live ? uk_pct_color(v->pct) : UK_OFF), LV_PART_INDICATOR))
+            lv_obj_set_style_bg_color(row->bar, uk_c(vols_live ? uk_pct_color(v->pct) : UK_OFF), LV_PART_INDICATOR);
     }
-    pool_layout(&s_p1_vol_n, &s_p1_vol_w, &s_p1_vol_h, nvol, s_ui.vol_pool, UK_ENTITY_MIN_WIDTH, false, NULL);
+    p1_vol = (uint32_t)esp_timer_get_time() - p1_t0; p1_t0 = (uint32_t)esp_timer_get_time();
 
     const bool raid_live = overview_live(st, "raid");
     int nraid = overview_readable(st, "raid") ? st->nraid : 0;
@@ -5452,9 +5701,9 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
             lv_obj_set_style_text_color(row->val, uk_c(col), 0);
         /* RAID rows otherwise land on 51 or 52 depending on the status text
            themselves; pin the item height so the list floor is deterministic. */
-        lv_obj_set_style_min_height(row->row, 52, 0);
+        if (!local_i32_is(row->row, LV_STYLE_MIN_HEIGHT, 52)) lv_obj_set_style_min_height(row->row, 52, 0);
     }
-    pool_layout(&s_p1_raid_n, &s_p1_raid_w, &s_p1_raid_h, nraid, s_ui.raid_pool, UK_ENTITY_MIN_WIDTH, false, NULL);
+    p1_raid = (uint32_t)esp_timer_get_time() - p1_t0; p1_t0 = (uint32_t)esp_timer_get_time();
 
     int ndisk = overview_readable(st, "disks") ? st->ndisks : 0;
     const bool disks_live = overview_live(st, "disks");
@@ -5502,7 +5751,7 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
                    NULL, -1, smart_led, true);
         show(row->name2, false); /* Full diagnostics remain available to details. */
     }
-    pool_layout(&s_p1_disk_n, &s_p1_disk_w, &s_p1_disk_h, ndisk, s_ui.disk_pool, UK_ENTITY_MIN_WIDTH, false, NULL);
+    p1_disk = (uint32_t)esp_timer_get_time() - p1_t0;
     }   /* (page == 1)：卷 / 阵列 / 硬盘清单 */
 
     /* ── P2：网络 ─────────────────────────────────────────────────────
@@ -5565,30 +5814,12 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
     /* Older collectors supply one selected interface. New frames supply all
        ports, bonds, VLANs and virtual interfaces without a fixed row count. */
     module_note(s_ui.net_card,st,"net");
+    network_prep_settle();              /* 预建没走完就入页：先把壳整池挂回卡片 */
     int nnets = net_readable ? (st->nnets ? st->nnets : (st->net.ifname[0] ? 1 : 0)) : 0;
+    s_net_unbound = -1;                 /* 下面逐行全量绑定，预建的待绑槽不再成立 */
     nnets = rows_sync(&s_ui.net_rows, &s_ui.net_made, nnets, s_ui.net_pool, true, false);
-    for (int i = 0; i < nnets; i++) {
-        const fnos_netif_t *net = st->nnets ? &st->nets[i] : &st->net;
-        uk_row_t *row = s_ui.net_rows[i];
-        if (net->state[0] && net->speed_mbps>0)
-            snprintf(b,sizeof b,"%s · %s · %d Mbps",net->ifname,net->state,net->speed_mbps);
-        else if (net->state[0]) snprintf(b,sizeof b,"%s · %s",net->ifname,net->state);
-        else snprintf(b,sizeof b,"%s",net->ifname);
-        uint32_t led = net_live && (!net->state[0] || !strcmp(net->state,"up")) ? UK_OK : UK_T3;
-        /* Reset on identity/link changes; retain the presented rate on ordinary refresh. */
-        if (strcmp(lv_label_get_text(row->name1),b))
-            uk_row_set(row,b,"","","",-1,led,true);
-        else if (row->led) lv_obj_set_style_bg_color(row->led,uk_c(led),0);
-        (net_live ? set_num : set_txt)(row->name2, "%s下行 %s · 上行 %s", net_live ? "" : "上次 · ", fmt_rate(c1,sizeof c1,net->rx_kbs),
-                                                  fmt_rate(c2,sizeof c2,net->tx_kbs));
-        if (net->physical && net->speed_mbps>0 && !strcmp(net->state,"up"))
-            set_txt(row->name2,"%s下行 %s · 上行 %s\n链路占用 收 %.1f%% / 发 %.1f%%", net_live ? "" : "上次 · ",
-                    fmt_rate(c1,sizeof c1,net->rx_kbs),fmt_rate(c2,sizeof c2,net->tx_kbs),
-                    net->rx_kbs*1024.0*8/(net->speed_mbps*1000000.0)*100,
-                    net->tx_kbs*1024.0*8/(net->speed_mbps*1000000.0)*100);
-        show(lv_obj_get_parent(row->name2),true);
-        lv_obj_set_style_text_color(row->name2,uk_c(net_live ? UK_T2 : UK_T3),0);
-    }
+    for (int i = 0; i < nnets; i++)
+        network_row_bind(s_ui.net_rows[i], st->nnets ? &st->nets[i] : &st->net, net_live, true);
     show(s_ui.net_card, nnets>0 || !net_readable);
     network_pool_layout();
     }   /* (page == 2)：网络 */
@@ -5673,7 +5904,6 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
         const fnos_docker_t *d = &st->docker[i];
         uk_row_t *r = s_ui.dock_row[i];
         const char *prefix = dock_live ? "" : (dock_partial ? "部分可读 · " : "上次");
-        if (strcmp(lv_label_get_text(r->name1), d->n)) s_p3_dock_n = -1;
         char cpu[64], mem[64], restarts[32];
         if (d->has_cpu && d->up) snprintf(cpu,sizeof cpu,"%.1f%%",d->cpu_pct); else snprintf(cpu,sizeof cpu,"--");
         if (d->has_mem && d->up) snprintf(mem,sizeof mem,"%.0f MB",d->mem_mb); else snprintf(mem,sizeof mem,"--");
@@ -5694,8 +5924,6 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
                    NULL, -1, !dock_live ? UK_OFF : d->up ? UK_OK : UK_WARN, true);
         show(r->name2, false);
     }
-    pool_layout(&s_p3_dock_n, &s_p3_dock_w, &s_p3_dock_h, ndock,
-                s_ui.dock_pool, UK_ENTITY_MIN_WIDTH, false, NULL);
     }   /* (page == 3)：容器行 */
 
     /* ── P3：硬件温度摘要 = **一台设备一行** ─────────────────────────────
@@ -5730,8 +5958,6 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
         lv_obj_set_style_text_color(r->val, uk_c(tc), 0);
         if (r->bar) lv_obj_set_style_bg_color(r->bar, uk_c(tc), LV_PART_INDICATOR);
     }
-    pool_layout(&s_p3_temp_n, &s_p3_temp_w, &s_p3_temp_h, ndev,
-                s_ui.p3_temp_pool, UK_ENTITY_MIN_WIDTH, false, NULL);
     }   /* (page == 3)：温度摘要行 */
 
     if (tgrp_ok && (page == 4)) {
@@ -5868,7 +6094,12 @@ static void refresh_body(int page, const fnos_status_t *st, const health_summary
     }
     set_txt(s_ui.agent_detail[UI_AGENT_ROWS - 1], "%s", motion_reduced() ? "精简" : "完整");
     }   /* (page == 3)：诊断明细 */
-    if (page == 1) storage_layout();
+    if (page == 1) {
+        uint32_t t = (uint32_t)esp_timer_get_time();
+        storage_layout();
+        p1_inv = (uint32_t)esp_timer_get_time() - t;
+        fnos_perf_note_p1_parts(p1_vol, p1_raid, p1_disk, p1_inv);
+    }
     if (page == 3) system_layout();
     /* P5：告警页与上面同源，按严重度分三组。组内行数多退少补 —— 不是 HIDDEN：
        隐藏的行仍然占位（见 row_trim 的注释）。 */
@@ -5947,15 +6178,37 @@ static void refresh_page(int idx)
     inventory_notice();
 }
 
-static void refresh(void)
+static void refresh_ex(bool body)
 {
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    int64_t r0 = esp_timer_get_time();
+#endif
     const health_summary_t health = health_summary(&s_st);
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    int64_t r1 = esp_timer_get_time();
+#endif
     for (int i = 0; i < FNOS_UI_PAGE_COUNT; i++) s_page_dirty[i] = i != s_page;
     uk_number_refresh_begin();
     uk_number_motion_enable(s_st.online && !motion_busy());
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    int64_t r2 = esp_timer_get_time();
+    fnos_perf_note_refresh_prep((uint32_t)(r2-r1));
+#endif
     refresh_shell(&s_st);
-    refresh_body(s_page, &s_st, &health);
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    int64_t r3 = esp_timer_get_time();
+#endif
+    if (body) refresh_body(s_page, &s_st, &health);
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    int64_t r4 = esp_timer_get_time();
+    fnos_perf_note_refresh_parts((uint32_t)(r1-r0), (uint32_t)(r3-r2), (uint32_t)(r4-r3));
+#endif
     inventory_notice();
+}
+
+static void refresh(void)
+{
+    refresh_ex(true);
 }
 
 /* ── tick / 生命周期 ──────────────────────────────────────────────── */
@@ -6053,6 +6306,139 @@ static void shot_do(void)
     atomic_store_explicit(&s_shot_done, true, memory_order_relaxed);
 }
 
+/* 空闲窗口预建网口行壳：入页时一次建 20 行再整池布局实测 105ms 创建 + 172ms 布局。
+   首次构建把行建在母体 screen 上的新池里，每 tick 只解母体子树；壳齐后整池一次挂回
+   卡片（见 network_prep_settle）。已经建好且数量没变的池留在卡片里，不再搬动；
+   运行中增减网口走原路径在卡片内增删，空闲 tick 再整池结算。
+   行内容用当前完整快照绑定，入页 refresh_body 再绑最新值；行数/行高不变时
+   shape 命中，入页不再重排。 */
+static void network_prep(void)
+{
+#if CONFIG_FNOS_UI_NET_PREP
+    if (!s_ui.net_pool || !s_ui.net_card || s_page == 2) return;
+    /* 手里正按着/覆盖层开着时别预建：池结算和落定会跟手势/详情抢帧。 */
+    if (s_pair_open || s_wifi_open || s_diagnostics || overlay_busy()) return;
+    if (s_ui.detail_mask && !lv_obj_has_flag(s_ui.detail_mask, LV_OBJ_FLAG_HIDDEN)) return;
+    if (motion_busy() || motion_pointer_busy()) return;
+    network_layout_pending_finish();    /* 挂回后的整页布局：单独占一个空闲 tick */
+    if (!overview_readable(&s_st, "net")) return;
+    const int want = s_st.nnets ? s_st.nnets : (s_st.net.ifname[0] ? 1 : 0);
+    if (want <= 0) {                    /* 端上没网口：别把旧壳留在池里当有效项 */
+        network_prep_settle();
+        s_net_unbound = -1;
+        if (s_ui.net_made > 0) {
+            rows_sync(&s_ui.net_rows, &s_ui.net_made, 0, s_ui.net_pool, true, false);
+            s_net_ready = false;
+        }
+        return;
+    }
+    /* 池已经是正式形态、数量也对：不要每 tick 把池搬出卡片再挂回。 */
+    if (s_net_ready && s_ui.net_made == want) return;
+    if (!s_net_geom_warm) {
+        int32_t w = lv_obj_get_content_width(s_ui.viewport);
+        if (w < 1) return;
+        /* 从未显示过的隐藏页 flex 尺寸还是 0；离屏布局一次后尺寸保留，隐藏时也能解几何。 */
+        lv_obj_set_style_translate_x(s_ui.page[2], w, 0);
+        /* translate 是延迟生效的样式，先解一次位置再 show，否则首帧按未移位的页面
+           全屏脏区重绘（host 上复现过放大到整区）。 */
+        lv_obj_refr_pos(s_ui.page[2]);
+        show(s_ui.page[2], true);
+        lv_obj_update_layout(s_ui.page[2]);
+        show(s_ui.page[2], false);
+        lv_obj_set_style_translate_x(s_ui.page[2], 0, 0);
+        s_net_geom_warm = true;
+        network_pool_layout();          /* 0 行时先解出列数与池宽 */
+    }
+    /* 只有“正式池还是空的”才走母体预建：有行的池留在卡片里按原路径增删。 */
+    if (s_ui.net_made == 0 && !s_net_stage) {
+        s_net_home = uk_card_body(s_ui.net_card);
+        if (!s_net_home) return;
+        s_net_stage = lv_obj_create(NULL);
+        if (!s_net_stage) return;
+        const int32_t home_w = lv_obj_get_content_width(s_ui.net_pool);
+        if (home_w < 1) { lv_obj_delete(s_net_stage); s_net_stage = NULL; return; }
+        s_net_staged = uk_pool_create(s_net_stage, UK_ENTITY_MIN_WIDTH);
+        if (!s_net_staged) { lv_obj_delete(s_net_stage); s_net_stage = NULL; return; }
+        lv_obj_set_style_pad_all(s_net_stage, 0, 0);
+        lv_obj_set_size(s_net_stage, home_w, lv_display_get_vertical_resolution(NULL));
+        lv_obj_set_flex_grow(s_net_staged, 0);
+        lv_obj_set_height(s_net_staged, LV_SIZE_CONTENT);
+        uk_pool_stretch(s_net_staged, false);
+        lv_obj_update_layout(s_net_stage);   /* 先把母体/池宽解出来，第一行就能按列宽建 */
+        s_net_col_w = 0;
+    }
+    const int before = s_ui.net_made;
+    lv_obj_t *pool = s_net_staged ? s_net_staged : s_ui.net_pool;
+    if (before > want) {                /* 拓扑缩小：多余壳删掉，与入页刷新一致 */
+        rows_sync(&s_ui.net_rows, &s_ui.net_made, want, pool, true, false);
+        if (s_net_unbound >= want) s_net_unbound = -1;   /* 待绑行已被删，别指着空槽 */
+        s_net_ready = false;
+        return;
+    }
+    /* 建壳和绑文本/量高度分两个 tick：合在一起单 tick ~12ms，加上本页刷新就顶到一帧。 */
+    if (s_net_unbound >= 0 && s_net_unbound < s_ui.net_made) {
+        const int b = s_net_unbound;
+        network_row_bind(s_ui.net_rows[b], s_st.nnets ? &s_st.nets[b] : &s_st.net,
+                         overview_live(&s_st, "net"), false);
+        s_net_unbound = -1;
+        s_net_ready = false;
+        if (s_net_stage) {
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+                int64_t t0 = esp_timer_get_time();
+#endif
+                lv_obj_update_layout(s_net_stage);
+                /* 行高随内容变化，先把已测出的最大行高同步给所有行；
+                   等最后挂回时再量一次就要多出一次整池布局。 */
+                int32_t h = 0;
+                for (int i = 0; i < s_ui.net_made; i++) {
+                    int32_t rh = lv_obj_get_height(s_ui.net_rows[i]->row);
+                    if (rh > h) h = rh;
+                }
+                if (h > 0) {
+                    for (int i = 0; i < s_ui.net_made; i++) {
+                        if (lv_obj_get_height(s_ui.net_rows[i]->row) != h)
+                            lv_obj_set_height(s_ui.net_rows[i]->row, h);
+                    }
+                }
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+            ESP_LOGI(TAG, "netprep row=%d stage_us=%u", s_ui.net_made,
+                     (unsigned)(esp_timer_get_time() - t0));
+#endif
+        }
+        return;
+    }
+    if (before < want) {
+        if (rows_sync(&s_ui.net_rows, &s_ui.net_made, before + 1, pool, true, false) > before) {
+            if (s_net_col_w <= 0) {
+                /* 列宽必须按卡片里正式池算：母体池还没结算过列数，按它算会把整行当成一列。 */
+                int32_t cols = uk_pool_cols(s_ui.net_pool);
+                if (cols < 1) cols = uk_pool_width_cols(s_ui.net_pool);
+                if (cols < 1) cols = 1;
+                int32_t pw = lv_obj_get_content_width(s_ui.net_pool);
+                if (pw > 0) s_net_col_w = (pw - UK_ITEM_GAP * (cols - 1)) / cols;
+            }
+            if (s_net_col_w > 0) lv_obj_set_width(s_ui.net_rows[before]->row, s_net_col_w);
+            s_net_unbound = before;
+            s_net_ready = false;
+        }
+        return;
+    }
+    if (s_net_stage) network_prep_settle();   /* 壳齐：整池一次挂回卡片 */
+    else if (!s_net_ready) {                  /* 卡片内增删后：空闲 tick 整池结算 */
+        if (s_net_layout_pending) return;      /* 分阶段结算正在走，本 tick 只推进一阶 */
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+        int64_t t0 = esp_timer_get_time();
+        network_pool_layout();
+        ESP_LOGI(TAG, "netprep grow rows=%d us=%u", s_ui.net_made,
+                 (unsigned)(esp_timer_get_time() - t0));
+#else
+        network_pool_layout();
+#endif
+        s_net_ready = s_network_pool_layout.ready;
+    }
+#endif
+}
+
 static void ui_tick(lv_timer_t *t)
 {
 #ifndef CONFIG_FNOS_UI_REFRESH_MS
@@ -6120,6 +6506,9 @@ static void ui_tick(lv_timer_t *t)
        LVGL 任务上（栈 12 KB），UI 任务上每一百字节都值得省。 */
     fnos_data_get(&s_st);
     nav_badge_sync(&s_st);
+    /* 预建壳排在这里：上一帧的排版在 tick 之间已经落定，此刻只有池子脏；
+       放在 refresh()/历史 push 之后会连当前页的排版一起重算。 */
+    network_prep();
 
     /* smp 是纯中转缓冲，且 ui_tick 只在 LVGL 任务里跑（lv_timer 回调），
        所以放 static 而不是压在栈上 —— 又是 1 KB。 */
@@ -6173,7 +6562,13 @@ static void ui_tick(lv_timer_t *t)
         return;
     }
     s_refresh_pending = false;
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    fnos_perf_layout_window(3);
+#endif
     refresh();
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    fnos_perf_layout_window(0);
+#endif
     /* 串口 'shot' 的落地点：快照必须打在刚刷完的这一帧上（排在 refresh 之后）。 */
     if (atomic_exchange_explicit(&s_shot_req, false, memory_order_relaxed)) shot_do();
     /* 串口 'temp n' 的落地点。温度块的展开态在真机上只能用手指点，而板上没有触摸
@@ -6467,6 +6862,9 @@ static struct {
     lv_indev_t *pointer;
 } s_motion;
 static int s_motion_pending = -1;
+/* Snapshot instance the target was prepared from. Body formatting is only
+   skipped when the visible page is still that exact instance; any new poll
+   (ok/fail/online included) forces the normal full refresh. */
 
 
 /* 8ms 的手势轮询即使什么都不做，也在每 8ms 唤醒一次 LVGL 任务（空闲时它本该睡到
@@ -6509,6 +6907,7 @@ static bool motion_reduced(void)
 }
 
 static bool motion_busy(void) { return s_motion.active; }
+static bool motion_pointer_busy(void) { return s_motion.tracking || s_motion.dragging; }
 
 static void page_layout(int idx)
 {
@@ -6522,20 +6921,24 @@ static void page_layout(int idx)
        the incoming geometry, never format and relayout the entire application. */
     /* 这一拍没刷到它就先补刷正文，再解几何：页露出来之前必须是最新数据。
        预热页（pages_warm）也走这里 —— 顺手把冷页的正文一次刷到位。 */
-    if (s_page_dirty[idx]) refresh_page(idx);
+    const bool refreshed = s_page_dirty[idx] != 0;
+    if (refreshed) {
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+        int64_t refresh_us = esp_timer_get_time();
+#endif
+        refresh_page(idx);
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+        fnos_perf_note_prep_refresh((uint32_t)(esp_timer_get_time() - refresh_us));
+#endif
+    }
     lv_obj_update_layout(s_ui.page[idx]);
-    if (idx == 1) {
+    if (idx == 1 && !refreshed) {
         storage_layout();
-        pool_layout(&s_p1_vol_n, &s_p1_vol_w, &s_p1_vol_h, s_ui.vol_made, s_ui.vol_pool, UK_ENTITY_MIN_WIDTH, false, NULL);
-        pool_layout(&s_p1_raid_n, &s_p1_raid_w, &s_p1_raid_h, s_ui.raid_made, s_ui.raid_pool, UK_ENTITY_MIN_WIDTH, false, NULL);
-        pool_layout(&s_p1_disk_n, &s_p1_disk_w, &s_p1_disk_h, s_ui.disk_made, s_ui.disk_pool, UK_ENTITY_MIN_WIDTH, false, NULL);
     } else if (idx == 2) {
         network_layout();
         network_pool_layout();
-    } else if (idx == 3) {
+    } else if (idx == 3 && !refreshed) {
         system_layout();
-        pool_layout(&s_p3_dock_n, &s_p3_dock_w, &s_p3_dock_h, s_ui.dock_made, s_ui.dock_pool, UK_ENTITY_MIN_WIDTH, false, NULL);
-        pool_layout(&s_p3_temp_n, &s_p3_temp_w, &s_p3_temp_h, s_ui.p3_temp_made, s_ui.p3_temp_pool, UK_ENTITY_MIN_WIDTH, false, NULL);
     } else if (idx == 4) {
     pool_layout(&s_p4_n, &s_p4_w, &s_p4_h, s_ui.temp_blk_made, s_ui.temp_pool, UK_ENTITY_MIN_WIDTH, false, NULL);
     /* 池刚给每块分了宽度：展开的通道网格跟着重算列数（池列数变了块宽就变）。 */
@@ -6677,6 +7080,13 @@ static void motion_exec(void *unused, int32_t value)
 
 static void motion_finish(void)
 {
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    fnos_perf_note_motion_settle(fnos_ui_page());
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    fnos_perf_note_settle_snapshot(s_st.source_seq,
+        s_st.source_seq != s_motion_seq0 || s_st.recv_ms != s_motion_recv0);
+#endif   /* 松手→落定：80ms 的 bench 窗口之外也要有数 */
+#endif
 #ifdef CONFIG_FNOS_UI_MOTION_STATS
     if (s_motion.active && s_motion_stats.frames) {
         ESP_LOGI(TAG, "motion %d->%d prepare_us=%lld frames=%lu render_avg_us=%lld render_max_us=%lld elapsed_ms=%lu",
@@ -6690,6 +7100,9 @@ static void motion_finish(void)
     bool settled_edge = s_motion.active &&
         ((s_page == s_motion.to && s_motion.painted == s_motion.width) ||
          (s_page == s_motion.from && s_motion.painted == 0));
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    int64_t seg0 = esp_timer_get_time();
+#endif
     s_motion.active = false;
     s_motion.velocity = 0;
     uk_trend_set_page_motion(false);
@@ -6707,17 +7120,33 @@ static void motion_finish(void)
         lv_obj_set_pos(clip, 0, 0);
         lv_obj_refr_size(clip);
     }
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    int64_t seg1 = esp_timer_get_time();
+#endif
     if (settled_edge) {
         lv_obj_update_layout(s_ui.viewport);
         lv_display_enable_invalidation(display, true);
     } else {
         lv_obj_invalidate(s_ui.viewport);
     }
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    int64_t seg2 = esp_timer_get_time();
+#endif
     refresh_soon();
     if (s_refresh_pending) {
         s_refresh_pending = false;
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+        fnos_perf_layout_window(2);
+#endif
         refresh(); pair_refresh();
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+        fnos_perf_layout_window(0);
+#endif
     }
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    fnos_perf_note_settle_parts((uint32_t)(seg1 - seg0), (uint32_t)(seg2 - seg1),
+                                (uint32_t)(esp_timer_get_time() - seg2));
+#endif
 }
 
 static void motion_complete(void)
@@ -6774,6 +7203,13 @@ static void motion_snap(bool commit)
     float max_speed = UK_MOTION_DAMPING * fabsf(d) / s_motion.duration;
     if (d * s_motion.start_velocity < 0 && fabsf(s_motion.start_velocity) > max_speed)
         s_motion.start_velocity = -copysignf(max_speed, d);
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    fnos_perf_note_motion_start();   /* 手势动画的代数：落定只认这一代 */
+#endif
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    s_motion_seq0 = s_st.source_seq;
+    s_motion_recv0 = s_st.recv_ms;
+#endif
     s_motion.active = true;
     lv_anim_t a;
     lv_anim_init(&a);
@@ -6802,6 +7238,10 @@ static void motion_prepare(int from, int to, int direction)
     s_motion.offset = 0;
     s_motion.painted = INT32_MIN;   /* 首帧必须画出来 */
     s_motion.velocity = 0;
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    s_motion_seq0 = s_st.source_seq;
+    s_motion_recv0 = s_st.recv_ms;
+#endif
     s_motion.active = true;
     uk_trend_set_page_motion(true);
     /* Clip the target side to zero width before it becomes visible; otherwise
@@ -6823,7 +7263,15 @@ static void motion_prepare(int from, int to, int direction)
     }
     /* Idle warming creates inventory rows before touch. Refresh only this
        target before revealing it; an old empty/offline page must not flash. */
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    int64_t layout_at = esp_timer_get_time();
+    fnos_perf_layout_window(1);
+#endif
     page_layout(to);
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    fnos_perf_note_prep_page((uint32_t)(esp_timer_get_time() - layout_at));
+    fnos_perf_layout_window(0);
+#endif
     s_refresh_pending = true;
 #ifdef CONFIG_FNOS_UI_MOTION_STATS
     s_motion_stats.prepared = esp_timer_get_time() - prepared_at;

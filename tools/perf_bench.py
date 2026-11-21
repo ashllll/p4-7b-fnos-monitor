@@ -32,10 +32,22 @@ FIELDS = ["kind", "page", "cycles", "misses",
           "rr2rs_n", "rr2rs_p50_us", "rr2rs_p95_us",
           "frames", "wall_ms", "fps_avg", "fps_p50",
           "tick_n", "tick_p50_us", "tick_p95_us", "tick_max_us",
-          "cpu_lvgl", "cpu_idle", "iv_p99_us", "iv_long_n", "drag_hold_ms"]
+          "cpu_lvgl", "cpu_idle", "iv_p99_us", "iv_long_n", "drag_hold_ms",
+          "dir", "span", "rel_settle_us", "rel_frames",
+          "rel_page", "rel_iv_max_us", "rel_long_n", "final_us",
+          "fin_fix_us", "fin_layout_us", "fin_refresh_us", "prep_page_us", "prep_refresh_us", "final_rs_us", "fin_skip", "ref_health_us", "ref_shell_us", "ref_body_us", "ref_prep_us", "p1_vol_us", "p1_raid_us", "p1_disk_us", "p1_inv_us", "rel_seq", "rel_new", "pair_us"]
 INT_FIELDS = {f for f in FIELDS if not f.startswith("fps") and not f.startswith("cpu") and f != "kind"}
 # 旧 [bench] 行没有这些字段；缺了按未测量处理，不能把旧日志判坏。
-BENCH_OPTIONAL_FIELDS = {"iv_sampled", "iv_capped", "iv_p99_us", "iv_long_n", "drag_hold_ms"}
+BENCH_OPTIONAL_FIELDS = {
+    "prep_refresh_us", "final_rs_us", "fin_skip",
+    "iv_sampled", "iv_capped", "iv_p99_us", "iv_long_n", "drag_hold_ms",
+                         # 2026-11-20 起：dir 0=左 1=右 2=不适用（脚本注入的真实方向），
+                         # rel_settle_us/rel_frames = 松手→motion_finish，跨过 frame_arm 的 80ms。
+                         "dir", "span", "rel_settle_us", "rel_frames",
+                         "rel_page", "rel_iv_max_us", "rel_long_n", "final_us",
+                         "fin_fix_us", "fin_layout_us", "fin_refresh_us", "prep_page_us",
+    "ref_health_us", "ref_shell_us", "ref_body_us",
+    "ref_prep_us", "p1_vol_us", "p1_raid_us", "p1_disk_us", "p1_inv_us", "rel_seq", "rel_new", "pair_us"}
 KV = re.compile(r"([a-z0-9_]+)=([^\s]+)")
 # 串口与其它任务的 ESP_LOG 共用：日志记录会直接接在当前行尾（实测
 # [bench_parts] 最后一个值被写成 "11470W (57753) esp-tls..."）。采集窗口里
@@ -59,7 +71,7 @@ def clean_line(line):
 # optional so a bench binary without them (the 30 FPS control build) still parses;
 # when a family is present, every field of that family is required.
 AUX_LINES = {"[bench_parts]": "part_", "[bench_draw]": "draw_",
-             "[bench_ui]": "ui_", "[bench_tick]": "tick_"}
+             "[bench_ui]": "ui_", "[bench_tick]": "tick_", "[bench_lay]": "lay_"}
 AUX_REQUIRED = {
     "part_": ("frames", "frame_us", "flush_us", "flush_wait_us",
               "ppa_us", "ppa_n", "ppa_max_us", "dma2d_us", "dma2d_n", "dma2d_max_us",
@@ -73,6 +85,9 @@ AUX_REQUIRED = {
             "chart_draw_us", "chart_draw_n", "chart_draw_max_us"),
     "tick_": ("motion_n", "motion_p50_us", "motion_p95_us", "motion_max_us",
               "full_n", "full_p50_us", "full_p95_us", "full_max_us"),
+    "lay_": tuple(f"w{w}_k{k}_{s}" for w in range(1, 4) for k in range(3)
+                  for s in ("n", "us", "max", "rl")) +
+            ("pool_rl_mask", "shape_hits", "shape_mask", "selfh_n", "selfh_chg", "selfh_us", "scr_n", "scr_dirty"),
 }
 AUX_FIELDS = [prefix + name for prefix, names in AUX_REQUIRED.items() for name in names]
 AUX_FLOAT_FIELDS = {"draw_cpu_worker"}
@@ -102,6 +117,26 @@ def parse_aux(line):
     prefix = next((p for head, p in AUX_LINES.items() if line.startswith(head)), None)
     if prefix is None:
         return None
+    if prefix == "lay_":
+        # [bench_lay] repeats us/max/rl for every window/kind, so only the full
+        # wN_kM_s key is unique; the generic KV map cannot represent it.
+        row = {}
+        for w, n, us, mx, rl in re.findall(
+                r"(w[1-3]_k[0-2])_n=(\d+) us=(\d+) max=(\d+) rl=(\d+)", line):
+            for suffix, raw in (("n", n), ("us", us), ("max", mx), ("rl", rl)):
+                row[f"{prefix}{w}_{suffix}"] = _aux_number(raw, f"{prefix}{w}_{suffix}")
+        for key, raw in KV.findall(line):
+            if key in {"kind", "page"} or key.startswith("w"):
+                continue
+            col = prefix + key
+            if col in AUX_FIELDS:
+                row[col] = _aux_number(raw, col)
+        for key, raw in KV.findall(line):
+            if key == "kind":
+                row["_kind"] = raw
+            elif key == "page":
+                row["_page"] = _aux_number(raw, "lay_page")
+        return _check_aux_row(row, prefix)
     row = {}
     for key, raw in KV.findall(line):
         if key == "kind":
@@ -122,6 +157,10 @@ def parse_aux(line):
         if col in row:
             raise ValueError("bench aux 字段重复：" + col)
         row[col] = _aux_number(raw, col)
+    return _check_aux_row(row, prefix)
+
+
+def _check_aux_row(row, prefix):
     if "_kind" not in row or "_page" not in row:
         raise ValueError("bench aux 行缺少 kind/page")
     missing = [prefix + name for name in AUX_REQUIRED[prefix] if prefix + name not in row]
@@ -172,7 +211,8 @@ def parse_bench(line):
                 row[k] = v
             elif k in INT_FIELDS:
                 value = float(v)
-                if not math.isfinite(value) or value < 0 or not value.is_integer():
+                if (not math.isfinite(value) or not value.is_integer()
+                        or (value < 0 and k != "rel_page")):
                     raise ValueError("无效 bench 整数：%s" % k)
                 row[k] = int(value)
             else:
