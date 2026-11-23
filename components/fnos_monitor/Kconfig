@@ -210,6 +210,17 @@ menu "fnOS monitor"
                 Print aggregate timing for page transitions, without telemetry
                 or endpoint details. Enable locally when profiling the display.
 
+        config FNOS_UI_NET_PREP
+            bool "Prebuild network rows during idle ticks"
+            default y
+            help
+                Create the network page's row shells during idle ticks, on an
+                inactive screen, then resolve the whole pool once and attach it
+                back. Cuts the first network entry from ~345ms to ~70ms; the
+                shells stay resident (~1.5KB PSRAM each) and are rebound to the
+                latest snapshot whenever the page refreshes. Turn off to compare
+                against the on-entry build path.
+
         config FNOS_UI_PERF_BENCH
             bool "Touch/render benchmark console (bench command)"
             default n

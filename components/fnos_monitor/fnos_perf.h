@@ -35,6 +35,29 @@ void fnos_perf_note_stage(fnos_perf_stage_t stage, uint32_t us);
    chart_draw 另受 frame_arm 窗口约束，以便与 chart_frames 对齐。 */
 void fnos_perf_note_ui_stage(fnos_perf_stage_t stage, uint32_t us);
 
+/* 松手 → motion_finish 的落定时长与帧数（不由 frame_arm 的 80ms 窗口截断）。 */
+void fnos_perf_note_motion_settle(int page);
+void fnos_perf_note_fin_skip(void);
+void fnos_perf_note_refresh_parts(uint32_t health_us, uint32_t shell_us, uint32_t body_us);
+void fnos_perf_note_pair(uint32_t us);
+void fnos_perf_note_refresh_prep(uint32_t us);
+/* motion_finish 内部分段：几何复位 / 整页布局 / 同步 refresh；motion_prepare 里的目标页布局 */
+void fnos_perf_note_settle_parts(uint32_t fix_us, uint32_t layout_us, uint32_t refresh_us);
+void fnos_perf_note_prep_page(uint32_t us);
+void fnos_perf_note_p1_parts(uint32_t vol_us, uint32_t raid_us, uint32_t disk_us, uint32_t inv_us);
+void fnos_perf_note_settle_snapshot(uint32_t seq, bool new_snapshot);
+void fnos_perf_note_prep_refresh(uint32_t us);
+void fnos_perf_note_pool_relayout(uint32_t mask);
+/* 布局归因窗口：1=motion_prepare，2=落定 refresh，3=普通 ui_tick refresh；0=关闭。 */
+void fnos_perf_layout_window(int win);
+/* kind：0=network_pool_layout 1=inventory_sections_layout 2=pool_layout；relayout 记真实重排次数。 */
+void fnos_perf_note_layout(int kind, uint32_t us, bool relayout);
+/* 网口池 shape 失配字段掩码：1 池宽 2 卡片宽 4 数量 8 行距 16 行高 32 子部件高度。 */
+void fnos_perf_note_shape_mismatch(uint32_t mask);
+void fnos_perf_note_selfsize(uint32_t us, bool changed);
+void fnos_perf_note_scr_dirty(bool dirty);
+void fnos_perf_note_motion_start(void);
+
 /* 给 trend chart 挂绘制计时；void* 是为了让本头不依赖 lvgl.h。生产构建里是空操作。 */
 void fnos_perf_track_chart(void *chart);
 

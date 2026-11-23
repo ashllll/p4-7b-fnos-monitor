@@ -575,7 +575,13 @@ void uk_row_set(uk_row_t *r, const char *l1, const char *l2,
         else     lv_obj_add_flag(line2, LV_OBJ_FLAG_HIDDEN);
     }
 
-    if (r->led) lv_obj_set_style_bg_color(r->led, uk_c(led_hex ? led_hex : UK_OFF), 0);
+    if (r->led) {
+        const lv_color_t lc = uk_c(led_hex ? led_hex : UK_OFF);
+        lv_style_value_t v;
+        if (lv_obj_get_local_style_prop(r->led, LV_STYLE_BG_COLOR, &v, 0) != LV_STYLE_RES_FOUND ||
+            !lv_color_eq(v.color, lc))
+            lv_obj_set_style_bg_color(r->led, lc, 0);
+    }
     if (r->bar) {
         if (pct < 0) lv_obj_add_flag(r->bar, LV_OBJ_FLAG_HIDDEN);
         else {
