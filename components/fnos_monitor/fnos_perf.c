@@ -99,6 +99,7 @@ static struct {
     uint32_t frames;
     uint32_t rel_frames;   /* 松手→落定之间渲染完成的帧数（独立于 frame_arm 80ms 窗口） */
     uint32_t rel_gen;      /* 松手时的 motion 代数：只有之后新起的手势动画才算本次落定 */
+    int rel_dir;           /* 该次松手的拖动方向：落定被接受后与 page/快照一起归档 */
     uint32_t hold_ms;   /* drag：press_seen 到脚本释放的实际墙钟时长 */
 } s_run;
 static bool s_release_pending;  /* 取消时欠 LVGL 一次合成的 RELEASED */
@@ -113,8 +114,10 @@ static uint32_t s_niv_total, s_niv_long, s_iv_max_all;
    frame_arm 80ms 之后才落定的动画，iv 窗口看不到；这两个数独立记整段。 */
 static uint32_t s_rel_settle_us, s_rel_frames;
 static int s_rel_page = -1;
+static int s_rel_dir = 2;   /* 被接受落定的方向；没有落定时报告回退到整轮最后一次方向 */
 static bool s_rel_settled;
-/* 松手→落定这一段自己的帧间隔（frame_arm 的 iv 只看 80ms，落定帧与释放长帧都在窗外）。 */
+/* 松手→落定这一段自己的帧间隔（frame_arm 的 iv 只看 80ms，落定帧与释放长帧都在窗外）。
+   每次松手重新累计、只到第一个被接受的落定，因此不是整轮最大值（整轮最大值是 iv_max_us）。 */
 static uint32_t s_rel_iv[PF_SAMPLES], s_rel_iv_max, s_rel_nlong;
 static int s_nrel_iv;
 static uint32_t s_final_us;    /* 落定 → 下一帧 READY：最终画面真正呈现的时刻 */
@@ -385,6 +388,14 @@ static void pf_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
         s_run.rel_seen   = true;
         s_run.release_us = esp_timer_get_time();
         s_run.rel_gen    = s_motion_gen;
+        s_run.rel_dir    = s_run.dir;   /* 落定可能晚于下一次翻向，方向必须随松手记 */
+        if (!s_rel_settled) {
+            /* 新一次松手重新开窗：迟到落定前，上一轮帧数/最大间隔不得混进本轮。 */
+            s_run.rel_frames = 0;
+            s_rel_iv_max = 0;
+            s_rel_nlong = 0;
+            s_nrel_iv = 0;
+        }
         s_run.wait_rel   = true;
     }
 }
@@ -465,6 +476,15 @@ static const char *pf_kind_name(void)
 {
     return s_run.kind == PF_IDLE ? "idle" : s_run.kind == PF_SWIPE ? "swipe"
          : s_run.kind == PF_DRAG ? "drag" : "tap";
+}
+
+/* [bench] 的 dir：有被接受的落定时用它那次松手的方向；没有落定时保持旧口径
+   （drag 取整轮最后一次方向，其它手势 2）。 */
+static int pf_report_dir(void)
+{
+    if (s_run.kind != PF_DRAG) return 2;
+    int dir = s_rel_settled ? s_rel_dir : s_run.dir;
+    return dir < 0 ? 0 : 1;
 }
 
 static void pf_report(void)
@@ -562,7 +582,7 @@ static void pf_report(void)
            s_nrr2rs, pf_pct(s_rr2rs, s_nrr2rs, 50), pf_pct(s_rr2rs, s_nrr2rs, 95),
            s_ntick, pf_pct(s_tick, s_ntick, 50), pf_pct(s_tick, s_ntick, 95), pf_max(s_tick, s_ntick),
            total ? 100.0 * lvgl / total : 0.0, total ? 100.0 * idle / total : 0.0, iv99, iv_long_n, s_run.hold_ms,
-           (unsigned)(s_run.kind == PF_DRAG ? (s_run.dir < 0 ? 0u : 1u) : 2u), (uint32_t)s_run.span,
+           (unsigned)pf_report_dir(), (uint32_t)s_run.span,
            s_rel_settle_us, s_rel_frames, s_rel_page, s_rel_iv_max, s_rel_nlong, s_final_us, s_final_rs_us, s_fin_skip,
            s_fin_fix_us, s_fin_layout_us, s_fin_refresh_us, s_prep_page_us, s_prep_refresh_us,
            s_ref_health_us, s_ref_shell_us, s_ref_body_us, s_pair_us, s_ref_prep_us,
@@ -758,6 +778,7 @@ static void pf_start(void)
     s_rel_frames = 0;
     s_rel_settled = false;
     s_rel_page = -1;
+    s_rel_dir = 2;
     s_nrel_iv = 0;
     s_rel_iv_max = 0;
     s_rel_nlong = 0;
@@ -900,7 +921,7 @@ void fnos_perf_note_fin_skip(void)
     if (s_run.active) s_fin_skip++;
 }
 
-void fnos_perf_note_motion_settle(int page)
+void fnos_perf_note_motion_settle(int page, uint32_t seq, bool new_snapshot)
 {
     if (!s_run.active || !s_run.rel_seen || s_rel_settled) return;
     /* 只有松手之后新起的动画才算本次落定；进页前的 page_motion_settle 不算呈现。 */
@@ -909,6 +930,10 @@ void fnos_perf_note_motion_settle(int page)
     s_rel_settle_us = (uint32_t)(now - s_run.release_us);
     s_rel_frames    = s_run.rel_frames;
     s_rel_page      = page;
+    s_rel_dir       = s_run.rel_dir;
+    /* 方向、page、时长、快照在同一次接受里写入；后续 cycle 的落定整条丢弃。 */
+    s_rel_seq       = seq;
+    s_rel_new       = new_snapshot;
     s_finish_us     = now;
     s_final_pending = true;
     s_rel_settled   = true;
@@ -942,11 +967,6 @@ void fnos_perf_note_p1_parts(uint32_t vol_us, uint32_t raid_us, uint32_t disk_us
 {
     if (s_lay_win != 2) return; /* only accept parts from the settle refresh itself */
     s_p1_vol_us = vol_us; s_p1_raid_us = raid_us; s_p1_disk_us = disk_us; s_p1_inv_us = inv_us;
-}
-
-void fnos_perf_note_settle_snapshot(uint32_t seq, bool new_snapshot)
-{
-    s_rel_seq = seq; s_rel_new = new_snapshot;
 }
 
 void fnos_perf_note_prep_page(uint32_t us)
@@ -1166,11 +1186,10 @@ void fnos_perf_note_pair(uint32_t us) { (void)us; }
 void fnos_perf_note_refresh_parts(uint32_t a, uint32_t b, uint32_t c) { (void)a; (void)b; (void)c; }
 void fnos_perf_note_fin_skip(void) {}
 
-void fnos_perf_note_motion_settle(int page) { (void)page; }
+void fnos_perf_note_motion_settle(int page, uint32_t seq, bool n) { (void)page; (void)seq; (void)n; }
 void fnos_perf_note_settle_parts(uint32_t a, uint32_t b, uint32_t c) { (void)a; (void)b; (void)c; }
 void fnos_perf_note_prep_page(uint32_t us) { (void)us; }
 void fnos_perf_note_p1_parts(uint32_t a, uint32_t b, uint32_t c, uint32_t d) { (void)a; (void)b; (void)c; (void)d; }
-void fnos_perf_note_settle_snapshot(uint32_t seq, bool n) { (void)seq; (void)n; }
 void fnos_perf_note_prep_refresh(uint32_t us) { (void)us; }
 void fnos_perf_note_pool_relayout(uint32_t mask) { (void)mask; }
 void fnos_perf_layout_window(int w) { (void)w; }
@@ -1178,6 +1197,7 @@ void fnos_perf_note_layout(int k, uint32_t us, bool r) { (void)k; (void)us; (voi
 void fnos_perf_note_shape_mismatch(uint32_t m) { (void)m; }
 void fnos_perf_note_selfsize(uint32_t us, bool c) { (void)us; (void)c; }
 void fnos_perf_note_scr_dirty(bool d) { (void)d; }
+void fnos_perf_note_motion_start(void) {}
 void fnos_perf_note_tick(uint32_t us, bool motion) { (void)us; (void)motion; }
 void fnos_perf_note_stage(fnos_perf_stage_t stage, uint32_t us) { (void)stage; (void)us; }
 void fnos_perf_note_ui_stage(fnos_perf_stage_t stage, uint32_t us) { (void)stage; (void)us; }

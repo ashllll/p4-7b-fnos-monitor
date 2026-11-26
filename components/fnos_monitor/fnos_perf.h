@@ -35,8 +35,11 @@ void fnos_perf_note_stage(fnos_perf_stage_t stage, uint32_t us);
    chart_draw 另受 frame_arm 窗口约束，以便与 chart_frames 对齐。 */
 void fnos_perf_note_ui_stage(fnos_perf_stage_t stage, uint32_t us);
 
-/* 松手 → motion_finish 的落定时长与帧数（不由 frame_arm 的 80ms 窗口截断）。 */
-void fnos_perf_note_motion_settle(int page);
+/* 落定记账：只接受第一个“松手后新起动画”的手势，page/方向/快照必须来自同一次
+   松手（调用方把快照一起传入，避免多次落定互相覆盖）。rel_iv_max_us/rel_long_n
+   与 rel_* 一样只描述这次落定；全段最大值/长帧数看 [bench] 的 iv_max_us / iv_long_n
+   （其余 *_max 是采样窗口内的最大值）。 */
+void fnos_perf_note_motion_settle(int page, uint32_t seq, bool new_snapshot);
 void fnos_perf_note_fin_skip(void);
 void fnos_perf_note_refresh_parts(uint32_t health_us, uint32_t shell_us, uint32_t body_us);
 void fnos_perf_note_pair(uint32_t us);
@@ -45,7 +48,6 @@ void fnos_perf_note_refresh_prep(uint32_t us);
 void fnos_perf_note_settle_parts(uint32_t fix_us, uint32_t layout_us, uint32_t refresh_us);
 void fnos_perf_note_prep_page(uint32_t us);
 void fnos_perf_note_p1_parts(uint32_t vol_us, uint32_t raid_us, uint32_t disk_us, uint32_t inv_us);
-void fnos_perf_note_settle_snapshot(uint32_t seq, bool new_snapshot);
 void fnos_perf_note_prep_refresh(uint32_t us);
 void fnos_perf_note_pool_relayout(uint32_t mask);
 /* 布局归因窗口：1=motion_prepare，2=落定 refresh，3=普通 ui_tick refresh；0=关闭。 */

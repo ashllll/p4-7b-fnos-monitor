@@ -44,6 +44,20 @@ class Samples(unittest.TestCase):
                         blend_us=300, blend_n=3, blend_max_us=120,
                         text_us=700, text_n=2, text_max_us=400)
 
+    def lay_line(self):
+        # Mirrors fnos_perf.c's real printf: 12 w1..w3 × k0..k2 groups in that
+        # order, then the eight tail counters. w3_k2 stays all-zero, as an
+        # unwarmed window really prints.
+        blocks = []
+        for w in range(1, 4):
+            for k in range(3):
+                n, us, mx, rl = ((0, 0, 0, 0) if (w, k) == (3, 2)
+                                 else (w + k, 100 * w + 10 * k, 50 * w + k, k))
+                blocks.append(f'w{w}_k{k}_n={n} us={us} max={mx} rl={rl}')
+        return ('[bench_lay] kind=tap page=3 ' + ' '.join(blocks) +
+                ' pool_rl_mask=3 shape_hits=2 shape_mask=6'
+                ' selfh_n=4 selfh_chg=1 selfh_us=90 scr_n=5 scr_dirty=2')
+
     def test_record_validation(self):
         self.assertEqual(bench.parse_bench(self.record())['frames'], 1)
         for line in ('[bench] kind=tap', self.record().replace('frames=1', 'frames=nan'),
@@ -143,6 +157,97 @@ class Samples(unittest.TestCase):
         self.assertEqual(row['part_flush_us_pf'], 750.0)
         self.assertEqual(row['draw_text_us_pf'], 175.0)
         self.assertEqual(row['tick_full_p50_us'], 1000)
+
+    def test_bench_lay_real_line_has_46_keys(self):
+        row = bench.parse_aux(self.lay_line())
+        self.assertEqual(len(row), 46)
+        self.assertEqual(row['_kind'], 'tap')
+        self.assertEqual(row['_page'], 3)
+        self.assertEqual(row['lay_w1_k0_n'], 1)
+        self.assertEqual(row['lay_w1_k0_us'], 100)
+        self.assertEqual(row['lay_w1_k0_max'], 50)
+        self.assertEqual(row['lay_w1_k0_rl'], 0)
+        self.assertEqual(row['lay_w3_k2_n'], 0)      # unwarmed window: zero is data
+        self.assertEqual(row['lay_scr_dirty'], 2)
+        self.assertEqual(set(row), {'_kind', '_page'} |
+                         {'lay_' + name for name in bench.AUX_REQUIRED['lay_']})
+
+    def test_bench_lay_merges_and_roundtrips_csv(self):
+        payload = self.lay_line() + '\n' + self.record(frames=10, rel_page=-1) + '\n'
+
+        class Serial:
+            def __init__(self): self.buf = payload.encode()
+            def write(self, _): pass
+            def flush(self): pass
+            def read(self, _):
+                chunk, self.buf = self.buf, b''
+                return chunk
+        with patch.object(bench, 'drain'):
+            row, _ = bench.run_case(Serial(), 'tap:3', 1)
+        self.assertEqual(row['lay_w2_k1_max'], 101)
+        self.assertEqual(row['lay_w3_k2_n'], 0)
+        self.assertNotIn('lay_w9_k9_n', row)
+        row.update({'label': 'synthetic', 'case': 'tap:3', 'repeat': 0})
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'lay.csv'
+            cols = ['label', 'case', 'repeat'] + bench.FIELDS + bench.AUX_FIELDS + bench.DERIVED_FIELDS
+            with open(path, 'w', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=cols, extrasaction='ignore', restval='')
+                writer.writeheader()
+                writer.writerow(row)
+            loaded = table.load(path)['tap:3'][0]
+        self.assertEqual(table.med([loaded], 'lay_w2_k1_max'), 101)
+        self.assertEqual(table.med([loaded], 'lay_scr_dirty'), 2)
+        self.assertEqual(loaded['rel_page'], -1)   # sentinel survives CSV load
+
+    def test_bench_lay_rejects_duplicates_and_bad_kind(self):
+        line = self.lay_line()
+        for bad in (line + ' w1_k0_n=1 us=2 max=3 rl=4',        # duplicate window block
+                    line + ' scr_n=99',                          # duplicate tail counter
+                    line.replace('kind=tap', 'kind=bogus'),
+                    line.replace(' page=3', ' page=3 page=3')):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                bench.parse_aux(bad)
+
+    def test_bench_lay_rejects_truncated_field_tokens(self):
+        line = self.lay_line()
+        block = 'w1_k0_n=1 us=100 max=50 rl=0'
+        for bad in (line.replace(block, 'w1_k0_n=1 us=100 max=50 rl=1.5'),
+                    line.replace(block, 'w1_k0_n=1 us=100 max=50 rl=1bad'),
+                    line.replace('w1_k0_n=1', 'w1_k0_n=1x')):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                bench.parse_aux(bad)
+
+    def load_rows(self, rows):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'table.csv'
+            cols = ['case', 'iv_p50_us', 'rel_page', 'rel_seq']
+            with open(path, 'w', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=cols, restval='')
+                writer.writeheader()
+                writer.writerows(rows)
+            return table.load(path)
+
+    def test_table_shares_rel_page_sentinel_rule(self):
+        cases = self.load_rows([
+            {'case': 'settled', 'iv_p50_us': '100', 'rel_page': '-1', 'rel_seq': '7'},
+            {'case': 'old', 'iv_p50_us': '120', 'rel_page': '', 'rel_seq': ''},
+        ])
+        self.assertEqual(cases['settled'][0]['rel_page'], -1)
+        self.assertIsNone(cases['old'][0]['rel_page'])
+        self.assertIsNone(cases['old'][0]['rel_seq'])
+        for bad in ('-2', '-1.5'):
+            with self.subTest(rel_page=bad), self.assertRaises(ValueError):
+                self.load_rows([{'case': 'x', 'iv_p50_us': '1', 'rel_page': bad, 'rel_seq': '0'}])
+        with self.assertRaises(ValueError):
+            self.load_rows([{'case': 'x', 'iv_p50_us': '-1', 'rel_page': '-1', 'rel_seq': '0'}])
+
+    def test_rel_page_sentinel_is_only_negative_value(self):
+        for page in (-1, 0, 5):
+            self.assertEqual(bench.parse_bench(self.record(rel_page=page))['rel_page'], page)
+        for page in (-2, -7):
+            with self.assertRaises(ValueError):
+                bench.parse_bench(self.record(rel_page=page))
 
     def test_draw_stages_marker_and_missing_row(self):
         # DRAW=n firmware omits [bench_draw]; the marker says so and the

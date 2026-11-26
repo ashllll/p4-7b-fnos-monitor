@@ -6,9 +6,8 @@
       iv_capped=1 时 p50/p95/p99 只基于缓冲，iv_max/iv_long_n 为全段；
       样本太小的用例（tap）标注为噪声不可判。"""
 import csv, sys, statistics as st
-import math
 from perf_bench import (FIELDS, INT_FIELDS, AUX_FIELDS, AUX_INT_FIELDS, DERIVED_FIELDS,
-                        BENCH_OPTIONAL_FIELDS, add_derived)
+                        BENCH_OPTIONAL_FIELDS, add_derived, number_ok)
 
 METRICS = [
     ("p2f_p50_us", "按下→首帧 p50"), ("p2f_p95_us", "按下→首帧 p95"),
@@ -52,8 +51,8 @@ def load(path):
                     value = float(raw)
                 except (TypeError, ValueError):
                     raise ValueError(f"{path}:{line}: {col} 缺失或非数字") from None
-                if not math.isfinite(value) or value < 0:
-                    raise ValueError(f"{path}:{line}: {col} 非有限非负数")
+                if not number_ok(col, value):
+                    raise ValueError(f"{path}:{line}: {col} 非有限/非法负数")
                 if col in INT_FIELDS | AUX_INT_FIELDS | {"repeat"} and not value.is_integer():
                     raise ValueError(f"{path}:{line}: {col} 不是整数")
                 row[col] = value

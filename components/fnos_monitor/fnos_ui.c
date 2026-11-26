@@ -7081,12 +7081,10 @@ static void motion_exec(void *unused, int32_t value)
 static void motion_finish(void)
 {
 #ifdef CONFIG_FNOS_UI_PERF_BENCH
-    fnos_perf_note_motion_settle(fnos_ui_page());
-#ifdef CONFIG_FNOS_UI_PERF_BENCH
-    fnos_perf_note_settle_snapshot(s_st.source_seq,
+    /* 快照与落定同一次写入：多 cycle 台架只保留第一个被接受手势的快照。 */
+    fnos_perf_note_motion_settle(fnos_ui_page(), s_st.source_seq,
         s_st.source_seq != s_motion_seq0 || s_st.recv_ms != s_motion_recv0);
 #endif   /* 松手→落定：80ms 的 bench 窗口之外也要有数 */
-#endif
 #ifdef CONFIG_FNOS_UI_MOTION_STATS
     if (s_motion.active && s_motion_stats.frames) {
         ESP_LOGI(TAG, "motion %d->%d prepare_us=%lld frames=%lu render_avg_us=%lld render_max_us=%lld elapsed_ms=%lu",

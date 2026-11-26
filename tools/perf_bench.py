@@ -37,6 +37,7 @@ FIELDS = ["kind", "page", "cycles", "misses",
           "rel_page", "rel_iv_max_us", "rel_long_n", "final_us",
           "fin_fix_us", "fin_layout_us", "fin_refresh_us", "prep_page_us", "prep_refresh_us", "final_rs_us", "fin_skip", "ref_health_us", "ref_shell_us", "ref_body_us", "ref_prep_us", "p1_vol_us", "p1_raid_us", "p1_disk_us", "p1_inv_us", "rel_seq", "rel_new", "pair_us"]
 INT_FIELDS = {f for f in FIELDS if not f.startswith("fps") and not f.startswith("cpu") and f != "kind"}
+BENCH_KINDS = {"tap", "swipe", "drag", "idle"}
 # 旧 [bench] 行没有这些字段；缺了按未测量处理，不能把旧日志判坏。
 BENCH_OPTIONAL_FIELDS = {
     "prep_refresh_us", "final_rs_us", "fin_skip",
@@ -102,9 +103,17 @@ DERIVED_FIELDS = [
 ]
 
 
+def number_ok(col, value):
+    """日志与 CSV 共用的数值下限：只有 rel_page 的 -1 表示未落定。"""
+    return math.isfinite(value) and (value >= 0 or (col == "rel_page" and value == -1))
+
+
 def _aux_number(raw, col):
-    value = float(raw)
-    if not math.isfinite(value) or value < 0:
+    try:
+        value = float(raw)
+    except ValueError:
+        raise ValueError("无效 bench aux 数值：" + col) from None
+    if not number_ok(col, value):
         raise ValueError("无效 bench aux 数值：" + col)
     if col in AUX_FLOAT_FIELDS:
         return value
@@ -118,29 +127,18 @@ def parse_aux(line):
     if prefix is None:
         return None
     if prefix == "lay_":
-        # [bench_lay] repeats us/max/rl for every window/kind, so only the full
-        # wN_kM_s key is unique; the generic KV map cannot represent it.
-        row = {}
-        for w, n, us, mx, rl in re.findall(
-                r"(w[1-3]_k[0-2])_n=(\d+) us=(\d+) max=(\d+) rl=(\d+)", line):
-            for suffix, raw in (("n", n), ("us", us), ("max", mx), ("rl", rl)):
-                row[f"{prefix}{w}_{suffix}"] = _aux_number(raw, f"{prefix}{w}_{suffix}")
-        for key, raw in KV.findall(line):
-            if key in {"kind", "page"} or key.startswith("w"):
-                continue
-            col = prefix + key
-            if col in AUX_FIELDS:
-                row[col] = _aux_number(raw, col)
-        for key, raw in KV.findall(line):
-            if key == "kind":
-                row["_kind"] = raw
-            elif key == "page":
-                row["_page"] = _aux_number(raw, "lay_page")
-        return _check_aux_row(row, prefix)
+        # Production prints bare `us/max/rl` after each wN_kM_n; bind them to
+        # that window once, then every value goes through the shared KV loop.
+        # Whole-token matching means rl=1.5/1bad is rejected, not truncated.
+        line = re.sub(
+            r"(w[1-3]_k[0-2])_n=([^\s]+)\s+us=([^\s]+)\s+max=([^\s]+)\s+rl=([^\s]+)",
+            lambda m: " ".join(f"{m[1]}_{suffix}={raw}" for suffix, raw in
+                               (("n", m[2]), ("us", m[3]), ("max", m[4]), ("rl", m[5]))),
+            line)
     row = {}
     for key, raw in KV.findall(line):
         if key == "kind":
-            if raw not in {"tap", "swipe", "drag", "idle"}:
+            if raw not in BENCH_KINDS:
                 raise ValueError("无效 bench aux kind：" + raw)
             if "_kind" in row:
                 raise ValueError("bench aux 字段重复：kind")
@@ -211,18 +209,17 @@ def parse_bench(line):
                 row[k] = v
             elif k in INT_FIELDS:
                 value = float(v)
-                if (not math.isfinite(value) or not value.is_integer()
-                        or (value < 0 and k != "rel_page")):
+                if not value.is_integer() or not number_ok(k, value):
                     raise ValueError("无效 bench 整数：%s" % k)
                 row[k] = int(value)
             else:
                 row[k] = float(v)
-                if not math.isfinite(row[k]) or row[k] < 0:
+                if not number_ok(k, row[k]):
                     raise ValueError("无效 bench 数值：%s" % k)
     missing = (set(FIELDS) - BENCH_OPTIONAL_FIELDS) - row.keys()
     if missing:
         raise ValueError("bench 记录不完整，缺少：" + ", ".join(sorted(missing)))
-    if row["kind"] not in {"tap", "swipe", "drag", "idle"}:
+    if row["kind"] not in BENCH_KINDS:
         raise ValueError("无效 bench kind")
     return row
 

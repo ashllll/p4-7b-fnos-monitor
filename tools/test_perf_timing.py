@@ -2,6 +2,7 @@
 """Run production bench callbacks with a controlled clock; no device required."""
 from pathlib import Path
 import os
+import re
 import subprocess
 import tempfile
 
@@ -89,12 +90,28 @@ static int32_t lv_display_get_horizontal_resolution(lv_display_t *d) { (void)d; 
 static void lv_timer_resume(lv_timer_t *t) { (void)t; }
 '''
 checks = r'''
+#define SETTLE(page, seq, fresh) fnos_perf_note_motion_settle((page), (seq), (fresh))
 static void event(int code, int64_t at) {
     clock_us = at;
     lv_event_t e = {code};
     if (code == LV_EVENT_RENDER_START) pf_start_cb(&e);
     else if (code == LV_EVENT_RENDER_READY) pf_render_cb(&e);
     else pf_parts_cb(&e);
+}
+static void test_press(int64_t t)
+{
+    clock_us = t;
+    lv_indev_data_t d = {0};
+    d.state = LV_INDEV_STATE_PRESSED;
+    pf_read_cb(&pointer, &d);
+}
+static void test_release(int64_t t)
+{
+    clock_us = t;
+    s_run.pressed = false;
+    lv_indev_data_t d = {0};
+    d.state = LV_INDEV_STATE_RELEASED;
+    pf_read_cb(&pointer, &d);
 }
 int main(void) {
     /* Bench parameters come off the serial CLI: reject junk and overflow instead of atoi UB. */
@@ -288,7 +305,72 @@ int main(void) {
     assert(!s_release_pending && rd2.state == LV_INDEV_STATE_RELEASED);
     pf_req_poll(NULL);
     assert(!s_req.valid && s_run.active);
-    fprintf(stderr, "production timing callbacks: argument parsing, idle, task ownership, frame scope, reset passed\n");
+    /* 多 cycle：两个相反方向的手势 + 两次不同快照。rel_page/落定时长/方向/快照
+       必须来自同一个被接受的落定手势（第一个），不能拿末次 cycle 的方向或快照。 */
+    s_req.kind = PF_DRAG; s_req.page = 2; s_req.px = 600; s_req.drag_ms = 1; s_req.cycles = 2;
+    s_drag_dir = -1;
+    clock_us = 3000000; pf_start();
+    assert(s_run.dir == -1);
+    s_nreal = 0;
+    clock_us = 3000100; pf_arm(clock_us);
+    test_press(3000200);
+    test_release(3000300);
+    clock_us = 3000400; fnos_perf_note_motion_start();
+    clock_us = 3000600; SETTLE(2, 11, false);
+    assert(s_rel_page == 2 && s_rel_settle_us == 300 && s_rel_seq == 11 && !s_rel_new);
+    assert(pf_report_dir() == 0);
+    clock_us = 3000700; pf_next_cycle(clock_us);
+    assert(s_run.dir == 1);
+    s_nreal = 0;
+    clock_us = 3000800; pf_arm(clock_us);
+    test_press(3000900);
+    test_release(3001000);
+    clock_us = 3001100; fnos_perf_note_motion_start();
+    clock_us = 3001400; SETTLE(3, 22, true);   /* 第二次落定/快照必须整条被丢弃 */
+    assert(s_rel_page == 2 && s_rel_settle_us == 300 && s_rel_seq == 11 && !s_rel_new);
+    assert(pf_report_dir() == 0);
+    clock_us = 3001500; pf_next_cycle(clock_us);
+
+    /* drag 没有落定：rel_* 保持未测，dir 沿用旧口径（整轮最后一次方向）。 */
+    s_req.cycles = 1; s_drag_dir = -1;
+    clock_us = 3100000; pf_start();
+    s_nreal = 0;
+    clock_us = 3100100; pf_arm(clock_us);
+    test_press(3100200);
+    test_release(3100300);
+    assert(s_rel_page == -1 && s_rel_seq == 0 && !s_rel_new);
+    assert(pf_report_dir() == 0);
+    clock_us = 3100400; pf_next_cycle(clock_us);
+
+    /* 迟到落定：上一 cycle 的动画若在下一 cycle 松手后才落定，不能冒充新手势。 */
+    s_req.cycles = 2; s_drag_dir = -1;
+    clock_us = 3200000; pf_start();
+    s_nreal = 0;
+    clock_us = 3200100; pf_arm(clock_us);
+    test_press(3200200);
+    test_release(3200300);
+    clock_us = 3200400; fnos_perf_note_motion_start();     /* cycle 1 的动画起了 */
+    event(LV_EVENT_RENDER_READY, 3200450);                 /* cycle 1 的松手窗先记数 */
+    event(LV_EVENT_RENDER_READY, 3200550);
+    assert(s_run.rel_frames == 2 && s_rel_iv_max == 100);
+    clock_us = 3200600; pf_next_cycle(clock_us);           /* 没等到落定就进下一 cycle */
+    s_nreal = 0;
+    clock_us = 3200700; pf_arm(clock_us);
+    test_press(3200800);
+    test_release(3200900);                                 /* rel_gen 已推进；沟槽重新开窗 */
+    assert(s_run.rel_frames == 0 && s_rel_iv_max == 0);
+    event(LV_EVENT_RENDER_READY, 3200950);
+    event(LV_EVENT_RENDER_READY, 3201000);
+    clock_us = 3201050; SETTLE(2, 11, false);              /* 旧一代落定：拒收 */
+    assert(!s_rel_settled && s_rel_page == -1 && s_rel_seq == 0);
+    clock_us = 3201100; fnos_perf_note_motion_start();
+    clock_us = 3201400; SETTLE(3, 22, true);               /* 本代落定：整条接受 */
+    assert(s_rel_page == 3 && s_rel_settle_us == 500 && s_rel_seq == 22 && s_rel_new);
+    assert(s_rel_frames == 2 && s_rel_iv_max == 50);        /* 本轮窗口，不混上一 cycle */
+    assert(pf_report_dir() == 1);
+    clock_us = 3201500; pf_next_cycle(clock_us);
+
+    fprintf(stderr, "production timing callbacks: argument parsing, idle, task ownership, frame scope, reset, settle attribution passed\n");
 }
 '''
 with tempfile.TemporaryDirectory() as tmp:
@@ -296,8 +378,35 @@ with tempfile.TemporaryDirectory() as tmp:
     task_type_start = source.index('typedef struct {\n    char name[configMAX_TASK_NAME_LEN]')
     task_type_end = source.index('} pf_task_t;', task_type_start) + len('} pf_task_t;')
     c.write_text(prefix + state + source[task_type_start:task_type_end] + stubs + '\n'.join(function(n) for n in
-                 ['pf_push', 'pf_int', 'pf_drag_pos', 'pf_arm', 'pf_next_cycle', 'pf_script_tick', 'pf_start_cb', 'pf_render_cb', 'pf_start', 'pf_stop', 'pf_read_cb', 'pf_req_poll', 'pf_cpu_delta', 'fnos_perf_note_tick', 'pf_chart_begin', 'pf_chart_end']) + checks)
+                 ['pf_push', 'pf_int', 'pf_drag_pos', 'pf_arm', 'pf_next_cycle', 'pf_script_tick', 'pf_start_cb', 'pf_render_cb', 'pf_start', 'pf_stop', 'pf_read_cb', 'pf_req_poll', 'pf_cpu_delta', 'fnos_perf_note_tick', 'pf_chart_begin', 'pf_chart_end', 'pf_report_dir', 'fnos_perf_note_motion_settle', 'fnos_perf_note_motion_start']) + checks)
     exe = Path(tmp) / 'timing'
     subprocess.run([os.environ.get('CC', 'cc'), '-std=c11', '-Wall', '-Wextra',
                     '-I', str(ROOT / 'components/fnos_monitor'), str(c), '-o', str(exe)], check=True)
     subprocess.run([str(exe)], check=True)
+
+# With CONFIG_FNOS_UI_PERF_BENCH off, every public fnos_perf_* declaration must
+# have an empty implementation. Compile the real #else block and link a call to
+# each declaration: a missing stub fails here, not at some future unguarded
+# call site.
+header = (ROOT / 'components/fnos_monitor/fnos_perf.h').read_text()
+marker = '#else  /* !CONFIG_FNOS_UI_PERF_BENCH */'
+stub_start = source.index(marker) + len(marker)
+stub_body = source[stub_start:source.index('\n#endif', stub_start)]
+api = re.findall(r'^(?:void|bool) (fnos_perf_\w+)\(([^)]*)\);', header, re.M)
+assert api, 'fnos_perf.h declares no public API'
+calls = []
+for name, params in api:
+    params = params.strip()
+    args = '' if params == 'void' else ', '.join('0' for _ in params.split(','))
+    calls.append('    (void)%s(%s);' % (name, args))
+stub_c = ('#include <stdbool.h>\n#include <stdint.h>\n#include "fnos_perf.h"\n'
+          + stub_body + '\nint main(void) {\n' + '\n'.join(calls) + '\n    return 0;\n}\n')
+with tempfile.TemporaryDirectory() as tmp:
+    stub_path = Path(tmp) / 'stub_link.c'
+    stub_path.write_text(stub_c)
+    stub_exe = Path(tmp) / 'stub_link'
+    subprocess.run([os.environ.get('CC', 'cc'), '-std=c11', '-Wall', '-Wextra',
+                    '-I', str(ROOT / 'components/fnos_monitor'), str(stub_path), '-o', str(stub_exe)],
+                   check=True)
+    subprocess.run([str(stub_exe)], check=True)
+print('non-bench stubs: all %d public fnos_perf_* declarations link' % len(api))
