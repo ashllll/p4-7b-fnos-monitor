@@ -84,18 +84,44 @@ jobs:
             exit 1
           fi
 
-      # A multi-path artifact keeps absolute runner segments (__w/...), which the
-      # release job cannot address; stage everything under one root instead.
+      # verify_all rebuilds; package the final build, not the pre-check one.
+      - name: Package flash release
+        run: |
+          set -euo pipefail
+          . "$IDF_PATH/export.sh" > /dev/null
+          out="$RUNNER_TEMP/fnos-verify/release"
+          mkdir -p "$out"
+          cat > build/FLASH.txt <<'EOF'
+          fnos_monitor — ESP32-P4 7B 通用固件
+
+          下载 fnos-monitor-*-full.zip 并解压，进入解压后的目录执行：
+
+            esptool.py --chip esp32p4 -p <PORT> -b 460800 write_flash @flash_args
+
+          说明：
+            * 必须使用包内 flash_args；esptool 的 @文件只接受文本参数。
+            * 不要对 flasher_args.json 使用 @。
+            * 完整烧录写入 0x2000 bootloader、0x8000 分区表、0x10000 应用。
+            * 适用 ESP32-P4 7B rev3.x / 32MB flash；不要执行 erase_flash。
+            * 固件由 gate 构建；.fpk 请在本地构建。
+          EOF
+          (cd build && zip -q -X "$out/fnos-monitor-full.zip" \
+            FLASH.txt flash_args flasher_args.json fnos_monitor.bin \
+            fnos_monitor.elf fnos_monitor.map \
+            bootloader/bootloader.bin partition_table/partition-table.bin)
+          cp build/FLASH.txt "$out/FLASH.txt"
+          extract="$RUNNER_TEMP/fnos-unzip"
+          unzip -oq "$out/fnos-monitor-full.zip" -d "$extract"
+          (cd "$extract" && python -m esptool --chip esp32p4 merge_bin \
+            -o "$RUNNER_TEMP/merge-package.bin" @flash_args)
+
       - name: Collect build outputs
         if: always()
         run: |
           out="$RUNNER_TEMP/fnos-verify"
-          # Keep the build tree's shape: flasher_args.json refers to
-          # bootloader/bootloader.bin and partition_table/partition-table.bin by
-          # those relative paths, so flattening would produce an unusable release.
           mkdir -p "$out/build/bootloader" "$out/build/partition_table"
           for f in build/fnos_monitor.bin build/fnos_monitor.elf build/fnos_monitor.map \
-                   build/flasher_args.json; do
+                   build/flasher_args.json build/flash_args; do
             if [ -f "$f" ]; then cp "$f" "$out/build/"; fi
           done
           if [ -f build/bootloader/bootloader.bin ]; then
@@ -105,7 +131,7 @@ jobs:
             cp build/partition_table/partition-table.bin "$out/build/partition_table/"
           fi
           if [ -f "$RUNNER_TEMP/verify.log" ]; then cp "$RUNNER_TEMP/verify.log" "$out/"; fi
-          find "$out/build" -type f -maxdepth 2 -exec ls -l {} \; || true
+          find "$out" -maxdepth 2 -type f -exec ls -l {} \; || true
 
       - name: Upload verification evidence
         if: always()
@@ -139,24 +165,18 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          mkdir -p release
-          cp artifacts/build/fnos_monitor.bin artifacts/build/bootloader/bootloader.bin \
-             artifacts/build/partition_table/partition-table.bin release/
-          cp artifacts/build/fnos_monitor.elf artifacts/build/fnos_monitor.map release/
-          cp artifacts/build/flasher_args.json release/
-          cat > release/FLASH.txt <<'EOF'
-          Flash with the ESP-IDF in the release notes' version:
-
-            esptool.py --chip esp32p4 -p <port> -b 460800 \
-              write_flash @flasher_args.json
-
-          The board image is built from the tagged commit by GitHub Actions.
-          The fnOS companion app (.fpk) is NOT part of this release: fnpack is
-          not available on hosted runners, so build it locally with
-          `bash nas/fpk/build.sh`.
-          EOF
-          gh release create "$TAG" release/* \
+          # The gate built and exercised this zip; only the tag-specific name is new.
+          mv artifacts/release/fnos-monitor-full.zip "fnos-monitor-${TAG}-full.zip"
+          gh release create "$TAG" \
+            "fnos-monitor-${TAG}-full.zip" \
+            artifacts/build/fnos_monitor.bin \
+            artifacts/build/bootloader/bootloader.bin \
+            artifacts/build/partition_table/partition-table.bin \
+            artifacts/build/fnos_monitor.elf \
+            artifacts/build/fnos_monitor.map \
+            artifacts/build/flasher_args.json \
+            artifacts/release/FLASH.txt \
             --repo "$GITHUB_REPOSITORY" \
             --title "$TAG" \
-            --notes "Firmware built from $GITHUB_SHA by the CI gate. The fnOS companion package is built locally; see README." \
+            --notes "Firmware built from $GITHUB_SHA by the CI gate. Download fnos-monitor-${TAG}-full.zip for the complete flash package (bootloader, partition table, app, flash_args and FLASH.txt). The fnOS companion package is built locally; see README." \
             --verify-tag

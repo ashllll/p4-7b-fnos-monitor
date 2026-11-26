@@ -312,7 +312,7 @@ python3 tools/test_history_merge.py
 
 ### 持续集成与发布
 
-每次推送到 `main` 或开 PR，GitHub Actions 用 `espressif/idf:v5.5.5` 容器跑一遍 `.github/workflows/ci.yml`：先 `bash idf.sh build`（主机预览要读生成的 `build/config/sdkconfig.h`），再 `bash tools/verify_all.sh --ci` 走完 L1 主机回归、L2 构建与静态栈深、`ui_kit` 出局检查；证据目录与固件二进制作为 artifact 保留 14 天。`--ci` 只跑跨平台部分：依赖非 root 宿主语义或 fnOS 包用户身份的检查按 [`tools/ci_host_skip.txt`](tools/ci_host_skip.txt) 逐条豁免并在输出里打印理由，完整套件仍在本机跑。推 `v*` 标签时，同一份构建产物发布为 GitHub Release（固件 bin、elf、map、烧录参数与烧录说明）。
+每次推送到 `main` 或开 PR，GitHub Actions 用 `espressif/idf:v5.5.5` 容器跑一遍 `.github/workflows/ci.yml`：先 `bash idf.sh build`（主机预览要读生成的 `build/config/sdkconfig.h`），再 `bash tools/verify_all.sh --ci` 走完 L1 主机回归、L2 构建与静态栈深、`ui_kit` 出局检查；证据目录与固件二进制作为 artifact 保留 14 天。`--ci` 只跑跨平台部分：依赖非 root 宿主语义或 fnOS 包用户身份的检查按 [`tools/ci_host_skip.txt`](tools/ci_host_skip.txt) 逐条豁免并在输出里打印理由，完整套件仍在本机跑。推 `v*` 标签时，同一份构建产物发布为 GitHub Release：完整包 zip（解压后按包内 `FLASH.txt` 用 `@flash_args` 烧录），以及 raw 固件 bin（含 bootloader、分区表）、elf、map、`flasher_args.json` 和 `FLASH.txt`。
 
 本地提交与推送使用全局 Git hooks（`core.hooksPath=/Users/llll/.config/git/hooks`）：提交时运行 `bash scripts/preflight.sh --staged`，推送时运行 `bash scripts/preflight.sh`。本地检查通过后再推送；现有 Actions 工作流继续执行构建与主机回归，合并前确认检查通过。
 
