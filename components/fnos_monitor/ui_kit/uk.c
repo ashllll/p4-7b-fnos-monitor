@@ -605,6 +605,9 @@ void uk_row_show(uk_row_t *r, bool show)
 
 typedef struct {
     int32_t min_col_w, cols, shown, no_stretch;
+#ifdef FNOS_UI_TESTING
+    int32_t relayouts;
+#endif
 } uk_pool_t;
 
 static void pool_delete_cb(lv_event_t *e)
@@ -651,6 +654,20 @@ int32_t uk_pool_cols(lv_obj_t *pool)
 { uk_pool_t *st=lv_obj_get_user_data(pool); return st ? st->cols : 0; }
 int32_t uk_pool_shown(lv_obj_t *pool)
 { uk_pool_t *st=lv_obj_get_user_data(pool); return st ? st->shown : 0; }
+void uk_pool_note_cols(lv_obj_t *pool, int32_t cols)
+{
+    uk_pool_t *st=lv_obj_get_user_data(pool);
+    if (!st) return;
+    int32_t n=(int32_t)lv_obj_get_child_count(pool);
+    if (cols<1) cols=1;
+    if (n>0 && cols>n) cols=n;
+    st->cols=cols;
+    st->shown=n;
+}
+#ifdef FNOS_UI_TESTING
+int32_t uk_pool_relayout_count(lv_obj_t *pool)
+{ uk_pool_t *st=lv_obj_get_user_data(pool); return st ? st->relayouts : 0; }
+#endif
 
 /* ── 清单可读性下限 ───────────────────────────────────────────────────
    池和滚动列建出来就带标记（见 uk_pool_create / fnos_ui.c 的 scroll_col），
@@ -798,6 +815,9 @@ void uk_pool_relayout(lv_obj_t *pool, int32_t min_col_w, bool data_fit, lv_obj_t
     (void)data_fit; /* Inventory views never omit the tail to fill one screen. */
     uk_pool_t *st=lv_obj_get_user_data(pool);
     if (!st) return;
+#ifdef FNOS_UI_TESTING
+    st->relayouts++;
+#endif
     if (min_col_w>0) st->min_col_w=min_col_w;
     int32_t base_gap=UK_ITEM_GAP;
     /* 行距可能被上一次的行对齐撑大过（uk_viewport_snap）：先回到基准，

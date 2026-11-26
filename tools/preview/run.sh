@@ -20,7 +20,7 @@ PREVIEW_BRANCH_VARS="PREVIEW_ALLOC_FAIL_AT PREVIEW_ALLOC_SEED_ONE PREVIEW_AUDIT_
 PREVIEW_BANDS_AT PREVIEW_BARMAP PREVIEW_CARDLIST PREVIEW_CARDMAP PREVIEW_CARDMAP_AT PREVIEW_CARD_OVERLAP
 PREVIEW_CHART_MAP PREVIEW_DATA_MOTION PREVIEW_ENTER_MID PREVIEW_HARDWARE_FIXTURE PREVIEW_MOTION
 PREVIEW_GESTURE_FPS PREVIEW_MOTION_CPU_BUDGET_US PREVIEW_MOTION_FIRST_ENTRY PREVIEW_MOTION_INPUT PREVIEW_MOTION_REPEAT_TARGET
-PREVIEW_MOTION_RESPONSIVENESS PREVIEW_MOTION_SCROLL PREVIEW_NUMBERS PREVIEW_OVERLAP_TRACE
+PREVIEW_MOTION_RESPONSIVENESS PREVIEW_MOTION_SCROLL PREVIEW_NET_GEOMETRY PREVIEW_NUMBERS PREVIEW_OVERLAP_TRACE
 PREVIEW_PAGE_CARDS PREVIEW_PAIR_FIRST_ENTRY PREVIEW_PARTIAL PREVIEW_POLL_MS PREVIEW_PROBE PREVIEW_REFRESH_WORK PREVIEW_SIZE
 PREVIEW_TRACE_CARDS PREVIEW_WHO PREVIEW_WHOALL"
 
@@ -157,9 +157,20 @@ if [ ! -x ./build/snapshot_check ]; then
 fi
 ./build/snapshot_check
 
-# Exercise dynamic inventories with the same renderer and audits as the samples.
+# Prebuild row geometry: pre-entry and first-entry widths must agree with the
+# real layout for 1/2/12 ports, count changes and entry mid-prebuild.
 MATRIX=$(mktemp -d)
 trap 'rm -rf "$MATRIX"' EXIT
+for geom in 1 2 12 long grow shrink cols shrink-cols enter; do
+  if ! env $(preview_env_args) PREVIEW_NET_GEOMETRY="$geom" \
+       ./build/preview "$MATRIX/netgeom-$geom" > "$MATRIX/netgeom-$geom.log" 2>&1; then
+    tail -20 "$MATRIX/netgeom-$geom.log" >&2
+    exit 1
+  fi
+done
+echo "network prebuild geometry 1/2/12/long/grow/shrink/cols/shrink-cols/enter: PASS"
+
+# Exercise dynamic inventories with the same renderer and audits as the samples.
 python3 hardware_fixtures.py "$MATRIX/fixtures" > "$MATRIX/fixtures.log"
 for fixture in empty compact mixed dense; do
   # 每个夹具阶段也先把所有分支变量清干净（审计 M36）：只清自己认识的那几个，

@@ -4388,7 +4388,7 @@ typedef struct { uint64_t shape; bool ready; } inventory_layout_cache_t;
 static inventory_layout_cache_t s_storage_layout, s_system_layout, s_network_pool_layout;
 
 /* 网口行壳：page2 从未显示过时它的 flex 尺寸还是 0，先在离屏布局里解一次，
-   之后隐藏页也能结算行几何。创建与列宽结算放进空闲 tick，入页只改文本。 */
+   之后隐藏页也能结算行几何。创建与几何收口放进空闲 tick，入页只改文本。 */
 static bool s_net_geom_warm;
 #ifdef CONFIG_FNOS_UI_PERF_BENCH
 static uint32_t s_motion_seq0;
@@ -4397,7 +4397,9 @@ static uint32_t s_motion_recv0;
 static bool s_net_ready;               /* 壳齐、几何已结算 */
 static bool s_net_layout_pending;       /* 池已挂回卡片，还差一次 page2 结算 */
 static int32_t s_net_unbound = -1;      /* 已建壳、还没绑文本的行；建和量分两个 tick 做 */
-static int32_t s_net_col_w;            /* 池内容宽解出的单列宽 */
+static int32_t s_net_cols;             /* 预建按实际行数预测的列数 */
+static int32_t s_net_col_w;            /* 预建行宽；空池算出的列宽只是上界 */
+static bool s_net_reflow;              /* 预测列数变过，settle 前用共享池布局收口 */
 static lv_obj_t *s_net_stage;          /* 预建母体：不激活的 screen，布局只算这棵子树 */
 static lv_obj_t *s_net_staged;         /* 母体上的新池；挂回成功才替换正式池 */
 static lv_obj_t *s_net_home;           /* 池的正式父对象（网口卡片 body） */
@@ -4458,34 +4460,8 @@ static uint64_t inventory_shape(lv_obj_t *container, lv_obj_t **cards,
     return shape;
 }
 
-/* Reuse resolved row geometry; changed wrapping or topology must still reflow. */
-/* 池挂回卡片后还差这一下：整页布局一次，再按真实几何写 shape 缓存。
-   放到单独的空闲 tick，避免和建行/挂回叠成超一帧的 tick。 */
-static void network_layout_pending_finish(void)
-{
-    if (!s_net_layout_pending || !s_ui.net_pool) return;
+/* 每次缓存 shape 时顺手记下关键几何，用于指出本轮为什么重排。只在台架里编。 */
 #ifdef CONFIG_FNOS_UI_PERF_BENCH
-    int64_t t0 = esp_timer_get_time();
-#endif
-    /* 行宽/行高在母体上已按正式池的列宽量好，这里只差一次整页布局把池摆回卡片里的位置；
-       再来一次 uk_pool_relayout 要 61ms，没有必要。 */
-    lv_obj_update_layout(s_ui.page[2]);
-    uk_viewport_snap(s_ui.net_pool, UK_ITEM_GAP);
-    int64_t t1 = esp_timer_get_time();
-    lv_obj_t *cards[] = {s_ui.net_card}, *pools[] = {s_ui.net_pool};
-    const int counts[] = {s_ui.net_made};
-    s_network_pool_layout.shape = inventory_shape(s_ui.net_pool, cards, pools, counts, 1);
-    s_network_pool_layout.ready = true;
-    s_net_ready = true;
-    s_net_layout_pending = false;
-#ifdef CONFIG_FNOS_UI_PERF_BENCH
-    ESP_LOGI(TAG, "netprep layout rows=%d snap=%u cache=%u us=%u", s_ui.net_made,
-             (unsigned)(t1 - t0), (unsigned)(esp_timer_get_time() - t1),
-             (unsigned)(esp_timer_get_time() - t0));
-#endif
-}
-
-/* 每次缓存 shape 时顺手记下关键几何，用于指出本轮为什么重排。 */
 typedef struct { int32_t pool_w, card_w, counts, pad_row, row0_h, part_h; } net_shape_dbg_t;
 static net_shape_dbg_t s_net_shape_dbg;
 
@@ -4517,6 +4493,79 @@ static uint32_t net_shape_dbg_diff(const net_shape_dbg_t *a, const net_shape_dbg
     if (a->part_h != b->part_h) m |= 32u;
     return m;
 }
+#endif
+
+/* 预建行宽：池宽按预测列数分；空池的 uk_pool_width_cols 只按宽度算列，
+   这里用实际要建的行数封顶，单口才会拿整行宽。 */
+static void network_predicted_geometry(lv_obj_t *pool, int32_t want,
+                                       int32_t *out_cols, int32_t *out_row_w)
+{
+    int32_t cols = uk_pool_width_cols(pool);
+    if (cols < 1) cols = 1;
+    if (want > 0 && cols > want) cols = want;
+    int32_t w = lv_obj_get_content_width(pool);
+    int32_t gap = lv_obj_get_style_pad_column(pool, 0);
+    int32_t rw = (w > 0) ? (w - gap * (cols - 1)) / cols : 0;
+    if (rw < 1) rw = w;
+    *out_cols = cols;
+    *out_row_w = rw;
+}
+
+/* 行几何是否已经等于当前行数该有的样子；只有不满足才值得动共享池布局。 */
+static bool network_rows_fit(lv_obj_t *pool, int32_t *out_cols)
+{
+    int32_t n = (int32_t)lv_obj_get_child_count(pool);
+    *out_cols = 0;
+    if (n < 1) return true;
+    int32_t cols = 0, rw = 0;
+    network_predicted_geometry(pool, n, &cols, &rw);
+    if (rw < 1) return false;   /* 池宽/行宽还没解出来：交给共享池布局 */
+    int32_t h0 = lv_obj_get_height(lv_obj_get_child(pool, 0));
+    if (h0 < 1) return false;   /* 还没解出行高：交给共享池布局量一次 */
+    for (int32_t i = 0; i < n; i++) {
+        lv_obj_t *row = lv_obj_get_child(pool, i);
+        if (lv_obj_get_width(row) != rw || lv_obj_get_height(row) != h0)
+            return false;
+    }
+    *out_cols = cols;
+    return true;
+}
+
+/* 池挂回卡片后还差这一下：整页布局一次，再按真实几何写 shape 缓存。
+   放到单独的空闲 tick，避免和建行/挂回叠成超一帧的 tick。 */
+static void network_layout_pending_finish(void)
+{
+    if (!s_net_layout_pending || !s_ui.net_pool) return;
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    int64_t t0 = esp_timer_get_time();
+#endif
+    /* 行宽/行高在母体上未必按最终行数收过口（中途入页、长名换行都会变）；
+       几何已经对上就只同步列状态，否则才走一次共享池布局。 */
+    lv_obj_update_layout(s_ui.page[2]);
+    int32_t cols = 0;
+    if (!network_rows_fit(s_ui.net_pool, &cols)) {
+        uk_pool_relayout(s_ui.net_pool, UK_ENTITY_MIN_WIDTH, false, NULL);
+        lv_obj_update_layout(s_ui.net_pool);
+    } else if (cols > 0) {
+        uk_pool_note_cols(s_ui.net_pool, cols);
+    }
+    uk_viewport_snap(s_ui.net_pool, UK_ITEM_GAP);
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    int64_t t1 = esp_timer_get_time();
+#endif
+    lv_obj_t *cards[] = {s_ui.net_card}, *pools[] = {s_ui.net_pool};
+    const int counts[] = {s_ui.net_made};
+    s_network_pool_layout.shape = inventory_shape(s_ui.net_pool, cards, pools, counts, 1);
+    s_network_pool_layout.ready = true;
+    s_net_ready = true;
+    s_net_layout_pending = false;
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
+    net_shape_dbg_read(&s_net_shape_dbg);   /* 缓存与基线同一次刷新 */
+    ESP_LOGI(TAG, "netprep layout rows=%d snap=%u cache=%u us=%u", s_ui.net_made,
+             (unsigned)(t1 - t0), (unsigned)(esp_timer_get_time() - t1),
+             (unsigned)(esp_timer_get_time() - t0));
+#endif
+}
 
 static void network_pool_layout(void)
 {
@@ -4546,18 +4595,24 @@ static void network_pool_layout(void)
     lv_obj_t *cards[] = {s_ui.net_card}, *pools[] = {s_ui.net_pool};
     const int counts[] = {s_ui.net_made};
     uint64_t shape = inventory_shape(s_ui.net_pool, cards, pools, counts, 1);
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
     bool relayout = false;
+#endif
     if (!s_network_pool_layout.ready || s_network_pool_layout.shape != shape) {
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
         net_shape_dbg_t now, prev = s_net_shape_dbg;
         net_shape_dbg_read(&now);
         if (s_network_pool_layout.ready)
             fnos_perf_note_shape_mismatch(net_shape_dbg_diff(&prev, &now));
+#endif
         uk_pool_relayout(s_ui.net_pool, UK_ENTITY_MIN_WIDTH, false, NULL);
         lv_obj_update_layout(s_ui.net_pool);
         s_network_pool_layout.shape = inventory_shape(s_ui.net_pool, cards, pools, counts, 1);
         s_network_pool_layout.ready = uk_pool_cols(s_ui.net_pool) > 0;
+#ifdef CONFIG_FNOS_UI_PERF_BENCH
         net_shape_dbg_read(&s_net_shape_dbg);
         relayout = true;
+#endif
     }
 #ifdef CONFIG_FNOS_UI_PERF_BENCH
     fnos_perf_note_layout(0, (uint32_t)(esp_timer_get_time() - t0), relayout);
@@ -4588,6 +4643,7 @@ static void network_prep_settle(void)
     lv_obj_set_parent(staged, s_net_home);
     if (lv_obj_get_parent(staged) == s_net_home) {
         lv_obj_move_to_index(staged, idx);          /* 保持卡片 body 里的原顺序 */
+        lv_obj_set_width(staged, LV_PCT(100));
         lv_obj_set_flex_grow(staged, 0);
         lv_obj_set_height(staged, LV_SIZE_CONTENT);
         s_ui.net_pool = staged;                    /* 登记表已经指向新池里的行 */
@@ -6359,13 +6415,23 @@ static void network_prep(void)
         if (home_w < 1) { lv_obj_delete(s_net_stage); s_net_stage = NULL; return; }
         s_net_staged = uk_pool_create(s_net_stage, UK_ENTITY_MIN_WIDTH);
         if (!s_net_staged) { lv_obj_delete(s_net_stage); s_net_stage = NULL; return; }
+        /* 母体是独立 screen，宽度按整屏解；先按卡片里正式池的宽定住，行宽才和挂回后一致。 */
+        lv_obj_set_width(s_net_staged, lv_obj_get_width(s_ui.net_pool));
         lv_obj_set_style_pad_all(s_net_stage, 0, 0);
         lv_obj_set_size(s_net_stage, home_w, lv_display_get_vertical_resolution(NULL));
         lv_obj_set_flex_grow(s_net_staged, 0);
         lv_obj_set_height(s_net_staged, LV_SIZE_CONTENT);
         uk_pool_stretch(s_net_staged, false);
-        lv_obj_update_layout(s_net_stage);   /* 先把母体/池宽解出来，第一行就能按列宽建 */
-        s_net_col_w = 0;
+        lv_obj_update_layout(s_net_stage);   /* 先把母体/池宽解出来 */
+        s_net_cols = 0;
+        s_net_reflow = false;
+    }
+    if (s_net_stage) {                      /* 行数变了，预测列宽跟着变；壳按新列宽建 */
+        int32_t cols = 0, row_w = 0;
+        network_predicted_geometry(s_ui.net_pool, want, &cols, &row_w);
+        if (s_net_cols > 0 && cols != s_net_cols) s_net_reflow = true;
+        s_net_cols = cols;
+        s_net_col_w = row_w;
     }
     const int before = s_ui.net_made;
     lv_obj_t *pool = s_net_staged ? s_net_staged : s_ui.net_pool;
@@ -6409,21 +6475,21 @@ static void network_prep(void)
     }
     if (before < want) {
         if (rows_sync(&s_ui.net_rows, &s_ui.net_made, before + 1, pool, true, false) > before) {
-            if (s_net_col_w <= 0) {
-                /* 列宽必须按卡片里正式池算：母体池还没结算过列数，按它算会把整行当成一列。 */
-                int32_t cols = uk_pool_cols(s_ui.net_pool);
-                if (cols < 1) cols = uk_pool_width_cols(s_ui.net_pool);
-                if (cols < 1) cols = 1;
-                int32_t pw = lv_obj_get_content_width(s_ui.net_pool);
-                if (pw > 0) s_net_col_w = (pw - UK_ITEM_GAP * (cols - 1)) / cols;
-            }
-            if (s_net_col_w > 0) lv_obj_set_width(s_ui.net_rows[before]->row, s_net_col_w);
+            if (s_net_stage && s_net_col_w > 0)
+                lv_obj_set_width(s_ui.net_rows[before]->row, s_net_col_w);
             s_net_unbound = before;
             s_net_ready = false;
         }
         return;
     }
-    if (s_net_stage) network_prep_settle();   /* 壳齐：整池一次挂回卡片 */
+    if (s_net_stage) {
+        /* 实际列数变过才值得整池收口；典型多口路径这里不动布局。 */
+        if (s_net_reflow) {
+            uk_pool_relayout(s_net_staged, UK_ENTITY_MIN_WIDTH, false, NULL);
+            s_net_reflow = false;
+        }
+        network_prep_settle();   /* 壳齐：整池一次挂回卡片 */
+    }
     else if (!s_net_ready) {                  /* 卡片内增删后：空闲 tick 整池结算 */
         if (s_net_layout_pending) return;      /* 分阶段结算正在走，本 tick 只推进一阶 */
 #ifdef CONFIG_FNOS_UI_PERF_BENCH

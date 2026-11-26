@@ -170,6 +170,12 @@ int32_t uk_pool_shown(lv_obj_t *pool);
 int32_t uk_pool_cols(lv_obj_t *pool);
 /* Initial columns from resolved content widths, before fitting rows to height. */
 int32_t uk_pool_width_cols(lv_obj_t *pool);
+/* 预建池已按真实行数定好几何时，同步 uk 的列状态（只记状态，不动布局）。 */
+void uk_pool_note_cols(lv_obj_t *pool, int32_t cols);
+#ifdef FNOS_UI_TESTING
+/* 主机测试用：该池实际跑过几次 uk_pool_relayout。 */
+int32_t uk_pool_relayout_count(lv_obj_t *pool);
+#endif
 /* 视口行对齐：容器纵向溢出时把"半行"赶出视口 —— 只调行距、不动行高、不藏数据
    （容器装得下时行距回到 base_gap）。base_gap = 本来要用的那个行距。 */
 void uk_viewport_snap(lv_obj_t *box, int32_t base_gap);

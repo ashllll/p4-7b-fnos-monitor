@@ -1622,6 +1622,182 @@ static lv_obj_t *visible_text(lv_obj_t *o, const char *text)
     return NULL;
 }
 
+static void regression_tick(void);
+static lv_obj_t *find_widget(lv_obj_t *root, const lv_obj_class_t *type);
+
+/* Hidden pages keep their widgets in the active screen tree; this finder is the
+   same as visible_text() but without the HIDDEN prune, for pre-entry geometry. */
+static lv_obj_t *any_text(lv_obj_t *o, const char *text)
+{
+    if (lv_obj_has_class(o, &lv_label_class) && strcmp(lv_label_get_text(o), text) == 0) return o;
+    for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) {
+        lv_obj_t *found = any_text(lv_obj_get_child(o, i), text);
+        if (found) return found;
+    }
+    return NULL;
+}
+
+static lv_obj_t *net_pool_any(void)
+{
+    lv_obj_t *label = any_text(lv_screen_active(), "网口与接口");
+    if (!label) return NULL;
+    lv_obj_t *card = lv_obj_get_parent(lv_obj_get_parent(label));
+    lv_obj_t *body = card ? uk_card_body(card) : NULL;
+    if (!body) return NULL;
+    for (uint32_t i = 0; i < lv_obj_get_child_count(body); i++) {
+        lv_obj_t *child = lv_obj_get_child(body, i);
+        if (lv_obj_has_flag(child, LV_OBJ_FLAG_USER_2)) return child;
+    }
+    return NULL;
+}
+
+static void net_geom_fixture(fnos_status_t *f, int max_nets, bool long_name)
+{
+    fnos_counts_t counts = {0};
+    counts.mods = 1;
+    counts.nets = max_nets;
+    assert(fnos_status_create(f, &counts));
+    f->ever_ok = f->online = true;
+    f->recv_ms = 5000;
+    f->source_seq = 1;
+    assert(fnos_status_text(f, &f->mods[0].name, "%s", "net"));
+    assert(fnos_status_text(f, &f->mods[0].status, "%s", "ok"));
+    assert(fnos_status_text(f, &f->net.ifname, "%s", "eth0"));
+    assert(fnos_status_text(f, &f->net.state, "%s", "up"));
+    f->net.speed_mbps = 2500;
+    f->net.physical = true;
+    for (int i = 0; i < max_nets; i++) {
+        char ifname[160];
+        if (long_name && i == 0)
+            snprintf(ifname, sizeof ifname, "enp1s0f0np0-uplink-%02d-a-very-long-interface-name", i);
+        else
+            snprintf(ifname, sizeof ifname, "eth%d", i);
+        assert(fnos_status_text(f, &f->nets[i].ifname, "%s", ifname));
+        assert(fnos_status_text(f, &f->nets[i].state, "%s", "up"));
+        f->nets[i].speed_mbps = 2500;
+        f->nets[i].physical = true;
+        f->nets[i].rx_kbs = 120.0f + i;
+        f->nets[i].tx_kbs = 80.0f + i;
+    }
+}
+
+/* The geometry a real first entry settles to: width-driven column count capped
+   by the actual row count (uk_pool_width_cols caps by n only when n > 0). */
+static void net_assert_geometry(lv_obj_t *pool, int n, const char *tag)
+{
+    assert(pool);
+    assert((int)lv_obj_get_child_count(pool) == n);
+    int32_t pool_w = lv_obj_get_content_width(pool);
+    int32_t gap = lv_obj_get_style_pad_column(pool, 0);
+    int32_t cols = uk_pool_width_cols(pool);
+    if (cols < 1) cols = 1;
+    if (cols > n) cols = n;
+    int32_t want_w = (pool_w - gap * (cols - 1)) / cols;
+    int32_t max_h = 0;
+    for (uint32_t i = 0; i < lv_obj_get_child_count(pool); i++) {
+        int32_t h = lv_obj_get_height(lv_obj_get_child(pool, i));
+        if (h > max_h) max_h = h;
+    }
+    fprintf(stderr, "net-geom %s: n=%d cols=%d cols_state=%d relayouts=%d pool_w=%d row_w=%d row_h=%d\n",
+            tag, n, (int)cols, (int)uk_pool_cols(pool), (int)uk_pool_relayout_count(pool),
+            (int)pool_w, (int)want_w, (int)max_h);
+    assert(uk_pool_cols(pool) == cols && "uk pool column state must match real geometry");
+    for (uint32_t i = 0; i < lv_obj_get_child_count(pool); i++) {
+        lv_obj_t *row = lv_obj_get_child(pool, i);
+        assert(lv_obj_get_width(row) == want_w);
+        assert(lv_obj_get_height(row) == max_h);
+    }
+}
+
+static void verify_net_geometry(const char *scenario)
+{
+    int initial = 2, target = 2, pre_ticks = 0;
+    int expect_relayouts = 0;   /* -1: at least one; -2: not asserted */
+    bool long_name = false, partial_entry = false;
+    if (!strcmp(scenario, "1")) initial = target = 1;
+    else if (!strcmp(scenario, "2")) initial = target = 2;
+    else if (!strcmp(scenario, "12")) initial = target = 12;
+    else if (!strcmp(scenario, "long")) { initial = target = 2; long_name = true; }
+    else if (!strcmp(scenario, "grow")) { initial = 4; target = 6; pre_ticks = 2; }
+    else if (!strcmp(scenario, "shrink")) { initial = 6; target = 2; pre_ticks = 8; }
+    else if (!strcmp(scenario, "enter")) { initial = target = 6; pre_ticks = 4; partial_entry = true; expect_relayouts = -1; }
+    else if (!strcmp(scenario, "cols")) { initial = 1; target = 2; pre_ticks = 2; expect_relayouts = 1; }
+    else if (!strcmp(scenario, "shrink-cols")) { initial = 2; target = 1; pre_ticks = 2; expect_relayouts = 1; }
+    else assert(!"unknown PREVIEW_NET_GEOMETRY scenario");
+
+    const int previous_page = fnos_ui_page();
+    fnos_status_t fixture = {0};
+    net_geom_fixture(&fixture, initial > target ? initial : target, long_name);
+    fixture.nnets = initial;
+    s_override_status = &fixture;
+    fnos_ui_set_page(0);
+    regression_tick();
+    regression_tick();
+    for (int i = 0; i < pre_ticks; i++) regression_tick();
+    if (initial != target) fixture.nnets = target;
+
+#if CONFIG_FNOS_UI_NET_PREP
+    if (partial_entry) {
+        /* "enter": enter while the stage still holds fewer than `target` rows.
+           The partial stage must not be visible through page2 yet. */
+        lv_obj_t *hidden_pool = net_pool_any();
+        assert(hidden_pool);
+        assert((int)lv_obj_get_child_count(hidden_pool) == 0 &&
+               "partial stage must not be attached before entry");
+    } else {
+        for (int i = 0, limit = target * 4 + 40; i < limit; i++) {
+            regression_tick();
+            lv_obj_t *pool = net_pool_any();
+            if (pool && (int)lv_obj_get_child_count(pool) == target) break;
+            assert(i + 1 < limit && "network prebuild did not settle");
+        }
+        for (int i = 0; i < 3; i++) regression_tick();
+        lv_obj_t *hidden_pool = net_pool_any();
+        assert(hidden_pool);
+        net_assert_geometry(hidden_pool, target, "pre-entry");
+        int32_t nrel = uk_pool_relayout_count(hidden_pool);
+        if (expect_relayouts >= 0) assert(nrel == expect_relayouts);
+        else if (expect_relayouts == -1) assert(nrel >= 1);
+    }
+#else
+    (void)pre_ticks;
+    for (int i = 0; i < 3; i++) regression_tick();
+    lv_obj_t *hidden_pool = net_pool_any();
+    assert(hidden_pool);
+    assert((int)lv_obj_get_child_count(hidden_pool) == 0 &&
+           "NET_PREP off must not populate the hidden network pool");
+#endif
+
+    fnos_ui_set_page(2);
+    fnos_ui_motion_settle();
+    for (int i = 0; i < 6; i++) regression_tick();
+    assert(fnos_ui_page() == 2);
+    assert(visible_text(lv_screen_active(), "网口与接口"));
+    lv_obj_t *pool = net_pool_any();
+    net_assert_geometry(pool, target, "entry");
+    lv_obj_t *first = lv_obj_get_child(pool, 0);
+    lv_obj_t *name = find_widget(first, &lv_label_class);
+    assert(name && strstr(lv_label_get_text(name), fixture.nets[0].ifname));
+#if CONFIG_FNOS_UI_NET_PREP
+    int32_t entry_rel = uk_pool_relayout_count(pool);
+    if (expect_relayouts >= 0) assert(entry_rel == expect_relayouts);
+    else if (expect_relayouts == -1) assert(entry_rel >= 1);
+#endif
+
+    /* stale/partial freshness: the retained reading must be labelled, not animated as live. */
+    fixture.online = false;
+    fixture.source_seq++;
+    for (int i = 0; i < 3; i++) regression_tick();
+    assert(visible_text_containing(lv_screen_active(), "上次 ·"));
+
+    s_override_status = NULL;
+    fnos_ui_set_page(previous_page);
+    fnos_ui_motion_settle();
+    regression_tick();
+    fnos_status_release(&fixture);
+    printf("checks: network prebuild geometry %s PASS\n", scenario);
+}
+
 /* Container identities must retain collector order through repeated reflows
    and when a larger snapshot adds new rows to an already split pool. */
 static void verify_container_order(void)
@@ -6660,6 +6836,10 @@ int main(int argc, char **argv)
     }
     if (getenv("PREVIEW_NUMBERS")) { record_numbers(); return preview_finish(); }
     fnos_ui_create();
+    if (getenv("PREVIEW_NET_GEOMETRY")) {
+        verify_net_geometry(getenv("PREVIEW_NET_GEOMETRY"));
+        return preview_finish();
+    }
     if (getenv("PREVIEW_REFRESH_WORK")) { verify_refresh_work(); return preview_finish(); }
     if (getenv("PREVIEW_DATA_MOTION")) {
         if (!strcmp(getenv("PREVIEW_DATA_MOTION"), "temperature")) verify_temperature_colors();
